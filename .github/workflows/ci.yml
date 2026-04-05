@@ -60,7 +60,7 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        run: turbo run test
+        run: bunx turbo run test
 
       - name: Browser test
         run: bun run --cwd apps/web test:browser
