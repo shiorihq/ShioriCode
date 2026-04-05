@@ -36,6 +36,22 @@ import { useStore } from "../store";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "contracts/settings";
+import type { ReactNode } from "react";
+
+vi.mock("../convex/HostedShioriProvider", () => ({
+  HostedShioriProvider: ({ children }: { children: ReactNode }) => children,
+  useHostedShioriState: () => ({
+    isAuthLoading: false,
+    isAuthenticated: true,
+    isSubscriptionLoading: false,
+    isPaidSubscriber: true,
+    authToken: null,
+    viewer: null,
+    catalogProviders: undefined,
+    signIn: async () => ({ signingIn: false }),
+    signOut: async () => undefined,
+  }),
+}));
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

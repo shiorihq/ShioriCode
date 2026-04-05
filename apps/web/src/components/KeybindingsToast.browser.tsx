@@ -28,6 +28,8 @@ vi.mock("../convex/HostedShioriProvider", () => ({
   useHostedShioriState: () => ({
     isAuthLoading: false,
     isAuthenticated: true,
+    isSubscriptionLoading: false,
+    isPaidSubscriber: true,
     authToken: null,
     viewer: null,
     catalogProviders: undefined,

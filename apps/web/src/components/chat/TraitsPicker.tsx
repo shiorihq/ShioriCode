@@ -312,6 +312,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     caps,
     effort,
     effortLevels,
+    thinkingEnabled,
     fastModeEnabled,
     contextWindowOptions,
     contextWindow,
@@ -345,6 +346,29 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           defaultEffort={defaultEffort}
           onValueChange={handleEffortChange}
         />
+      ),
+    });
+  }
+
+  if (caps.supportsThinkingToggle && thinkingEnabled !== null) {
+    const thinkingDefault = provider !== "shiori";
+    sections.push({
+      key: "thinking",
+      content: (
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
+          <MenuRadioGroup
+            value={thinkingEnabled ? "on" : "off"}
+            onValueChange={(value) => {
+              updateModelOptions(
+                buildNextOptions(provider, modelOptions, { thinking: value === "on" }),
+              );
+            }}
+          >
+            <MenuRadioItem value="on">On{thinkingDefault ? " (default)" : ""}</MenuRadioItem>
+            <MenuRadioItem value="off">Off{!thinkingDefault ? " (default)" : ""}</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
       ),
     });
   }
@@ -525,6 +549,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     caps,
     effort,
     effortLevels,
+    thinkingEnabled,
     fastModeEnabled,
     contextWindowOptions,
     contextWindow,
@@ -539,8 +564,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     contextWindowOptions.length > 1 && contextWindow !== defaultContextWindow
       ? (contextWindowOptions.find((o) => o.value === contextWindow)?.label ?? null)
       : null;
+  const thinkingLabel =
+    thinkingEnabled !== null ? `Thinking ${thinkingEnabled ? "On" : "Off"}` : null;
   const triggerLabel = [
     includeEffort ? (ultrathinkPromptControlled ? "Ultrathink" : effortLabel) : null,
+    thinkingLabel,
     ...(includeFastMode && caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
     ...(contextWindowLabel ? [contextWindowLabel] : []),
   ]
@@ -551,6 +579,7 @@ export const TraitsPicker = memo(function TraitsPicker({
 
   const hasVisibleSections =
     (includeEffort && effort !== null) ||
+    caps.supportsThinkingToggle ||
     (includeFastMode && caps.supportsFastMode) ||
     contextWindowOptions.length > 1;
 

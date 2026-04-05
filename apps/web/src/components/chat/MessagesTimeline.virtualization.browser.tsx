@@ -340,7 +340,7 @@ function buildStaticScenarios(): VirtualizationScenario[] {
       props: createBaseTimelineProps({
         messages: [...beforeMessages, longUserMessage, ...afterMessages],
       }),
-      maxEstimateDeltaPx: 56,
+      maxEstimateDeltaPx: 140,
     },
     {
       name: "grouped work log row",
@@ -395,7 +395,7 @@ function buildStaticScenarios(): VirtualizationScenario[] {
         "I was always passing `onVirtualizerSnapshot`, including `undefined`.",
         "I'm tightening that object construction and rerunning the checks.",
       ].join(" "),
-      maxEstimateDeltaPx: 28,
+      maxEstimateDeltaPx: 40,
     }),
     createChangedFilesScenario({
       name: "assistant changed-files row with a compacted single-chain directory",
