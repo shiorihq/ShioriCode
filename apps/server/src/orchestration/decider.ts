@@ -1,8 +1,4 @@
-import type {
-  OrchestrationCommand,
-  OrchestrationEvent,
-  OrchestrationReadModel,
-} from "contracts";
+import type { OrchestrationCommand, OrchestrationEvent, OrchestrationReadModel } from "contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

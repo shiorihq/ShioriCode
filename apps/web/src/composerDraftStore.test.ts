@@ -1,10 +1,5 @@
 import * as Schema from "effect/Schema";
-import {
-  ProjectId,
-  ThreadId,
-  type ModelSelection,
-  type ProviderModelOptions,
-} from "contracts";
+import { ProjectId, ThreadId, type ModelSelection, type ProviderModelOptions } from "contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

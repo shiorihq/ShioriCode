@@ -30,11 +30,7 @@ import { autoUpdater } from "electron-updater";
 import type { ContextMenuItem } from "contracts";
 import { NetService } from "shared/Net";
 import { RotatingFileSink } from "shared/logging";
-import {
-  quoteShellArg,
-  resolveLoginShell,
-  runCommandInLoginShell,
-} from "shared/shell";
+import { quoteShellArg, resolveLoginShell, runCommandInLoginShell } from "shared/shell";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";

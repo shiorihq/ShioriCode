@@ -1,8 +1,4 @@
-import type {
-  ModelCapabilities,
-  ServerProvider,
-  ServerProviderModel,
-} from "contracts";
+import type { ModelCapabilities, ServerProvider, ServerProviderModel } from "contracts";
 import { useMemo } from "react";
 
 import { type HostedCatalogProvider, type HostedViewer } from "./api";

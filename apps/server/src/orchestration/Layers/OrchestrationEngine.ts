@@ -1,9 +1,4 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationReadModel,
-  ProjectId,
-  ThreadId,
-} from "contracts";
+import type { OrchestrationEvent, OrchestrationReadModel, ProjectId, ThreadId } from "contracts";
 import { OrchestrationCommand } from "contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

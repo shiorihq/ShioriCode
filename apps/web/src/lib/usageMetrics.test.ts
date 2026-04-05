@@ -1,10 +1,4 @@
-import {
-  EventId,
-  type OrchestrationThreadActivity,
-  ProjectId,
-  ThreadId,
-  TurnId,
-} from "contracts";
+import { EventId, type OrchestrationThreadActivity, ProjectId, ThreadId, TurnId } from "contracts";
 import { describe, expect, it } from "vitest";
 
 import { deriveLocalProviderUsageSummaries } from "./usageMetrics";

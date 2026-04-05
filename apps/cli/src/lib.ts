@@ -16,10 +16,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationThread,
 } from "contracts";
-import {
-  decodeServerInstanceRecord,
-  getServerInstancePath,
-} from "shared/serverInstance";
+import { decodeServerInstanceRecord, getServerInstancePath } from "shared/serverInstance";
 import { createWsRpcClient, type WsRpcClient } from "shared/wsRpc";
 
 export interface CliContext {

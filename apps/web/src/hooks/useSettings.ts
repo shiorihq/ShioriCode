@@ -10,12 +10,7 @@
  * store.
  */
 import { useCallback, useMemo } from "react";
-import {
-  ServerSettings,
-  ServerSettingsPatch,
-  ModelSelection,
-  ThreadEnvMode,
-} from "contracts";
+import { ServerSettings, ServerSettingsPatch, ModelSelection, ThreadEnvMode } from "contracts";
 import {
   type ClientSettings,
   ClientSettingsSchema,

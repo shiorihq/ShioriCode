@@ -38,14 +38,14 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "contracts": "workspace:*",
-    "shared": "workspace:*",
-    "web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
+    "contracts": "workspace:*",
+    "shared": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "web": "workspace:*"
   },
   "engines": {
     "node": "^22.16 || ^23.11 || >=24.10"

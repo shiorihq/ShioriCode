@@ -2,11 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type {
-  OrchestrationReadModel,
-  ProviderRuntimeEvent,
-  ProviderSession,
-} from "contracts";
+import type { OrchestrationReadModel, ProviderRuntimeEvent, ProviderSession } from "contracts";
 import {
   ApprovalRequestId,
   CommandId,

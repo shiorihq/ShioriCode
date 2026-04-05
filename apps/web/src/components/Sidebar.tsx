@@ -41,18 +41,10 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  type DesktopUpdateState,
-  ProjectId,
-  ThreadId,
-  type GitStatusResult,
-} from "contracts";
+import { type DesktopUpdateState, ProjectId, ThreadId, type GitStatusResult } from "contracts";
 import { useQueries } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import {
-  type SidebarProjectSortOrder,
-  type SidebarThreadSortOrder,
-} from "contracts/settings";
+import { type SidebarProjectSortOrder, type SidebarThreadSortOrder } from "contracts/settings";
 import { isElectron } from "../env";
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";

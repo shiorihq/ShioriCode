@@ -1,7 +1,4 @@
-import {
-  type WsRpcClient,
-  createWsRpcClient as createSharedWsRpcClient,
-} from "shared/wsRpc";
+import { type WsRpcClient, createWsRpcClient as createSharedWsRpcClient } from "shared/wsRpc";
 
 import { resolveServerUrl } from "./lib/utils";
 import { WsTransport } from "./wsTransport";

@@ -1,9 +1,4 @@
-import type {
-  ProviderKind,
-  ProviderSessionRuntimeStatus,
-  RuntimeMode,
-  ThreadId,
-} from "contracts";
+import type { ProviderKind, ProviderSessionRuntimeStatus, RuntimeMode, ThreadId } from "contracts";
 import { Option, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

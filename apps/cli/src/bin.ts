@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -259,7 +260,12 @@ function isDirectExecution(): boolean {
   if (!entryPath) {
     return false;
   }
-  return import.meta.url === pathToFileURL(path.resolve(entryPath)).href;
+  try {
+    const resolved = fs.realpathSync(path.resolve(entryPath));
+    return import.meta.url === pathToFileURL(resolved).href;
+  } catch {
+    return import.meta.url === pathToFileURL(path.resolve(entryPath)).href;
+  }
 }
 
 if (isDirectExecution()) {

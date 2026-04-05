@@ -1,8 +1,4 @@
-import {
-  ApprovalRequestId,
-  type ChatAttachment,
-  type OrchestrationEvent,
-} from "contracts";
+import { ApprovalRequestId, type ChatAttachment, type OrchestrationEvent } from "contracts";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

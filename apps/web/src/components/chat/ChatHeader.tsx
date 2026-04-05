@@ -1,8 +1,4 @@
-import {
-  type EditorId,
-  type ResolvedKeybindingsConfig,
-  type ThreadId,
-} from "contracts";
+import { type EditorId, type ResolvedKeybindingsConfig, type ThreadId } from "contracts";
 import { memo } from "react";
 import { ChevronDownIcon, DiffIcon, GitBranchIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";

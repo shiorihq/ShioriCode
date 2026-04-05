@@ -1,9 +1,6 @@
 import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
-import {
-  decodeServerInstanceRecord,
-  encodeServerInstanceRecord,
-} from "shared/serverInstance";
+import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/serverInstance";
 
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
 import { type ServerConfigShape, ServerConfig } from "./config";

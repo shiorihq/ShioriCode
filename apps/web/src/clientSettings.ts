@@ -1,8 +1,4 @@
-import {
-  ClientSettingsSchema,
-  DEFAULT_CLIENT_SETTINGS,
-  type ClientSettings,
-} from "contracts";
+import { ClientSettingsSchema, DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "contracts";
 import * as Schema from "effect/Schema";
 
 export const CLIENT_SETTINGS_STORAGE_KEY = "shioricode:client-settings:v1";

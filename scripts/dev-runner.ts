@@ -31,13 +31,7 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "dev", "--filter=shioricode"],
   "dev:web": ["run", "dev", "--filter=web"],
-  "dev:desktop": [
-    "run",
-    "dev",
-    "--filter=desktop",
-    "--filter=web",
-    "--parallel",
-  ],
+  "dev:desktop": ["run", "dev", "--filter=desktop", "--filter=web", "--parallel"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;

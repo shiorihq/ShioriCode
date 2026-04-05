@@ -11,8 +11,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
     "@effect/platform-node": "catalog:",
     "contracts": "workspace:*",
-    "shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "shared": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

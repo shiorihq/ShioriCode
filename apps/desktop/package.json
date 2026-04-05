@@ -19,9 +19,9 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "contracts": "workspace:*",
     "shared": "workspace:*",
-    "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -1,8 +1,4 @@
-import {
-  OrchestrationEvent,
-  ThreadId,
-  type ServerLifecycleWelcomePayload,
-} from "contracts";
+import { OrchestrationEvent, ThreadId, type ServerLifecycleWelcomePayload } from "contracts";
 import {
   Outlet,
   createRootRouteWithContext,

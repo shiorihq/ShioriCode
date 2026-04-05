@@ -5,12 +5,7 @@
  *
  * @module ProviderSessionRuntimeRepository
  */
-import {
-  IsoDateTime,
-  ProviderSessionRuntimeStatus,
-  RuntimeMode,
-  ThreadId,
-} from "contracts";
+import { IsoDateTime, ProviderSessionRuntimeStatus, RuntimeMode, ThreadId } from "contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

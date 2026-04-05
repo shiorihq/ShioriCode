@@ -6,13 +6,7 @@
  *
  * @module ProjectionThreadSessionRepository
  */
-import {
-  RuntimeMode,
-  IsoDateTime,
-  OrchestrationSessionStatus,
-  ThreadId,
-  TurnId,
-} from "contracts";
+import { RuntimeMode, IsoDateTime, OrchestrationSessionStatus, ThreadId, TurnId } from "contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 

@@ -10,11 +10,7 @@
  *
  * @module OrchestrationEngineService
  */
-import type {
-  OrchestrationCommand,
-  OrchestrationEvent,
-  OrchestrationReadModel,
-} from "contracts";
+import type { OrchestrationCommand, OrchestrationEvent, OrchestrationReadModel } from "contracts";
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 

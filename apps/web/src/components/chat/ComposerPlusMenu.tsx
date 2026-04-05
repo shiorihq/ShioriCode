@@ -1,9 +1,4 @@
-import type {
-  ProviderKind,
-  ProviderModelOptions,
-  ServerProviderModel,
-  ThreadId,
-} from "contracts";
+import type { ProviderKind, ProviderModelOptions, ServerProviderModel, ThreadId } from "contracts";
 import { memo, useCallback, useRef } from "react";
 import { PaperclipIcon, PlusIcon, ZapIcon } from "lucide-react";
 import { Button } from "../ui/button";

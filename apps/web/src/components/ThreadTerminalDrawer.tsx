@@ -1,10 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import {
-  type TerminalEvent,
-  type TerminalSessionSnapshot,
-  type ThreadId,
-} from "contracts";
+import { type TerminalEvent, type TerminalSessionSnapshot, type ThreadId } from "contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,

@@ -1,10 +1,4 @@
-import {
-  EventId,
-  MessageId,
-  ThreadId,
-  TurnId,
-  type OrchestrationThreadActivity,
-} from "contracts";
+import { EventId, MessageId, ThreadId, TurnId, type OrchestrationThreadActivity } from "contracts";
 import { describe, expect, it } from "vitest";
 
 import {
