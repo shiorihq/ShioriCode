@@ -68,6 +68,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Playwright browsers
+        run: cd apps/web && bun run test:browser:install
+
       - name: Lint
         run: bun run lint
 
