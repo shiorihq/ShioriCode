@@ -1,0 +1,32 @@
+{
+  "name": "shiori-cli",
+  "version": "0.0.17",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingdotgg/shioricode",
+    "directory": "apps/cli"
+  },
+  "bin": {
+    "shiori": "./dist/bin.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "bunx tsdown",
+    "start": "node dist/bin.mjs",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bunx vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": "^22.16 || ^23.11 || >=24.10"
+  }
+}

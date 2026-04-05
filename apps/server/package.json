@@ -1,0 +1,53 @@
+{
+  "name": "shioricode",
+  "version": "0.0.15",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingdotgg/shioricode",
+    "directory": "apps/server"
+  },
+  "bin": {
+    "shioricode": "./dist/bin.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/bin.ts",
+    "dev:bundle": "tsdown --watch",
+    "build": "node scripts/cli.ts build",
+    "start": "node dist/bin.mjs",
+    "prepare": "effect-language-service patch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.77",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@pierre/diffs": "^1.1.0-beta.16",
+    "ai": "^6.0.141",
+    "effect": "catalog:",
+    "node-pty": "^1.1.0",
+    "open": "^10.1.0",
+    "uploadthing": "^7.7.4"
+  },
+  "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
+    "contracts": "workspace:*",
+    "shared": "workspace:*",
+    "web": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": "^22.16 || ^23.11 || >=24.10"
+  }
+}

@@ -1,0 +1,1541 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShioriCode — Blueprint Logo System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Leicht"), local("Söhne Leicht"), local("Soehne Light");
+        font-weight: 300;
+      }
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Buch"), local("Söhne Buch"), local("Soehne"), local("Söhne");
+        font-weight: 400;
+      }
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Kraftig"), local("Söhne Kräftig"), local("Soehne Medium");
+        font-weight: 500;
+      }
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Halbfett"), local("Söhne Halbfett"), local("Soehne SemiBold");
+        font-weight: 600;
+      }
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Dreiviertelfett"), local("Söhne Dreiviertelfett"), local("Soehne Bold");
+        font-weight: 700;
+      }
+      @font-face {
+        font-family: "Soehne";
+        src: local("Soehne-Fett"), local("Söhne Fett"), local("Soehne ExtraBold");
+        font-weight: 800;
+      }
+
+      :root {
+        --ff: "Soehne", "Helvetica Neue", sans-serif;
+        --mono: "IBM Plex Mono", "SF Mono", monospace;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        font-family: var(--ff);
+        background: #0b0b0e;
+        color: #fff;
+      }
+
+      /* ── Shared blueprint grid generator ── */
+      .bp-grid {
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent 19px,
+            var(--grid-fine, rgba(255, 255, 255, 0.03)) 19px,
+            var(--grid-fine, rgba(255, 255, 255, 0.03)) 20px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            transparent 0,
+            transparent 19px,
+            var(--grid-fine, rgba(255, 255, 255, 0.03)) 19px,
+            var(--grid-fine, rgba(255, 255, 255, 0.03)) 20px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent 99px,
+            var(--grid-major, rgba(255, 255, 255, 0.06)) 99px,
+            var(--grid-major, rgba(255, 255, 255, 0.06)) 100px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            transparent 0,
+            transparent 99px,
+            var(--grid-major, rgba(255, 255, 255, 0.06)) 99px,
+            var(--grid-major, rgba(255, 255, 255, 0.06)) 100px
+          ),
+          var(--bg);
+      }
+
+      /* ── Page grid ── */
+      .page-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px;
+        padding: 2px;
+      }
+
+      .card {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 440px;
+        overflow: hidden;
+        user-select: none;
+      }
+
+      .card-label {
+        position: absolute;
+        bottom: 16px;
+        left: 20px;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 400;
+        letter-spacing: 0.08em;
+        z-index: 10;
+      }
+
+      .full {
+        grid-column: 1 / -1;
+      }
+
+      /* ── Shared annotation styling ── */
+      .dim {
+        font-family: var(--mono);
+        font-weight: 400;
+        letter-spacing: 0.05em;
+      }
+
+      .dim-line {
+        flex: 1;
+        height: 1px;
+      }
+
+      .tick-left::before,
+      .tick-right::after {
+        content: "";
+        display: inline-block;
+        width: 1px;
+        height: 8px;
+        vertical-align: middle;
+      }
+
+      /* ═══════════════════════════════════════════════════
+         01 · HERO — full technical drawing, animated draw-in
+      ═══════════════════════════════════════════════════ */
+      .v01 {
+        --bg: #152238;
+        --grid-fine: rgba(100, 160, 220, 0.06);
+        --grid-major: rgba(100, 160, 220, 0.12);
+        min-height: 520px;
+      }
+
+      .v01 .drawing {
+        position: relative;
+        padding: 48px 64px;
+      }
+
+      /* crosshair registration marks */
+      .v01 .crosshair {
+        position: absolute;
+        width: 24px;
+        height: 24px;
+      }
+      .v01 .crosshair::before,
+      .v01 .crosshair::after {
+        content: "";
+        position: absolute;
+        background: rgba(122, 184, 230, 0.3);
+      }
+      .v01 .crosshair::before {
+        width: 24px;
+        height: 1px;
+        top: 50%;
+        left: 0;
+      }
+      .v01 .crosshair::after {
+        width: 1px;
+        height: 24px;
+        left: 50%;
+        top: 0;
+      }
+      .v01 .cross-tl {
+        top: 0;
+        left: 0;
+      }
+      .v01 .cross-tr {
+        top: 0;
+        right: 0;
+      }
+      .v01 .cross-bl {
+        bottom: 0;
+        left: 0;
+      }
+      .v01 .cross-br {
+        bottom: 0;
+        right: 0;
+      }
+
+      /* dimension lines */
+      .v01 .dim-h {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 10px;
+        color: rgba(122, 184, 230, 0.4);
+        margin-bottom: 20px;
+      }
+      .v01 .dim-h .dim-line {
+        background: rgba(122, 184, 230, 0.2);
+      }
+      .v01 .dim-h .tick {
+        width: 1px;
+        height: 10px;
+        background: rgba(122, 184, 230, 0.3);
+      }
+
+      .v01 .logo-row {
+        display: flex;
+        align-items: baseline;
+        position: relative;
+      }
+
+      .v01 .sh {
+        font-size: 88px;
+        font-weight: 600;
+        letter-spacing: -0.035em;
+        line-height: 1;
+        color: rgba(220, 235, 250, 0.92);
+      }
+      .v01 .co {
+        font-family: var(--mono);
+        font-size: 88px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        line-height: 1;
+        color: #7ab8e6;
+      }
+
+      /* baseline indicator */
+      .v01 .baseline {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: rgba(122, 184, 230, 0.15);
+      }
+      .v01 .baseline-label {
+        position: absolute;
+        right: -80px;
+        bottom: -5px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.3);
+      }
+
+      /* cap-height indicator */
+      .v01 .capline {
+        position: absolute;
+        top: 4px;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: rgba(122, 184, 230, 0.1);
+        border-top: 1px dashed rgba(122, 184, 230, 0.15);
+      }
+      .v01 .capline-label {
+        position: absolute;
+        right: -80px;
+        top: -5px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.3);
+      }
+
+      /* vertical dimension */
+      .v01 .dim-v {
+        position: absolute;
+        right: -52px;
+        top: 4px;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.35);
+      }
+      .v01 .dim-v .dim-line-v {
+        flex: 1;
+        width: 1px;
+        background: rgba(122, 184, 230, 0.2);
+      }
+
+      .v01 .dim-bottom {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 10px;
+        color: rgba(122, 184, 230, 0.35);
+        margin-top: 20px;
+      }
+      .v01 .dim-bottom .dim-line {
+        background: rgba(122, 184, 230, 0.15);
+      }
+
+      /* title block */
+      .v01 .title-block {
+        position: absolute;
+        bottom: 20px;
+        right: 24px;
+        border: 1px solid rgba(122, 184, 230, 0.15);
+        padding: 10px 16px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.35);
+        letter-spacing: 0.05em;
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 2px 16px;
+      }
+      .v01 .title-block .val {
+        color: rgba(122, 184, 230, 0.55);
+      }
+
+      .v01 .card-label {
+        color: rgba(122, 184, 230, 0.25);
+      }
+
+      /* animated draw-in */
+      .v01 .draw-in {
+        animation: draw-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .v01 .draw-in-d1 {
+        animation-delay: 0.1s;
+      }
+      .v01 .draw-in-d2 {
+        animation-delay: 0.3s;
+      }
+      .v01 .draw-in-d3 {
+        animation-delay: 0.5s;
+      }
+      .v01 .draw-in-d4 {
+        animation-delay: 0.7s;
+      }
+      @keyframes draw-in {
+        0% {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* ═══════════════════════════════════════════════════
+         02 · DARK BLUEPRINT — inverted, cyan accents
+      ═══════════════════════════════════════════════════ */
+      .v02 {
+        --bg: #0a0e14;
+        --grid-fine: rgba(0, 200, 255, 0.03);
+        --grid-major: rgba(0, 200, 255, 0.06);
+      }
+
+      .v02 .frame {
+        position: relative;
+        border: 1px solid rgba(0, 200, 255, 0.12);
+        padding: 32px 48px;
+      }
+
+      /* corner brackets */
+      .v02 .corner {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+      }
+      .v02 .corner::before,
+      .v02 .corner::after {
+        content: "";
+        position: absolute;
+        background: rgba(0, 200, 255, 0.35);
+      }
+      .v02 .c-tl {
+        top: -1px;
+        left: -1px;
+      }
+      .v02 .c-tl::before {
+        width: 16px;
+        height: 1px;
+        top: 0;
+        left: 0;
+      }
+      .v02 .c-tl::after {
+        width: 1px;
+        height: 16px;
+        top: 0;
+        left: 0;
+      }
+      .v02 .c-tr {
+        top: -1px;
+        right: -1px;
+      }
+      .v02 .c-tr::before {
+        width: 16px;
+        height: 1px;
+        top: 0;
+        right: 0;
+      }
+      .v02 .c-tr::after {
+        width: 1px;
+        height: 16px;
+        top: 0;
+        right: 0;
+      }
+      .v02 .c-bl {
+        bottom: -1px;
+        left: -1px;
+      }
+      .v02 .c-bl::before {
+        width: 16px;
+        height: 1px;
+        bottom: 0;
+        left: 0;
+      }
+      .v02 .c-bl::after {
+        width: 1px;
+        height: 16px;
+        bottom: 0;
+        left: 0;
+      }
+      .v02 .c-br {
+        bottom: -1px;
+        right: -1px;
+      }
+      .v02 .c-br::before {
+        width: 16px;
+        height: 1px;
+        bottom: 0;
+        right: 0;
+      }
+      .v02 .c-br::after {
+        width: 1px;
+        height: 16px;
+        bottom: 0;
+        right: 0;
+      }
+
+      .v02 .dim-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(0, 200, 255, 0.3);
+        margin-bottom: 14px;
+      }
+      .v02 .dim-row .line {
+        flex: 1;
+        height: 1px;
+        background: rgba(0, 200, 255, 0.1);
+      }
+
+      .v02 .logo {
+        font-size: 68px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .v02 .sh {
+        font-weight: 600;
+        color: rgba(200, 230, 255, 0.9);
+      }
+      .v02 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #00c8ff;
+        text-shadow: 0 0 30px rgba(0, 200, 255, 0.15);
+      }
+
+      .v02 .meta-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 14px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(0, 200, 255, 0.25);
+      }
+
+      .v02 .card-label {
+        color: rgba(0, 200, 255, 0.2);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         03 · WARM BLUEPRINT — sepia engineering drawing
+      ═══════════════════════════════════════════════════ */
+      .v03 {
+        --bg: #f4efe6;
+        --grid-fine: rgba(140, 100, 60, 0.06);
+        --grid-major: rgba(140, 100, 60, 0.12);
+      }
+
+      .v03 .drawing {
+        position: relative;
+        padding: 36px 52px;
+      }
+
+      .v03 .dim-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: rgba(100, 70, 40, 0.35);
+      }
+      .v03 .dim-top .line {
+        flex: 1;
+        height: 1px;
+        background: rgba(100, 70, 40, 0.15);
+      }
+      .v03 .dim-top .arrow {
+        border: 4px solid transparent;
+        border-left: 6px solid rgba(100, 70, 40, 0.25);
+      }
+      .v03 .dim-top .arrow-l {
+        border-left: none;
+        border-right: 6px solid rgba(100, 70, 40, 0.25);
+      }
+
+      .v03 .logo {
+        font-size: 72px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .v03 .sh {
+        font-weight: 600;
+        color: #3a2e22;
+      }
+      .v03 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #8c5a2e;
+      }
+
+      .v03 .annotations {
+        margin-top: 16px;
+        display: flex;
+        gap: 32px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(100, 70, 40, 0.35);
+      }
+      .v03 .ann {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .v03 .ann-dot {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: rgba(100, 70, 40, 0.3);
+      }
+
+      .v03 .card-label {
+        color: rgba(100, 70, 40, 0.2);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         04 · STACKED BLUEPRINT — vertical arrangement
+      ═══════════════════════════════════════════════════ */
+      .v04 {
+        --bg: #182940;
+        --grid-fine: rgba(100, 160, 220, 0.05);
+        --grid-major: rgba(100, 160, 220, 0.1);
+      }
+
+      .v04 .drawing {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 40px;
+      }
+
+      .v04 .logo-stack {
+        display: flex;
+        flex-direction: column;
+        line-height: 0.85;
+      }
+      .v04 .sh {
+        font-size: 80px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: rgba(220, 235, 250, 0.9);
+      }
+      .v04 .co {
+        font-family: var(--mono);
+        font-size: 36px;
+        font-weight: 400;
+        letter-spacing: 0.22em;
+        color: #7ab8e6;
+        margin-top: 6px;
+      }
+      .v04 .rule {
+        width: 50px;
+        height: 3px;
+        background: #7ab8e6;
+        opacity: 0.5;
+        margin-top: 14px;
+        border-radius: 1px;
+      }
+
+      /* side annotations */
+      .v04 .side-ann {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-top: 8px;
+      }
+      .v04 .ann-item {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.3);
+        letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .v04 .ann-tick {
+        width: 12px;
+        height: 1px;
+        background: rgba(122, 184, 230, 0.2);
+      }
+
+      .v04 .card-label {
+        color: rgba(122, 184, 230, 0.2);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         05 · COMPACT NAV — three sizes with grid bg
+      ═══════════════════════════════════════════════════ */
+      .v05 {
+        --bg: #152238;
+        --grid-fine: rgba(100, 160, 220, 0.04);
+        --grid-major: rgba(100, 160, 220, 0.08);
+        min-height: 340px;
+      }
+
+      .v05 .sizes {
+        display: flex;
+        align-items: flex-end;
+        gap: 48px;
+      }
+
+      .v05 .size-group {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .v05 .size-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(122, 184, 230, 0.3);
+        letter-spacing: 0.05em;
+      }
+
+      .v05 .logo-lg {
+        font-size: 48px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .v05 .logo-md {
+        font-size: 28px;
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+      .v05 .logo-sm {
+        font-size: 16px;
+        line-height: 1;
+        letter-spacing: -0.02em;
+      }
+
+      .v05 .sh {
+        font-weight: 600;
+        color: rgba(220, 235, 250, 0.9);
+      }
+      .v05 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #7ab8e6;
+      }
+
+      .v05 .size-rule {
+        width: 100%;
+        height: 1px;
+        background: rgba(122, 184, 230, 0.1);
+      }
+
+      .v05 .card-label {
+        color: rgba(122, 184, 230, 0.2);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         06 · APP ICON — blueprint grid in monogram
+      ═══════════════════════════════════════════════════ */
+      .v06 {
+        --bg: #111118;
+        --grid-fine: rgba(100, 160, 220, 0.03);
+        --grid-major: rgba(100, 160, 220, 0.06);
+      }
+
+      .v06 .icons {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+      }
+
+      .v06 .app-icon {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .v06 .app-icon .icon-grid {
+        position: absolute;
+        inset: 0;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent 9px,
+            rgba(122, 184, 230, 0.06) 9px,
+            rgba(122, 184, 230, 0.06) 10px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            transparent 0,
+            transparent 9px,
+            rgba(122, 184, 230, 0.06) 9px,
+            rgba(122, 184, 230, 0.06) 10px
+          );
+        pointer-events: none;
+      }
+
+      .v06 .app-icon .icon-border {
+        position: absolute;
+        inset: 6px;
+        border: 1px solid rgba(122, 184, 230, 0.12);
+        border-radius: inherit;
+        pointer-events: none;
+      }
+
+      /* corner ticks on icons */
+      .v06 .app-icon .icon-ticks {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .v06 .app-icon .icon-ticks::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 6px;
+        width: 8px;
+        height: 1px;
+        background: rgba(122, 184, 230, 0.2);
+      }
+      .v06 .app-icon .icon-ticks::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 6px;
+        height: 8px;
+        width: 1px;
+        background: rgba(122, 184, 230, 0.2);
+      }
+
+      .v06 .icon-lg {
+        width: 120px;
+        height: 120px;
+        border-radius: 28px;
+        background: linear-gradient(145deg, #182a42 0%, #0f1c30 100%);
+        border: 1px solid rgba(122, 184, 230, 0.1);
+        box-shadow:
+          0 8px 40px rgba(0, 0, 0, 0.5),
+          0 2px 8px rgba(0, 0, 0, 0.3),
+          inset 0 1px 0 rgba(122, 184, 230, 0.06);
+      }
+      .v06 .icon-lg .i-s {
+        font-family: var(--ff);
+        font-size: 52px;
+        font-weight: 700;
+        color: rgba(220, 235, 250, 0.9);
+        letter-spacing: -0.04em;
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-lg .i-c {
+        font-family: var(--mono);
+        font-size: 42px;
+        font-weight: 600;
+        color: #7ab8e6;
+        margin-left: -4px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .v06 .icon-md {
+        width: 76px;
+        height: 76px;
+        border-radius: 18px;
+        background: linear-gradient(145deg, #182a42 0%, #0f1c30 100%);
+        border: 1px solid rgba(122, 184, 230, 0.08);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      }
+      .v06 .icon-md .i-s {
+        font-family: var(--ff);
+        font-size: 32px;
+        font-weight: 700;
+        color: rgba(220, 235, 250, 0.9);
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-md .i-c {
+        font-family: var(--mono);
+        font-size: 26px;
+        font-weight: 600;
+        color: #7ab8e6;
+        margin-left: -2px;
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-md .icon-border {
+        inset: 4px;
+      }
+      .v06 .icon-md .icon-ticks::before {
+        left: 4px;
+        width: 6px;
+      }
+      .v06 .icon-md .icon-ticks::after {
+        top: 4px;
+        height: 6px;
+      }
+
+      .v06 .icon-sm {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: linear-gradient(145deg, #182a42 0%, #0f1c30 100%);
+        border: 1px solid rgba(122, 184, 230, 0.06);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+      .v06 .icon-sm .i-s {
+        font-family: var(--ff);
+        font-size: 21px;
+        font-weight: 700;
+        color: rgba(220, 235, 250, 0.9);
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-sm .i-c {
+        font-family: var(--mono);
+        font-size: 17px;
+        font-weight: 600;
+        color: #7ab8e6;
+        margin-left: -1px;
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-sm .icon-border {
+        inset: 3px;
+      }
+      .v06 .icon-sm .icon-ticks::before {
+        left: 3px;
+        width: 4px;
+      }
+      .v06 .icon-sm .icon-ticks::after {
+        top: 3px;
+        height: 4px;
+      }
+
+      .v06 .icon-xs {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: linear-gradient(145deg, #182a42 0%, #0f1c30 100%);
+        border: 1px solid rgba(122, 184, 230, 0.06);
+      }
+      .v06 .icon-xs .i-s {
+        font-family: var(--ff);
+        font-size: 14px;
+        font-weight: 700;
+        color: rgba(220, 235, 250, 0.9);
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-xs .i-c {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 600;
+        color: #7ab8e6;
+        position: relative;
+        z-index: 1;
+      }
+      .v06 .icon-xs .icon-border {
+        display: none;
+      }
+      .v06 .icon-xs .icon-ticks {
+        display: none;
+      }
+
+      .v06 .card-label {
+        color: rgba(122, 184, 230, 0.2);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         07 · WHITE BLUEPRINT — light technical
+      ═══════════════════════════════════════════════════ */
+      .v07 {
+        --bg: #ffffff;
+        --grid-fine: rgba(0, 60, 120, 0.04);
+        --grid-major: rgba(0, 60, 120, 0.08);
+      }
+
+      .v07 .drawing {
+        position: relative;
+        padding: 32px 48px;
+        border: 1px solid rgba(0, 60, 120, 0.1);
+      }
+
+      .v07 .tag {
+        position: absolute;
+        top: -1px;
+        left: 32px;
+        background: #1a3a5c;
+        color: rgba(255, 255, 255, 0.8);
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        padding: 3px 12px;
+      }
+
+      .v07 .logo {
+        font-size: 72px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+        margin-top: 8px;
+      }
+      .v07 .sh {
+        font-weight: 600;
+        color: #1a2a40;
+      }
+      .v07 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #3d7ab5;
+      }
+
+      .v07 .spec-row {
+        display: flex;
+        gap: 24px;
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(0, 60, 120, 0.08);
+      }
+      .v07 .spec {
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(0, 60, 120, 0.3);
+        letter-spacing: 0.04em;
+      }
+      .v07 .spec b {
+        font-weight: 500;
+        color: rgba(0, 60, 120, 0.5);
+      }
+
+      .v07 .card-label {
+        color: rgba(0, 60, 120, 0.15);
+      }
+
+      /* ═══════════════════════════════════════════════════
+         08 · GREEN SCHEMATIC — terminal meets blueprint
+      ═══════════════════════════════════════════════════ */
+      .v08 {
+        --bg: #080e08;
+        --grid-fine: rgba(50, 200, 100, 0.03);
+        --grid-major: rgba(50, 200, 100, 0.06);
+      }
+
+      /* scanline overlay */
+      .v08::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent 0px,
+          transparent 3px,
+          rgba(0, 0, 0, 0.08) 3px,
+          rgba(0, 0, 0, 0.08) 4px
+        );
+        z-index: 2;
+        pointer-events: none;
+      }
+
+      .v08 .frame {
+        position: relative;
+        z-index: 1;
+        border: 1px solid rgba(50, 200, 100, 0.12);
+        padding: 28px 44px;
+      }
+
+      .v08 .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: rgba(50, 200, 100, 0.35);
+      }
+      .v08 .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(50, 200, 100, 0.6);
+        animation: status-pulse 2s ease-in-out infinite;
+      }
+      @keyframes status-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      .v08 .logo {
+        font-size: 64px;
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+      .v08 .sh {
+        font-weight: 600;
+        color: rgba(50, 200, 100, 0.85);
+        text-shadow: 0 0 20px rgba(50, 200, 100, 0.2);
+      }
+      .v08 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: rgba(50, 200, 100, 0.6);
+      }
+
+      .v08 .coords {
+        margin-top: 14px;
+        font-family: var(--mono);
+        font-size: 9px;
+        color: rgba(50, 200, 100, 0.25);
+        letter-spacing: 0.04em;
+      }
+
+      .v08 .card-label {
+        color: rgba(50, 200, 100, 0.15);
+        z-index: 3;
+      }
+
+      /* ═══════════════════════════════════════════════════
+         09 · SPLIT SPEC — dark/light with dimensions
+      ═══════════════════════════════════════════════════ */
+      .v09 {
+        background: linear-gradient(90deg, #152238 50%, #f0ece4 50%);
+        position: relative;
+        min-height: 380px;
+      }
+
+      /* grids on each half */
+      .v09::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 50%;
+        height: 100%;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent 19px,
+            rgba(100, 160, 220, 0.05) 19px,
+            rgba(100, 160, 220, 0.05) 20px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            transparent 0,
+            transparent 19px,
+            rgba(100, 160, 220, 0.05) 19px,
+            rgba(100, 160, 220, 0.05) 20px
+          );
+      }
+      .v09::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 50%;
+        height: 100%;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0,
+            transparent 19px,
+            rgba(0, 60, 120, 0.04) 19px,
+            rgba(0, 60, 120, 0.04) 20px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            transparent 0,
+            transparent 19px,
+            rgba(0, 60, 120, 0.04) 19px,
+            rgba(0, 60, 120, 0.04) 20px
+          );
+      }
+
+      .v09 .logo {
+        position: relative;
+        z-index: 1;
+        font-size: 76px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .v09 .sh {
+        font-weight: 600;
+        color: rgba(220, 235, 250, 0.9);
+      }
+      .v09 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #2a5a8a;
+      }
+
+      /* mode labels */
+      .v09 .mode-dark,
+      .v09 .mode-light {
+        position: absolute;
+        top: 16px;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        z-index: 1;
+      }
+      .v09 .mode-dark {
+        left: 20px;
+        color: rgba(122, 184, 230, 0.25);
+      }
+      .v09 .mode-light {
+        right: 20px;
+        color: rgba(0, 60, 120, 0.2);
+      }
+
+      .v09 .card-label {
+        color: rgba(122, 184, 230, 0.2);
+        z-index: 2;
+      }
+
+      /* ═══════════════════════════════════════════════════
+         10 · ANIMATED CONSTRUCT — lines drawing the logo
+      ═══════════════════════════════════════════════════ */
+      .v10 {
+        --bg: #101828;
+        --grid-fine: rgba(100, 160, 220, 0.04);
+        --grid-major: rgba(100, 160, 220, 0.08);
+      }
+
+      .v10 .construct {
+        position: relative;
+      }
+
+      .v10 .logo {
+        font-size: 76px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .v10 .sh {
+        font-weight: 600;
+        color: rgba(220, 235, 250, 0.9);
+      }
+      .v10 .co {
+        font-family: var(--mono);
+        font-weight: 500;
+        color: #7ab8e6;
+      }
+
+      /* animated construction lines */
+      .v10 .construct-lines {
+        position: absolute;
+        inset: -20px -30px;
+        pointer-events: none;
+      }
+      .v10 .h-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 1px;
+        transform-origin: left;
+        animation: line-draw 2s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .v10 .h-line-1 {
+        top: 0;
+        background: rgba(122, 184, 230, 0.12);
+        animation-delay: 0s;
+      }
+      .v10 .h-line-2 {
+        top: 50%;
+        background: rgba(122, 184, 230, 0.06);
+        animation-delay: 0.2s;
+      }
+      .v10 .h-line-3 {
+        bottom: 0;
+        background: rgba(122, 184, 230, 0.12);
+        animation-delay: 0.4s;
+      }
+
+      .v10 .v-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        transform-origin: top;
+        animation: line-draw-v 2s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .v10 .v-line-1 {
+        left: 0;
+        background: rgba(122, 184, 230, 0.1);
+        animation-delay: 0.1s;
+      }
+      .v10 .v-line-2 {
+        left: 48%;
+        background: rgba(122, 184, 230, 0.06);
+        animation-delay: 0.3s;
+      }
+      .v10 .v-line-3 {
+        right: 0;
+        background: rgba(122, 184, 230, 0.1);
+        animation-delay: 0.5s;
+      }
+
+      /* animated dots at intersections */
+      .v10 .dot {
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: rgba(122, 184, 230, 0.4);
+        animation: dot-appear 0.5s ease both;
+      }
+      .v10 .dot-1 {
+        top: -2px;
+        left: -2px;
+        animation-delay: 0.8s;
+      }
+      .v10 .dot-2 {
+        top: -2px;
+        right: -2px;
+        animation-delay: 1s;
+      }
+      .v10 .dot-3 {
+        bottom: -2px;
+        left: -2px;
+        animation-delay: 1.2s;
+      }
+      .v10 .dot-4 {
+        bottom: -2px;
+        right: -2px;
+        animation-delay: 1.4s;
+      }
+
+      @keyframes line-draw {
+        0% {
+          transform: scaleX(0);
+          opacity: 0;
+        }
+        100% {
+          transform: scaleX(1);
+          opacity: 1;
+        }
+      }
+      @keyframes line-draw-v {
+        0% {
+          transform: scaleY(0);
+          opacity: 0;
+        }
+        100% {
+          transform: scaleY(1);
+          opacity: 1;
+        }
+      }
+      @keyframes dot-appear {
+        0% {
+          transform: scale(0);
+          opacity: 0;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
+
+      .v10 .card-label {
+        color: rgba(122, 184, 230, 0.2);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-grid">
+      <!-- 01 · HERO -->
+      <div class="card v01 bp-grid full">
+        <div class="drawing">
+          <div class="crosshair cross-tl"></div>
+          <div class="crosshair cross-tr"></div>
+          <div class="crosshair cross-bl"></div>
+          <div class="crosshair cross-br"></div>
+
+          <div class="dim-h draw-in draw-in-d1">
+            <span class="tick"></span>
+            <span class="dim">0</span>
+            <span class="dim-line"></span>
+            <span class="dim">ShioriCode</span>
+            <span class="dim-line"></span>
+            <span class="dim">640px</span>
+            <span class="tick"></span>
+          </div>
+
+          <div class="logo-row draw-in draw-in-d2">
+            <span class="sh">Shiori</span><span class="co">Code</span>
+            <div class="baseline"><span class="baseline-label">baseline</span></div>
+            <div class="capline"><span class="capline-label">cap height</span></div>
+            <div class="dim-v">
+              <span>88px</span>
+              <span class="dim-line-v"></span>
+              <span>&darr;</span>
+            </div>
+          </div>
+
+          <div class="dim-bottom draw-in draw-in-d3">
+            <span class="dim">font: S&ouml;hne 600</span>
+            <span class="dim-line"></span>
+            <span class="dim">mono: IBM Plex 500</span>
+            <span class="dim-line"></span>
+            <span class="dim">tracking: -0.035em</span>
+          </div>
+        </div>
+
+        <div class="title-block draw-in draw-in-d4">
+          <span>project</span><span class="val">ShioriCode</span> <span>rev</span
+          ><span class="val">3.0</span> <span>date</span><span class="val">2026-04-03</span>
+          <span>scale</span><span class="val">1:1</span>
+        </div>
+
+        <span class="card-label">01 — Hero Technical Drawing</span>
+      </div>
+
+      <!-- 02 · DARK CYAN -->
+      <div class="card v02 bp-grid">
+        <div class="frame">
+          <div class="corner c-tl"></div>
+          <div class="corner c-tr"></div>
+          <div class="corner c-bl"></div>
+          <div class="corner c-br"></div>
+          <div class="dim-row"><span>x: 0</span><span class="line"></span><span>w: 480</span></div>
+          <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          <div class="meta-row">
+            <span>SOEHNE-600 + PLEX-500</span>
+            <span>REV 3.0</span>
+          </div>
+        </div>
+        <span class="card-label">02 — Dark Cyan</span>
+      </div>
+
+      <!-- 03 · WARM SEPIA -->
+      <div class="card v03 bp-grid">
+        <div class="drawing">
+          <div class="dim-top">
+            <span class="arrow arrow-l"></span>
+            <span class="line"></span>
+            <span>520px</span>
+            <span class="line"></span>
+            <span class="arrow"></span>
+          </div>
+          <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          <div class="annotations">
+            <div class="ann"><span class="ann-dot"></span>S&ouml;hne Halbfett</div>
+            <div class="ann"><span class="ann-dot"></span>IBM Plex Mono 500</div>
+            <div class="ann"><span class="ann-dot"></span>1:1 scale</div>
+          </div>
+        </div>
+        <span class="card-label">03 — Warm Sepia</span>
+      </div>
+
+      <!-- 04 · STACKED -->
+      <div class="card v04 bp-grid">
+        <div class="drawing">
+          <div class="logo-stack">
+            <span class="sh">Shiori</span>
+            <span class="co">Code</span>
+            <div class="rule"></div>
+          </div>
+          <div class="side-ann">
+            <div class="ann-item"><span class="ann-tick"></span>display: 80px</div>
+            <div class="ann-item"><span class="ann-tick"></span>mono: 36px</div>
+            <div class="ann-item"><span class="ann-tick"></span>tracking: +0.22em</div>
+            <div class="ann-item"><span class="ann-tick"></span>weight: 700/400</div>
+          </div>
+        </div>
+        <span class="card-label">04 — Stacked</span>
+      </div>
+
+      <!-- 05 · COMPACT SIZES -->
+      <div class="card v05 bp-grid full">
+        <div class="sizes">
+          <div class="size-group">
+            <span class="size-label">48px &mdash; display</span>
+            <div class="size-rule"></div>
+            <div class="logo-lg"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          </div>
+          <div class="size-group">
+            <span class="size-label">28px &mdash; heading</span>
+            <div class="size-rule"></div>
+            <div class="logo-md"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          </div>
+          <div class="size-group">
+            <span class="size-label">16px &mdash; nav</span>
+            <div class="size-rule"></div>
+            <div class="logo-sm"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          </div>
+        </div>
+        <span class="card-label">05 — Size Scale</span>
+      </div>
+
+      <!-- 06 · APP ICONS -->
+      <div class="card v06 bp-grid full">
+        <div class="icons">
+          <div class="app-icon icon-lg">
+            <div class="icon-grid"></div>
+            <div class="icon-border"></div>
+            <div class="icon-ticks"></div>
+            <span class="i-s">S</span><span class="i-c">C</span>
+          </div>
+          <div class="app-icon icon-md">
+            <div class="icon-grid"></div>
+            <div class="icon-border"></div>
+            <div class="icon-ticks"></div>
+            <span class="i-s">S</span><span class="i-c">C</span>
+          </div>
+          <div class="app-icon icon-sm">
+            <div class="icon-grid"></div>
+            <div class="icon-border"></div>
+            <div class="icon-ticks"></div>
+            <span class="i-s">S</span><span class="i-c">C</span>
+          </div>
+          <div class="app-icon icon-xs">
+            <div class="icon-grid"></div>
+            <span class="i-s">S</span><span class="i-c">C</span>
+          </div>
+        </div>
+        <span class="card-label">06 — App Icons</span>
+      </div>
+
+      <!-- 07 · WHITE TECHNICAL -->
+      <div class="card v07 bp-grid">
+        <div class="drawing">
+          <div class="tag">LOGO SPEC</div>
+          <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          <div class="spec-row">
+            <div class="spec"><b>typeface</b> S&ouml;hne + IBM Plex Mono</div>
+            <div class="spec"><b>weight</b> 600 / 500</div>
+            <div class="spec"><b>color</b> #1a2a40 / #3d7ab5</div>
+          </div>
+        </div>
+        <span class="card-label">07 — White Technical</span>
+      </div>
+
+      <!-- 08 · GREEN SCHEMATIC -->
+      <div class="card v08 bp-grid">
+        <div class="frame">
+          <div class="status">
+            <span class="status-dot"></span>
+            <span>SYSTEM ACTIVE</span>
+          </div>
+          <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+          <div class="coords">
+            x: 0 &middot; y: 0 &middot; w: 480 &middot; h: 64 &middot; scale: 1.0
+          </div>
+        </div>
+        <span class="card-label">08 — Schematic</span>
+      </div>
+
+      <!-- 09 · SPLIT -->
+      <div class="card v09 full">
+        <span class="mode-dark">DARK MODE</span>
+        <span class="mode-light">LIGHT MODE</span>
+        <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+        <span class="card-label">09 — Split Mode</span>
+      </div>
+
+      <!-- 10 · ANIMATED CONSTRUCT -->
+      <div class="card v10 bp-grid full">
+        <div class="construct">
+          <div class="construct-lines">
+            <div class="h-line h-line-1"></div>
+            <div class="h-line h-line-2"></div>
+            <div class="h-line h-line-3"></div>
+            <div class="v-line v-line-1"></div>
+            <div class="v-line v-line-2"></div>
+            <div class="v-line v-line-3"></div>
+            <div class="dot dot-1"></div>
+            <div class="dot dot-2"></div>
+            <div class="dot dot-3"></div>
+            <div class="dot dot-4"></div>
+          </div>
+          <div class="logo"><span class="sh">Shiori</span><span class="co">Code</span></div>
+        </div>
+        <span class="card-label">10 — Construct</span>
+      </div>
+    </div>
+  </body>
+</html>
