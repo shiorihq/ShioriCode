@@ -18,12 +18,14 @@
     },
     "apps/cli": {
       "name": "shiori-cli",
-      "version": "0.0.17",
+      "version": "0.0.19",
       "bin": {
-        "shiori": "./dist/bin.mjs",
+        "shiori": "dist/bin.mjs",
       },
       "devDependencies": {
         "@types/node": "catalog:",
+        "contracts": "workspace:*",
+        "shared": "workspace:*",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
