@@ -13,6 +13,7 @@ export default defineConfig([
     entry: ["src/main.ts"],
     clean: true,
     noExternal: (id) => id.startsWith(""),
+    inlineOnly: false,
   },
   {
     ...shared,
