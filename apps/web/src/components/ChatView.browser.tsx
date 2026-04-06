@@ -707,6 +707,9 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       updatedAt: NOW_ISO,
     };
   }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return { sequence: fixture.snapshot.snapshotSequence + 1 };
+  }
   return {};
 }
 
