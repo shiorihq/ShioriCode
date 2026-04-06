@@ -115,6 +115,27 @@ function commentaryAssistantTextFromEvent(event: ProviderRuntimeEvent): string |
   return asString(event.payload.detail) ?? asString(payloadItem?.text) ?? asString(rawItem?.text);
 }
 
+function rawPayloadFromEvent(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
+  return asObject(event.raw?.payload);
+}
+
+function parentItemIdFromRuntimeEvent(event: ProviderRuntimeEvent): string | undefined {
+  const rawPayload = rawPayloadFromEvent(event);
+  const parentToolUseId = asString(rawPayload?.parent_tool_use_id);
+  if (parentToolUseId) {
+    return parentToolUseId;
+  }
+
+  switch (event.type) {
+    case "task.started":
+    case "task.progress":
+    case "task.completed":
+      return asString(rawPayload?.tool_use_id);
+    default:
+      return undefined;
+  }
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -240,6 +261,18 @@ function isReasoningStreamKind(
   value: string | undefined,
 ): value is "reasoning_text" | "reasoning_summary_text" {
   return value === "reasoning_text" || value === "reasoning_summary_text";
+}
+
+function truncateTaskProgressDetail(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+) {
+  return truncateDetail(event.payload.summary ?? event.payload.description);
+}
+
+function isReasoningTaskProgress(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+): boolean {
+  return event.provider === "codex";
 }
 
 function runtimeEventToActivities(
@@ -399,6 +432,7 @@ function runtimeEventToActivities(
     }
 
     case "task.started": {
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
@@ -413,6 +447,7 @@ function runtimeEventToActivities(
                 : "Task started",
           payload: {
             taskId: event.payload.taskId,
+            ...(parentItemId ? { parentItemId } : {}),
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
@@ -425,17 +460,25 @@ function runtimeEventToActivities(
     }
 
     case "task.progress": {
+      const detail = truncateTaskProgressDetail(event);
+      const reasoningProgress = isReasoningTaskProgress(event);
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "info",
           kind: "task.progress",
-          summary: "Reasoning update",
+          summary: reasoningProgress ? "Reasoning update" : "Status update",
           payload: {
             taskId: event.payload.taskId,
-            detail: truncateDetail(event.payload.summary ?? event.payload.description),
+            ...(parentItemId ? { parentItemId } : {}),
+            ...(detail ? { detail } : {}),
+            displayAs: reasoningProgress ? "reasoning" : "status",
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
+            ...(event.payload.description
+              ? { description: truncateDetail(event.payload.description) }
+              : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
@@ -446,6 +489,7 @@ function runtimeEventToActivities(
     }
 
     case "task.completed": {
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
@@ -461,6 +505,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             status: event.payload.status,
+            ...(parentItemId ? { parentItemId } : {}),
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
@@ -539,6 +584,7 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
@@ -548,6 +594,7 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool updated",
           payload: {
             ...(event.itemId ? { itemId: event.itemId } : {}),
+            ...(parentItemId ? { parentItemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -566,6 +613,7 @@ function runtimeEventToActivities(
         commentaryAssistantPhaseFromEvent(event) === "commentary"
       ) {
         const detail = commentaryAssistantTextFromEvent(event);
+        const parentItemId = parentItemIdFromRuntimeEvent(event);
         return detail
           ? [
               {
@@ -576,6 +624,7 @@ function runtimeEventToActivities(
                 summary: "Status update",
                 payload: {
                   ...(event.itemId ? { itemId: event.itemId } : {}),
+                  ...(parentItemId ? { parentItemId } : {}),
                   detail,
                   phase: "commentary",
                 },
@@ -606,6 +655,7 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
@@ -615,6 +665,7 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: {
             ...(event.itemId ? { itemId: event.itemId } : {}),
+            ...(parentItemId ? { parentItemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -648,6 +699,7 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const parentItemId = parentItemIdFromRuntimeEvent(event);
       return [
         {
           id: event.eventId,
@@ -657,6 +709,7 @@ function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             ...(event.itemId ? { itemId: event.itemId } : {}),
+            ...(parentItemId ? { parentItemId } : {}),
             itemType: event.payload.itemType,
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -1115,6 +1168,33 @@ const make = Effect.fn("make")(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) return;
+
+    // Guard against stale events from a provider that no longer owns this
+    // thread's session.  Lifecycle events (session.*, turn.*, thread.started)
+    // are exempt because they establish or transition session state and may
+    // legitimately race with the session-set dispatch during restarts.
+    const isSessionLifecycleEvent =
+      event.type === "session.started" ||
+      event.type === "session.configured" ||
+      event.type === "session.state.changed" ||
+      event.type === "session.exited" ||
+      event.type === "thread.started" ||
+      event.type === "turn.started" ||
+      event.type === "turn.completed";
+
+    if (!isSessionLifecycleEvent) {
+      const sessionProvider = thread.session?.providerName ?? null;
+      if (sessionProvider !== null && event.provider !== sessionProvider) {
+        yield* Effect.logDebug("provider runtime ingestion skipping stale-provider event", {
+          eventId: event.eventId,
+          eventType: event.type,
+          eventProvider: event.provider,
+          sessionProvider,
+          threadId: thread.id,
+        });
+        return;
+      }
+    }
 
     const now = event.createdAt;
     const eventTurnId = toTurnId(event.turnId);

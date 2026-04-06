@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.0-beta.18",
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",

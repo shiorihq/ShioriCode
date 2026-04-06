@@ -1,4 +1,5 @@
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 export interface ProcessRunOptions {
   cwd?: string | undefined;
@@ -102,6 +103,7 @@ function appendChunkWithinLimit(
   currentBytes: number,
   chunk: Buffer,
   maxBytes: number,
+  decoder: StringDecoder,
 ): {
   next: string;
   nextBytes: number;
@@ -113,13 +115,13 @@ function appendChunkWithinLimit(
   }
   if (chunk.length <= remaining) {
     return {
-      next: `${target}${chunk.toString()}`,
+      next: `${target}${decoder.write(chunk)}`,
       nextBytes: currentBytes + chunk.length,
       truncated: false,
     };
   }
   return {
-    next: `${target}${chunk.subarray(0, remaining).toString()}`,
+    next: `${target}${decoder.write(chunk.subarray(0, remaining))}`,
     nextBytes: currentBytes + remaining,
     truncated: true,
   };
@@ -152,6 +154,11 @@ export async function runProcess(
     let settled = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // StringDecoder buffers incomplete multi-byte UTF-8 sequences across
+    // chunk boundaries, preventing replacement-character corruption.
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
       killChild(child, "SIGTERM");
@@ -178,17 +185,24 @@ export async function runProcess(
     };
 
     const appendOutput = (stream: "stdout" | "stderr", chunk: Buffer | string): Error | null => {
+      const decoder = stream === "stdout" ? stdoutDecoder : stderrDecoder;
       const chunkBuffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-      const text = chunkBuffer.toString();
       const byteLength = chunkBuffer.length;
       if (stream === "stdout") {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendChunkWithinLimit(
+            stdout,
+            stdoutBytes,
+            chunkBuffer,
+            maxBufferBytes,
+            decoder,
+          );
           stdout = appended.next;
           stdoutBytes = appended.nextBytes;
           stdoutTruncated = stdoutTruncated || appended.truncated;
           return null;
         }
+        const text = typeof chunk === "string" ? chunk : decoder.write(chunkBuffer);
         stdout += text;
         stdoutBytes += byteLength;
         if (stdoutBytes > maxBufferBytes) {
@@ -196,12 +210,19 @@ export async function runProcess(
         }
       } else {
         if (outputMode === "truncate") {
-          const appended = appendChunkWithinLimit(stderr, stderrBytes, chunkBuffer, maxBufferBytes);
+          const appended = appendChunkWithinLimit(
+            stderr,
+            stderrBytes,
+            chunkBuffer,
+            maxBufferBytes,
+            decoder,
+          );
           stderr = appended.next;
           stderrBytes = appended.nextBytes;
           stderrTruncated = stderrTruncated || appended.truncated;
           return null;
         }
+        const text = typeof chunk === "string" ? chunk : decoder.write(chunkBuffer);
         stderr += text;
         stderrBytes += byteLength;
         if (stderrBytes > maxBufferBytes) {
@@ -232,6 +253,12 @@ export async function runProcess(
     });
 
     child.once("close", (code, signal) => {
+      // Flush any incomplete multi-byte sequences buffered by the decoders.
+      const stdoutRemainder = stdoutDecoder.end();
+      const stderrRemainder = stderrDecoder.end();
+      if (stdoutRemainder) stdout += stdoutRemainder;
+      if (stderrRemainder) stderr += stderrRemainder;
+
       const result: ProcessRunResult = {
         stdout,
         stderr,

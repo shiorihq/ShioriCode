@@ -16,7 +16,10 @@ export function deepMerge<T extends Record<string, unknown>>(current: T, patch: 
     if (value === undefined) continue;
 
     const existing = next[key];
-    next[key] = P.isObject(existing) && P.isObject(value) ? deepMerge(existing, value) : value;
+    next[key] =
+      P.isObject(existing) && P.isObject(value) && !Array.isArray(value)
+        ? deepMerge(existing, value)
+        : value;
   }
 
   return next as T;

@@ -30,7 +30,9 @@ export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
 }
 
-export interface UiState extends UiProjectState, UiThreadState {}
+export interface UiState extends UiProjectState, UiThreadState {
+  projectAddRequestNonce: number;
+}
 
 export interface SyncProjectInput {
   id: ProjectId;
@@ -45,6 +47,7 @@ export interface SyncThreadInput {
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  projectAddRequestNonce: 0,
   threadLastVisitedAtById: {},
 };
 
@@ -390,6 +393,7 @@ interface UiStateStore extends UiState {
   toggleProject: (projectId: ProjectId) => void;
   setProjectExpanded: (projectId: ProjectId, expanded: boolean) => void;
   reorderProjects: (draggedProjectId: ProjectId, targetProjectId: ProjectId) => void;
+  requestProjectAdd: () => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -406,6 +410,11 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  requestProjectAdd: () =>
+    set((state) => ({
+      ...state,
+      projectAddRequestNonce: state.projectAddRequestNonce + 1,
+    })),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

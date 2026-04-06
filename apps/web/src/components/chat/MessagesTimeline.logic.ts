@@ -24,14 +24,17 @@ export interface TimelineDurationMessage {
   completedAt?: string | undefined;
 }
 
+export interface WorkTimelineRow {
+  kind: "work";
+  id: string;
+  createdAt: string;
+  groupedEntries: WorkLogEntry[];
+  stickyInProgress: boolean;
+  childRows: WorkTimelineRow[];
+}
+
 export type MessagesTimelineRow =
-  | {
-      kind: "work";
-      id: string;
-      createdAt: string;
-      groupedEntries: WorkLogEntry[];
-      stickyInProgress: boolean;
-    }
+  | WorkTimelineRow
   | {
       kind: "reasoning";
       id: string;
@@ -220,6 +223,22 @@ function getToolInputQuery(input: Record<string, unknown> | null): string | null
   );
 }
 
+function isEmptyStructuredToolDetail(detail: string | null | undefined): boolean {
+  if (!detail) {
+    return false;
+  }
+  const trimmed = detail.trim();
+  return /^[A-Za-z][A-Za-z0-9 _-]{1,48}:\s*\{\s*\}$/u.test(trimmed);
+}
+
+function getExplicitDetail(entry: WorkLogEntry): string | null {
+  const detail = entry.detail ?? entry.changedFiles?.[0] ?? null;
+  if (!detail) {
+    return null;
+  }
+  return isEmptyStructuredToolDetail(detail) ? null : detail;
+}
+
 function normalizeWorkEntryCommand(entry: WorkLogEntry): string {
   return (entry.command ?? entry.detail ?? "").trim().toLowerCase();
 }
@@ -256,6 +275,41 @@ export function isExplorationWorkEntry(entry: WorkLogEntry): boolean {
   }
 
   return false;
+}
+
+function formatSubagentTaskDetail(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const description =
+    asTrimmedString(input.description) ??
+    asTrimmedString(input.task) ??
+    asTrimmedString(input.title) ??
+    asTrimmedString(input.prompt);
+  const subagentType =
+    asTrimmedString(input.subagent_type) ??
+    asTrimmedString(input.subagentType) ??
+    asTrimmedString(input.agent_type) ??
+    asTrimmedString(input.agentType);
+
+  if (description && subagentType) {
+    return `${description} (${subagentType})`;
+  }
+  return description ?? subagentType ?? null;
+}
+
+function formatSkillToolDetail(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  return (
+    asTrimmedString(input.skill) ??
+    asTrimmedString(input.skill_name) ??
+    asTrimmedString(input.skillName) ??
+    asTrimmedString(input.name)
+  );
 }
 
 const COMMAND_TOKEN_PATTERN = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|[^\s]+/g;
@@ -427,12 +481,45 @@ function runningActionForKind(kind: WorkEntryDisplayKind): string {
 
 export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   const normalizedLabel = normalizeWorkEntryTitle(entry);
-  const explicitDetail = entry.detail || entry.changedFiles?.[0] || null;
+  const explicitDetail = getExplicitDetail(entry);
   const running = entry.running === true;
   const providerToolKind = classifyToolName(getEntryToolName(entry));
   const providerToolInput = getEntryToolInput(entry);
+  const providerToolName = getEntryToolName(entry);
   const providerToolPath = getToolInputPath(providerToolInput);
   const providerToolQuery = getToolInputQuery(providerToolInput);
+  const subagentTaskDetail = formatSubagentTaskDetail(providerToolInput);
+  const skillToolDetail = formatSkillToolDetail(providerToolInput);
+
+  if (entry.itemType === "collab_agent_tool_call") {
+    return {
+      kind: "other",
+      action: running ? "Delegating" : "Delegated",
+      detail: subagentTaskDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "skill") {
+    return {
+      kind: "other",
+      action: running ? "Launching skill" : "Launched skill",
+      detail: skillToolDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "write") {
+    return {
+      kind: "edit",
+      action: running ? "Writing" : "Wrote",
+      detail: providerToolPath ?? explicitDetail,
+      monospace: true,
+      dedupeKey: providerToolPath ? `write:${providerToolPath}` : null,
+    };
+  }
 
   if (entry.requestKind === "file-change" || entry.itemType === "file_change") {
     return {
@@ -540,7 +627,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     return {
       kind: "command",
       action: running ? "Running" : "Ran",
-      detail: entry.command || entry.detail || null,
+      detail: entry.command || explicitDetail || null,
       monospace: true,
       dedupeKey: null,
     };
@@ -553,7 +640,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   return {
     kind: "other",
     action: heading,
-    detail: entry.command || entry.detail || null,
+    detail: entry.command || explicitDetail || null,
     monospace: false,
     dedupeKey: null,
   };
@@ -643,6 +730,9 @@ export function buildWorkGroupSummary(
 }
 
 export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
+  if (entry.label.trim().toLowerCase() === "status update") {
+    return null;
+  }
   if (entry.requestKind === "file-change" || entry.itemType === "file_change") {
     return "edit";
   }
@@ -651,6 +741,10 @@ export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
   }
   if (entry.requestKind === "command" || entry.itemType === "command_execution") {
     return "command";
+  }
+  if (entry.itemType === "collab_agent_tool_call") {
+    const formatted = formatWorkEntry(entry);
+    return formatted.detail ? `subagent:${formatted.detail}` : `subagent:${entry.id}`;
   }
 
   const normalized = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
@@ -676,23 +770,19 @@ export function deriveMessagesTimelineRows(input: {
 
     switch (timelineEntry.kind) {
       case "work": {
-        const groupedEntries = [timelineEntry.entry];
-        const groupKey = deriveWorkEntryGroupKey(timelineEntry.entry);
         let cursor = index + 1;
+        const workEntries = [timelineEntry.entry];
         while (cursor < input.timelineEntries.length) {
           const nextEntry = input.timelineEntries[cursor];
           if (!nextEntry || nextEntry.kind !== "work") break;
-          if (groupKey === null || deriveWorkEntryGroupKey(nextEntry.entry) !== groupKey) break;
-          groupedEntries.push(nextEntry.entry);
+          workEntries.push(nextEntry.entry);
           cursor += 1;
         }
-        nextRows.push({
-          kind: "work",
-          id: timelineEntry.id,
-          createdAt: timelineEntry.createdAt,
-          groupedEntries,
-          stickyInProgress: input.isWorking && cursor >= input.timelineEntries.length,
-        });
+        nextRows.push(
+          ...deriveNestedWorkRows(workEntries, {
+            stickyTailInProgress: input.isWorking && cursor >= input.timelineEntries.length,
+          }),
+        );
         index = cursor - 1;
         continue;
       }
@@ -740,6 +830,84 @@ export function deriveMessagesTimelineRows(input: {
   return nextRows;
 }
 
+function deriveNestedWorkRows(
+  entries: ReadonlyArray<WorkLogEntry>,
+  options: {
+    stickyTailInProgress: boolean;
+  },
+): WorkTimelineRow[] {
+  if (entries.length === 0) {
+    return [];
+  }
+
+  const parentItemIds = new Set(
+    entries
+      .map((entry) => entry.itemId)
+      .filter((itemId): itemId is string => typeof itemId === "string" && itemId.length > 0),
+  );
+  const childEntryIds = new Set<string>();
+  const childrenByParentItemId = new Map<string, WorkLogEntry[]>();
+
+  for (const entry of entries) {
+    if (!entry.parentItemId || !parentItemIds.has(entry.parentItemId)) {
+      continue;
+    }
+    childEntryIds.add(entry.id);
+    const siblings = childrenByParentItemId.get(entry.parentItemId);
+    if (siblings) {
+      siblings.push(entry);
+    } else {
+      childrenByParentItemId.set(entry.parentItemId, [entry]);
+    }
+  }
+
+  const topLevelEntries = entries.filter((entry) => !childEntryIds.has(entry.id));
+  const rows: WorkTimelineRow[] = [];
+
+  for (let index = 0; index < topLevelEntries.length; index += 1) {
+    const entry = topLevelEntries[index]!;
+    const groupedEntries = [entry];
+    const groupKey = deriveWorkEntryGroupKey(entry);
+    const hasNestedChildren =
+      typeof entry.itemId === "string" &&
+      (childrenByParentItemId.get(entry.itemId)?.length ?? 0) > 0;
+
+    let cursor = index + 1;
+    if (!hasNestedChildren) {
+      while (cursor < topLevelEntries.length) {
+        const nextEntry = topLevelEntries[cursor];
+        if (!nextEntry) {
+          break;
+        }
+        if (groupKey === null || deriveWorkEntryGroupKey(nextEntry) !== groupKey) {
+          break;
+        }
+        groupedEntries.push(nextEntry);
+        cursor += 1;
+      }
+    }
+
+    const primaryEntry = groupedEntries[0]!;
+    const childEntries =
+      groupedEntries.length === 1 && primaryEntry.itemId
+        ? (childrenByParentItemId.get(primaryEntry.itemId) ?? [])
+        : [];
+
+    rows.push({
+      kind: "work",
+      id: primaryEntry.id,
+      createdAt: primaryEntry.createdAt,
+      groupedEntries,
+      stickyInProgress: options.stickyTailInProgress && cursor >= topLevelEntries.length,
+      childRows: deriveNestedWorkRows(childEntries, { stickyTailInProgress: false }),
+    });
+
+    index = cursor - 1;
+  }
+
+  return rows;
+}
+
 export function estimateMessagesTimelineRowHeight(
   row: MessagesTimelineRow,
   input: {
@@ -780,11 +948,19 @@ function estimateReasoningRowHeight(text: string): number {
 }
 
 function estimateWorkRowHeight(
-  row: Extract<MessagesTimelineRow, { kind: "work" }>,
+  row: WorkTimelineRow,
   input: {
     expandedWorkGroups?: Readonly<Record<string, boolean>>;
   },
 ): number {
+  const nestedRowsHeight = (childRows: ReadonlyArray<WorkTimelineRow>): number =>
+    childRows.reduce((total, childRow) => total + estimateWorkRowHeight(childRow, input) + 6, 0);
+
+  if (row.childRows.length > 0) {
+    const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
+    return 16 + 26 + (isExpanded ? nestedRowsHeight(row.childRows) + 8 : 0);
+  }
+
   const displayedEntries = getDisplayedWorkEntries(row.groupedEntries);
   const entryCount = displayedEntries.length;
 

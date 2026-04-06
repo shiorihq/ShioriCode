@@ -5,11 +5,13 @@ import { resolveShortcutCommand } from "~/keybindings";
 import { useDesktopWindowControlsInset } from "~/hooks/useDesktopWindowControlsInset";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { useTerminalStateStore } from "~/terminalStateStore";
+import { useUiStateStore } from "~/uiStateStore";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 
 import ThreadSidebar from "./Sidebar";
+import { shouldHandleSidebarToggleShortcut } from "./AppSidebarLayout.logic";
 import { CommandKModal, useCommandK } from "./CommandKModal";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 
@@ -20,6 +22,7 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 function AppSidebarKeyboardShortcuts() {
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
+  const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const terminalOpen = useTerminalStateStore((state) =>
     Object.values(state.terminalStateByThreadId).some(
       (terminalState) => terminalState.terminalOpen,
@@ -28,17 +31,30 @@ function AppSidebarKeyboardShortcuts() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
+      const terminalFocus = isTerminalFocused();
+      if (
+        !shouldHandleSidebarToggleShortcut(event, keybindings, {
+          terminalFocus,
+          terminalOpen,
+        })
+      ) {
         return;
       }
 
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
-          terminalFocus: isTerminalFocused(),
+          terminalFocus,
           terminalOpen,
         },
       });
       if (command !== "sidebar.toggle") {
+        if (command !== "project.add") {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        requestProjectAdd();
         return;
       }
 
@@ -51,7 +67,7 @@ function AppSidebarKeyboardShortcuts() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [keybindings, terminalOpen, toggleSidebar]);
+  }, [keybindings, requestProjectAdd, terminalOpen, toggleSidebar]);
 
   return null;
 }
@@ -64,7 +80,7 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className={cn("flex min-h-0 min-w-0 flex-1 flex-col")}
+      className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background")}
       style={
         applyClosedSidebarMacPadding ? { paddingLeft: `${macWindowControlsInset}px` } : undefined
       }
@@ -75,6 +91,13 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
 }
 
 function useSidebarTranslucency(enabled: boolean) {
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-sidebar-translucent", enabled);
+    return () => {
+      document.documentElement.removeAttribute("data-sidebar-translucent");
+    };
+  }, [enabled]);
+
   useEffect(() => {
     const bridge = window.desktopBridge;
     if (!bridge || typeof bridge.setVibrancy !== "function") return;

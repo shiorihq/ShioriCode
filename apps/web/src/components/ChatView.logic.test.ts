@@ -203,6 +203,7 @@ const makeThread = (input?: {
   branchSourceTurnId: null,
   branch: null,
   worktreePath: null,
+  tag: null,
   turnDiffSummaries: [],
   activities: [],
 });
@@ -358,6 +359,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       branchSourceTurnId: null,
       branch: null,
       worktreePath: null,
+      tag: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -396,6 +398,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       branchSourceTurnId: null,
       branch: null,
       worktreePath: null,
+      tag: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -440,6 +443,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       branchSourceTurnId: null,
       branch: null,
       worktreePath: null,
+      tag: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -478,6 +482,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       branchSourceTurnId: null,
       branch: null,
       worktreePath: null,
+      tag: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -516,6 +521,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       branchSourceTurnId: null,
       branch: null,
       worktreePath: null,
+      tag: null,
       turnDiffSummaries: [],
       activities: [],
     });

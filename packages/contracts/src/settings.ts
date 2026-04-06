@@ -9,7 +9,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ShioriModelOptions,
 } from "./model";
-import { ModelSelection } from "./orchestration";
+import { ModelSelection, ProviderKind } from "./orchestration";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -183,7 +183,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(() => DEFAULT_CODE_FONT_FAMILY),
   ),
   importedThemes: Schema.Array(ImportedTheme).pipe(Schema.withDecodingDefault(() => [])),
-  sidebarTranslucent: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  sidebarTranslucent: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -238,6 +238,33 @@ export const ClaudeSettings = Schema.Struct({
 });
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
+// ── MCP Server Configuration ─────────────────────────────────
+
+export const McpTransport = Schema.Literals(["stdio", "sse", "http"]);
+export type McpTransport = typeof McpTransport.Type;
+
+export const McpServerEntry = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  transport: McpTransport,
+  // sse/http transport fields
+  url: Schema.optionalKey(TrimmedString),
+  headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  // stdio transport fields
+  command: Schema.optionalKey(TrimmedString),
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  // Common fields
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  /** Empty array = all providers */
+  providers: Schema.Array(ProviderKind).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type McpServerEntry = typeof McpServerEntry.Type;
+
+export const McpServersConfig = Schema.Struct({
+  servers: Schema.Array(McpServerEntry).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type McpServersConfig = typeof McpServersConfig.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
@@ -258,6 +285,9 @@ export const ServerSettings = Schema.Struct({
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
     })),
   ),
+
+  // MCP servers (global, with per-server provider affinity)
+  mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // Provider specific settings
   providers: Schema.Struct({
@@ -348,6 +378,11 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   defaultModelSelection: Schema.optionalKey(ModelSelectionPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  mcpServers: Schema.optionalKey(
+    Schema.Struct({
+      servers: Schema.optionalKey(Schema.Array(McpServerEntry)),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       shiori: Schema.optionalKey(ShioriSettingsPatch),

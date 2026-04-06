@@ -884,6 +884,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branchSourceTurnId: null,
     branch: null,
     worktreePath: null,
+    tag: null,
     turnDiffSummaries: [],
     activities: [],
     ...overrides,

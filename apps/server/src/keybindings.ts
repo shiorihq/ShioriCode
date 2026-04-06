@@ -57,13 +57,13 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
+  { key: "mod+shift+o", command: "project.add", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
-  { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
@@ -376,6 +376,32 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
   const rightContext = keybindingShortcutContext(right);
   if (!leftContext || !rightContext) return false;
   return leftContext === rightContext;
+}
+
+function migrateLegacyDefaultKeybindings(keybindings: readonly KeybindingRule[]): {
+  keybindings: KeybindingRule[];
+  migratedLegacyChatNewShiftO: boolean;
+} {
+  let migratedLegacyChatNewShiftO = false;
+  const migrated = keybindings.map((rule) => {
+    if (
+      rule.command === "chat.new" &&
+      rule.key === "mod+shift+o" &&
+      (rule.when ?? undefined) === "!terminalFocus"
+    ) {
+      migratedLegacyChatNewShiftO = true;
+      return {
+        ...rule,
+        command: "project.add" as const,
+      };
+    }
+    return rule;
+  });
+
+  return {
+    keybindings: migrated,
+    migratedLegacyChatNewShiftO,
+  };
 }
 
 function encodeShortcut(shortcut: KeybindingShortcut): string | null {
@@ -729,7 +755,11 @@ const makeKeybindings = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const migratedConfig = migrateLegacyDefaultKeybindings(runtimeConfig.keybindings);
+      const customConfig = migratedConfig.keybindings;
+      if (migratedConfig.migratedLegacyChatNewShiftO) {
+        yield* writeConfigAtomically(customConfig);
+      }
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{

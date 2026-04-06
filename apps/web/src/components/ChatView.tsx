@@ -165,7 +165,8 @@ import {
   renderProviderTraitsPicker,
 } from "./chat/composerProviderRegistry";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
-import { EmptyThreadHeading, EmptyThreadSuggestions } from "./chat/EmptyThreadHero";
+import { EmptyThreadAmbient } from "./chat/EmptyThreadAmbient";
+import { EmptyThreadSuggestions } from "./chat/EmptyThreadHero";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -321,6 +322,79 @@ const terminalContextIdListsEqual = (
 
 interface ChatViewProps {
   threadId: ThreadId;
+}
+
+function useThreadRelations(input: {
+  isServerThread: boolean;
+  serverThreadId: ThreadId | undefined;
+  parentThreadId: ThreadId | null;
+}) {
+  const selector = useMemo(() => {
+    let previousThreads: Thread[] | null = null;
+    let previousThreadIdsByProjectId: Record<string, ThreadId[]> | null = null;
+    let previousServerThreadIds: ThreadId[] = [];
+    let previousParentThread: Thread | null = null;
+    let previousChildThreads: Thread[] = [];
+    let previousResult: {
+      serverThreadIds: ThreadId[];
+      parentThread: Thread | null;
+      childThreads: Thread[];
+    } = {
+      serverThreadIds: previousServerThreadIds,
+      parentThread: previousParentThread,
+      childThreads: previousChildThreads,
+    };
+
+    return (state: {
+      threads: Thread[];
+      threadIdsByProjectId: Record<string, ThreadId[]>;
+    }): {
+      serverThreadIds: ThreadId[];
+      parentThread: Thread | null;
+      childThreads: Thread[];
+    } => {
+      if (previousThreads !== state.threads) {
+        previousThreads = state.threads;
+        if (!input.isServerThread || !input.serverThreadId) {
+          previousParentThread = null;
+          previousChildThreads = [];
+        } else {
+          previousParentThread =
+            input.parentThreadId === null
+              ? null
+              : (state.threads.find((thread) => thread.id === input.parentThreadId) ?? null);
+          previousChildThreads = state.threads
+            .filter((thread) => thread.parentThreadId === input.serverThreadId)
+            .toSorted(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+            );
+        }
+      }
+
+      if (previousThreadIdsByProjectId !== state.threadIdsByProjectId) {
+        previousThreadIdsByProjectId = state.threadIdsByProjectId;
+        previousServerThreadIds = Object.values(state.threadIdsByProjectId).flat();
+      }
+
+      if (
+        previousResult.serverThreadIds === previousServerThreadIds &&
+        previousResult.parentThread === previousParentThread &&
+        previousResult.childThreads === previousChildThreads
+      ) {
+        return previousResult;
+      }
+
+      previousResult = {
+        serverThreadIds: previousServerThreadIds,
+        parentThread: previousParentThread,
+        childThreads: previousChildThreads,
+      };
+      return previousResult;
+    };
+  }, [input.isServerThread, input.parentThreadId, input.serverThreadId]);
+
+  return useStore(selector);
 }
 
 function useLocalDispatchState(input: {
@@ -649,7 +723,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -713,9 +786,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
-  const threads = useStore((state) => state.threads);
   const { branchThread } = useThreadActions();
-  const serverThreadIds = useMemo(() => threads.map((thread) => thread.id), [threads]);
   const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
   const draftThreadIds = useMemo(
     () => Object.keys(draftThreadsByThreadId) as ThreadId[],
@@ -803,6 +874,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  const { serverThreadIds, parentThread, childThreads } = useThreadRelations({
+    isServerThread,
+    serverThreadId: serverThread?.id,
+    parentThreadId: serverThread?.parentThreadId ?? null,
+  });
   const existingOpenTerminalThreadIds = useMemo(() => {
     const existingThreadIds = new Set<ThreadId>([...serverThreadIds, ...draftThreadIds]);
     return openTerminalThreadIds.filter((nextThreadId) => existingThreadIds.has(nextThreadId));
@@ -842,24 +918,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
-  const parentThread = useMemo(() => {
-    if (!isServerThread || !serverThread.parentThreadId) {
-      return null;
-    }
-    return threads.find((thread) => thread.id === serverThread.parentThreadId) ?? null;
-  }, [isServerThread, serverThread, threads]);
-  const childThreads = useMemo(
-    () =>
-      isServerThread
-        ? threads
-            .filter((thread) => thread.parentThreadId === serverThread.id)
-            .toSorted(
-              (left, right) =>
-                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-            )
-        : [],
-    [isServerThread, serverThread, threads],
-  );
   const handleBranchActiveThread = useCallback(async () => {
     if (!isServerThread || !serverThread) {
       return;
@@ -1142,7 +1200,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.session ?? null,
   );
   const isWorking = isTurnRunning || isSendBusy || isConnecting || isRevertingCheckpoint;
-  const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -1377,31 +1434,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [turnDiffSummaries]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
+    let pendingTurnCountForPreviousUser: number | null = null;
+
+    // Walk backwards once so each user message picks up the nearest assistant
+    // message checkpoint in its turn segment without nested scanning.
+    for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
       const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      if (!entry || entry.kind !== "message") {
         continue;
       }
 
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (entry.message.role === "assistant") {
+        const summary = turnDiffSummaryByAssistantMessageId.get(entry.message.id);
         if (!summary) {
           continue;
         }
         const turnCount =
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof turnCount !== "number") {
-          break;
+        if (typeof turnCount === "number") {
+          pendingTurnCountForPreviousUser = Math.max(0, turnCount - 1);
         }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
+        continue;
+      }
+
+      if (entry.message.role === "user" && pendingTurnCountForPreviousUser !== null) {
+        byUserMessageId.set(entry.message.id, pendingTurnCountForPreviousUser);
+        pendingTurnCountForPreviousUser = null;
       }
     }
 
@@ -2340,16 +2398,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     : isLocalDraftThread
       ? (draftThread?.envMode ?? "local")
       : "local";
-
-  useEffect(() => {
-    if (!isTurnRunning) return;
-    const timer = window.setInterval(() => {
-      setNowTick(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [isTurnRunning]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -3838,12 +3886,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isWorking={isWorking}
                   activeTurnInProgress={isWorking || !latestTurnSettled}
                   activeTurnStartedAt={activeWorkStartedAt}
+                  activeTurnId={activeThread.session?.activeTurnId ?? null}
                   scrollContainer={messagesScrollElement}
                   timelineEntries={timelineEntries}
                   completionDividerBeforeEntryId={completionDividerBeforeEntryId}
                   completionSummary={completionSummary}
                   turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                  nowIso={nowIso}
                   expandedWorkGroups={expandedWorkGroups}
                   onToggleWorkGroup={onToggleWorkGroup}
                   onOpenTurnDiff={onOpenTurnDiff}
@@ -3877,17 +3925,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
           {/* Input bar */}
           <div
             className={cn(
-              "w-full min-w-0",
+              "relative w-full min-w-0",
               isEmptyThread
                 ? "flex flex-1 flex-col items-center justify-center px-3 sm:px-5"
                 : cn("shrink-0 px-3 sm:px-5", isGitRepo ? "pb-1" : "pb-3 sm:pb-4"),
             )}
           >
-            {isEmptyThread && <EmptyThreadHeading />}
+            {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
+            {isEmptyThread && isGitRepo && (
+              <div className="relative z-10 mx-auto mb-2 flex w-full min-w-0 max-w-[52rem] items-center justify-start gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <BranchToolbar
+                  inline
+                  threadId={activeThread.id}
+                  onEnvModeChange={onEnvModeChange}
+                  envLocked={envLocked}
+                  onComposerFocusRequest={scheduleComposerFocus}
+                  {...(canCheckoutPullRequestIntoThread
+                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                    : {})}
+                />
+              </div>
+            )}
             <form
               ref={composerFormRef}
               onSubmit={onSend}
-              className="mx-auto w-full min-w-0 max-w-[52rem]"
+              className="relative z-10 mx-auto w-full min-w-0 max-w-[52rem]"
               data-chat-composer-form="true"
             >
               {showPlanSuggestion && (
@@ -3908,7 +3970,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               >
                 <div
                   className={cn(
-                    "min-w-0 rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
+                    "min-w-0 rounded-[20px] border bg-card shadow-sm transition-colors duration-200 has-focus-visible:border-ring/45",
                     isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
                     composerProviderState.composerSurfaceClassName,
                   )}
@@ -4080,7 +4142,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       data-chat-composer-footer="true"
                       data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                       className={cn(
-                        "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                        "flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                        "justify-between",
                         isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                       )}
                     >
@@ -4121,22 +4184,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             : {})}
                           onProviderModelChange={onProviderModelSelect}
                         />
-
-                        {isEmptyThread && isGitRepo && (
-                          <>
-                            <Separator orientation="vertical" className="mx-0.5 h-4" />
-                            <BranchToolbar
-                              inline
-                              threadId={activeThread.id}
-                              onEnvModeChange={onEnvModeChange}
-                              envLocked={envLocked}
-                              onComposerFocusRequest={scheduleComposerFocus}
-                              {...(canCheckoutPullRequestIntoThread
-                                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                : {})}
-                            />
-                          </>
-                        )}
 
                         {providerEffortPicker}
 

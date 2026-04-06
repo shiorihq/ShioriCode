@@ -13,6 +13,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
+import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsFeedbackRouteImport } from './routes/settings.feedback'
 import { Route as SettingsCreditsRouteImport } from './routes/settings.credits'
@@ -37,6 +38,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const SettingsUsageRoute = SettingsUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/usage': typeof SettingsUsageRoute
 }
 export interface FileRoutesByTo {
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/': typeof ChatIndexRoute
 }
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/_chat/': typeof ChatIndexRoute
 }
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/skills'
     | '/settings/usage'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/skills'
     | '/settings/usage'
     | '/'
   id:
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/skills'
     | '/settings/usage'
     | '/_chat/'
   fileRoutesById: FileRoutesById
@@ -175,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/settings/usage'
       preLoaderRoute: typeof SettingsUsageRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
@@ -240,6 +259,7 @@ interface SettingsRouteChildren {
   SettingsCreditsRoute: typeof SettingsCreditsRoute
   SettingsFeedbackRoute: typeof SettingsFeedbackRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsUsageRoute: typeof SettingsUsageRoute
 }
 
@@ -249,6 +269,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCreditsRoute: SettingsCreditsRoute,
   SettingsFeedbackRoute: SettingsFeedbackRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsUsageRoute: SettingsUsageRoute,
 }
 

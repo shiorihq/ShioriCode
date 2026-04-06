@@ -171,6 +171,226 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary([codexReadEntry], false)).toBe("Explored 1 file");
   });
 
+  it("formats Claude subagent tasks without dumping raw JSON input", () => {
+    const subagentEntry = {
+      id: "claude-subagent",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      label: "Subagent task started",
+      tone: "tool" as const,
+      itemType: "collab_agent_tool_call" as const,
+      detail:
+        'Agent: {"description":"Review the database layer","prompt":"Audit the SQL changes","subagent_type":"code-reviewer"}',
+    };
+
+    expect(formatWorkEntry(subagentEntry)).toMatchObject({
+      kind: "other",
+      action: "Delegated",
+      detail: "Review the database layer (code-reviewer)",
+      monospace: false,
+    });
+  });
+
+  it("formats Skill tool calls with the launched skill name", () => {
+    const skillEntry = {
+      id: "claude-skill",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      label: "Tool call Skill",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail: 'Skill: {"skill":"dogfood"}',
+    };
+
+    expect(formatWorkEntry(skillEntry)).toMatchObject({
+      kind: "other",
+      action: "Launched skill",
+      detail: "dogfood",
+      monospace: false,
+    });
+  });
+
+  it("formats Claude Write tool calls as write actions with the target path", () => {
+    const writeEntry = {
+      id: "claude-write",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      label: "Tool call Write",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      output: {
+        toolName: "Write",
+        input: {
+          file_path: "/tmp/report.md",
+          content: "# Report",
+        },
+      },
+    };
+
+    expect(formatWorkEntry(writeEntry)).toMatchObject({
+      kind: "edit",
+      action: "Wrote",
+      detail: "/tmp/report.md",
+      monospace: true,
+    });
+  });
+
+  it("omits useless empty-object details for Claude read/write/bash tool calls", () => {
+    expect(
+      formatWorkEntry({
+        id: "claude-empty-read",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        detail: "Read: {}",
+      }),
+    ).toMatchObject({
+      kind: "read",
+      action: "Read",
+      detail: null,
+    });
+
+    expect(
+      formatWorkEntry({
+        id: "claude-empty-write",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "file_change",
+        detail: "Write: {}",
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Wrote",
+      detail: null,
+    });
+
+    expect(
+      formatWorkEntry({
+        id: "claude-empty-bash",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "command_execution",
+        detail: "Bash: {}",
+      }),
+    ).toMatchObject({
+      kind: "command",
+      action: "Ran",
+      detail: null,
+    });
+  });
+
+  it("nests child work entries beneath their delegated subagent parent", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "subagent-parent",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "subagent-parent",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Subagent task",
+          tone: "tool",
+          itemId: "agent-tool-1",
+          itemType: "collab_agent_tool_call",
+          detail:
+            'Agent: {"description":"Find UI bugs in chat components","subagent_type":"explore"}',
+        },
+      },
+      {
+        id: "subagent-child-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "subagent-child-1",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "List directory",
+          tone: "tool",
+          parentItemId: "agent-tool-1",
+          itemType: "command_execution",
+          toolTitle: "List directory",
+          detail: "src/components",
+        },
+      },
+      {
+        id: "top-level-sibling",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "top-level-sibling",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Status update",
+          tone: "info",
+          detail: "Main agent still coordinating work.",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(2);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["subagent-parent"]);
+    expect(workRows[0]?.childRows).toHaveLength(1);
+    expect(workRows[0]?.childRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "subagent-child-1",
+    ]);
+    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual(["top-level-sibling"]);
+  });
+
+  it("nests child work entries beneath generic parent tool calls like Skill", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "skill-parent",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "skill-parent",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Tool call Skill",
+          tone: "tool",
+          itemId: "skill-tool-1",
+          itemType: "dynamic_tool_call",
+          detail: 'Skill: {"skill":"dogfood"}',
+        },
+      },
+      {
+        id: "skill-child",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "skill-child",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Read issue taxonomy",
+          tone: "tool",
+          parentItemId: "skill-tool-1",
+          itemType: "command_execution",
+          toolTitle: "Read file",
+          detail: "/Users/choki/.claude/skills/dogfood/references/issue-taxonomy.md",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["skill-parent"]);
+    expect(workRows[0]?.childRows).toHaveLength(1);
+    expect(workRows[0]?.childRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "skill-child",
+    ]);
+  });
+
   it("groups similar running work entries in real time", () => {
     const timelineEntries: TimelineEntry[] = [
       {
@@ -363,5 +583,46 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
     ]);
+  });
+
+  it("does not group consecutive status updates into one work disclosure", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "status-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "status-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Status update",
+          tone: "info",
+          detail: "Running List React component files in apps/web/src",
+        },
+      },
+      {
+        id: "status-2",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "status-2",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Status update",
+          tone: "info",
+          detail: "Finding **/*.tsx",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(2);
+    expect(workRows[0]?.groupedEntries).toHaveLength(1);
+    expect(workRows[1]?.groupedEntries).toHaveLength(1);
   });
 });

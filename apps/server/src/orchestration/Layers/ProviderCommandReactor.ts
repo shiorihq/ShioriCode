@@ -748,6 +748,9 @@ const make = Effect.gen(function* () {
       yield* providerService.stopSession({ threadId: thread.id });
     }
 
+    // Clean up cached model selection to prevent unbounded Map growth.
+    threadModelSelections.delete(event.payload.threadId);
+
     yield* setThreadSession({
       threadId: thread.id,
       session: {

@@ -1,6 +1,7 @@
 "use client";
 
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
+import { useCallback, useState, type UIEvent } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -16,21 +17,61 @@ function ScrollArea({
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
 }) {
+  const [topFadeOpacity, setTopFadeOpacity] = useState(0);
+  const [bottomFadeOpacity, setBottomFadeOpacity] = useState(0);
+
+  const updateFadeOpacity = useCallback((el: HTMLElement) => {
+    const fadeDistance = 56;
+    const distanceFromTop = el.scrollTop;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const toOpacity = (distance: number) => Math.max(0, Math.min(1, distance / fadeDistance));
+    setTopFadeOpacity(toOpacity(distanceFromTop));
+    setBottomFadeOpacity(toOpacity(distanceFromBottom));
+  }, []);
+
+  const handleViewportScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      updateFadeOpacity(event.currentTarget);
+    },
+    [updateFadeOpacity],
+  );
+
+  const handleViewportRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) updateFadeOpacity(node);
+    },
+    [updateFadeOpacity],
+  );
+
   return (
-    <ScrollAreaPrimitive.Root className={cn("size-full min-h-0", className)} {...props}>
+    <ScrollAreaPrimitive.Root className={cn("relative size-full min-h-0", className)} {...props}>
       <ScrollAreaPrimitive.Viewport
         className={cn(
           "h-full overscroll-contain rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain",
-          scrollFade &&
-            "mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] [--fade-size:1.5rem]",
           scrollbarGutter && "data-has-overflow-y:pe-2.5 data-has-overflow-x:pb-2.5",
           hideScrollbars &&
             "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         )}
+        onScroll={handleViewportScroll}
+        ref={handleViewportRef}
         data-slot="scroll-area-viewport"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
+      {scrollFade ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 h-6 rounded-t-[inherit] bg-linear-to-b from-background to-transparent"
+            style={{ opacity: topFadeOpacity }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-[inherit] bg-linear-to-t from-background to-transparent"
+            style={{ opacity: bottomFadeOpacity }}
+          />
+        </>
+      ) : null}
       {!hideScrollbars && (
         <>
           <ScrollBar orientation="vertical" />

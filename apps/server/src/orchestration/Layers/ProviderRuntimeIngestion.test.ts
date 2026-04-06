@@ -2374,6 +2374,25 @@ describe("ProviderRuntimeIngestion", () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
+    // Switch session to claudeAgent so ingestion accepts claudeAgent events.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-claude-usage"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated-claude-window"),
@@ -2545,6 +2564,131 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("keeps Claude task progress as status updates instead of reasoning entries", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Switch session to claudeAgent so ingestion accepts claudeAgent events.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-claude-task"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-claude-task-progress"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-task-1"),
+      payload: {
+        taskId: "task-subagent-1",
+        description: "Running background teammate",
+        summary: "Code reviewer checked the migration edge cases.",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-task-progress",
+      ),
+    );
+
+    const progress = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-task-progress",
+    );
+    const progressPayload =
+      progress?.payload && typeof progress.payload === "object"
+        ? (progress.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(progress?.kind).toBe("task.progress");
+    expect(progress?.summary).toBe("Status update");
+    expect(progressPayload?.displayAs).toBe("status");
+    expect(progressPayload?.detail).toBe("Code reviewer checked the migration edge cases.");
+  });
+
+  it("projects Claude subagent parent ids onto child task updates", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Switch session to claudeAgent so ingestion accepts claudeAgent events.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-claude-subagent"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-claude-subagent-child-progress"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-task-2"),
+      payload: {
+        taskId: "task-subagent-2",
+        description: "Finding components",
+        summary: "Finding src/components/chat-ui/**/*",
+      },
+      raw: {
+        source: "claude.sdk.message",
+        method: "claude/system/task_progress",
+        payload: {
+          type: "system",
+          subtype: "task_progress",
+          task_id: "task-subagent-2",
+          tool_use_id: "agent-tool-2",
+          description: "Finding components",
+          summary: "Finding src/components/chat-ui/**/*",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-claude-subagent-child-progress",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) =>
+        candidate.id === "evt-claude-subagent-child-progress",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(payload?.parentItemId).toBe("agent-tool-2");
   });
 
   it("projects reasoning lifecycle and deltas into thread activities", async () => {

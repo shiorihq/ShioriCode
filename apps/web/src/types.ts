@@ -109,6 +109,8 @@ export interface Thread {
   branchSourceTurnId: TurnId | null;
   branch: string | null;
   worktreePath: string | null;
+  /** User-defined label for sidebar organization; persisted via orchestration. */
+  tag: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }
@@ -126,6 +128,7 @@ export interface SidebarThreadSummary {
   parentThreadId: ThreadId | null;
   branch: string | null;
   worktreePath: string | null;
+  tag: string | null;
   latestUserMessageAt: string | null;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;

@@ -20,7 +20,7 @@ function makeSettings(overrides: Partial<ClientSettings> = {}): ClientSettings {
     diffWordWrap: false,
     sidebarProjectSortOrder: "updated_at",
     sidebarThreadSortOrder: "updated_at",
-    sidebarTranslucent: false,
+    sidebarTranslucent: true,
     timestampFormat: "locale",
     themeMode: DEFAULT_THEME_MODE,
     lightThemeId: DEFAULT_LIGHT_THEME_ID,

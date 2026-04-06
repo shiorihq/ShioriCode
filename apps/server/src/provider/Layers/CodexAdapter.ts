@@ -22,7 +22,7 @@ import {
   TurnId,
   ProviderSendTurnInput,
 } from "contracts";
-import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
+import { Effect, FileSystem, Layer, Queue, Ref, Schema, ServiceMap, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -41,6 +41,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { probeCodexUsage } from "../codexAppServer.ts";
 import { fetchCodexOAuthUsageSnapshot } from "../codexUsage.ts";
+import { prepareCodexHomeWithManagedMcpServers } from "../mcpServers.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import type { CodexUsageSnapshot } from "../Services/ProviderUsage.ts";
@@ -1384,13 +1385,43 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
   });
 
+  const temporaryCodexHomesRef = yield* Ref.make(
+    new Map<ThreadId, { cleanup: () => Promise<void> }>(),
+  );
+
+  const rememberTemporaryCodexHome = (threadId: ThreadId, cleanup: () => Promise<void>) =>
+    Ref.update(temporaryCodexHomesRef, (existing) => {
+      const next = new Map(existing);
+      next.set(threadId, { cleanup });
+      return next;
+    }).pipe(Effect.asVoid);
+
+  const releaseTemporaryCodexHome = (threadId: ThreadId) =>
+    Ref.modify(temporaryCodexHomesRef, (existing) => {
+      const next = new Map(existing);
+      const removed = next.get(threadId);
+      next.delete(threadId);
+      return [removed?.cleanup, next] as const;
+    });
+
+  const releaseAllTemporaryCodexHomes = Ref.modify(temporaryCodexHomesRef, (existing) => [
+    [...existing.values()].map((entry) => entry.cleanup),
+    new Map<ThreadId, { cleanup: () => Promise<void> }>(),
+  ]);
+
   const manager = yield* Effect.acquireRelease(acquireManager(), (manager) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       try {
         manager.stopAll();
       } catch {
         // Finalizers should never fail and block shutdown.
       }
+      const cleanups = yield* releaseAllTemporaryCodexHomes;
+      yield* Effect.forEach(
+        cleanups,
+        (cleanup) => Effect.promise(cleanup).pipe(Effect.ignore({ log: false })),
+        { concurrency: "unbounded", discard: true },
+      );
     }),
   );
   const serverSettingsService = yield* ServerSettingsService;
@@ -1405,8 +1436,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         });
       }
 
-      const codexSettings = yield* serverSettingsService.getSettings.pipe(
-        Effect.map((settings) => settings.providers.codex),
+      const settings = yield* serverSettingsService.getSettings.pipe(
         Effect.mapError(
           (error) =>
             new ProviderAdapterProcessError({
@@ -1417,8 +1447,25 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }),
         ),
       );
+      const codexSettings = settings.providers.codex;
       const binaryPath = codexSettings.binaryPath;
-      const homePath = codexSettings.homePath;
+      const preparedHome = yield* Effect.tryPromise({
+        try: () =>
+          prepareCodexHomeWithManagedMcpServers({
+            threadId: String(input.threadId),
+            runtimeRootDir: serverConfig.stateDir,
+            homePath: codexSettings.homePath,
+            servers: settings.mcpServers.servers,
+          }),
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Failed to prepare the Codex MCP configuration."),
+            cause,
+          }),
+      });
+      const homePath = preparedHome?.homePath ?? codexSettings.homePath;
       const managerInput: CodexAppServerStartSessionInput = {
         threadId: input.threadId,
         provider: "codex",
@@ -1444,7 +1491,18 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             detail: toMessage(cause, "Failed to start Codex adapter session."),
             cause,
           }),
-      });
+      }).pipe(
+        Effect.tap(() =>
+          preparedHome
+            ? rememberTemporaryCodexHome(input.threadId, preparedHome.cleanup)
+            : Effect.void,
+        ),
+        Effect.tapError(() =>
+          preparedHome
+            ? Effect.promise(preparedHome.cleanup).pipe(Effect.ignore({ log: false }))
+            : Effect.void,
+        ),
+      );
     },
   );
 
@@ -1574,8 +1632,14 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     });
 
   const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
-    Effect.sync(() => {
-      manager.stopSession(threadId);
+    Effect.gen(function* () {
+      yield* Effect.sync(() => {
+        manager.stopSession(threadId);
+      });
+      const cleanup = yield* releaseTemporaryCodexHome(threadId);
+      if (cleanup) {
+        yield* Effect.promise(cleanup).pipe(Effect.ignore({ log: false }));
+      }
     });
 
   const readUsage: CodexAdapterShape["readUsage"] = Effect.fn("readUsage")(function* () {
@@ -1629,8 +1693,16 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.sync(() => manager.hasSession(threadId));
 
   const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.sync(() => {
-      manager.stopAll();
+    Effect.gen(function* () {
+      yield* Effect.sync(() => {
+        manager.stopAll();
+      });
+      const cleanups = yield* releaseAllTemporaryCodexHomes;
+      yield* Effect.forEach(
+        cleanups,
+        (cleanup) => Effect.promise(cleanup).pipe(Effect.ignore({ log: false })),
+        { concurrency: "unbounded", discard: true },
+      );
     });
 
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();

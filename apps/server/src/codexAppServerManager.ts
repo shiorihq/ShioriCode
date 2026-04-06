@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:chil
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 
 import {
   ApprovalRequestId,
@@ -990,8 +991,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.handleStdoutLine(context, line);
     });
 
+    // StringDecoder buffers incomplete multi-byte UTF-8 sequences across
+    // chunk boundaries, preventing replacement-character corruption.
+    const stderrDecoder = new StringDecoder("utf8");
     context.child.stderr.on("data", (chunk: Buffer) => {
-      const raw = chunk.toString();
+      const raw = stderrDecoder.write(chunk);
       const lines = raw.split(/\r?\n/g);
       for (const rawLine of lines) {
         const classified = classifyCodexStderrLine(rawLine);

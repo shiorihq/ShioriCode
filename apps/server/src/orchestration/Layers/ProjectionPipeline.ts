@@ -444,6 +444,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             branchSourceTurnId: event.payload.branchSourceTurnId ?? null,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            tag: event.payload.tag ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -499,6 +500,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            ...(event.payload.tag !== undefined ? { tag: event.payload.tag } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

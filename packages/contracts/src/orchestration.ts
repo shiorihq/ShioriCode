@@ -287,6 +287,12 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/** Max length for a user-defined thread tag label (sidebar). */
+export const THREAD_TAG_MAX_CHARS = 48 as const;
+
+export const ThreadTag = TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_TAG_MAX_CHARS));
+export type ThreadTag = typeof ThreadTag.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -300,6 +306,7 @@ export const OrchestrationThread = Schema.Struct({
   branchSourceTurnId: Schema.optionalKey(Schema.NullOr(TurnId)),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  tag: Schema.optional(Schema.NullOr(ThreadTag)).pipe(Schema.withDecodingDefault(() => null)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -363,6 +370,7 @@ const ThreadCreateCommand = Schema.Struct({
   seedMessages: Schema.optionalKey(Schema.Array(ThreadSeedMessage)),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  tag: Schema.optional(Schema.NullOr(ThreadTag)),
   createdAt: IsoDateTime,
 });
 
@@ -392,6 +400,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  tag: Schema.optional(Schema.NullOr(ThreadTag)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -679,6 +688,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   branchSourceTurnId: Schema.optionalKey(Schema.NullOr(TurnId)),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  tag: Schema.optional(Schema.NullOr(ThreadTag)).pipe(Schema.withDecodingDefault(() => null)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -705,6 +715,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  tag: Schema.optional(Schema.NullOr(ThreadTag)),
   updatedAt: IsoDateTime,
 });
 

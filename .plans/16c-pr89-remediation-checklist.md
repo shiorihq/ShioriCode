@@ -45,8 +45,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5whszW, PRRT_kwDORLtfbc5wyTaS, PRRT_kwDORLtfbc5wzli0, PRRT_kwDORLtfbc5w0_g4, PRRT_kwDORLtfbc5w1HGX (+4 duplicate thread(s))
   - Audit note: Revert completion dispatch remains forked; state consistency window remains.
 
-- [ ] `C019` ProviderRuntimeIngestion processes events for wrong thread on race
-  - Status: `TODO`
+- [x] `C019` ProviderRuntimeIngestion processes events for wrong thread on race
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Medium`
   - Area: `Runtime resilience and failure handling`
@@ -135,8 +135,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5v-WPD
   - Audit note: Still uses write+destroy rather than end() for rejection response.
 
-- [ ] `C054` When array chunks contain a multi-byte UTF-8 character split across boundaries, decoding each chunk separately produces replacement characters. Consider using `Buffer.concat()` on all chunks before calling `.toString("utf8")`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C054` When array chunks contain a multi-byte UTF-8 character split across boundaries, decoding each chunk separately produces replacement characters. Consider using `Buffer.concat()` on all chunks before calling `.toString("utf8")`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Low`
   - Area: `WebSocket robustness`
@@ -240,8 +240,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ### Phase 4
 
-- [ ] `C018` Unbounded memory growth in turn start deduplication set
-  - Status: `TODO`
+- [x] `C018` Unbounded memory growth in turn start deduplication set
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
   - Area: `Memory/resource growth`

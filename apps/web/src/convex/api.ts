@@ -33,6 +33,9 @@ export interface HostedViewer {
   image: string | null;
 }
 
+/** Normalized Shiori billing tier (see `~/Developer/shiori/convex/schema.ts` subscriptions.plan). */
+export type HostedSubscriptionPlanId = "free" | "plus" | "pro" | "max";
+
 export interface HostedSubscriptionSummary {
   plan: string;
 }

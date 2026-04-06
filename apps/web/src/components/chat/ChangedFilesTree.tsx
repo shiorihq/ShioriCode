@@ -67,6 +67,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           <button
             type="button"
             data-scroll-anchor-ignore
+            aria-expanded={isExpanded}
             className={cn(
               CHAT_THREAD_BODY_CLASS,
               "group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80",

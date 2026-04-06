@@ -12,7 +12,7 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.ts"],
     clean: true,
-    noExternal: (id) => id.startsWith(""),
+    noExternal: (id) => id !== "electron" && id.startsWith(""),
     inlineOnly: false,
   },
   {

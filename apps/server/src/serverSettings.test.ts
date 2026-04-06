@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_SERVER_SETTINGS, ServerSettingsPatch } from "contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  McpServerEntry,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Schema } from "effect";
 import { ServerConfig } from "./config";
@@ -256,6 +261,128 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("decodes MCP server entries in settings patch", () =>
+    Effect.sync(() => {
+      const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+
+      assert.deepEqual(
+        decodePatch({
+          mcpServers: {
+            servers: [
+              { name: "GitHub", transport: "stdio", command: "npx", args: ["-y", "mcp-github"] },
+            ],
+          },
+        }),
+        {
+          mcpServers: {
+            servers: [
+              {
+                name: "GitHub",
+                transport: "stdio",
+                command: "npx",
+                args: ["-y", "mcp-github"],
+                enabled: true,
+                providers: [],
+              },
+            ],
+          },
+        },
+      );
+    }),
+  );
+
+  it.effect("decodes MCP server entries for all transport types", () =>
+    Effect.sync(() => {
+      const decode = Schema.decodeUnknownSync(McpServerEntry);
+
+      // stdio
+      assert.deepEqual(decode({ name: "fs", transport: "stdio", command: "node" }), {
+        name: "fs",
+        transport: "stdio",
+        command: "node",
+        enabled: true,
+        providers: [],
+      });
+
+      // sse
+      assert.deepEqual(decode({ name: "remote", transport: "sse", url: "https://x.com/sse" }), {
+        name: "remote",
+        transport: "sse",
+        url: "https://x.com/sse",
+        enabled: true,
+        providers: [],
+      });
+
+      // http
+      assert.deepEqual(
+        decode({
+          name: "api",
+          transport: "http",
+          url: "https://api.example.com",
+          headers: { Authorization: "Bearer token" },
+          providers: ["claudeAgent"],
+        }),
+        {
+          name: "api",
+          transport: "http",
+          url: "https://api.example.com",
+          headers: { Authorization: "Bearer token" },
+          enabled: true,
+          providers: ["claudeAgent"],
+        },
+      );
+    }),
+  );
+
+  it.effect("backward-compatible when mcpServers is missing", () =>
+    Effect.sync(() => {
+      const settings = Schema.decodeUnknownSync(ServerSettings)({});
+      assert.deepEqual(settings.mcpServers, { servers: [] });
+    }),
+  );
+
+  it.effect("persists and round-trips MCP server settings", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        mcpServers: {
+          servers: [
+            {
+              name: "GitHub",
+              transport: "stdio",
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-github"],
+              enabled: true,
+              providers: [],
+            },
+            {
+              name: "API Server",
+              transport: "http",
+              url: "https://mcp.example.com",
+              enabled: false,
+              providers: ["claudeAgent"],
+            },
+          ],
+        },
+      });
+
+      const written = next.mcpServers.servers;
+      assert.equal(written.length, 2);
+      const [first, second] = written;
+      assert.ok(first !== undefined && second !== undefined);
+      assert.equal(first.name, "GitHub");
+      assert.equal(first.transport, "stdio");
+      assert.equal(second.name, "API Server");
+      assert.equal(second.enabled, false);
+      assert.deepEqual(second.providers, ["claudeAgent"]);
+
+      // Re-read to confirm round-trip
+      const reread = yield* serverSettings.getSettings;
+      assert.deepEqual(reread.mcpServers, next.mcpServers);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

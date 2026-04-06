@@ -30,6 +30,8 @@ vi.mock("../convex/HostedShioriProvider", () => ({
     isAuthenticated: true,
     isSubscriptionLoading: false,
     isPaidSubscriber: true,
+    subscriptionPlanId: "pro",
+    subscriptionPlanLabel: "Pro plan",
     authToken: null,
     viewer: null,
     catalogProviders: undefined,
@@ -79,6 +81,7 @@ function createBaseServerConfig(): ServerConfig {
       defaultThreadEnvMode: "local" as const,
       defaultModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
+      mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },

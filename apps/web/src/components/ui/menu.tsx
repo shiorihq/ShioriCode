@@ -2,20 +2,70 @@
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ChevronRightIcon } from "lucide-react";
-import { useCallback, useState, type RefCallback } from "react";
+import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-/** Track scroll position and return a mask-image style for top/bottom fades. */
-function useScrollFadeMask(enabled: boolean) {
-  const [scrolledFromTop, setScrolledFromTop] = useState(false);
-  const [canScrollDown, setCanScrollDown] = useState(false);
+/** Track scroll position and expose top/bottom fade visibility. */
+function useScrollFadeOverlays() {
+  const [topFadeStrength, setTopFadeStrength] = useState(0);
+  const [bottomFadeStrength, setBottomFadeStrength] = useState(0);
+  const targetTopRef = useRef(0);
+  const targetBottomRef = useRef(0);
+  const topRef = useRef(0);
+  const bottomRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
-  const update = useCallback((el: HTMLElement) => {
-    setScrolledFromTop(el.scrollTop > 2);
-    setCanScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+  const step = useCallback(() => {
+    const epsilon = 0.005;
+    const maxStepPerFrame = 0.045;
+    const topDelta = targetTopRef.current - topRef.current;
+    const bottomDelta = targetBottomRef.current - bottomRef.current;
+    const nextTop =
+      topRef.current + Math.sign(topDelta) * Math.min(Math.abs(topDelta), maxStepPerFrame);
+    const nextBottom =
+      bottomRef.current + Math.sign(bottomDelta) * Math.min(Math.abs(bottomDelta), maxStepPerFrame);
+
+    topRef.current = nextTop;
+    bottomRef.current = nextBottom;
+    setTopFadeStrength(nextTop);
+    setBottomFadeStrength(nextBottom);
+
+    if (
+      Math.abs(targetTopRef.current - nextTop) > epsilon ||
+      Math.abs(targetBottomRef.current - nextBottom) > epsilon
+    ) {
+      rafRef.current = requestAnimationFrame(step);
+      return;
+    }
+
+    // Snap to final values to avoid tiny tailing updates.
+    topRef.current = targetTopRef.current;
+    bottomRef.current = targetBottomRef.current;
+    setTopFadeStrength(targetTopRef.current);
+    setBottomFadeStrength(targetBottomRef.current);
+    rafRef.current = null;
   }, []);
+
+  const scheduleStep = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(step);
+  }, [step]);
+
+  const update = useCallback(
+    (el: HTMLElement) => {
+      const threshold = Math.max(120, Math.round(el.clientHeight * 0.35));
+      const distanceFromTop = el.scrollTop;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const toStrength = (distance: number) => Math.max(0, Math.min(1, distance / threshold));
+
+      targetTopRef.current = toStrength(distanceFromTop);
+      targetBottomRef.current = toStrength(distanceFromBottom);
+      scheduleStep();
+    },
+    [scheduleStep],
+  );
 
   const refCb: RefCallback<HTMLDivElement> = useCallback(
     (node) => {
@@ -29,15 +79,14 @@ function useScrollFadeMask(enabled: boolean) {
     [update],
   );
 
-  if (!enabled) return { ref: undefined, onScroll: undefined, style: undefined };
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    },
+    [],
+  );
 
-  const maskImage = `linear-gradient(to bottom, ${scrolledFromTop ? "transparent 0%, black 1.25rem" : "black 0%"}, ${canScrollDown ? "black calc(100% - 1.25rem), transparent 100%" : "black 100%"})`;
-
-  return {
-    ref: refCb,
-    onScroll,
-    style: scrolledFromTop || canScrollDown ? ({ maskImage } as React.CSSProperties) : undefined,
-  };
+  return { ref: refCb, onScroll, topFadeStrength, bottomFadeStrength };
 }
 
 const MenuCreateHandle = MenuPrimitive.createHandle;
@@ -72,7 +121,7 @@ function MenuPopup({
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
 }) {
-  const fade = useScrollFadeMask(!!scrollFade);
+  const fade = useScrollFadeOverlays();
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -93,13 +142,30 @@ function MenuPopup({
           {...props}
         >
           <div
-            ref={fade.ref}
+            ref={scrollFade ? fade.ref : undefined}
             className="max-h-(--available-height) w-full overflow-y-auto p-1"
-            onScroll={fade.onScroll}
-            style={fade.style}
+            onScroll={scrollFade ? fade.onScroll : undefined}
           >
             {children}
           </div>
+          {scrollFade ? (
+            <>
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute inset-x-0 top-0 h-5 rounded-t-[calc(var(--radius-lg)-1px)] bg-linear-to-b from-popover to-transparent will-change-opacity",
+                )}
+                style={{ opacity: fade.topFadeStrength }}
+              />
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute inset-x-0 bottom-0 h-5 rounded-b-[calc(var(--radius-lg)-1px)] bg-linear-to-t from-popover to-transparent will-change-opacity",
+                )}
+                style={{ opacity: fade.bottomFadeStrength }}
+              />
+            </>
+          ) : null}
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>

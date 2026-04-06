@@ -31,6 +31,8 @@ interface MutableDirectoryNode {
 }
 
 const SORT_LOCALE_OPTIONS: Intl.CollatorOptions = { numeric: true, sensitivity: "base" };
+const turnDiffTreeCache = new WeakMap<ReadonlyArray<TurnDiffFileChange>, TurnDiffTreeNode[]>();
+const turnDiffStatsCache = new WeakMap<ReadonlyArray<TurnDiffFileChange>, TurnDiffStat>();
 
 function normalizePathSegments(pathValue: string): string[] {
   return pathValue
@@ -97,7 +99,12 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
 }
 
 export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffStat {
-  return files.reduce(
+  const cached = turnDiffStatsCache.get(files);
+  if (cached) {
+    return cached;
+  }
+
+  const summary = files.reduce(
     (acc, file) => {
       const stat = readStat(file);
       if (!stat) return acc;
@@ -108,9 +115,16 @@ export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>)
     },
     { additions: 0, deletions: 0 },
   );
+  turnDiffStatsCache.set(files, summary);
+  return summary;
 }
 
 export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
+  const cached = turnDiffTreeCache.get(files);
+  if (cached) {
+    return cached;
+  }
+
   const root: MutableDirectoryNode = {
     name: "",
     path: "",
@@ -168,5 +182,7 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
     }
   }
 
-  return toTreeNodes(root);
+  const tree = toTreeNodes(root);
+  turnDiffTreeCache.set(files, tree);
+  return tree;
 }

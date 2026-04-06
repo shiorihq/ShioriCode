@@ -1,6 +1,7 @@
 import { type EditorId, type ResolvedKeybindingsConfig, type ThreadId } from "contracts";
 import { memo } from "react";
-import { ChevronDownIcon, DiffIcon, GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, DiffIcon, GitBranchIcon, WrenchIcon } from "lucide-react";
+import { APP_STAGE_LABEL } from "../../branding";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
@@ -83,6 +84,12 @@ export const ChatHeader = memo(function ChatHeader({
               >
                 {activeProjectPath}
               </span>
+              {APP_STAGE_LABEL ? (
+                <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/70">
+                  <WrenchIcon className="size-3" />
+                  <span>In construction</span>
+                </span>
+              ) : null}
             </>
           )}
         </div>

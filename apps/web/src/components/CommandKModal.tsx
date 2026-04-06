@@ -75,6 +75,7 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
   const { handleNewThread, activeThread, activeDraftThread, defaultProjectId } =
     useHandleNewThread();
   const appSettings = useSettings();
+  const requestProjectAdd = useUiStateStore((store) => store.requestProjectAdd);
   const projects = useStore((store) => store.projects);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
 
@@ -147,7 +148,7 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
           id: "new-thread",
           label: "New thread",
           icon: <SquarePenIcon className="size-4" />,
-          shortcutCommand: "chat.newLocal",
+          shortcutCommand: "chat.new",
           onSelect: () => {
             close();
             const projectId =
@@ -164,7 +165,11 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
           id: "open-folder",
           label: "Open folder",
           icon: <FolderOpenIcon className="size-4" />,
-          onSelect: close,
+          shortcutCommand: "project.add",
+          onSelect: () => {
+            close();
+            requestProjectAdd();
+          },
         },
         {
           id: "settings",
@@ -275,6 +280,7 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
     navigate,
     navigateAdjacentThread,
     navigateToThread,
+    requestProjectAdd,
     threads,
     toggleSidebar,
   ]);

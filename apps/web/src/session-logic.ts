@@ -39,6 +39,7 @@ export interface WorkLogEntry {
   createdAt: string;
   label: string;
   itemId?: string;
+  parentItemId?: string;
   detail?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
@@ -544,7 +545,28 @@ function isReasoningActivity(activity: OrchestrationThreadActivity): boolean {
 }
 
 function isReasoningProgressActivity(activity: OrchestrationThreadActivity): boolean {
-  return activity.kind === "task.progress" && activity.summary === "Reasoning update";
+  if (activity.kind !== "task.progress") {
+    return false;
+  }
+
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  if (payload?.displayAs === "reasoning") {
+    return true;
+  }
+
+  // Backward compatibility for older persisted Codex activities before
+  // `displayAs` was projected. Claude subagent task progress also used the
+  // generic "Reasoning update" summary, but those task ids do not match the
+  // canonical turn id.
+  return (
+    activity.summary === "Reasoning update" &&
+    typeof payload?.taskId === "string" &&
+    activity.turnId !== null &&
+    payload.taskId === activity.turnId
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -578,6 +600,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const itemId = asTrimmedString(payload?.itemId);
   if (itemId) {
     entry.itemId = itemId;
+  }
+  const parentItemId = asTrimmedString(payload?.parentItemId);
+  if (parentItemId) {
+    entry.parentItemId = parentItemId;
   }
   if (lifecycleStatus) {
     entry.lifecycleStatus = lifecycleStatus;
@@ -619,13 +645,56 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  const openLifecycleIndexByItemId = new Map<string, number>();
   for (const entry of entries) {
+    if (entry.itemId) {
+      const openIndex = openLifecycleIndexByItemId.get(entry.itemId);
+      if (openIndex !== undefined) {
+        const previous = collapsed[openIndex];
+        if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
+          const merged = mergeDerivedWorkLogEntries(previous, entry);
+          collapsed[openIndex] = merged;
+          if (
+            merged.activityKind === "tool.completed" ||
+            merged.lifecycleStatus === "completed" ||
+            merged.lifecycleStatus === "failed" ||
+            merged.lifecycleStatus === "declined"
+          ) {
+            openLifecycleIndexByItemId.delete(entry.itemId);
+          }
+          continue;
+        }
+      }
+    }
+
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+      const merged = collapsed[collapsed.length - 1]!;
+      if (merged.itemId) {
+        if (
+          merged.activityKind === "tool.completed" ||
+          merged.lifecycleStatus === "completed" ||
+          merged.lifecycleStatus === "failed" ||
+          merged.lifecycleStatus === "declined"
+        ) {
+          openLifecycleIndexByItemId.delete(merged.itemId);
+        } else {
+          openLifecycleIndexByItemId.set(merged.itemId, collapsed.length - 1);
+        }
+      }
       continue;
     }
     collapsed.push(entry);
+    if (
+      entry.itemId &&
+      entry.activityKind !== "tool.completed" &&
+      entry.lifecycleStatus !== "completed" &&
+      entry.lifecycleStatus !== "failed" &&
+      entry.lifecycleStatus !== "declined"
+    ) {
+      openLifecycleIndexByItemId.set(entry.itemId, collapsed.length - 1);
+    }
   }
   return collapsed;
 }
@@ -659,6 +728,7 @@ function mergeDerivedWorkLogEntries(
   const command = next.command ?? previous.command;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
+  const parentItemId = next.parentItemId ?? previous.parentItemId;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const lifecycleStatus = next.lifecycleStatus ?? previous.lifecycleStatus;
@@ -671,6 +741,7 @@ function mergeDerivedWorkLogEntries(
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
+    ...(parentItemId ? { parentItemId } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(lifecycleStatus ? { lifecycleStatus } : {}),
@@ -704,14 +775,20 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   const normalizedCommand = normalizeCommandValue(entry.command ?? entry.detail) ?? "";
   const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";
+  const parentItemId = entry.parentItemId ?? "";
   const lifecycleIdentity =
     entry.itemType === "command_execution" || entry.requestKind === "command"
       ? normalizedCommand || detail
       : detail;
-  if (normalizedLabel.length === 0 && lifecycleIdentity.length === 0 && itemType.length === 0) {
+  if (
+    normalizedLabel.length === 0 &&
+    lifecycleIdentity.length === 0 &&
+    itemType.length === 0 &&
+    parentItemId.length === 0
+  ) {
     return undefined;
   }
-  return [itemType, normalizedLabel, lifecycleIdentity].join("\u001f");
+  return [parentItemId, itemType, normalizedLabel, lifecycleIdentity].join("\u001f");
 }
 
 function normalizeCompactToolLabel(value: string): string {
@@ -996,8 +1073,11 @@ export function deriveReasoningEntries(
 
   for (const activity of ordered) {
     const reasoningProgress = isReasoningProgressActivity(activity);
+    const taskId = getReasoningTaskId(activity);
     const reasoningTaskCompleted =
-      activity.kind === "task.completed" && getReasoningTaskId(activity) !== null;
+      activity.kind === "task.completed" &&
+      taskId !== null &&
+      entriesById.has(`reasoning-task:${taskId}`);
 
     if (!isReasoningActivity(activity) && !reasoningProgress && !reasoningTaskCompleted) {
       continue;
@@ -1008,7 +1088,6 @@ export function deriveReasoningEntries(
         ? (activity.payload as Record<string, unknown>)
         : null;
     const itemId = getReasoningActivityItemId(activity);
-    const taskId = getReasoningTaskId(activity);
     const entryId =
       itemId !== null
         ? `reasoning:${itemId}`

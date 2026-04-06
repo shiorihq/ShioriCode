@@ -29,6 +29,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branchSourceTurnId: null,
     branch: null,
     worktreePath: null,
+    tag: null,
     ...overrides,
   };
 }

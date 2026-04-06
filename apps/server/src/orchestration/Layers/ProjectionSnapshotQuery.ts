@@ -199,6 +199,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           branch_source_turn_id AS "branchSourceTurnId",
           branch,
           worktree_path AS "worktreePath",
+          tag,
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

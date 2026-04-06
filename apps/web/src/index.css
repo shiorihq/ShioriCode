@@ -132,7 +132,16 @@ body {
   min-height: 100vh;
 }
 
-/* Translucent sidebar — make inner bg transparent so native vibrancy shows */
+/* Translucent sidebar — strip opaque backgrounds so native vibrancy shows through */
+:root[data-sidebar-translucent],
+:root[data-sidebar-translucent] body {
+  background-color: transparent !important;
+}
+
+[data-translucent] [data-slot="sidebar-container"] {
+  background-color: transparent !important;
+}
+
 [data-translucent] [data-slot="sidebar-inner"] {
   background-color: transparent !important;
 }
@@ -158,6 +167,11 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 256px 256px;
+}
+
+/* Hide noise overlay over the sidebar area so vibrancy is unobstructed */
+:root[data-sidebar-translucent] body::after {
+  display: none;
 }
 
 pre,
@@ -238,6 +252,15 @@ textarea {
   left: 0 !important;
 }
 
+/* ── Messages timeline: enforce one font-size for everything ──────── */
+[data-timeline-root] {
+  font-size: 0.875rem; /* text-sm – the canonical chat body size */
+}
+
+[data-timeline-root] * {
+  font-size: inherit;
+}
+
 /* Chat markdown rendering */
 .chat-markdown {
   min-width: 0;
@@ -316,7 +339,6 @@ textarea {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
 }
 
 .chat-markdown pre {
@@ -333,7 +355,6 @@ textarea {
   background: transparent;
   padding: 0;
   line-height: 1.5;
-  font-size: 0.875rem;
 }
 
 .chat-markdown .chat-markdown-codeblock {
@@ -384,14 +405,43 @@ textarea {
 
 .chat-markdown table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  overflow: hidden;
 }
 
-.chat-markdown th,
-.chat-markdown td {
-  border: 1px solid var(--border);
-  padding: 0.35rem 0.45rem;
+.chat-markdown th {
+  padding: 0.5rem 0.75rem;
   text-align: left;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-markdown th:not(:last-child) {
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.chat-markdown td {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.chat-markdown td:not(:last-child) {
+  border-right: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+}
+
+.chat-markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.chat-markdown tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
@@ -546,4 +596,40 @@ textarea {
   background: oklch(0.25 0.08 200 / 16%);
   animation: auth-drift 32s ease-in-out infinite;
   animation-delay: -12s;
+}
+
+/* ── Empty thread ambient (cursor-reveal grid) ── */
+
+.empty-thread-ambient {
+  z-index: 0;
+  isolation: isolate;
+}
+
+.ambient-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--foreground) 4%, transparent) 0 1px,
+      transparent 1px 60px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--foreground) 4%, transparent) 0 1px,
+      transparent 1px 60px
+    );
+  mask-image: radial-gradient(
+    circle 200px at var(--mx, -999px) var(--my, -999px),
+    white,
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-thread-ambient {
+    display: none;
+  }
 }

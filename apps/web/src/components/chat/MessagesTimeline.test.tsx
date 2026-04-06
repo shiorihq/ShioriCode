@@ -1,4 +1,4 @@
-import { MessageId } from "contracts";
+import { MessageId, TurnId } from "contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -77,7 +77,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -122,7 +121,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -166,7 +164,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -219,7 +216,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{ "entry-command-output": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -270,7 +266,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -331,7 +326,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-04-05T11:33:10.000Z"
         expandedWorkGroups={{ "entry-command-execution-payload": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -356,6 +350,183 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Copy command");
     expect(markup).not.toContain("&quot;commandActions&quot;");
     expect(markup).not.toContain("&quot;processId&quot;");
+  });
+
+  it("renders Skill tool calls as a structured workflow card instead of raw JSON", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-skill-tool",
+            kind: "work",
+            createdAt: "2026-04-06T15:28:01.000Z",
+            entry: {
+              id: "work-skill-tool",
+              createdAt: "2026-04-06T15:28:01.000Z",
+              label: "Tool call Skill",
+              detail: 'Skill: {"skill":"dogfood"}',
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              output: {
+                toolName: "Skill",
+                input: {
+                  skill: "dogfood",
+                },
+                result: {
+                  type: "tool_result",
+                  tool_use_id: "tool_abc123",
+                  content: 'Launching skill: "dogfood"',
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "entry-skill-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Skill workflow");
+    expect(markup).toContain("dogfood");
+    expect(markup).toContain("tool_abc123");
+    expect(markup).not.toContain("&quot;skill&quot;");
+  });
+
+  it("renders delegated agent tool calls as a structured workflow card instead of raw JSON", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-agent-tool",
+            kind: "work",
+            createdAt: "2026-04-06T15:28:01.000Z",
+            entry: {
+              id: "work-agent-tool",
+              createdAt: "2026-04-06T15:28:01.000Z",
+              label: "Subagent task",
+              detail:
+                'Agent: {"description":"Find UI bugs in layouts/pages","prompt":"Explore the app","subagent_type":"explore","run_in_background":true}',
+              tone: "tool",
+              itemType: "collab_agent_tool_call",
+              output: {
+                toolName: "Agent",
+                input: {
+                  description: "Find UI bugs in layouts/pages",
+                  prompt: "Explore the app",
+                  subagent_type: "explore",
+                  run_in_background: true,
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "entry-agent-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Delegated agent");
+    expect(markup).toContain("Find UI bugs in layouts/pages");
+    expect(markup).toContain("Explore the app");
+    expect(markup).toContain("Background");
+    expect(markup).not.toContain("&quot;subagent_type&quot;");
+  });
+
+  it("renders Claude Write tool calls with a diff preview and error message", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-write-tool",
+            kind: "work",
+            createdAt: "2026-04-06T16:02:01.000Z",
+            entry: {
+              id: "work-write-tool",
+              createdAt: "2026-04-06T16:02:01.000Z",
+              label: "Tool call Write",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              output: {
+                toolName: "Write",
+                input: {
+                  file_path: "/Users/choki/Developer/shiori/dogfood-output/report.md",
+                  content: "# Dogfood Report: Shiori\n\n## Summary\n",
+                },
+                result: {
+                  type: "tool_result",
+                  content:
+                    "<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>",
+                  is_error: true,
+                  tool_use_id: "toolu_0119tkSUYTv6EoNcpy9vzYco",
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "entry-write-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Wrote");
+    expect(markup).toContain("/Users/choki/Developer/shiori/dogfood-output/report.md");
+    expect(markup).toContain("Dogfood Report: Shiori");
+    expect(markup).toContain("File has not been read yet. Read it first before writing to it.");
+    expect(markup).not.toContain("&quot;toolName&quot;");
   });
 
   it("renders read details in monospace within work log rows", async () => {
@@ -387,7 +558,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -440,7 +610,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{ "entry-read-file-output": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -488,7 +657,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -578,7 +746,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{ "entry-1": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -644,7 +811,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -705,7 +871,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -765,7 +930,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -819,7 +983,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -882,7 +1045,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -929,7 +1091,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -968,7 +1129,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -986,7 +1146,6 @@ describe("MessagesTimeline", () => {
     expect(streamingMarkup).toContain("Thinking");
     expect(streamingMarkup).toContain("<strong>Inspecting project details</strong>");
     expect(completedMarkup).toContain("Thought");
-    expect(completedMarkup).toContain("<strong>Inspecting project details</strong>");
     expect(completedMarkup).not.toContain("bg-muted/20");
   });
 
@@ -1017,7 +1176,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1035,5 +1193,64 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Thought");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain('disabled=""');
+  });
+
+  it("hides assistant footer actions for an in-progress active turn until the whole response finishes", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        activeTurnId={TurnId.makeUnsafe("turn-active")}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "user-active",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            message: {
+              id: MessageId.makeUnsafe("user-active"),
+              role: "user",
+              text: "",
+              turnId: null,
+              createdAt: "2026-03-17T19:12:27.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "assistant-active",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-active"),
+              role: "assistant",
+              text: "Dev server is running. Let me keep exploring.",
+              turnId: TurnId.makeUnsafe("turn-active"),
+              createdAt: "2026-03-17T19:12:28.000Z",
+              completedAt: "2026-03-17T19:12:55.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain("Copy message");
   });
 });

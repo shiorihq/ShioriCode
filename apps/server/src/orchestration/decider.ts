@@ -199,6 +199,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           branchSourceTurnId,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          tag: command.tag ?? null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -326,6 +327,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.tag !== undefined ? { tag: command.tag } : {}),
           updatedAt: occurredAt,
         },
       };

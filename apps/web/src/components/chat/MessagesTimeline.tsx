@@ -1,5 +1,6 @@
 import { type MessageId, type TurnId } from "contracts";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -38,6 +39,7 @@ import {
   formatWorkEntry,
   getDisplayedWorkEntries,
   type MessagesTimelineRow,
+  type WorkTimelineRow,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
@@ -57,18 +59,19 @@ import {
 const DEFAULT_CHANGED_FILES_DIRS_EXPANDED = false;
 const COLLAPSED_WORK_OUTPUT_LINE_THRESHOLD = 10;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
+const MIN_ROWS_FOR_VIRTUALIZATION = 120;
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  activeTurnId?: TurnId | null;
   scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
-  nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -98,12 +101,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
+  activeTurnId = null,
   scrollContainer,
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
-  nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
@@ -194,10 +197,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
   }, [activeTurnInProgress, activeTurnStartedAt, rows]);
 
-  const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
-    minimum: 0,
-    maximum: rows.length,
-  });
+  const shouldVirtualizeRows = rows.length >= MIN_ROWS_FOR_VIRTUALIZATION;
+  const virtualizedRowCount = shouldVirtualizeRows
+    ? clamp(firstUnvirtualizedRowIndex, {
+        minimum: 0,
+        maximum: rows.length,
+      })
+    : 0;
   const virtualMeasurementScopeKey =
     timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
   const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
@@ -324,7 +330,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         if (currentTurnStart === null) {
           currentTurnStart = row.durationStart;
         }
-        lastAssistantInTurn = row.message.id;
+        if (
+          activeTurnInProgress &&
+          activeTurnId !== null &&
+          row.message.turnId !== undefined &&
+          row.message.turnId === activeTurnId
+        ) {
+          lastAssistantInTurn = null;
+        } else {
+          lastAssistantInTurn = row.message.id;
+        }
       }
     }
 
@@ -333,7 +348,119 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return result;
-  }, [rows]);
+  }, [activeTurnId, activeTurnInProgress, rows]);
+
+  const renderWorkRow = (row: WorkTimelineRow, depth = 0): ReactNode => {
+    const groupId = row.id;
+    const entries = row.groupedEntries;
+    const hasChildren = row.childRows.length > 0;
+    const wrapperClassName = depth > 0 ? "ml-4 border-l border-border/40 pl-3" : "";
+
+    if (hasChildren) {
+      const parentEntry = entries[0]!;
+      const isExpanded = expandedWorkGroups[groupId] ?? false;
+      const formattedEntry = formatWorkEntry(parentEntry);
+      const summary = formattedEntry.detail
+        ? `${formattedEntry.action} ${formattedEntry.detail}`
+        : formattedEntry.action;
+      const isInProgress =
+        entries.some((entry) => entry.running) ||
+        row.childRows.some(
+          (childRow) =>
+            childRow.groupedEntries.some((entry) => entry.running) || childRow.stickyInProgress,
+        ) ||
+        row.stickyInProgress;
+      const groupItemsId = `work-group-items-${groupId}`;
+
+      return (
+        <div className={wrapperClassName}>
+          <div>
+            <button
+              type="button"
+              aria-controls={groupItemsId}
+              aria-expanded={isExpanded}
+              className={cn(
+                CHAT_THREAD_BODY_CLASS,
+                "flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-foreground/80 transition-colors duration-150 hover:text-foreground/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+              )}
+              onClick={() => {
+                onToggleWorkGroup(groupId);
+                scheduleTimelineMeasure();
+              }}
+            >
+              <ChevronDownIcon
+                className={cn(
+                  "size-3 shrink-0 transition-transform duration-150",
+                  !isExpanded && "-rotate-90",
+                )}
+              />
+              <span className={cn(isInProgress && "shimmer shimmer-spread-200")}>{summary}</span>
+            </button>
+            <AnimatedExpandPanel open={isExpanded}>
+              <div id={groupItemsId} className="mt-1 space-y-1">
+                {row.childRows.map((childRow) => (
+                  <div key={`nested-work-row:${childRow.id}`}>
+                    {renderWorkRow(childRow, depth + 1)}
+                  </div>
+                ))}
+              </div>
+            </AnimatedExpandPanel>
+          </div>
+        </div>
+      );
+    }
+
+    if (entries.length === 1) {
+      const singleEntry = entries[0]!;
+      if (isStatusUpdateEntry(singleEntry)) {
+        return (
+          <div className={wrapperClassName}>
+            <StatusUpdateEntry workEntry={singleEntry} markdownCwd={markdownCwd} />
+          </div>
+        );
+      }
+      if (!singleEntry.running) {
+        const isExpanded = expandedWorkGroups[groupId] ?? false;
+        return (
+          <div className={wrapperClassName}>
+            <ExpandableWorkEntry
+              workEntry={singleEntry}
+              isExpanded={isExpanded}
+              onToggle={() => onToggleWorkGroup(groupId)}
+              onHeightChange={scheduleTimelineMeasure}
+            />
+          </div>
+        );
+      }
+      return (
+        <div className={wrapperClassName}>
+          <MinimalWorkEntry workEntry={singleEntry} indented={false} />
+        </div>
+      );
+    }
+
+    const isExpanded = expandedWorkGroups[groupId] ?? false;
+    const isInProgress = entries.some((e) => e.running) || row.stickyInProgress;
+    const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
+    const groupItemsId = `work-group-items-${groupId}`;
+
+    return (
+      <div className={wrapperClassName}>
+        <GroupedWorkEntries
+          entries={entries}
+          groupItemsId={groupItemsId}
+          isExpanded={isExpanded}
+          isInProgress={isInProgress}
+          summary={summary}
+          onHeightChange={scheduleTimelineMeasure}
+          onToggleGroup={() => {
+            onToggleWorkGroup(groupId);
+            scheduleTimelineMeasure();
+          }}
+        />
+      </div>
+    );
+  };
 
   const renderRowContent = (row: TimelineRow) => (
     <div
@@ -343,62 +470,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" &&
-        (() => {
-          const groupId = row.id;
-          const entries = row.groupedEntries;
-
-          if (entries.length === 1) {
-            const singleEntry = entries[0]!;
-            if (isStatusUpdateEntry(singleEntry)) {
-              return (
-                <AnimatedWorkGroupShell>
-                  <StatusUpdateEntry workEntry={singleEntry} markdownCwd={markdownCwd} />
-                </AnimatedWorkGroupShell>
-              );
-            }
-            if (!singleEntry.running) {
-              const isExpanded = expandedWorkGroups[groupId] ?? false;
-              return (
-                <AnimatedWorkGroupShell>
-                  <ExpandableWorkEntry
-                    workEntry={singleEntry}
-                    isExpanded={isExpanded}
-                    onToggle={() => onToggleWorkGroup(groupId)}
-                    onHeightChange={scheduleTimelineMeasure}
-                  />
-                </AnimatedWorkGroupShell>
-              );
-            }
-            return (
-              <AnimatedWorkGroupShell>
-                <MinimalWorkEntry workEntry={entries[0]!} indented={false} />
-              </AnimatedWorkGroupShell>
-            );
-          }
-
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const isInProgress = entries.some((e) => e.running) || row.stickyInProgress;
-          const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
-          const groupItemsId = `work-group-items-${groupId}`;
-
-          return (
-            <AnimatedWorkGroupShell>
-              <GroupedWorkEntries
-                entries={entries}
-                groupItemsId={groupItemsId}
-                isExpanded={isExpanded}
-                isInProgress={isInProgress}
-                summary={summary}
-                onHeightChange={scheduleTimelineMeasure}
-                onToggleGroup={() => {
-                  onToggleWorkGroup(groupId);
-                  scheduleTimelineMeasure();
-                }}
-              />
-            </AnimatedWorkGroupShell>
-          );
-        })()}
+      {row.kind === "work" && <AnimatedWorkGroupShell>{renderWorkRow(row)}</AnimatedWorkGroupShell>}
 
       {row.kind === "message" &&
         row.message.role === "user" &&
@@ -408,7 +480,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="group rounded-2xl border border-border/60 bg-secondary/80 px-4 py-3">
+            <div className="group rounded-2xl border border-border/60 bg-secondary/80 px-4 py-3 shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   {userImages.length > 0 && (
@@ -540,7 +612,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             variant="ghost"
                             className={cn(
                               CHAT_THREAD_BODY_CLASS,
-                              "h-auto min-h-0 shrink-0 px-1.5 py-0.5 text-foreground/75 hover:text-foreground/90 sm:text-sm sm:leading-relaxed",
+                              "h-auto min-h-0 shrink-0 px-1.5 py-0.5 text-foreground/75 hover:text-foreground/90",
                             )}
                             data-scroll-anchor-ignore
                             onClick={() => onToggleAllDirectories(turnSummary.turnId)}
@@ -553,7 +625,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             variant="ghost"
                             className={cn(
                               CHAT_THREAD_BODY_CLASS,
-                              "h-auto min-h-0 shrink-0 px-1.5 py-0.5 text-foreground/75 hover:text-foreground/90 sm:text-sm sm:leading-relaxed",
+                              "h-auto min-h-0 shrink-0 px-1.5 py-0.5 text-foreground/75 hover:text-foreground/90",
                             )}
                             onClick={() =>
                               onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
@@ -583,15 +655,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       {!row.message.streaming && messageText && (
                         <MessageCopyButton text={messageText} />
                       )}
-                      <p className={cn(CHAT_THREAD_BODY_CLASS, "text-foreground/55")}>
-                        {formatMessageMeta(
-                          row.message.createdAt,
-                          row.message.streaming
-                            ? formatElapsed(turnStart, nowIso)
-                            : formatElapsed(turnStart, row.message.completedAt),
-                          timestampFormat,
-                        )}
-                      </p>
+                      <AssistantMessageMeta
+                        createdAt={row.message.createdAt}
+                        durationStart={turnStart}
+                        completedAt={row.message.completedAt}
+                        streaming={Boolean(row.message.streaming)}
+                        timestampFormat={timestampFormat}
+                      />
                     </div>
                   );
                 })()}
@@ -620,13 +690,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       {row.kind === "working" && (
         <div className="py-0.5 pl-1">
-          <p
-            className={cn(CHAT_THREAD_BODY_CLASS, "shimmer shimmer-spread-200 text-foreground/70")}
-          >
-            {row.createdAt
-              ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-              : "Working..."}
-          </p>
+          <WorkingIndicator createdAt={row.createdAt} />
         </div>
       )}
     </div>
@@ -697,18 +761,17 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
   const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
   if (elapsedSeconds < 60) {
-    return `${elapsedSeconds}s`;
+    return null;
   }
 
   const hours = Math.floor(elapsedSeconds / 3600);
   const minutes = Math.floor((elapsedSeconds % 3600) / 60);
-  const seconds = elapsedSeconds % 60;
 
   if (hours > 0) {
-    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    return `Working for ${minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`}`;
   }
 
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  return `Working for ${minutes}m`;
 }
 
 function formatMessageMeta(
@@ -719,6 +782,63 @@ function formatMessageMeta(
   if (!duration) return formatTimestamp(createdAt, timestampFormat);
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
+
+function useLiveNowIso(active: boolean): string {
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+
+    setNowTick(Date.now());
+    const timer = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [active]);
+
+  return useMemo(() => new Date(nowTick).toISOString(), [nowTick]);
+}
+
+const AssistantMessageMeta = memo(function AssistantMessageMeta(props: {
+  createdAt: string;
+  durationStart: string;
+  completedAt: string | undefined;
+  streaming: boolean;
+  timestampFormat: TimestampFormat;
+}) {
+  const nowIso = useLiveNowIso(props.streaming);
+  const duration = useMemo(
+    () =>
+      props.streaming
+        ? formatElapsed(props.durationStart, nowIso)
+        : formatElapsed(props.durationStart, props.completedAt),
+    [nowIso, props.completedAt, props.durationStart, props.streaming],
+  );
+
+  return (
+    <p className={cn(CHAT_THREAD_BODY_CLASS, "text-foreground/55")}>
+      {formatMessageMeta(props.createdAt, duration, props.timestampFormat)}
+    </p>
+  );
+});
+
+const WorkingIndicator = memo(function WorkingIndicator(props: { createdAt: string | null }) {
+  const nowIso = useLiveNowIso(props.createdAt !== null);
+  const label = props.createdAt
+    ? (formatWorkingTimer(props.createdAt, nowIso) ?? "Working")
+    : "Working";
+
+  return (
+    <p className={cn(CHAT_THREAD_BODY_CLASS, "shimmer shimmer-spread-200 text-foreground/70")}>
+      {label}
+    </p>
+  );
+});
 
 const UserMessageTerminalContextInlineLabel = memo(
   function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
@@ -842,22 +962,19 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
   onHeightChange?: () => void;
 }) {
   const { reasoning, markdownCwd, onHeightChange } = props;
-  const [isExpanded, setIsExpanded] = useState(
-    reasoning.streaming || reasoning.text.trim().length > 0,
-  );
+  const [isExpanded, setIsExpanded] = useState(reasoning.streaming);
   const hasContent = reasoning.text.trim().length > 0;
   const placeholderText = reasoning.streaming
     ? "Reasoning is in progress. Details may remain hidden for this provider."
     : "No visible reasoning details were provided for this step.";
 
   useEffect(() => {
-    if (!hasContent && !reasoning.streaming) {
-      setIsExpanded(false);
-    }
     if (reasoning.streaming) {
       setIsExpanded(true);
+    } else {
+      setIsExpanded(false);
     }
-  }, [hasContent, reasoning.streaming]);
+  }, [reasoning.streaming]);
 
   useLayoutEffect(() => {
     onHeightChange?.();
@@ -1062,6 +1179,47 @@ interface CommandExecutionOutputSummary {
   actions: ReadonlyArray<CommandExecutionActionSummary>;
 }
 
+interface WorkflowToolSummaryField {
+  label: string;
+  value: string;
+  monospace?: boolean;
+}
+
+interface WorkflowToolSummary {
+  kind: "skill" | "subagent";
+  title: string;
+  summary: string | null;
+  fields: ReadonlyArray<WorkflowToolSummaryField>;
+}
+
+function normalizeToolResultErrorText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value
+    .replace(/<tool_use_error>/gi, "")
+    .replace(/<\/tool_use_error>/gi, "")
+    .trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractToolErrorText(output: unknown): string | null {
+  const record = asObject(output);
+  if (!record) {
+    return null;
+  }
+
+  const result = asObject(record.result) ?? asObject(asObject(record.item)?.result);
+  if (!result) {
+    return null;
+  }
+
+  if (result.is_error === true) {
+    return normalizeToolResultErrorText(asNonEmptyString(result.content));
+  }
+  return null;
+}
+
 function extractCommandExecutionSummary(output: unknown): CommandExecutionOutputSummary | null {
   const record = asObject(output);
   if (!record) {
@@ -1126,6 +1284,86 @@ function extractCommandExecutionSummary(output: unknown): CommandExecutionOutput
   };
 }
 
+function extractWorkflowToolSummary(output: unknown): WorkflowToolSummary | null {
+  const record = asObject(output);
+  if (!record) {
+    return null;
+  }
+
+  const item = asObject(record.item);
+  const toolNameRaw =
+    asNonEmptyString(record.toolName) ??
+    asNonEmptyString(item?.toolName) ??
+    asNonEmptyString(item?.name) ??
+    asNonEmptyString(record.name);
+  const toolName = toolNameRaw?.trim().toLowerCase() ?? null;
+  const input = asObject(record.input) ?? asObject(item?.input);
+  const result = asObject(record.result) ?? asObject(item?.result);
+
+  if (toolName === "skill") {
+    const skillName =
+      asNonEmptyString(input?.skill) ??
+      asNonEmptyString(input?.skillName) ??
+      asNonEmptyString(result?.tool_use_id);
+    const launchSummary =
+      asNonEmptyString(result?.content) ?? asNonEmptyString(result?.type) ?? null;
+    const fields: WorkflowToolSummaryField[] = [];
+    if (skillName) {
+      fields.push({ label: "Skill", value: skillName });
+    }
+    if (asNonEmptyString(result?.type)) {
+      fields.push({ label: "Result type", value: asNonEmptyString(result?.type)! });
+    }
+    if (asNonEmptyString(result?.tool_use_id)) {
+      fields.push({
+        label: "Tool use",
+        value: asNonEmptyString(result?.tool_use_id)!,
+        monospace: true,
+      });
+    }
+    return {
+      kind: "skill",
+      title: "Skill workflow",
+      summary: launchSummary,
+      fields,
+    };
+  }
+
+  const subagentType =
+    asNonEmptyString(input?.subagent_type) ??
+    asNonEmptyString(input?.subagentType) ??
+    asNonEmptyString(input?.agent_type) ??
+    asNonEmptyString(input?.agentType);
+  if (toolName === "agent" || toolName === "task" || subagentType) {
+    const description =
+      asNonEmptyString(input?.description) ??
+      asNonEmptyString(input?.task) ??
+      asNonEmptyString(input?.name);
+    const prompt = asNonEmptyString(input?.prompt);
+    const fields: WorkflowToolSummaryField[] = [];
+    if (subagentType) {
+      fields.push({ label: "Agent type", value: subagentType });
+    }
+    if (description) {
+      fields.push({ label: "Task", value: description });
+    }
+    if (prompt) {
+      fields.push({ label: "Prompt", value: prompt });
+    }
+    if (input?.run_in_background === true) {
+      fields.push({ label: "Mode", value: "Background" });
+    }
+    return {
+      kind: "subagent",
+      title: "Delegated agent",
+      summary: description ?? subagentType ?? null,
+      fields,
+    };
+  }
+
+  return null;
+}
+
 function formatToolOutput(output: unknown): string | null {
   if (output == null) return null;
   if (typeof output === "string") return output || null;
@@ -1185,6 +1423,11 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
     () => extractCommandExecutionSummary(workEntry.output),
     [workEntry.output],
   );
+  const workflowToolSummary = useMemo(
+    () => extractWorkflowToolSummary(workEntry.output),
+    [workEntry.output],
+  );
+  const toolErrorText = useMemo(() => extractToolErrorText(workEntry.output), [workEntry.output]);
   const detailUsesMono = formattedEntry.monospace;
   const outputText = formatToolOutput(workEntry.output);
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
@@ -1241,7 +1484,7 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
             />
           )}
           {parsedDiff && hasNonZeroStat(parsedDiff) && (
-            <span className="ml-1 text-xs tabular-nums">
+            <span className={cn(CHAT_THREAD_BODY_CLASS, "ml-1 tabular-nums")}>
               <DiffStatLabel additions={parsedDiff.additions} deletions={parsedDiff.deletions} />
             </span>
           )}
@@ -1250,9 +1493,46 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
 
       <AnimatedExpandPanel open={isExpanded}>
         <div id={expandedContentId}>
+          {workflowToolSummary && (
+            <div className="mt-1 space-y-2 pl-4">
+              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                <p className={cn(CHAT_THREAD_BODY_CLASS, "font-medium text-foreground/75")}>
+                  {workflowToolSummary.title}
+                </p>
+                {workflowToolSummary.summary && (
+                  <p className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 text-foreground/85")}>
+                    {workflowToolSummary.summary}
+                  </p>
+                )}
+                {workflowToolSummary.fields.length > 0 && (
+                  <dl
+                    className={cn(
+                      CHAT_THREAD_BODY_CLASS,
+                      "mt-2 grid gap-1 text-foreground/65 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-x-3",
+                    )}
+                  >
+                    {workflowToolSummary.fields.map((field) => (
+                      <Fragment key={`${field.label}:${field.value}`}>
+                        <dt className="font-medium text-foreground/55">{field.label}</dt>
+                        <dd className={cn(field.monospace && "font-mono", "text-foreground/75")}>
+                          {field.value}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+
           {commandExecutionSummary && (
             <div className="mt-1 space-y-2 pl-4">
-              <dl className="grid gap-1 text-xs text-foreground/65 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-x-3">
+              <dl
+                className={cn(
+                  CHAT_THREAD_BODY_CLASS,
+                  "grid gap-1 text-foreground/65 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-x-3",
+                )}
+              >
                 {commandExecutionSummary.command && (
                   <>
                     <dt className="font-medium text-foreground/55">Command</dt>
@@ -1293,7 +1573,10 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
                   {commandExecutionSummary.actions.map((commandAction) => (
                     <span
                       key={`${commandAction.label}:${commandAction.detail ?? ""}`}
-                      className="rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-foreground/60"
+                      className={cn(
+                        CHAT_THREAD_BODY_CLASS,
+                        "rounded-full border border-border/70 px-2 py-0.5 text-foreground/60",
+                      )}
                       title={commandAction.detail ?? undefined}
                     >
                       {commandAction.label}
@@ -1311,12 +1594,25 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
             </div>
           )}
 
-          {!parsedDiff && commandExecutionSummary?.stdout && (
+          {toolErrorText && (
+            <div className="mt-1 pl-4">
+              <p
+                className={cn(
+                  CHAT_THREAD_BODY_CLASS,
+                  "rounded-md border border-destructive/25 bg-destructive/8 px-3 py-2 text-destructive/85",
+                )}
+              >
+                {toolErrorText}
+              </p>
+            </div>
+          )}
+
+          {!parsedDiff && !toolErrorText && commandExecutionSummary?.stdout && (
             <div className="mt-0.5 pl-4">
               <pre
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
-                  "overflow-x-auto whitespace-pre text-xs text-foreground/60",
+                  "overflow-x-auto whitespace-pre text-foreground/60",
                 )}
               >
                 {commandExecutionSummary.stdout}
@@ -1324,27 +1620,30 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
             </div>
           )}
 
-          {!parsedDiff && !commandExecutionSummary?.stdout && commandExecutionSummary?.stderr && (
-            <div className="mt-0.5 pl-4">
-              <pre
-                className={cn(
-                  CHAT_THREAD_BODY_CLASS,
-                  "overflow-x-auto whitespace-pre text-xs text-foreground/60",
-                )}
-              >
-                {commandExecutionSummary.stderr}
-              </pre>
-            </div>
-          )}
+          {!parsedDiff &&
+            !toolErrorText &&
+            !commandExecutionSummary?.stdout &&
+            commandExecutionSummary?.stderr && (
+              <div className="mt-0.5 pl-4">
+                <pre
+                  className={cn(
+                    CHAT_THREAD_BODY_CLASS,
+                    "overflow-x-auto whitespace-pre text-foreground/60",
+                  )}
+                >
+                  {commandExecutionSummary.stderr}
+                </pre>
+              </div>
+            )}
 
           {/* Fallback: raw text output */}
-          {!parsedDiff && outputText && (
+          {!parsedDiff && !workflowToolSummary && !toolErrorText && outputText && (
             <div className="mt-0.5 pl-4">
               <div className="relative">
                 <pre
                   className={cn(
                     CHAT_THREAD_BODY_CLASS,
-                    "overflow-x-auto whitespace-pre text-xs text-foreground/60",
+                    "overflow-x-auto whitespace-pre text-foreground/60",
                     shouldClampOutput && !isOutputExpanded
                       ? "max-h-48 overflow-y-hidden"
                       : "overflow-y-visible",
@@ -1426,18 +1725,6 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
 
   useLayoutEffect(() => {
     onHeightChange?.();
-  }, [isExpanded, onHeightChange, showAllEntries]);
-
-  useEffect(() => {
-    if (!onHeightChange) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      onHeightChange();
-    }, 220);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
   }, [isExpanded, onHeightChange, showAllEntries]);
 
   return (

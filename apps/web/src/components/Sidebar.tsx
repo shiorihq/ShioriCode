@@ -11,7 +11,6 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
 import {
   useCallback,
@@ -201,6 +200,28 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   return null;
 }
 
+/** Thread running: loader 6 (× / +), 700ms. Text in DOM; CSS `content` keyframes are unreliable in WebKit. */
+const SIDEBAR_THREAD_ASCII_LOADER_6_FRAME_MS = 350;
+
+function SidebarThreadAsciiLoader6() {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setFrame((value) => (value + 1) % 2);
+    }, SIDEBAR_THREAD_ASCII_LOADER_6_FRAME_MS);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span
+      role="img"
+      aria-label="Response in progress"
+      className="inline-flex size-3 shrink-0 items-center justify-center font-mono text-[10px] leading-none text-current opacity-70"
+    >
+      {frame === 0 ? "\u00d7" : "+"}
+    </span>
+  );
+}
+
 interface SidebarThreadRowProps {
   threadId: ThreadId;
   orderedProjectThreadIds: readonly ThreadId[];
@@ -264,7 +285,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate`}
+        })} relative isolate text-[13px]`}
         onClick={(event) => {
           props.handleThreadClick(event, thread.id, props.orderedProjectThreadIds);
         }}
@@ -292,6 +313,13 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         }}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          <span className="mr-2 inline-flex shrink-0 items-center justify-center pl-1">
+            {isThreadRunning ? (
+              <SidebarThreadAsciiLoader6 />
+            ) : (
+              <span className="size-1.5 rounded-full bg-current opacity-50" aria-hidden />
+            )}
+          </span>
           {thread.parentThreadId !== null && (
             <Tooltip>
               <TooltipTrigger
@@ -336,7 +364,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                   element.select();
                 }
               }}
-              className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+              className="min-w-0 flex-1 truncate text-[13px] bg-transparent outline-none border border-ring rounded px-0.5"
               value={props.renamingTitle}
               onChange={(event) => props.setRenamingTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -360,7 +388,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             />
           ) : (
             <span
-              className={`min-w-0 flex-1 truncate text-xs ${isThreadRunning ? "shimmer shimmer-spread-200" : ""}`}
+              className={`min-w-0 flex-1 truncate ${isThreadRunning ? "shimmer shimmer-spread-200" : ""}`}
             >
               {thread.title}
             </span>
@@ -560,18 +588,18 @@ function UserAvatar(props: { src: string | null | undefined; name: string | null
     <img
       src={props.src}
       alt=""
-      className="size-6 shrink-0 rounded-full object-cover"
+      className="size-6 shrink-0 rounded-lg object-cover"
       referrerPolicy="no-referrer"
     />
   ) : (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground">
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-[10px] font-medium text-muted-foreground">
       {initials}
     </span>
   );
 }
 
 function SidebarUserFooter(props: { onSettingsClick: () => void }) {
-  const { isAuthenticated, viewer } = useHostedShioriState();
+  const { isAuthenticated, viewer, subscriptionPlanLabel } = useHostedShioriState();
 
   if (!isAuthenticated || !viewer) {
     return (
@@ -597,12 +625,19 @@ function SidebarUserFooter(props: { onSettingsClick: () => void }) {
     <div className="flex items-center gap-1.5">
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+        className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
         onClick={props.onSettingsClick}
       >
-        <UserAvatar src={viewer.image} name={viewer.name} />
-        <span className="truncate text-xs font-medium text-foreground group-data-[collapsible=icon]:hidden">
-          {displayName}
+        <span className="mt-0.5 shrink-0">
+          <UserAvatar src={viewer.image} name={viewer.name} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
+          <span className="block truncate text-xs font-medium text-foreground">{displayName}</span>
+          {subscriptionPlanLabel ? (
+            <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+              {subscriptionPlanLabel}
+            </span>
+          ) : null}
         </span>
       </button>
       <button
@@ -643,7 +678,8 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const appSettings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const { activeDraftThread, activeThread, handleNewThread } = useHandleNewThread();
+  const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
+    useHandleNewThread();
   const { archiveThread, branchThread, deleteThread } = useThreadActions();
   const routeThreadId = useParams({
     strict: false,
@@ -1554,7 +1590,7 @@ export default function Sidebar() {
           <SidebarMenuButton
             ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
             size="sm"
-            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+            className={`group/project-name gap-2 px-2 py-1.5 text-left hover:bg-transparent ${
               isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
             }`}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -1571,14 +1607,13 @@ export default function Sidebar() {
               });
             }}
           >
-            {project.expanded ? (
-              <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-            ) : (
-              <ProjectFavicon cwd={project.cwd} />
-            )}
-            <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+            <span className="min-w-0 shrink truncate text-sm text-muted-foreground">
               {project.name}
             </span>
+            <ChevronDownIcon
+              aria-hidden
+              className="pointer-events-none size-3.5 shrink-0 text-muted-foreground/50 opacity-0 group-hover/project-name:opacity-100 group-focus-visible/project-name:opacity-100"
+            />
           </SidebarMenuButton>
           <Tooltip>
             <TooltipTrigger
@@ -1640,7 +1675,7 @@ export default function Sidebar() {
 
         <SidebarMenuSub
           ref={attachThreadListAutoAnimateRef}
-          className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+          className="mx-0 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0"
         >
           {shouldShowThreadPanel && showEmptyThreadState ? (
             <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -1946,6 +1981,49 @@ export default function Sidebar() {
       ) : (
         <>
           <SidebarContent className="gap-0">
+            <SidebarGroup className="px-3 pt-1 pb-0">
+              <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
+                <SidebarMenuSubItem className="w-full">
+                  <SidebarMenuSubButton
+                    render={<button type="button" />}
+                    size="sm"
+                    isActive={false}
+                    data-testid="new-thread-button"
+                    className={`${resolveThreadRowClassName({
+                      isActive: false,
+                      isSelected: false,
+                    })} relative isolate text-[13px]`}
+                    disabled={defaultProjectId === null}
+                    onClick={() => {
+                      const projectId =
+                        activeThread?.projectId ?? activeDraftThread?.projectId ?? defaultProjectId;
+                      if (!projectId) return;
+                      void handleNewThread(projectId, {
+                        envMode:
+                          activeDraftThread?.envMode ??
+                          (activeThread?.worktreePath ? "worktree" : "local"),
+                      });
+                    }}
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                      <span className="mr-2 inline-flex shrink-0 items-center justify-center pl-1">
+                        <SquarePenIcon className="size-3.5" aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">New Thread</span>
+                    </div>
+                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                      <div className="flex min-w-12 justify-end">
+                        {newThreadShortcutLabel ? (
+                          <span className="text-[10px] text-muted-foreground/40">
+                            {newThreadShortcutLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              </SidebarMenuSub>
+            </SidebarGroup>
             {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
               <SidebarGroup className="px-2 pt-2 pb-0">
                 <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -2069,7 +2147,7 @@ export default function Sidebar() {
                   {Array.from({ length: 3 }, (_, i) => (
                     <SidebarMenuItem key={i}>
                       <SidebarMenuSkeleton showIcon />
-                      <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0">
+                      <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
                         <SidebarMenuSkeleton />
                         <SidebarMenuSkeleton />
                       </SidebarMenuSub>

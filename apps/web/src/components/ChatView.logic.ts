@@ -40,6 +40,7 @@ export function buildLocalDraftThread(
     branchSourceTurnId: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    tag: null,
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],

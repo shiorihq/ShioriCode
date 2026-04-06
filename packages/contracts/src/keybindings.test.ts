@@ -29,6 +29,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedSidebarToggle.command, "sidebar.toggle");
 
+    const parsedProjectAdd = yield* decode(KeybindingRule, {
+      key: "mod+shift+o",
+      command: "project.add",
+    });
+    assert.strictEqual(parsedProjectAdd.command, "project.add");
+
     const parsed = yield* decode(KeybindingRule, {
       key: "mod+j",
       command: "terminal.toggle",

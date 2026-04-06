@@ -27,6 +27,7 @@ import {
   buildShioriWorkspaceRules,
   buildHostedToolDescriptors,
   buildInterruptedTurnEvents,
+  makeShioriAdapterLive,
   toolRequestKind,
 } from "./ShioriAdapter.ts";
 
@@ -71,6 +72,27 @@ const shioriAdapterTestLayer = ShioriAdapterLive.pipe(
   Layer.provideMerge(workspaceEntriesTestLayer),
   Layer.provideMerge(NodeServices.layer),
 );
+
+function makeShioriAdapterTestLayer(options?: Parameters<typeof makeShioriAdapterLive>[0]) {
+  return makeShioriAdapterLive(options).pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-shiori-adapter-test-" }),
+    ),
+    Layer.provideMerge(
+      ServerSettingsService.layerTest({
+        providers: {
+          shiori: {
+            apiBaseUrl: "http://shiori.test",
+          },
+        },
+      }),
+    ),
+    Layer.provideMerge(hostedShioriAuthTokenStoreTestLayer),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(workspaceEntriesTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -1040,6 +1062,372 @@ describe("ShioriAdapterLive session state", () => {
       ),
     );
   });
+
+  it("uses plan-mode tools and emits structured plan events in plan mode", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-plan-update-1",
+            toolName: "update_plan",
+            input: {
+              explanation: "Collecting the fix steps.",
+              plan: [
+                { step: "Inspect the Shiori adapter flow", status: "in_progress" },
+                { step: "Wire plan events into the UI contract", status: "pending" },
+              ],
+            },
+          },
+        ]);
+      }
+
+      const secondBody = requestBodies[1];
+      const secondMessages = Array.isArray(secondBody?.messages)
+        ? (secondBody.messages as Array<Record<string, unknown>>)
+        : [];
+      const lastAssistantMessage = secondMessages.at(-1);
+      const lastParts = Array.isArray(lastAssistantMessage?.parts)
+        ? (lastAssistantMessage.parts as Array<Record<string, unknown>>)
+        : [];
+
+      assert.equal(lastAssistantMessage?.role, "assistant");
+      assert.equal(lastParts[0]?.type, "dynamic-tool");
+      assert.equal(lastParts[0]?.toolName, "update_plan");
+      assert.equal(lastParts[0]?.state, "output-available");
+
+      return responseFromChunks([
+        { type: "text-start", id: "plan-text-1" },
+        {
+          type: "text-delta",
+          id: "plan-text-1",
+          delta:
+            "# Fix Shiori plan mode\n\n- Inspect the adapter flow\n- Emit structured plan runtime events",
+        },
+        { type: "text-end", id: "plan-text-1" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-plan-mode");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          const eventsFiber = yield* Effect.forkScoped(
+            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(5))),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Can you create a plan for this?",
+            interactionMode: "plan",
+          });
+
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+
+          assert.equal(requestBodies.length, 2);
+          const firstTools = Array.isArray(requestBodies[0]?.tools)
+            ? (requestBodies[0]?.tools as Array<Record<string, unknown>>)
+            : [];
+          assert.ok(firstTools.some((tool) => tool.name === "update_plan"));
+          assert.ok(firstTools.some((tool) => tool.name === "request_user_input"));
+
+          const firstRules = Array.isArray(requestBodies[0]?.workspaceContext?.rules)
+            ? (requestBodies[0]?.workspaceContext?.rules as string[])
+            : [];
+          assert.ok(firstRules.some((rule) => rule.includes("## Plan Mode")));
+
+          assert.deepStrictEqual(
+            events.map((event) => event.type),
+            [
+              "turn.started",
+              "turn.plan.updated",
+              "turn.proposed.delta",
+              "turn.proposed.completed",
+              "turn.completed",
+            ],
+          );
+
+          assert.equal(events[1]?.type, "turn.plan.updated");
+          if (events[1]?.type === "turn.plan.updated") {
+            assert.equal(events[1].payload.explanation, "Collecting the fix steps.");
+            assert.deepStrictEqual(events[1].payload.plan, [
+              { step: "Inspect the Shiori adapter flow", status: "inProgress" },
+              { step: "Wire plan events into the UI contract", status: "pending" },
+            ]);
+          }
+
+          assert.equal(events[2]?.type, "turn.proposed.delta");
+          if (events[2]?.type === "turn.proposed.delta") {
+            assert.match(events[2].payload.delta, /^# Fix Shiori plan mode/);
+          }
+
+          assert.equal(events[3]?.type, "turn.proposed.completed");
+          if (events[3]?.type === "turn.proposed.completed") {
+            assert.match(events[3].payload.planMarkdown, /^# Fix Shiori plan mode/);
+          }
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
+  it("treats request_user_input as a blocking plan-mode user input tool", async () => {
+    let callCount = 0;
+    const fetchMock = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-plan-question-1",
+            toolName: "request_user_input",
+            input: {
+              questions: [
+                {
+                  header: "Scope",
+                  id: "scope",
+                  question: "How broad should the implementation be?",
+                  options: [
+                    { label: "Tight", description: "Only fix the bug." },
+                    { label: "Broader", description: "Fix it and add guardrails." },
+                  ],
+                },
+              ],
+            },
+          },
+        ]);
+      }
+
+      return responseFromChunks([
+        { type: "text-start", id: "plan-text-question" },
+        {
+          type: "text-delta",
+          id: "plan-text-question",
+          delta: "# Final plan\n\n- Tighten the adapter behavior\n- Verify the plan flow",
+        },
+        { type: "text-end", id: "plan-text-question" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-plan-question");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          const requestedFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (
+                    event,
+                  ): event is Extract<ProviderRuntimeEvent, { type: "user-input.requested" }> =>
+                    event.type === "user-input.requested",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          const completedFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Plan the fix and ask me if you need a scope decision.",
+            interactionMode: "plan",
+          });
+
+          const requested = yield* Fiber.join(requestedFiber);
+          assert.equal(requested._tag, "Some");
+          assert.equal(requested.value.type, "user-input.requested");
+          assert.ok(requested.value.requestId);
+          assert.deepStrictEqual(requested.value.payload.questions, [
+            {
+              id: "scope",
+              header: "Scope",
+              question: "How broad should the implementation be?",
+              options: [
+                { label: "Tight", description: "Only fix the bug." },
+                { label: "Broader", description: "Fix it and add guardrails." },
+              ],
+              multiSelect: false,
+            },
+          ]);
+
+          yield* adapter.respondToUserInput(threadId, requested.value.requestId, {
+            scope: "Tight",
+          });
+
+          const completed = yield* Fiber.join(completedFiber);
+          assert.equal(completed._tag, "Some");
+          assert.equal(completed.value.type, "turn.completed");
+          assert.equal(callCount, 2);
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
+  it("injects configured MCP tools into Shiori turns and executes them locally", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const closeMcpRuntime = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-mcp-1",
+            toolName: "mcp__demo__lookup_weather",
+            input: { city: "Zurich" },
+          },
+        ]);
+      }
+
+      const secondBody = requestBodies[1];
+      const secondMessages = Array.isArray(secondBody?.messages)
+        ? (secondBody.messages as Array<Record<string, unknown>>)
+        : [];
+      const lastAssistantMessage = secondMessages.at(-1);
+      const lastParts = Array.isArray(lastAssistantMessage?.parts)
+        ? (lastAssistantMessage.parts as Array<Record<string, unknown>>)
+        : [];
+
+      assert.equal(lastAssistantMessage?.role, "assistant");
+      assert.equal(lastParts[0]?.type, "dynamic-tool");
+      assert.equal(lastParts[0]?.toolName, "mcp__demo__lookup_weather");
+      assert.equal(lastParts[0]?.state, "output-available");
+      assert.deepStrictEqual(lastParts[0]?.output, {
+        forecast: "Sunny",
+        temperatureC: 18,
+      });
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-mcp" },
+        { type: "text-delta", id: "text-mcp", delta: "Forecast captured." },
+        { type: "text-end", id: "text-mcp" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const layer = makeShioriAdapterTestLayer({
+      buildMcpToolRuntime: async () => ({
+        descriptors: [
+          {
+            name: "mcp__demo__lookup_weather",
+            title: "Demo · lookup_weather",
+            description: "Look up the weather for a city.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                city: { type: "string" },
+              },
+              required: ["city"],
+              additionalProperties: false,
+            },
+          },
+        ],
+        executors: new Map([
+          [
+            "mcp__demo__lookup_weather",
+            {
+              title: "Demo · lookup_weather",
+              execute: async (input: Record<string, unknown>) => {
+                assert.deepStrictEqual(input, { city: "Zurich" });
+                return { forecast: "Sunny", temperatureC: 18 };
+              },
+            },
+          ],
+        ]),
+        warnings: [],
+        close: closeMcpRuntime,
+      }),
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-mcp");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          const completionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Use the MCP weather tool.",
+          });
+
+          const completed = yield* Fiber.join(completionFiber);
+          assert.equal(completed._tag, "Some");
+          assert.equal(requestBodies.length, 2);
+
+          const firstTools = Array.isArray(requestBodies[0]?.tools)
+            ? (requestBodies[0]?.tools as Array<Record<string, unknown>>)
+            : [];
+          assert.ok(firstTools.some((tool) => tool.name === "mcp__demo__lookup_weather"));
+          assert.equal(closeMcpRuntime.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+  });
 });
 
 describe("hosted tools", () => {
@@ -1143,5 +1531,18 @@ describe("hosted tools", () => {
       "x-shioricode-request-kind": "file-read",
       "x-shioricode-needs-approval": true,
     });
+  });
+
+  it("adds plan-mode specific planning tools when the thread is in plan mode", () => {
+    const tools = buildHostedToolDescriptors({
+      allowedRequestKinds: new Set(),
+      session: {
+        runtimeMode: "approval-required",
+      } satisfies Pick<ProviderSession, "runtimeMode">,
+      interactionMode: "plan",
+    });
+
+    assert.ok(tools.some((tool) => tool.name === "update_plan"));
+    assert.ok(tools.some((tool) => tool.name === "request_user_input"));
   });
 });

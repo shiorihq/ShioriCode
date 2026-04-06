@@ -9,7 +9,7 @@ export default defineConfig({
   outDir: "dist",
   sourcemap: true,
   clean: true,
-  noExternal: (id) => id.startsWith(""),
+  noExternal: (id) => id !== "node-pty" && id.startsWith(""),
   inlineOnly: false,
   banner: {
     js: "#!/usr/bin/env node\n",

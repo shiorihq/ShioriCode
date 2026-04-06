@@ -29,6 +29,7 @@ export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number
 
 const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "project.add",
   "terminal.toggle",
   "terminal.split",
   "terminal.new",

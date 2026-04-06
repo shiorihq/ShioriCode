@@ -110,6 +110,7 @@ export function useThreadActions() {
         seedMessages,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        tag: thread.tag,
         createdAt,
       });
 

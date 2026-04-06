@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { CHAT_THREAD_BODY_CLASS } from "../../chatTypography";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +24,10 @@ interface ParsedEditDiff {
   additions: number;
   deletions: number;
 }
+
+const MAX_PRIMITIVE_PARSE_CACHE_ENTRIES = 200;
+const parseEditDiffObjectCache = new WeakMap<object, Map<string, ParsedEditDiff | null>>();
+const parseEditDiffPrimitiveCache = new Map<string, ParsedEditDiff | null>();
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -296,8 +301,49 @@ function diffFromStructuredPatch(
 const MAX_DIFF_LINES = 80;
 
 export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff | null {
+  const detailKey = detail ?? "";
+  if (output && typeof output === "object") {
+    const cachedByDetail = parseEditDiffObjectCache.get(output as object);
+    const cached = cachedByDetail?.get(detailKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+  } else {
+    const primitiveKey = `${typeof output}:${String(output)}\u0000${detailKey}`;
+    const cached = parseEditDiffPrimitiveCache.get(primitiveKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+  }
+
+  const storeParsedDiff = (value: ParsedEditDiff | null): ParsedEditDiff | null => {
+    if (output && typeof output === "object") {
+      const objectKey = output as object;
+      const existingByDetail = parseEditDiffObjectCache.get(objectKey);
+      if (existingByDetail) {
+        existingByDetail.set(detailKey, value);
+      } else {
+        parseEditDiffObjectCache.set(objectKey, new Map([[detailKey, value]]));
+      }
+      return value;
+    }
+
+    const primitiveKey = `${typeof output}:${String(output)}\u0000${detailKey}`;
+    parseEditDiffPrimitiveCache.set(primitiveKey, value);
+    if (parseEditDiffPrimitiveCache.size > MAX_PRIMITIVE_PARSE_CACHE_ENTRIES) {
+      const oldestKey = parseEditDiffPrimitiveCache.keys().next().value;
+      if (typeof oldestKey === "string") {
+        parseEditDiffPrimitiveCache.delete(oldestKey);
+      }
+    }
+    return value;
+  };
+
+  const top = asRecord(output);
   const data = resolveInnerData(output);
-  if (!data) return null;
+  if (!data) return storeParsedDiff(null);
+  const topInput = asRecord(top?.input);
+  const topToolName = asString(top?.toolName)?.toLowerCase() ?? null;
 
   // Extract file path from various locations
   const filePath =
@@ -305,6 +351,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     asString(data.path) ??
     asString(data.relativePath) ??
     asString(data.filename) ??
+    asString(topInput?.file_path) ??
     asString((asRecord(data.input) ?? {}).file_path) ??
     detail ??
     null;
@@ -313,7 +360,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (Array.isArray(data.structuredPatch) && data.structuredPatch.length > 0) {
     const lines = diffFromStructuredPatch(data.structuredPatch);
     if (lines.length > 0) {
-      return buildResult(filePath, lines);
+      return storeParsedDiff(buildResult(filePath, lines));
     }
   }
 
@@ -323,7 +370,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (patchStr) {
     const lines = diffFromUnifiedPatch(patchStr);
     if (lines.length > 0) {
-      return buildResult(filePath, lines);
+      return storeParsedDiff(buildResult(filePath, lines));
     }
   }
 
@@ -332,7 +379,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (topPatch) {
     const lines = diffFromUnifiedPatch(topPatch);
     if (lines.length > 0) {
-      return buildResult(filePath, lines);
+      return storeParsedDiff(buildResult(filePath, lines));
     }
   }
 
@@ -343,11 +390,23 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (oldString != null && newString != null) {
     const lines = diffFromOldNew(oldString, newString);
     if (lines.length > 0) {
-      return buildResult(filePath, lines);
+      return storeParsedDiff(buildResult(filePath, lines));
     }
   }
 
-  // Strategy 5: Codex fileChange format — item.changes[] with unified diffs
+  // Strategy 5: Claude Write tool — show the attempted file contents as a full write diff.
+  const writeContent =
+    topToolName === "write"
+      ? (asString(topInput?.content) ?? asString((asRecord(data.input) ?? {}).content))
+      : null;
+  if (writeContent != null) {
+    const lines = diffFromOldNew("", writeContent);
+    if (lines.length > 0) {
+      return storeParsedDiff(buildResult(filePath, lines));
+    }
+  }
+
+  // Strategy 6: Codex fileChange format — item.changes[] with unified diffs
   const item = asRecord(data.item);
   if (item && Array.isArray(item.changes)) {
     for (const change of item.changes) {
@@ -358,13 +417,13 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
       if (changeDiff) {
         const lines = diffFromUnifiedPatch(changeDiff);
         if (lines.length > 0) {
-          return buildResult(changePath ?? filePath, lines);
+          return storeParsedDiff(buildResult(changePath ?? filePath, lines));
         }
       }
     }
   }
 
-  return null;
+  return storeParsedDiff(null);
 }
 
 function buildResult(filePath: string | null, lines: DiffLine[]): ParsedEditDiff {
@@ -453,7 +512,12 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
   return (
     <div className={cn("overflow-hidden rounded-md border border-border/50", className)}>
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-xs text-muted-foreground">
+      <div
+        className={cn(
+          CHAT_THREAD_BODY_CLASS,
+          "flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-muted-foreground",
+        )}
+      >
         {diff.filePath && (
           <span className="truncate font-medium text-foreground/80" title={diff.filePath}>
             {extractBasename(diff.filePath)}
@@ -467,7 +531,8 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
           <button
             type="button"
             className="shrink-0 text-muted-foreground/60 transition-colors hover:text-foreground/80"
-            title="Copy file path"
+            title={isCopied ? "Copied" : "Copy file path"}
+            aria-label={isCopied ? "Copied" : "Copy file path"}
             onClick={() => copyToClipboard(diff.filePath!)}
           >
             {isCopied ? (
@@ -481,7 +546,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
 
       {/* Diff body */}
       <div className="overflow-x-auto">
-        <pre className="text-xs leading-5">
+        <pre className={cn(CHAT_THREAD_BODY_CLASS, "leading-5")}>
           {diff.lines.map((line, lineIndex) => (
             <div
               key={`${line.type}:${line.oldLineNo ?? "n"}:${line.newLineNo ?? "n"}`}
@@ -516,7 +581,12 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
       </div>
 
       {diff.lines.length >= MAX_DIFF_LINES && (
-        <div className="border-t border-border/50 px-3 py-1 text-center text-xs text-muted-foreground/70">
+        <div
+          className={cn(
+            CHAT_THREAD_BODY_CLASS,
+            "border-t border-border/50 px-3 py-1 text-center text-muted-foreground/70",
+          )}
+        >
           Diff truncated
         </div>
       )}

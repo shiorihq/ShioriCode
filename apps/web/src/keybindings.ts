@@ -150,22 +150,27 @@ function findEffectiveShortcutForCommand(
 ): KeybindingShortcut | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
-  const claimedShortcuts = new Set<string>();
+  const activeBindings = keybindings.filter((binding) =>
+    matchesWhenClause(binding.whenAst, context),
+  );
+  const latestBindingByConflictKey = new Map<string, KeybindingShortcut>();
 
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
+  for (let index = activeBindings.length - 1; index >= 0; index -= 1) {
+    const binding = activeBindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
 
     const conflictKey = shortcutConflictKey(binding.shortcut, platform);
-    if (claimedShortcuts.has(conflictKey)) {
+    latestBindingByConflictKey.set(conflictKey, binding.shortcut);
+  }
+
+  for (const binding of activeBindings) {
+    if (binding.command !== command) continue;
+    const conflictKey = shortcutConflictKey(binding.shortcut, platform);
+    if (latestBindingByConflictKey.get(conflictKey) !== binding.shortcut) {
       continue;
     }
 
-    claimedShortcuts.add(conflictKey);
-    if (binding.command === command) {
-      return binding.shortcut;
-    }
+    return binding.shortcut;
   }
 
   return null;

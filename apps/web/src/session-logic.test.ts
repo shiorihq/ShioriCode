@@ -675,6 +675,55 @@ describe("deriveWorkLogEntries", () => {
     expect(entries[0]?.running).toBe(false);
   });
 
+  it("collapses started/completed tool rows by item id even when other activities interleave", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start-interleaved",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Bash started",
+        tone: "tool",
+        payload: {
+          itemId: "tool:call-interleaved",
+          itemType: "command_execution",
+          title: "Bash",
+          detail: "mkdir -p ./dogfood-output/screenshots ./dogfood-output/videos",
+        },
+      }),
+      makeActivity({
+        id: "commentary-interleaved",
+        createdAt: "2026-02-23T00:00:01.500Z",
+        kind: "assistant.commentary",
+        summary: "Status update",
+        tone: "info",
+        payload: {
+          detail: "Let me check if the dev server is running.",
+        },
+      }),
+      makeActivity({
+        id: "tool-complete-interleaved",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Bash completed",
+        tone: "tool",
+        payload: {
+          itemId: "tool:call-interleaved",
+          itemType: "command_execution",
+          title: "Bash",
+          detail: "mkdir -p ./dogfood-output/screenshots ./dogfood-output/videos",
+          data: { stdout: "" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "tool-complete-interleaved",
+      "commentary-interleaved",
+    ]);
+    expect(entries[0]?.running).toBe(false);
+  });
+
   it("does not keep completed tool updates marked as running", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1341,6 +1390,7 @@ describe("deriveReasoningEntries", () => {
         payload: {
           taskId: "turn-2",
           detail: "Comparing both transports before editing.",
+          displayAs: "reasoning",
         },
       }),
       makeActivity({
@@ -1367,6 +1417,52 @@ describe("deriveReasoningEntries", () => {
         turnId: TurnId.makeUnsafe("turn-2"),
       },
     ]);
+  });
+
+  it("keeps backward compatibility for persisted reasoning progress summaries", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "task-progress-legacy",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        turnId: "turn-legacy",
+        payload: {
+          taskId: "turn-legacy",
+          detail: "Compare persisted snapshots.",
+        },
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      {
+        id: "reasoning-task:turn-legacy",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        text: "Compare persisted snapshots.",
+        streaming: true,
+        turnId: TurnId.makeUnsafe("turn-legacy"),
+      },
+    ]);
+  });
+
+  it("does not treat legacy Claude task progress summaries as reasoning blocks", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "task-progress-legacy-claude",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        turnId: "turn-legacy-claude",
+        payload: {
+          taskId: "task-subagent-1",
+          detail: "Running List React component files in apps/web/src",
+        },
+      }),
+    ]);
+
+    expect(entries).toEqual([]);
   });
 
   it("appends multiple reasoning progress summaries into one persisted block", () => {
@@ -1483,6 +1579,25 @@ describe("deriveReasoningEntries", () => {
         turnId: TurnId.makeUnsafe("turn-2"),
       },
     ]);
+  });
+
+  it("ignores unrelated task completion events when no reasoning progress exists", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "task-complete-only",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        turnId: "turn-plain-task",
+        payload: {
+          taskId: "turn-plain-task",
+          status: "completed",
+        },
+      }),
+    ]);
+
+    expect(entries).toEqual([]);
   });
 
   it("treats reasoning deltas without item ids as separate entries instead of turn-level buckets", () => {

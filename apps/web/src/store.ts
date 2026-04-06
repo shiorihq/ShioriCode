@@ -175,6 +175,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     branchSourceTurnId: thread.branchSourceTurnId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    tag: thread.tag ?? null,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
   };
@@ -225,6 +226,7 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
     parentThreadId: thread.parentThreadId ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    tag: thread.tag,
     latestUserMessageAt: getLatestUserMessageAt(thread.messages),
     hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
     hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
@@ -252,6 +254,7 @@ function sidebarThreadSummariesEqual(
     left.parentThreadId === right.parentThreadId &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
+    left.tag === right.tag &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
@@ -658,6 +661,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         branchSourceTurnId: event.payload.branchSourceTurnId ?? null,
         branch: event.payload.branch,
         worktreePath: event.payload.worktreePath,
+        tag: event.payload.tag ?? null,
         latestTurn: null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
@@ -747,6 +751,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ...(event.payload.worktreePath !== undefined
           ? { worktreePath: event.payload.worktreePath }
           : {}),
+        ...(event.payload.tag !== undefined ? { tag: event.payload.tag } : {}),
         updatedAt: event.payload.updatedAt,
       }));
     }

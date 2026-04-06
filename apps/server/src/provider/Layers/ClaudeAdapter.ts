@@ -10,6 +10,10 @@ import {
   type CanUseTool,
   query,
   type Options as ClaudeQueryOptions,
+  type McpServerConfig as ClaudeMcpServerConfig,
+  type McpStdioServerConfig,
+  type McpSSEServerConfig,
+  type McpHttpServerConfig,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
@@ -39,6 +43,7 @@ import {
   TurnId,
   type UserInputQuestion,
   ClaudeCodeEffort,
+  type McpServerEntry,
 } from "contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -67,6 +72,7 @@ import { ServerConfig } from "../../config.ts";
 import { fetchClaudeUsageSnapshot } from "../claudeUsage.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { filterMcpServersForProvider } from "../mcpServers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -115,6 +121,9 @@ interface ClaudeTurnState {
 interface AssistantTextBlockState {
   readonly itemId: string;
   readonly blockIndex: number;
+  readonly streamKind: ClaudeTextStreamKind;
+  readonly runtimeItemType: "assistant_message" | "reasoning";
+  readonly title: string;
   emittedTextDelta: boolean;
   fallbackText: string;
   streamClosed: boolean;
@@ -184,6 +193,42 @@ export interface ClaudeAdapterLiveOptions {
   readonly fetchUsage?: (input?: { readonly signal?: AbortSignal }) => Promise<ClaudeUsageSnapshot>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+}
+
+function translateToClaudeMcpConfig(
+  entry: McpServerEntry,
+): McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig {
+  switch (entry.transport) {
+    case "stdio":
+      return {
+        type: "stdio",
+        command: entry.command ?? "",
+        ...(entry.args ? { args: [...entry.args] } : {}),
+        ...(entry.env ? { env: { ...entry.env } } : {}),
+      } satisfies McpStdioServerConfig;
+    case "sse":
+      return {
+        type: "sse",
+        url: entry.url ?? "",
+        ...(entry.headers ? { headers: { ...entry.headers } } : {}),
+      } satisfies McpSSEServerConfig;
+    case "http":
+      return {
+        type: "http",
+        url: entry.url ?? "",
+        ...(entry.headers ? { headers: { ...entry.headers } } : {}),
+      } satisfies McpHttpServerConfig;
+  }
+}
+
+function buildClaudeMcpServers(
+  servers: readonly McpServerEntry[],
+): Record<string, ClaudeMcpServerConfig> | undefined {
+  const result: Record<string, ClaudeMcpServerConfig> = {};
+  for (const server of filterMcpServersForProvider("claudeAgent", servers)) {
+    result[server.name] = translateToClaudeMcpConfig(server);
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function isUuid(value: string): boolean {
@@ -260,6 +305,14 @@ function resultErrorsText(result: SDKResultMessage): string {
 function isInterruptedResult(result: SDKResultMessage): boolean {
   const errors = resultErrorsText(result);
   if (errors.includes("interrupt")) {
+    return true;
+  }
+
+  if (
+    result.subtype === "error_during_execution" &&
+    result.is_error === false &&
+    result.stop_reason === "tool_use"
+  ) {
     return true;
   }
 
@@ -1023,6 +1076,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     options?: {
       readonly fallbackText?: string;
       readonly streamClosed?: boolean;
+      readonly streamKind?: ClaudeTextStreamKind;
+      readonly runtimeItemType?: "assistant_message" | "reasoning";
+      readonly title?: string;
     },
   ) {
     const turnState = context.turnState;
@@ -1044,6 +1100,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const block: AssistantTextBlockState = {
       itemId: yield* Random.nextUUIDv4,
       blockIndex,
+      streamKind: options?.streamKind ?? "assistant_text",
+      runtimeItemType: options?.runtimeItemType ?? "assistant_message",
+      title: options?.title ?? "Assistant message",
       emittedTextDelta: false,
       fallbackText: options?.fallbackText ?? "",
       streamClosed: options?.streamClosed ?? false,
@@ -1099,7 +1158,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turnId: turnState.turnId,
         itemId: asRuntimeItemId(block.itemId),
         payload: {
-          streamKind: "assistant_text",
+          streamKind: block.streamKind,
           delta: block.fallbackText,
         },
         providerRefs: nativeProviderRefs(context),
@@ -1130,9 +1189,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       threadId: context.session.threadId,
       turnId: turnState.turnId,
       payload: {
-        itemType: "assistant_message",
+        itemType: block.runtimeItemType,
         status: "completed",
-        title: "Assistant message",
+        title: block.title,
         ...(block.fallbackText.length > 0 ? { detail: block.fallbackText } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -1161,10 +1220,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const orderedBlocks = turnState.assistantTextBlockOrder.map((block) => ({
-      blockIndex: block.blockIndex,
-      block,
-    }));
+    const orderedBlocks = turnState.assistantTextBlockOrder
+      .filter((block) => block.runtimeItemType === "assistant_message")
+      .map((block) => ({
+        blockIndex: block.blockIndex,
+        block,
+      }));
 
     for (const [position, text] of snapshotTextBlocks.entries()) {
       const existingEntry = orderedBlocks[position];
@@ -1522,16 +1583,17 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const streamKind = streamKindFromDeltaType(event.delta.type);
         const assistantBlockEntry =
           event.delta.type === "text_delta"
-            ? yield* ensureAssistantTextBlock(context, event.index)
-            : context.turnState.assistantTextBlocks.get(event.index)
-              ? {
-                  blockIndex: event.index,
-                  block: context.turnState.assistantTextBlocks.get(
-                    event.index,
-                  ) as AssistantTextBlockState,
-                }
-              : undefined;
-        if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
+            ? yield* ensureAssistantTextBlock(context, event.index, {
+                streamKind: "assistant_text",
+                runtimeItemType: "assistant_message",
+                title: "Assistant message",
+              })
+            : yield* ensureAssistantTextBlock(context, event.index, {
+                streamKind: "reasoning_text",
+                runtimeItemType: "reasoning",
+                title: "Thinking",
+              });
+        if (assistantBlockEntry?.block) {
           assistantBlockEntry.block.emittedTextDelta = true;
         }
         const stamp = yield* makeEventStamp();
@@ -1630,6 +1692,18 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (block.type === "text") {
         yield* ensureAssistantTextBlock(context, index, {
           fallbackText: extractContentBlockText(block),
+          streamKind: "assistant_text",
+          runtimeItemType: "assistant_message",
+          title: "Assistant message",
+        });
+        return;
+      }
+      if (block.type === "thinking") {
+        yield* ensureAssistantTextBlock(context, index, {
+          fallbackText: typeof block.thinking === "string" ? block.thinking : "",
+          streamKind: "reasoning_text",
+          runtimeItemType: "reasoning",
+          title: "Thinking",
         });
         return;
       }
@@ -2685,6 +2759,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       );
       const claudeSettings = serverSettings.providers.claudeAgent;
       const claudeBinaryPath = claudeSettings.binaryPath;
+      const claudeMcpServers = buildClaudeMcpServers(serverSettings.mcpServers.servers);
       const assistantPersonalityAppendix = buildAssistantPersonalityAppendix(
         serverSettings.assistantPersonality,
       );
@@ -2732,6 +2807,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: process.env,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
+        ...(claudeMcpServers ? { mcpServers: claudeMcpServers } : {}),
       };
 
       const queryRuntime = yield* Effect.try({

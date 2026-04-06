@@ -3,6 +3,7 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BarChart3Icon,
+  BlocksIcon,
   MessageSquareIcon,
   Settings2Icon,
   UserIcon,
@@ -20,6 +21,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/skills"
   | "/settings/account"
   | "/settings/archived"
   | "/settings/usage"
@@ -31,6 +33,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
   { label: "Account", to: "/settings/account", icon: UserIcon },
   { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
@@ -47,7 +50,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
-              className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="gap-2 px-2 py-2 text-xs text-muted-foreground transition-none hover:bg-accent hover:text-foreground"
               onClick={() => window.history.back()}
             >
               <ArrowLeftIcon className="size-4" />
@@ -71,8 +74,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   isActive={isActive}
                   className={
                     isActive
-                      ? "gap-2 px-2 py-2 text-left text-xs text-foreground"
-                      : "gap-2 px-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground/80"
+                      ? "gap-2 px-2 py-2 text-left text-xs text-foreground transition-none"
+                      : "gap-2 px-2 py-2 text-left text-xs text-muted-foreground transition-none hover:text-foreground/80"
                   }
                   onClick={() => void navigate({ to: item.to, replace: true })}
                 >

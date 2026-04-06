@@ -11,8 +11,13 @@ import {
   hostedModelsListQuery,
   hostedUserWithUsageQuery,
   type HostedCatalogProvider,
+  type HostedSubscriptionPlanId,
   type HostedViewer,
 } from "./api";
+import {
+  hostedSubscriptionPlanLabel,
+  normalizeHostedSubscriptionPlanId,
+} from "./hostedSubscriptionPlan";
 import { readNativeApi } from "../nativeApi";
 
 function normalizeHostedShioriAuthToken(token: string | null): string | null {
@@ -32,6 +37,9 @@ interface HostedShioriState {
   isAuthenticated: boolean;
   isSubscriptionLoading: boolean;
   isPaidSubscriber: boolean;
+  /** Resolved tier once usage is loaded; null while the usage query is in flight. */
+  subscriptionPlanId: HostedSubscriptionPlanId | null;
+  subscriptionPlanLabel: string | null;
   authToken: string | null;
   viewer: HostedViewer | null | undefined;
   catalogProviders: ReadonlyArray<HostedCatalogProvider> | undefined;
@@ -49,6 +57,8 @@ const HostedShioriContext = createContext<HostedShioriState>({
   isAuthenticated: false,
   isSubscriptionLoading: false,
   isPaidSubscriber: false,
+  subscriptionPlanId: null,
+  subscriptionPlanLabel: null,
   authToken: null,
   viewer: null,
   catalogProviders: undefined,
@@ -62,8 +72,13 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   const normalizedAuthToken = normalizeHostedShioriAuthToken(authToken);
   const viewer = useQuery(hostedCurrentUserQuery, {});
   const userWithUsage = useQuery(hostedUserWithUsageQuery, isAuthenticated ? {} : "skip");
-  const subscriptionPlan = userWithUsage?.subscription?.plan ?? null;
-  const isPaidSubscriber = subscriptionPlan !== null && subscriptionPlan !== "free";
+  const subscriptionPlanId =
+    !isAuthenticated || userWithUsage === undefined
+      ? null
+      : normalizeHostedSubscriptionPlanId(userWithUsage?.subscription?.plan ?? "free");
+  const subscriptionPlanLabel =
+    subscriptionPlanId === null ? null : hostedSubscriptionPlanLabel(subscriptionPlanId);
+  const isPaidSubscriber = subscriptionPlanId !== null && subscriptionPlanId !== "free";
   const isSubscriptionLoading = isAuthenticated && userWithUsage === undefined;
   const catalogProviders = useQuery(
     hostedModelsListQuery,
@@ -92,6 +107,8 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isSubscriptionLoading,
       isPaidSubscriber,
+      subscriptionPlanId,
+      subscriptionPlanLabel,
       authToken: normalizedAuthToken,
       viewer,
       catalogProviders,
@@ -107,6 +124,8 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       normalizedAuthToken,
       signIn,
       signOut,
+      subscriptionPlanId,
+      subscriptionPlanLabel,
       viewer,
     ],
   );
