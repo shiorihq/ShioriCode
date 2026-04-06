@@ -33,7 +33,7 @@
     },
     "apps/desktop": {
       "name": "desktop",
-      "version": "0.0.15",
+      "version": "0.1.0",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -61,7 +61,7 @@
     },
     "apps/server": {
       "name": "shioricode",
-      "version": "0.0.15",
+      "version": "0.1.0",
       "bin": {
         "shioricode": "./dist/bin.mjs",
       },
@@ -92,7 +92,7 @@
     },
     "apps/web": {
       "name": "web",
-      "version": "0.0.15",
+      "version": "0.1.0",
       "dependencies": {
         "@auth/core": "^0.41.1",
         "@base-ui/react": "^1.2.0",
@@ -149,7 +149,7 @@
     },
     "packages/contracts": {
       "name": "contracts",
-      "version": "0.0.15",
+      "version": "0.1.0",
       "dependencies": {
         "effect": "catalog:",
       },
