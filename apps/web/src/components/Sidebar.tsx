@@ -1993,7 +1993,7 @@ export default function Sidebar() {
                       isActive: false,
                       isSelected: false,
                     })} relative isolate text-[13px]`}
-                    disabled={defaultProjectId === null}
+                    aria-disabled={defaultProjectId === null || undefined}
                     onClick={() => {
                       const projectId =
                         activeThread?.projectId ?? activeDraftThread?.projectId ?? defaultProjectId;

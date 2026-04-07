@@ -55,17 +55,20 @@
     "convex:dev": "bunx convex dev",
     "convex:codegen": "bunx convex codegen",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
+    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
+    "prepare": "effect-language-service patch"
   },
   "devDependencies": {
     "@auth/core": "^0.41.1",
     "@convex-dev/auth": "^0.0.91",
+    "@effect/language-service": "catalog:",
     "@types/node": "catalog:",
     "convex": "^1.28.0",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
     "tw-shimmer": "^0.4.9",
+    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "overrides": {
