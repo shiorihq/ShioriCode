@@ -224,7 +224,7 @@ function createSnapshotForTargetUser(options: {
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
-  for (let index = 0; index < 22; index += 1) {
+  for (let index = 0; index < 65; index += 1) {
     const isTarget = index === 3;
     const userId = `msg-user-${index}` as MessageId;
     const assistantId = `msg-assistant-${index}` as MessageId;

@@ -791,7 +791,7 @@ describe("MessagesTimeline virtualization harness", () => {
     const afterMessages = createFillerMessages({
       prefix: "after-worklog-expand",
       startOffsetSeconds: 40,
-      pairCount: 8,
+      pairCount: 62,
     });
     const workEntries = Array.from({ length: 10 }, (_, index) =>
       createToolWorkEntry({
@@ -875,7 +875,7 @@ describe("MessagesTimeline virtualization harness", () => {
     const afterMessages = createFillerMessages({
       prefix: "after-command-output-expand",
       startOffsetSeconds: 40,
-      pairCount: 8,
+      pairCount: 62,
     });
     const output = Array.from({ length: 24 }, (_, index) => `tool output line ${index + 1}`).join(
       "\n",
