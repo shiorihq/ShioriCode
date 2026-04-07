@@ -81,6 +81,8 @@ export const SHIORI_WORKSPACE_RULES = [
     "4. Keep responses concise, concrete, and technically precise.",
     "",
     "## Capabilities",
+    "You have full access to the user's local machine through the tools exposed in this session.",
+    "This includes the ability to read and write arbitrary files, execute shell commands, browse the filesystem, and launch applications — you are not sandboxed or limited to a single workspace directory.",
     "Use only the tools actually exposed in this session.",
     "If local tools such as exec_command, read_file, write_file, or apply_patch are available, treat them as real capabilities of your current environment.",
     "Do not claim you lack local machine, workspace, file, or browser-launch access when an available tool can perform the action.",
@@ -2093,8 +2095,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               },
             } satisfies ProviderRuntimeEvent);
           }
+          assistantCompletionText += segmentText;
           assistantFinalText += segmentText;
           if (input.context.activeTurn) {
+            input.context.activeTurn.assistantText = assistantCompletionText;
             input.context.activeTurn.assistantFinalText = assistantFinalText;
           }
           yield* emit({
@@ -2159,11 +2163,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               }
               case "text-delta": {
                 assistantText += chunk.delta;
-                assistantCompletionText += chunk.delta;
-                if (input.context.activeTurn) {
-                  input.context.activeTurn.assistantText = assistantCompletionText;
-                }
                 if (interactionMode === "plan") {
+                  assistantCompletionText += chunk.delta;
+                  if (input.context.activeTurn) {
+                    input.context.activeTurn.assistantText = assistantCompletionText;
+                  }
                   yield* emit({
                     ...runtimeEventBase({
                       threadId: input.context.session.threadId,

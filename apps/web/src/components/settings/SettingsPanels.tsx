@@ -1,10 +1,16 @@
 import {
   ArchiveIcon,
   ArchiveX,
+  BinocularsIcon,
   ChevronDownIcon,
+  CompassIcon,
+  FootprintsIcon,
+  GamepadDirectionalIcon,
   InfoIcon,
+  NavigationIcon,
   PlusIcon,
   RefreshCwIcon,
+  ShipIcon,
   Trash2,
   Undo2Icon,
   XIcon,
@@ -35,6 +41,7 @@ import {
   DEFAULT_LIGHT_THEME_ID,
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_UNIFIED_SETTINGS,
+  type NewThreadIcon,
 } from "contracts/settings";
 import { normalizeModelSlug } from "shared/model";
 import { Equal } from "effect";
@@ -107,6 +114,24 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const NEW_THREAD_ICON_LABELS: Record<NewThreadIcon, string> = {
+  navigation: "Navigation",
+  binoculars: "Binoculars",
+  "gamepad-directional": "Gamepad",
+  footprints: "Footprints",
+  compass: "Compass",
+  ship: "Ship",
+};
+
+const NEW_THREAD_ICON_OPTIONS = [
+  { value: "navigation" as const, label: "Navigation", icon: NavigationIcon },
+  { value: "binoculars" as const, label: "Binoculars", icon: BinocularsIcon },
+  { value: "gamepad-directional" as const, label: "Gamepad", icon: GamepadDirectionalIcon },
+  { value: "footprints" as const, label: "Footprints", icon: FootprintsIcon },
+  { value: "compass" as const, label: "Compass", icon: CompassIcon },
+  { value: "ship" as const, label: "Ship", icon: ShipIcon },
+];
 
 type FontOption = {
   value: string;
@@ -1560,6 +1585,47 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
             />
+          }
+        />
+
+        <SettingsRow
+          title="New thread icon"
+          description="Choose the icon displayed on the New Thread button in the sidebar."
+          resetAction={
+            settings.newThreadIcon !== DEFAULT_UNIFIED_SETTINGS.newThreadIcon ? (
+              <SettingResetButton
+                label="new thread icon"
+                onClick={() =>
+                  updateSettings({
+                    newThreadIcon: DEFAULT_UNIFIED_SETTINGS.newThreadIcon,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.newThreadIcon}
+              onValueChange={(value) => {
+                if (value) {
+                  updateSettings({ newThreadIcon: value as NewThreadIcon });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="New thread icon">
+                <SelectValue>{NEW_THREAD_ICON_LABELS[settings.newThreadIcon]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {NEW_THREAD_ICON_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} hideIndicator value={opt.value}>
+                    <span className="flex items-center gap-2">
+                      <opt.icon className="size-4" />
+                      {opt.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

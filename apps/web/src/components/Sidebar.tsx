@@ -1,12 +1,17 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  BinocularsIcon,
   ChevronDownIcon,
+  CompassIcon,
   FolderIcon,
+  FootprintsIcon,
+  GamepadDirectionalIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   NavigationIcon,
   SettingsIcon,
+  ShipIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -123,7 +128,23 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
+import type { NewThreadIcon } from "contracts/settings";
 import type { Project } from "../types";
+
+const NEW_THREAD_ICON_COMPONENTS: Record<NewThreadIcon, typeof NavigationIcon> = {
+  navigation: NavigationIcon,
+  binoculars: BinocularsIcon,
+  "gamepad-directional": GamepadDirectionalIcon,
+  footprints: FootprintsIcon,
+  compass: CompassIcon,
+  ship: ShipIcon,
+};
+
+function NewThreadIconComponent({ icon }: { icon: NewThreadIcon }) {
+  const Icon = NEW_THREAD_ICON_COMPONENTS[icon];
+  return <Icon className="size-4 shrink-0" aria-hidden />;
+}
+
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -313,7 +334,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         }}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <span className="mr-2 inline-flex shrink-0 items-center justify-center pl-1">
+          <span className="mr-2 inline-flex w-3 shrink-0 items-center justify-center pl-1">
             {isThreadRunning ? (
               <SidebarThreadAsciiLoader6 />
             ) : (
@@ -2015,7 +2036,7 @@ export default function Sidebar() {
                       });
                     }}
                   >
-                    <NavigationIcon className="size-4 shrink-0" aria-hidden />
+                    <NewThreadIconComponent icon={appSettings.newThreadIcon} />
                     <span className="min-w-0 flex-1 truncate">New Thread</span>
                     {newThreadShortcutLabel ? (
                       <span className="ml-auto text-xs text-muted-foreground/50">

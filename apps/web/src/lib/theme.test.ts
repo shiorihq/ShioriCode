@@ -18,6 +18,7 @@ function makeSettings(overrides: Partial<ClientSettings> = {}): ClientSettings {
   return {
     confirmThreadDelete: true,
     diffWordWrap: false,
+    newThreadIcon: "navigation",
     sidebarProjectSortOrder: "updated_at",
     sidebarThreadSortOrder: "updated_at",
     sidebarTranslucent: true,

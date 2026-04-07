@@ -418,7 +418,7 @@ describe("ShioriAdapterLive session state", () => {
     );
   });
 
-  it("emits commentary-like pre-tool text as status activity and keeps it out of the final answer", async () => {
+  it("keeps commentary-like pre-tool text out of replay history and the final answer", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     let callCount = 0;
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -428,7 +428,12 @@ describe("ShioriAdapterLive session state", () => {
       if (callCount === 1) {
         return responseFromChunks([
           { type: "text-start", id: "text-1" },
-          { type: "text-delta", id: "text-1", delta: "I'll inspect the files now." },
+          {
+            type: "text-delta",
+            id: "text-1",
+            delta:
+              "I'll start by exploring the workspace to understand the recent changes. Now let me check the git history to see recent changes. Now let me check the most recent changes in detail.",
+          },
           {
             type: "tool-input-available",
             toolCallId: "tool-1",
@@ -448,10 +453,8 @@ describe("ShioriAdapterLive session state", () => {
         : [];
 
       assert.equal(lastAssistantMessage?.role, "assistant");
-      assert.equal(lastParts[0]?.type, "text");
-      assert.equal(lastParts[0]?.text, "I'll inspect the files now.");
-      assert.equal(lastParts[1]?.type, "dynamic-tool");
-      assert.equal(lastParts[1]?.state, "output-error");
+      assert.equal(lastParts[0]?.type, "dynamic-tool");
+      assert.equal(lastParts[0]?.state, "output-error");
 
       return responseFromChunks([
         { type: "text-start", id: "text-2" },
@@ -479,7 +482,7 @@ describe("ShioriAdapterLive session state", () => {
           });
 
           const eventsFiber = yield* Effect.forkScoped(
-            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(9))),
+            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(8))),
           );
           yield* Effect.sleep("10 millis");
 
@@ -512,12 +515,13 @@ describe("ShioriAdapterLive session state", () => {
 
           assert.equal(requestBodies.length, 2);
           assert.ok(commentaryEvent);
-          assert.equal(commentaryEvent?.payload.detail, "I'll inspect the files now.");
+          assert.match(
+            String(commentaryEvent?.payload.detail ?? ""),
+            /I'll start by exploring the workspace/i,
+          );
           assert.ok(finalAssistantCompletion);
           assert.equal(finalAssistantCompletion?.payload.detail, "Here is the final answer.");
-          assert.ok(
-            !String(finalAssistantCompletion?.payload.detail ?? "").includes("I'll inspect"),
-          );
+          assert.ok(!String(finalAssistantCompletion?.payload.detail ?? "").includes("I'll start"));
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
       ),
     );

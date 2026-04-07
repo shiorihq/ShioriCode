@@ -1072,7 +1072,12 @@ const WorkEntryDetail = memo(function WorkEntryDetail(props: {
 }) {
   const { detail, monospace = false } = props;
 
-  return <span className={cn("text-foreground/90", monospace && "font-mono")}> {detail}</span>;
+  return (
+    <span className={cn(monospace ? "font-mono text-muted-foreground/80" : "text-foreground/90")}>
+      {" "}
+      {detail}
+    </span>
+  );
 });
 
 const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
@@ -1458,7 +1463,7 @@ const ExpandableWorkEntry = memo(function ExpandableWorkEntry(props: ExpandableW
   }, [isExpanded, isOutputExpanded, onHeightChange]);
 
   return (
-    <div>
+    <div className="tool-ui-mono-muted">
       <button
         type="button"
         aria-controls={expandedContentId}

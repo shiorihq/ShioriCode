@@ -161,9 +161,21 @@ export const ImportedTheme = Schema.Struct({
 });
 export type ImportedTheme = typeof ImportedTheme.Type;
 
+export const NewThreadIcon = Schema.Literals([
+  "navigation",
+  "binoculars",
+  "gamepad-directional",
+  "footprints",
+  "compass",
+  "ship",
+]);
+export type NewThreadIcon = typeof NewThreadIcon.Type;
+export const DEFAULT_NEW_THREAD_ICON: NewThreadIcon = "navigation";
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  newThreadIcon: NewThreadIcon.pipe(Schema.withDecodingDefault(() => DEFAULT_NEW_THREAD_ICON)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),

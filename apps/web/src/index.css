@@ -54,6 +54,8 @@
 
   body {
     @apply bg-background text-foreground relative;
+    user-select: none;
+    -webkit-user-select: none;
   }
 }
 
@@ -261,11 +263,18 @@ textarea {
   font-size: inherit;
 }
 
+/* Tool UI: make monospace values visually muted (paths, filenames, ids, commands) */
+.tool-ui-mono-muted :is(.font-mono, code, kbd, samp, pre) {
+  color: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
 /* Chat markdown rendering */
 .chat-markdown {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .chat-markdown > :first-child {
