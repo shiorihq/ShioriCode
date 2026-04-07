@@ -46,6 +46,7 @@ describe("shouldHandleSidebarToggleShortcut", () => {
         {
           terminalFocus: false,
           terminalOpen: false,
+          platform: "MacIntel",
         },
       ),
     ).toBe(true);
@@ -63,6 +64,7 @@ describe("shouldHandleSidebarToggleShortcut", () => {
         {
           terminalFocus: false,
           terminalOpen: false,
+          platform: "MacIntel",
         },
       ),
     ).toBe(false);
@@ -78,6 +80,7 @@ describe("shouldHandleSidebarToggleShortcut", () => {
         {
           terminalFocus: true,
           terminalOpen: true,
+          platform: "MacIntel",
         },
       ),
     ).toBe(false);

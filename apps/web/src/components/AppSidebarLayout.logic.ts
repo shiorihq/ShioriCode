@@ -7,18 +7,16 @@ export function shouldHandleSidebarToggleShortcut(
   options: {
     terminalFocus: boolean;
     terminalOpen: boolean;
+    platform?: string;
   },
 ): boolean {
-  if (
+  return (
     resolveShortcutCommand(event, keybindings, {
+      ...(options.platform != null && { platform: options.platform }),
       context: {
         terminalFocus: options.terminalFocus,
         terminalOpen: options.terminalOpen,
       },
     }) === "sidebar.toggle"
-  ) {
-    return true;
-  }
-
-  return !event.defaultPrevented;
+  );
 }

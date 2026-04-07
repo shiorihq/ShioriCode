@@ -155,10 +155,7 @@ function findEffectiveShortcutForCommand(
   );
   const latestBindingByConflictKey = new Map<string, KeybindingShortcut>();
 
-  for (let index = activeBindings.length - 1; index >= 0; index -= 1) {
-    const binding = activeBindings[index];
-    if (!binding) continue;
-
+  for (const binding of activeBindings) {
     const conflictKey = shortcutConflictKey(binding.shortcut, platform);
     latestBindingByConflictKey.set(conflictKey, binding.shortcut);
   }
