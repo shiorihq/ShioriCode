@@ -206,7 +206,7 @@ export async function createThreadForProject(input: {
     commandId: CommandId.makeUnsafe(randomUUID()),
     threadId,
     projectId: input.projectId,
-    title: input.title?.trim() || "New thread",
+    title: input.title?.trim() || "New Thread",
     modelSelection,
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

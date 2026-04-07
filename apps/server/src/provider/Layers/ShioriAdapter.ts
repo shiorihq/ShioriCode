@@ -242,7 +242,9 @@ interface ActiveTurnState {
   readonly closeMcpTools: () => Promise<void>;
   readonly modelSettings?: HostedShioriModelSettings | undefined;
   assistantText: string;
+  assistantFinalText: string;
   assistantStarted: boolean;
+  commentaryCount: number;
   reasoningBlocks: Map<
     string,
     {
@@ -1170,6 +1172,74 @@ function buildAssistantCompletionEvent(input: {
   } satisfies ProviderRuntimeEvent;
 }
 
+const HOSTED_COMMENTARY_PREFIXES = [
+  "i'll ",
+  "i will ",
+  "i’m going to ",
+  "i am going to ",
+  "let me ",
+  "now let me ",
+  "first, let me ",
+  "next, let me ",
+  "i should ",
+  "i need to ",
+] as const;
+
+const HOSTED_COMMENTARY_VERBS = [
+  "check",
+  "look",
+  "see",
+  "examine",
+  "review",
+  "inspect",
+  "search",
+  "open",
+  "read",
+  "scan",
+  "take a look",
+] as const;
+
+function normalizeHostedCommentaryText(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > 240) {
+    return null;
+  }
+  const normalized = trimmed.replace(/\s+/g, " ").replaceAll("’", "'").toLowerCase();
+  const hasCommentaryPrefix = HOSTED_COMMENTARY_PREFIXES.some((prefix) =>
+    normalized.startsWith(prefix),
+  );
+  const hasCommentaryVerb = HOSTED_COMMENTARY_VERBS.some((verb) => normalized.includes(verb));
+  return hasCommentaryPrefix && hasCommentaryVerb ? trimmed : null;
+}
+
+function buildCommentaryAssistantCompletionEvent(input: {
+  threadId: ThreadId;
+  turnId: TurnId;
+  itemId: RuntimeItemId;
+  detail: string;
+}): ProviderRuntimeEvent {
+  return {
+    ...runtimeEventBase({
+      threadId: input.threadId,
+      turnId: input.turnId,
+      itemId: input.itemId,
+    }),
+    type: "item.completed",
+    payload: {
+      itemType: "assistant_message",
+      status: "completed",
+      detail: input.detail,
+      data: {
+        item: {
+          id: String(input.itemId),
+          phase: "commentary",
+          text: input.detail,
+        },
+      },
+    },
+  } satisfies ProviderRuntimeEvent;
+}
+
 function buildTurnCompletedEvent(input: {
   threadId: ThreadId;
   turnId: TurnId;
@@ -1591,7 +1661,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               const block = activeTurn.reasoningBlocks.get(blockId);
               return block && !block.completed ? [block.itemId] : [];
             }),
-            assistantText: activeTurn.assistantText,
+            assistantText: activeTurn.assistantFinalText,
           }),
           emit,
           { concurrency: 1 },
@@ -1995,7 +2065,51 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
         let assistantText = "";
         let assistantCompletionText = input.context.activeTurn?.assistantText ?? "";
+        let assistantFinalText = input.context.activeTurn?.assistantFinalText ?? "";
         let assistantStarted = input.context.activeTurn?.assistantStarted ?? false;
+
+        const flushVisibleAssistantSegment = Effect.fn("flushVisibleAssistantSegment")(function* (
+          segmentText: string,
+        ) {
+          if (interactionMode === "plan" || segmentText.length === 0) {
+            return;
+          }
+          if (!assistantStarted) {
+            assistantStarted = true;
+            if (input.context.activeTurn) {
+              input.context.activeTurn.assistantStarted = true;
+            }
+            yield* emit({
+              ...runtimeEventBase({
+                threadId: input.context.session.threadId,
+                turnId: input.turnId,
+                itemId: input.assistantItemId,
+              }),
+              type: "item.started",
+              payload: {
+                itemType: "assistant_message",
+                status: "inProgress",
+                title: "Assistant message",
+              },
+            } satisfies ProviderRuntimeEvent);
+          }
+          assistantFinalText += segmentText;
+          if (input.context.activeTurn) {
+            input.context.activeTurn.assistantFinalText = assistantFinalText;
+          }
+          yield* emit({
+            ...runtimeEventBase({
+              threadId: input.context.session.threadId,
+              turnId: input.turnId,
+              itemId: input.assistantItemId,
+            }),
+            type: "content.delta",
+            payload: {
+              streamKind: "assistant_text",
+              delta: segmentText,
+            },
+          } satisfies ProviderRuntimeEvent);
+        });
 
         try {
           for (;;) {
@@ -2040,28 +2154,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const chunk = next.value.value as UIMessageChunk;
             switch (chunk.type) {
               case "text-start": {
-                if (interactionMode === "plan") {
-                  break;
-                }
-                if (!assistantStarted) {
-                  assistantStarted = true;
-                  if (input.context.activeTurn) {
-                    input.context.activeTurn.assistantStarted = true;
-                  }
-                  yield* emit({
-                    ...runtimeEventBase({
-                      threadId: input.context.session.threadId,
-                      turnId: input.turnId,
-                      itemId: input.assistantItemId,
-                    }),
-                    type: "item.started",
-                    payload: {
-                      itemType: "assistant_message",
-                      status: "inProgress",
-                      title: "Assistant message",
-                    },
-                  } satisfies ProviderRuntimeEvent);
-                }
+                assistantText = "";
                 break;
               }
               case "text-delta": {
@@ -2083,18 +2176,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   } satisfies ProviderRuntimeEvent);
                   break;
                 }
-                yield* emit({
-                  ...runtimeEventBase({
-                    threadId: input.context.session.threadId,
-                    turnId: input.turnId,
-                    itemId: input.assistantItemId,
-                  }),
-                  type: "content.delta",
-                  payload: {
-                    streamKind: "assistant_text",
-                    delta: chunk.delta,
-                  },
-                } satisfies ProviderRuntimeEvent);
+                // Buffer assistant text until the next boundary so we can keep
+                // commentary-style pre-tool narration out of the final message.
+                break;
+              }
+              case "text-end": {
+                yield* flushVisibleAssistantSegment(assistantText);
+                assistantText = "";
                 break;
               }
               case "reasoning-start": {
@@ -2183,6 +2271,26 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   input.context.activeTurn && reasoningBlockIds.length > 0
                     ? buildReasoningPartsForBlockIds(input.context.activeTurn, reasoningBlockIds)
                     : undefined;
+                const commentaryText =
+                  interactionMode === "plan" ? null : normalizeHostedCommentaryText(assistantText);
+
+                if (commentaryText && input.context.activeTurn) {
+                  input.context.activeTurn.commentaryCount += 1;
+                  const commentaryItemId = RuntimeItemId.makeUnsafe(
+                    `commentary:${String(input.turnId)}:${input.context.activeTurn.commentaryCount}`,
+                  );
+                  yield* emit(
+                    buildCommentaryAssistantCompletionEvent({
+                      threadId: input.context.session.threadId,
+                      turnId: input.turnId,
+                      itemId: commentaryItemId,
+                      detail: commentaryText,
+                    }),
+                  );
+                } else {
+                  yield* flushVisibleAssistantSegment(assistantText);
+                }
+                assistantText = "";
 
                 if (toolName === "update_plan") {
                   const planUpdate = extractPlanUpdatePayload(toolInput);
@@ -2498,6 +2606,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             return;
           }
 
+          if (interactionMode !== "plan") {
+            yield* flushVisibleAssistantSegment(assistantText);
+            assistantText = "";
+          }
+
           if (interactionMode === "plan" && assistantCompletionText.trim().length > 0) {
             yield* emit({
               ...runtimeEventBase({
@@ -2509,20 +2622,20 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 planMarkdown: assistantCompletionText,
               },
             } satisfies ProviderRuntimeEvent);
-          } else if (assistantStarted) {
+          } else if (assistantStarted && assistantFinalText.trim().length > 0) {
             yield* emit(
               buildAssistantCompletionEvent({
                 threadId: input.context.session.threadId,
                 turnId: input.turnId,
                 itemId: input.assistantItemId,
-                detail: assistantCompletionText,
+                detail: assistantFinalText,
               }),
             );
           }
 
           const assistantMessage = assistantMessageWithParts({
             messageId: `assistant-${String(input.turnId)}`,
-            text: assistantText,
+            text: assistantFinalText,
             ...(input.context.activeTurn
               ? {
                   reasoningParts: buildReasoningPartsForBlockIds(
@@ -2538,7 +2651,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           yield* Effect.logInfo("shiori turn completed", {
             threadId: input.context.session.threadId,
             turnId: input.turnId,
-            assistantChars: assistantText.length,
+            assistantChars: assistantFinalText.length,
           });
           const finalizedMessages = hasMessageParts(assistantMessage)
             ? [...input.requestMessages, assistantMessage]
@@ -2613,7 +2726,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                         return block && !block.completed ? [block.itemId] : [];
                       })
                     : [],
-                assistantText,
+                assistantText: assistantFinalText,
               }),
               emit,
               { concurrency: 1 },
@@ -2643,7 +2756,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         } finally {
           yield* Effect.tryPromise({
             try: () => reader.cancel(),
-            catch: (error) => error,
+            catch: (error) =>
+              requestError(
+                `shiori.turn.start:${String(input.context.session.threadId)}`,
+                toMessage(error),
+                error,
+              ),
           }).pipe(Effect.ignore({ log: false }));
         }
       });
@@ -2812,7 +2930,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 closeMcpTools: mcpToolRuntime.close,
                 ...(modelSettings ? { modelSettings } : {}),
                 assistantText: "",
+                assistantFinalText: "",
                 assistantStarted: false,
+                commentaryCount: 0,
                 reasoningBlocks: new Map(),
                 reasoningBlockOrder: [],
               },

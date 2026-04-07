@@ -5,7 +5,7 @@ import {
   FolderIcon,
   GitBranchIcon,
   GitPullRequestIcon,
-  PlusIcon,
+  NavigationIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -598,24 +598,27 @@ function UserAvatar(props: { src: string | null | undefined; name: string | null
   );
 }
 
-function SidebarUserFooter(props: { onSettingsClick: () => void }) {
+function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: ReactNode }) {
   const { isAuthenticated, viewer, subscriptionPlanLabel } = useHostedShioriState();
 
   if (!isAuthenticated || !viewer) {
     return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            tooltip="Settings"
-            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-            onClick={props.onSettingsClick}
-          >
-            <SettingsIcon className="size-3.5" />
-            <span className="text-xs">Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
+      <div className="flex items-center gap-1">
+        {props.sortMenu}
+        <SidebarMenu className="flex-1">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Settings"
+              className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+              onClick={props.onSettingsClick}
+            >
+              <SettingsIcon className="size-3.5" />
+              <span className="text-xs">Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </div>
     );
   }
 
@@ -640,13 +643,16 @@ function SidebarUserFooter(props: { onSettingsClick: () => void }) {
           ) : null}
         </span>
       </button>
-      <button
-        type="button"
-        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground group-data-[collapsible=icon]:hidden"
-        onClick={props.onSettingsClick}
-      >
-        <SettingsIcon className="size-3.5" />
-      </button>
+      <div className="flex shrink-0 items-center gap-0.5 group-data-[collapsible=icon]:hidden">
+        {props.sortMenu}
+        <button
+          type="button"
+          className="flex size-7 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+          onClick={props.onSettingsClick}
+        >
+          <SettingsIcon className="size-3.5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -941,14 +947,22 @@ export default function Sidebar() {
     setIsPickingFolder(false);
   };
 
-  const handleStartAddProject = () => {
-    setAddProjectError(null);
-    if (shouldBrowseForProjectImmediately) {
-      void handlePickFolder();
-      return;
-    }
-    setAddingProject((prev) => !prev);
-  };
+  const handlePickFolderRef = useRef(handlePickFolder);
+  handlePickFolderRef.current = handlePickFolder;
+
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") return;
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action !== "open-project") return;
+      void handlePickFolderRef.current();
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
@@ -1668,7 +1682,7 @@ export default function Sidebar() {
               }
             />
             <TooltipPopup side="top">
-              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+              {newThreadShortcutLabel ? `New Thread (${newThreadShortcutLabel})` : "New Thread"}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -1981,18 +1995,14 @@ export default function Sidebar() {
       ) : (
         <>
           <SidebarContent className="gap-0">
-            <SidebarGroup className="px-3 pt-1 pb-0">
-              <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
-                <SidebarMenuSubItem className="w-full">
-                  <SidebarMenuSubButton
+            <SidebarGroup className="px-2 pt-1 pb-0">
+              <SidebarMenu className="gap-0.5">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     render={<button type="button" />}
                     size="sm"
-                    isActive={false}
                     data-testid="new-thread-button"
-                    className={`${resolveThreadRowClassName({
-                      isActive: false,
-                      isSelected: false,
-                    })} relative isolate text-[13px]`}
+                    className="h-9 gap-3 rounded-lg bg-sidebar-accent/50 px-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                     aria-disabled={defaultProjectId === null || undefined}
                     onClick={() => {
                       const projectId =
@@ -2005,24 +2015,16 @@ export default function Sidebar() {
                       });
                     }}
                   >
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                      <span className="mr-2 inline-flex shrink-0 items-center justify-center pl-1">
-                        <SquarePenIcon className="size-3.5" aria-hidden />
+                    <NavigationIcon className="size-4 shrink-0" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate">New Thread</span>
+                    {newThreadShortcutLabel ? (
+                      <span className="ml-auto text-xs text-muted-foreground/50">
+                        {newThreadShortcutLabel}
                       </span>
-                      <span className="min-w-0 flex-1 truncate">New Thread</span>
-                    </div>
-                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                      <div className="flex min-w-12 justify-end">
-                        {newThreadShortcutLabel ? (
-                          <span className="text-[10px] text-muted-foreground/40">
-                            {newThreadShortcutLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-              </SidebarMenuSub>
+                    ) : null}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
             </SidebarGroup>
             {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
               <SidebarGroup className="px-2 pt-2 pb-0">
@@ -2048,47 +2050,6 @@ export default function Sidebar() {
               </SidebarGroup>
             ) : null}
             <SidebarGroup className="px-2 py-2">
-              <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                  Projects
-                </span>
-                <div className="flex items-center gap-1">
-                  <ProjectSortMenu
-                    projectSortOrder={appSettings.sidebarProjectSortOrder}
-                    threadSortOrder={appSettings.sidebarThreadSortOrder}
-                    onProjectSortOrderChange={(sortOrder) => {
-                      updateSettings({ sidebarProjectSortOrder: sortOrder });
-                    }}
-                    onThreadSortOrderChange={(sortOrder) => {
-                      updateSettings({ sidebarThreadSortOrder: sortOrder });
-                    }}
-                  />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label={
-                            shouldShowProjectPathEntry ? "Cancel add project" : "Add project"
-                          }
-                          aria-pressed={shouldShowProjectPathEntry}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                          onClick={handleStartAddProject}
-                        />
-                      }
-                    >
-                      <PlusIcon
-                        className={`size-3.5 transition-transform duration-150 ${
-                          shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
-                        }`}
-                      />
-                    </TooltipTrigger>
-                    <TooltipPopup side="right">
-                      {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                    </TooltipPopup>
-                  </Tooltip>
-                </div>
-              </div>
               {shouldShowProjectPathEntry && (
                 <div className="mb-2 px-1">
                   {isElectron && (
@@ -2200,7 +2161,21 @@ export default function Sidebar() {
           <SidebarSeparator />
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />
-            <SidebarUserFooter onSettingsClick={() => void navigate({ to: "/settings" })} />
+            <SidebarUserFooter
+              onSettingsClick={() => void navigate({ to: "/settings" })}
+              sortMenu={
+                <ProjectSortMenu
+                  projectSortOrder={appSettings.sidebarProjectSortOrder}
+                  threadSortOrder={appSettings.sidebarThreadSortOrder}
+                  onProjectSortOrderChange={(sortOrder) => {
+                    updateSettings({ sidebarProjectSortOrder: sortOrder });
+                  }}
+                  onThreadSortOrderChange={(sortOrder) => {
+                    updateSettings({ sidebarThreadSortOrder: sortOrder });
+                  }}
+                />
+              }
+            />
           </SidebarFooter>
         </>
       )}

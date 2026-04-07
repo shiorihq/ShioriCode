@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
-import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
+import { SidebarInset } from "../components/ui/sidebar";
 import { isElectron } from "../env";
 
 function SettingsContentLayout() {
@@ -34,7 +34,6 @@ function SettingsContentLayout() {
         {!isElectron && (
           <header className="border-b border-border px-3 py-2 sm:px-5">
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0" />
               <span className="text-sm font-medium text-foreground">Settings</span>
               <div className="ms-auto flex items-center gap-2">
                 <Button
@@ -53,8 +52,7 @@ function SettingsContentLayout() {
 
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <SidebarTrigger className="no-drag-region size-7 shrink-0" />
-            <span className="ml-2 text-xs font-medium tracking-wide text-muted-foreground/70">
+            <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
             <div className="ms-auto flex items-center gap-2">

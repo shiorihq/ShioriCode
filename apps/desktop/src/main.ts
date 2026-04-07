@@ -975,6 +975,12 @@ function configureApplicationMenu(): void {
     {
       label: "File",
       submenu: [
+        {
+          label: "Open Project...",
+          accelerator: "CmdOrCtrl+O",
+          click: () => dispatchMenuAction("open-project"),
+        },
+        { type: "separator" },
         ...(process.platform === "darwin"
           ? []
           : [

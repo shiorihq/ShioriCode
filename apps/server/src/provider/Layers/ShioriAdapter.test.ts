@@ -418,6 +418,111 @@ describe("ShioriAdapterLive session state", () => {
     );
   });
 
+  it("emits commentary-like pre-tool text as status activity and keeps it out of the final answer", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", delta: "I'll inspect the files now." },
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-1",
+            toolName: "read_file",
+            input: { path: "missing.txt" },
+          },
+        ]);
+      }
+
+      const secondBody = requestBodies[1];
+      const secondMessages = Array.isArray(secondBody?.messages)
+        ? (secondBody.messages as Array<Record<string, unknown>>)
+        : [];
+      const lastAssistantMessage = secondMessages.at(-1);
+      const lastParts = Array.isArray(lastAssistantMessage?.parts)
+        ? (lastAssistantMessage.parts as Array<Record<string, unknown>>)
+        : [];
+
+      assert.equal(lastAssistantMessage?.role, "assistant");
+      assert.equal(lastParts[0]?.type, "text");
+      assert.equal(lastParts[0]?.text, "I'll inspect the files now.");
+      assert.equal(lastParts[1]?.type, "dynamic-tool");
+      assert.equal(lastParts[1]?.state, "output-error");
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-2" },
+        { type: "text-delta", id: "text-2", delta: "Here is the final answer." },
+        { type: "text-end", id: "text-2" },
+        {
+          type: "finish",
+          finishReason: "stop",
+        },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-commentary");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            runtimeMode: "full-access",
+          });
+
+          const eventsFiber = yield* Effect.forkScoped(
+            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(9))),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Review the repo changes.",
+          });
+
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+          const commentaryEvent = events.find(
+            (event) =>
+              event.type === "item.completed" &&
+              event.payload.itemType === "assistant_message" &&
+              event.payload.data &&
+              typeof event.payload.data === "object" &&
+              "item" in event.payload.data &&
+              typeof event.payload.data.item === "object" &&
+              event.payload.data.item !== null &&
+              "phase" in event.payload.data.item &&
+              event.payload.data.item.phase === "commentary",
+          );
+          const finalAssistantCompletion = events
+            .toReversed()
+            .find(
+              (event) =>
+                event.type === "item.completed" &&
+                event.payload.itemType === "assistant_message" &&
+                event.payload.detail === "Here is the final answer.",
+            );
+
+          assert.equal(requestBodies.length, 2);
+          assert.ok(commentaryEvent);
+          assert.equal(commentaryEvent?.payload.detail, "I'll inspect the files now.");
+          assert.ok(finalAssistantCompletion);
+          assert.equal(finalAssistantCompletion?.payload.detail, "Here is the final answer.");
+          assert.ok(
+            !String(finalAssistantCompletion?.payload.detail ?? "").includes("I'll inspect"),
+          );
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
   it("preserves assistant reasoning parts when replaying tool calls", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     let callCount = 0;
@@ -736,12 +841,19 @@ describe("ShioriAdapterLive session state", () => {
 
           const session = (yield* adapter.listSessions())[0];
           const resumeCursor = session?.resumeCursor as
-            | { messages?: Array<{ role?: string; parts?: unknown[] }> }
+            | {
+                messages?: Array<{
+                  role?: string;
+                  parts?: Array<{ type?: string; text?: string }>;
+                }>;
+              }
             | undefined;
           assert.ok(resumeCursor);
-          assert.equal(resumeCursor?.messages?.length, 2);
+          assert.equal(resumeCursor?.messages?.length, 3);
           assert.equal(resumeCursor?.messages?.at(-1)?.role, "assistant");
           assert.ok((resumeCursor?.messages?.at(-1)?.parts?.length ?? 0) > 0);
+          assert.equal(resumeCursor?.messages?.at(-1)?.parts?.[0]?.type, "text");
+          assert.equal(resumeCursor?.messages?.at(-1)?.parts?.[0]?.text, "Before tool. ");
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
       ),
     );

@@ -74,7 +74,7 @@ const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "shioricode";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
-const DEFAULT_THREAD_TITLE = "New thread";
+const DEFAULT_THREAD_TITLE = "New Thread";
 const THREAD_METADATA_TEXT_GENERATION_PROVIDERS = new Set<ProviderKind>(["codex", "claudeAgent"]);
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {

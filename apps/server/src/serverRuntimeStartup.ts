@@ -199,7 +199,7 @@ const autoBootstrapWelcome = Effect.gen(function* () {
           commandId: CommandId.makeUnsafe(crypto.randomUUID()),
           threadId: createdThreadId,
           projectId: nextProjectId,
-          title: "New thread",
+          title: "New Thread",
           modelSelection: nextProjectDefaultModelSelection,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",

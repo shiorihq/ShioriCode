@@ -1059,7 +1059,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Running");
+    expect(markup).toContain("Executing");
     expect(markup).toContain("Ran");
   });
 

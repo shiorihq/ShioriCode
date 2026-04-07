@@ -2862,7 +2862,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         } else if (composerTerminalContextsSnapshot.length > 0) {
           titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
         } else {
-          titleSeed = "New thread";
+          titleSeed = "New Thread";
         }
       }
       const title = truncate(titleSeed);

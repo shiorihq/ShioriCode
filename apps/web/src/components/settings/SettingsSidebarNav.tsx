@@ -74,8 +74,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   isActive={isActive}
                   className={
                     isActive
-                      ? "gap-2 px-2 py-2 text-left text-xs text-foreground transition-none"
-                      : "gap-2 px-2 py-2 text-left text-xs text-muted-foreground transition-none hover:text-foreground/80"
+                      ? "gap-2 px-2 py-2 text-left text-xs text-foreground transition-none hover:bg-accent hover:text-foreground"
+                      : "gap-2 px-2 py-2 text-left text-xs text-muted-foreground transition-none hover:bg-accent hover:text-foreground"
                   }
                   onClick={() => void navigate({ to: item.to, replace: true })}
                 >

@@ -146,7 +146,7 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
       items: [
         {
           id: "new-thread",
-          label: "New thread",
+          label: "New Thread",
           icon: <SquarePenIcon className="size-4" />,
           shortcutCommand: "chat.new",
           onSelect: () => {

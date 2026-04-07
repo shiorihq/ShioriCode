@@ -685,7 +685,7 @@ export function buildWorkGroupSummary(
     case "edit":
       return isInProgress ? "Editing" : "Edited";
     case "command":
-      return isInProgress ? "Running" : "Ran";
+      return isInProgress ? "Executing" : "Executed";
     case "explore": {
       const displayedEntries = getDisplayedWorkEntries(entries);
       const readKeys = new Set<string>();

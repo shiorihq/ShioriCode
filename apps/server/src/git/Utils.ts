@@ -64,7 +64,7 @@ export function sanitizeThreadTitle(raw: string): string {
     .replace(/\s+/g, " ");
 
   if (!normalized || normalized.trim().length === 0) {
-    return "New thread";
+    return "New Thread";
   }
 
   if (normalized.length <= 50) {

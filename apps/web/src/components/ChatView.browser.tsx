@@ -337,7 +337,7 @@ function addThreadToSnapshot(
       {
         id: threadId,
         projectId: PROJECT_ID,
-        title: "New thread",
+        title: "New Thread",
         modelSelection: {
           provider: "codex",
           model: "gpt-5",
@@ -386,7 +386,7 @@ function createThreadCreatedEvent(threadId: ThreadId, sequence: number): Orchest
     payload: {
       threadId,
       projectId: PROJECT_ID,
-      title: "New thread",
+      title: "New Thread",
       modelSelection: {
         provider: "codex",
         model: "gpt-5",
@@ -939,11 +939,8 @@ async function triggerChatNewShortcutUntilPath(
 async function waitForNewThreadShortcutLabel(): Promise<void> {
   const newThreadButton = page.getByTestId("new-thread-button");
   await expect.element(newThreadButton).toBeInTheDocument();
-  await newThreadButton.hover();
-  const shortcutLabel = isMacPlatform(navigator.platform)
-    ? "New thread (⌘N)"
-    : "New thread (Ctrl+N)";
-  await expect.element(page.getByText(shortcutLabel)).toBeInTheDocument();
+  const shortcutLabel = isMacPlatform(navigator.platform) ? "⌘N" : "Ctrl+N";
+  await expect.element(newThreadButton.getByText(shortcutLabel)).toBeInTheDocument();
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -2408,7 +2405,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await waitForURL(
         mounted.router,
         (path) => path === newThreadPath,
-        "New thread should remain selected after server thread promotion clears the draft.",
+        "New Thread should remain selected after server thread promotion clears the draft.",
       );
 
       // The empty thread view and composer should still be visible.

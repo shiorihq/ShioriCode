@@ -1,8 +1,7 @@
 import { memo } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, LoaderCircleIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
-import { LoadingText } from "../ui/loading-text";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
 interface PendingActionState {
@@ -184,9 +183,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       }
     >
       {isConnecting || isSendBusy ? (
-        <LoadingText className="text-[9px] font-medium sm:text-[8px]">
-          {isConnecting ? "Connecting" : "Sending"}
-        </LoadingText>
+        <LoaderCircleIcon className="size-4 animate-spin" aria-hidden="true" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path

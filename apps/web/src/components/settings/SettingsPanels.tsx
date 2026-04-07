@@ -727,7 +727,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Assistant personality"]
         : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
-        ? ["New thread mode"]
+        ? ["New Thread mode"]
         : []),
       ...(isDefaultModelDirty ? ["Default model"] : []),
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
@@ -1639,7 +1639,7 @@ export function GeneralSettingsPanel() {
         </SettingsRow>
 
         <SettingsRow
-          title="New threads"
+          title="New Threads"
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (

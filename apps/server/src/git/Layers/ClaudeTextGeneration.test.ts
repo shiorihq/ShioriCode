@@ -303,7 +303,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
           },
         });
 
-        expect(generated.title).toBe("New thread");
+        expect(generated.title).toBe("New Thread");
       }),
     ),
   );

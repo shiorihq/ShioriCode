@@ -6,8 +6,8 @@ Add git integration to let users start new threads from a specific branch, optio
 
 ## UX Flow
 
-- **Left click** "+ New thread" → immediately creates a thread (current behavior, unchanged)
-- **Right click** "+ New thread" → opens a context menu with git options:
+- **Left click** "+ New Thread" → immediately creates a thread (current behavior, unchanged)
+- **Right click** "+ New Thread" → opens a context menu with git options:
   - List of local branches → clicking one creates a thread on that branch (uses project cwd)
   - Each branch has a "worktree" sub-option → creates a worktree, then creates thread with worktree as cwd
 - When thread has a worktree, the agent session uses the worktree path as its cwd
@@ -71,7 +71,7 @@ worktreePath: string | null
 ### 9. `apps/renderer/src/components/Sidebar.tsx` — MODIFY (main UI work)
 
 - Keep existing left-click `handleNewThread` unchanged (immediate thread creation)
-- Add `onContextMenu` handler to "+ New thread" buttons (both global and per-project)
+- Add `onContextMenu` handler to "+ New Thread" buttons (both global and per-project)
 - On right-click: fetch branches via `api.git.listBranches`, show a custom context menu
 - Context menu items: branch names, each with a nested option to create with worktree
 - Clicking a branch → creates thread with `branch` set, title = branch name
@@ -108,7 +108,7 @@ Context menu component: a positioned `<div>` with `position: fixed` anchored to 
 
 1. `turbo build` — confirm contracts/desktop/renderer all compile
 2. Launch app, add a project pointing to a git repo
-3. Click "+ New thread" → verify branch list loads
+3. Click "+ New Thread" → verify branch list loads
 4. Select a branch, click Start → thread created with branch in title
 5. Enable worktree checkbox, pick branch, Start → verify worktree directory created on disk
 6. Send a message in worktree thread → verify agent runs in worktree cwd
