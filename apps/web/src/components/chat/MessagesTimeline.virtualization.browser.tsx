@@ -238,7 +238,7 @@ function createChangedFilesScenario(input: {
   const afterMessages = createFillerMessages({
     prefix: `${input.rowId}-after`,
     startOffsetSeconds: 40,
-    pairCount: 8,
+    pairCount: 62,
   });
   const changedFilesMessage = createMessage({
     id: input.rowId,
@@ -275,7 +275,7 @@ function createAssistantMessageScenario(input: {
   const afterMessages = createFillerMessages({
     prefix: `${input.rowId}-after`,
     startOffsetSeconds: 40,
-    pairCount: 8,
+    pairCount: 62,
   });
   const assistantMessage = createMessage({
     id: input.rowId,
@@ -303,7 +303,7 @@ function buildStaticScenarios(): VirtualizationScenario[] {
   const afterMessages = createFillerMessages({
     prefix: "after",
     startOffsetSeconds: 40,
-    pairCount: 8,
+    pairCount: 62,
   });
 
   const longUserMessage = createMessage({
@@ -653,7 +653,7 @@ describe("MessagesTimeline virtualization harness", () => {
     const afterMessages = createFillerMessages({
       prefix: "after-collapse",
       startOffsetSeconds: 40,
-      pairCount: 8,
+      pairCount: 62,
     });
     const targetMessage = createMessage({
       id: "target-assistant-collapse",
@@ -1023,7 +1023,7 @@ describe("MessagesTimeline virtualization harness", () => {
           ...createFillerMessages({
             prefix: "tail-transition-extra",
             startOffsetSeconds: 120,
-            pairCount: 8,
+            pairCount: 62,
           }),
         ],
         turnDiffSummaryByAssistantMessageId: initialProps.turnDiffSummaryByAssistantMessageId,
@@ -1125,7 +1125,7 @@ describe("MessagesTimeline virtualization harness", () => {
           ...createFillerMessages({
             prefix: "tail-image-extra",
             startOffsetSeconds: 120,
-            pairCount: 8,
+            pairCount: 62,
           }),
         ],
         onVirtualizerSnapshot: initialProps.onVirtualizerSnapshot,
