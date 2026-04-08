@@ -2147,3 +2147,61 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(
+  Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-pending-approvals-structured-decision-")),
+)("OrchestrationProjectionPipeline", (it) => {
+  it.effect("normalizes structured approval decisions for pending approval projections", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.makeUnsafe("evt-structured-approval"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-structured-approval"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-structured-approval"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-structured-approval"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-structured-approval"),
+          activity: {
+            id: EventId.makeUnsafe("activity-structured-approval"),
+            tone: "approval",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: {
+              requestId: "approval-structured-1",
+              decision: {
+                acceptWithExecpolicyAmendment: {
+                  execpolicy_amendment: ['allow: ["git", "status"]'],
+                },
+              },
+            },
+            turnId: null,
+            createdAt: now,
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const rows = yield* sql<{
+        readonly status: string;
+        readonly decision: string | null;
+      }>`
+        SELECT
+          status,
+          decision
+        FROM projection_pending_approvals
+        WHERE request_id = 'approval-structured-1'
+      `;
+      assert.deepEqual(rows, [{ status: "resolved", decision: "accept" }]);
+    }),
+  );
+});

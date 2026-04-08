@@ -51,7 +51,7 @@ import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-route
 import { type SidebarProjectSortOrder, type SidebarThreadSortOrder } from "contracts/settings";
 import { isElectron } from "../env";
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
@@ -236,7 +236,7 @@ function SidebarThreadAsciiLoader6() {
     <span
       role="img"
       aria-label="Response in progress"
-      className="inline-flex size-3 shrink-0 items-center justify-center font-mono text-[10px] leading-none text-current opacity-70"
+      className="inline-flex size-3 shrink-0 items-center justify-center font-mono text-sm leading-none text-current opacity-70"
     >
       {frame === 0 ? "\u00d7" : "+"}
     </span>
@@ -306,7 +306,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate text-[13px]`}
+        })} relative isolate text-sm`}
         onClick={(event) => {
           props.handleThreadClick(event, thread.id, props.orderedProjectThreadIds);
         }}
@@ -385,7 +385,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                   element.select();
                 }
               }}
-              className="min-w-0 flex-1 truncate text-[13px] bg-transparent outline-none border border-ring rounded px-0.5"
+              className="min-w-0 flex-1 truncate border border-ring rounded bg-transparent px-0.5 text-sm outline-none"
               value={props.renamingTitle}
               onChange={(event) => props.setRenamingTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -458,14 +458,14 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             <span className={threadMetaClassName}>
               {props.showThreadJumpHints && props.jumpLabel ? (
                 <span
-                  className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
+                  className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-sm font-medium tracking-tight text-foreground shadow-sm"
                   title={props.jumpLabel}
                 >
                   {props.jumpLabel}
                 </span>
               ) : (
                 <span
-                  className={`text-[10px] ${
+                  className={`text-sm ${
                     isHighlighted
                       ? "text-foreground/72 dark:text-foreground/82"
                       : "text-muted-foreground/40"
@@ -488,7 +488,7 @@ function ShioriWordmark() {
   return (
     <span className="flex items-baseline gap-0.5 shrink-0">
       <span className="font-sans text-sm font-normal tracking-tight text-foreground">Shiori</span>
-      <span className="font-mono text-[13px] font-medium italic text-primary">Code</span>
+      <span className="font-mono text-sm font-medium italic text-primary">Code</span>
     </span>
   );
 }
@@ -523,9 +523,7 @@ function ProjectSortMenu({
       </Tooltip>
       <MenuPopup align="end" side="bottom" className="min-w-44">
         <MenuGroup>
-          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
-            Sort projects
-          </div>
+          <div className="px-2 py-1 text-sm font-medium text-muted-foreground">Sort projects</div>
           <MenuRadioGroup
             value={projectSortOrder}
             onValueChange={(value) => {
@@ -534,7 +532,7 @@ function ProjectSortMenu({
           >
             {(Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>).map(
               ([value, label]) => (
-                <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+                <MenuRadioItem key={value} value={value} className="min-h-7 py-1 text-sm">
                   {label}
                 </MenuRadioItem>
               ),
@@ -542,7 +540,7 @@ function ProjectSortMenu({
           </MenuRadioGroup>
         </MenuGroup>
         <MenuGroup>
-          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
+          <div className="px-2 pt-2 pb-1 text-sm font-medium text-muted-foreground">
             Sort threads
           </div>
           <MenuRadioGroup
@@ -554,7 +552,7 @@ function ProjectSortMenu({
             {(
               Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
             ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 text-sm">
                 {label}
               </MenuRadioItem>
             ))}
@@ -613,7 +611,7 @@ function UserAvatar(props: { src: string | null | undefined; name: string | null
       referrerPolicy="no-referrer"
     />
   ) : (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-[10px] font-medium text-muted-foreground">
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-medium text-muted-foreground">
       {initials}
     </span>
   );
@@ -635,7 +633,7 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
               onClick={props.onSettingsClick}
             >
               <SettingsIcon className="size-3.5" />
-              <span className="text-xs">Settings</span>
+              <span className="text-sm">Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -656,9 +654,9 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
           <UserAvatar src={viewer.image} name={viewer.name} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-          <span className="block truncate text-xs font-medium text-foreground">{displayName}</span>
+          <span className="block truncate text-sm font-medium text-foreground">{displayName}</span>
           {subscriptionPlanLabel ? (
-            <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+            <span className="block truncate text-sm leading-tight text-muted-foreground">
               {subscriptionPlanLabel}
             </span>
           ) : null}
@@ -1642,7 +1640,7 @@ export default function Sidebar() {
               });
             }}
           >
-            <span className="min-w-0 shrink truncate text-sm text-muted-foreground">
+            <span className="min-w-0 shrink truncate text-[13px] text-muted-foreground">
               {project.name}
             </span>
             <ChevronDownIcon
@@ -1716,7 +1714,7 @@ export default function Sidebar() {
             <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
               <div
                 data-thread-selection-safe
-                className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+                className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-sm text-muted-foreground/60"
               >
                 <span>{emptyThreadStateLabel}</span>
               </div>
@@ -1887,6 +1885,7 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal", sidebarShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", sidebarShortcutLabelOptions);
+  const projectListTopSpacingClassName = shouldShowProjectPathEntry ? "" : "mt-2";
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -1980,11 +1979,6 @@ export default function Sidebar() {
               to="/"
             >
               <ShioriWordmark />
-              {APP_STAGE_LABEL ? (
-                <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                  {APP_STAGE_LABEL}
-                </span>
-              ) : null}
             </Link>
           }
         />
@@ -2023,7 +2017,7 @@ export default function Sidebar() {
                     render={<button type="button" />}
                     size="sm"
                     data-testid="new-thread-button"
-                    className="h-9 gap-3 rounded-lg bg-sidebar-accent/50 px-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                    className="h-7 gap-2 rounded-lg bg-sidebar-accent/50 px-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                     aria-disabled={defaultProjectId === null || undefined}
                     onClick={() => {
                       const projectId =
@@ -2039,7 +2033,7 @@ export default function Sidebar() {
                     <NewThreadIconComponent icon={appSettings.newThreadIcon} />
                     <span className="min-w-0 flex-1 truncate">New Thread</span>
                     {newThreadShortcutLabel ? (
-                      <span className="ml-auto text-xs text-muted-foreground/50">
+                      <span className="ml-auto text-sm text-muted-foreground/50">
                         {newThreadShortcutLabel}
                       </span>
                     ) : null}
@@ -2076,7 +2070,7 @@ export default function Sidebar() {
                   {isElectron && (
                     <button
                       type="button"
-                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-sm text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => void handlePickFolder()}
                       disabled={isPickingFolder || isAddingProject}
                     >
@@ -2087,7 +2081,7 @@ export default function Sidebar() {
                   <div className="flex gap-1.5">
                     <input
                       ref={addProjectInputRef}
-                      className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                      className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
                         addProjectError
                           ? "border-red-500/70 focus:border-red-500"
                           : "border-border focus:border-ring"
@@ -2109,7 +2103,7 @@ export default function Sidebar() {
                     />
                     <button
                       type="button"
-                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
                       onClick={handleAddProject}
                       disabled={!canAddProject}
                     >
@@ -2117,7 +2111,7 @@ export default function Sidebar() {
                     </button>
                   </div>
                   {addProjectError && (
-                    <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                    <p className="mt-1 px-0.5 text-sm leading-tight text-red-400">
                       {addProjectError}
                     </p>
                   )}
@@ -2125,7 +2119,7 @@ export default function Sidebar() {
               )}
 
               {!bootstrapComplete ? (
-                <SidebarMenu>
+                <SidebarMenu className={projectListTopSpacingClassName}>
                   {Array.from({ length: 3 }, (_, i) => (
                     <SidebarMenuItem key={i}>
                       <SidebarMenuSkeleton showIcon />
@@ -2145,7 +2139,7 @@ export default function Sidebar() {
                   onDragEnd={handleProjectDragEnd}
                   onDragCancel={handleProjectDragCancel}
                 >
-                  <SidebarMenu>
+                  <SidebarMenu className={projectListTopSpacingClassName}>
                     <SortableContext
                       items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
                       strategy={verticalListSortingStrategy}
@@ -2162,7 +2156,10 @@ export default function Sidebar() {
                   </SidebarMenu>
                 </DndContext>
               ) : (
-                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                <SidebarMenu
+                  ref={attachProjectListAutoAnimateRef}
+                  className={projectListTopSpacingClassName}
+                >
                   {renderedProjects.map((renderedProject) => (
                     <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
                       {renderProjectItem(renderedProject, null)}
@@ -2172,7 +2169,7 @@ export default function Sidebar() {
               )}
 
               {bootstrapComplete && projects.length === 0 && !shouldShowProjectPathEntry && (
-                <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+                <div className="px-2 pt-4 text-center text-sm text-muted-foreground/60">
                   No projects yet
                 </div>
               )}

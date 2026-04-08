@@ -16,13 +16,12 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
-  ProviderApprovalDecision,
   ProviderItemId,
   ThreadId,
   TurnId,
   ProviderSendTurnInput,
 } from "contracts";
-import { Effect, FileSystem, Layer, Queue, Ref, Schema, ServiceMap, Stream } from "effect";
+import { Effect, FileSystem, Layer, Queue, Ref, ServiceMap, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -45,6 +44,7 @@ import { prepareCodexHomeWithManagedMcpServers } from "../mcpServers.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import type { CodexUsageSnapshot } from "../Services/ProviderUsage.ts";
+import { normalizeProviderApprovalDecision } from "../providerApprovalDecision.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -298,6 +298,7 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
     case "execCommandApproval":
       return "exec_command_approval";
     case "item/tool/requestUserInput":
+    case "tool/requestUserInput":
       return "tool_user_input";
     case "item/tool/call":
       return "dynamic_tool_call";
@@ -618,7 +619,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.kind === "request") {
-    if (event.method === "item/tool/requestUserInput") {
+    if (event.method === "item/tool/requestUserInput" || event.method === "tool/requestUserInput") {
       const questions = toUserInputQuestions(payload);
       if (!questions) {
         return [];
@@ -650,7 +651,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/requestApproval/decision" && event.requestId) {
-    const decision = Schema.decodeUnknownSync(ProviderApprovalDecision)(payload?.decision);
+    const decision = normalizeProviderApprovalDecision(payload?.decision);
     const requestType =
       event.requestKind !== undefined
         ? toRequestTypeFromKind(event.requestKind)
@@ -1013,7 +1014,10 @@ function mapToRuntimeEvents(
     ];
   }
 
-  if (event.method === "item/tool/requestUserInput/answered") {
+  if (
+    event.method === "item/tool/requestUserInput/answered" ||
+    event.method === "tool/requestUserInput/answered"
+  ) {
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),

@@ -73,14 +73,19 @@ function AppSidebarKeyboardShortcuts() {
 }
 
 function AppSidebarContent({ children }: { children: ReactNode }) {
-  const { open: sidebarOpen } = useSidebar();
+  const { isMobile, open: sidebarOpen } = useSidebar();
   const macWindowControlsInset = useDesktopWindowControlsInset();
   const applyClosedSidebarMacPadding =
     isElectron && isMacPlatform(navigator.platform) && !sidebarOpen;
+  const showCurvedSidebarEdge = sidebarOpen && !isMobile;
 
   return (
     <div
-      className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background")}
+      className={cn(
+        "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+        showCurvedSidebarEdge &&
+          "overflow-hidden rounded-tl-[1.375rem] rounded-bl-[1.375rem] border-l border-border",
+      )}
       style={
         applyClosedSidebarMacPadding ? { paddingLeft: `${macWindowControlsInset}px` } : undefined
       }
@@ -136,10 +141,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         side="left"
         collapsible="offcanvas"
         data-translucent={translucent || undefined}
-        className={cn(
-          "border-r border-border text-foreground",
-          translucent ? "bg-transparent" : "bg-card",
-        )}
+        className={cn("!border-r-0 text-foreground", translucent ? "bg-transparent" : "bg-card")}
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>

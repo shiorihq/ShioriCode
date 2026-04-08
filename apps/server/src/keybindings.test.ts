@@ -172,7 +172,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
 
       assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
-      assert.equal(defaultsByCommand.get("project.add"), "mod+shift+o");
+      assert.equal(defaultsByCommand.get("project.add"), "mod+o");
+      assert.equal(defaultsByCommand.get("editor.openFavorite"), "mod+shift+o");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
@@ -310,7 +311,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     );
   });
 
-  it.effect("migrates the legacy mod+shift+o chat.new default to project.add", () =>
+  it.effect("migrates the legacy mod+shift+o chat.new default to project.add on mod+o", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
@@ -328,8 +329,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         persisted.some(
           (entry) =>
             entry.command === "project.add" &&
-            entry.key === "mod+shift+o" &&
+            entry.key === "mod+o" &&
             entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "editor.openFavorite" && entry.key === "mod+shift+o",
         ),
       );
       assert.isFalse(
@@ -339,6 +345,47 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
             entry.key === "mod+shift+o" &&
             entry.when === "!terminalFocus",
         ),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("migrates the legacy project/editor shortcut defaults to the current mapping", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+shift+o", command: "project.add", when: "!terminalFocus" },
+        { key: "mod+o", command: "editor.openFavorite" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "project.add" &&
+            entry.key === "mod+o" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "editor.openFavorite" && entry.key === "mod+shift+o",
+        ),
+      );
+      assert.isFalse(
+        persisted.some(
+          (entry) =>
+            entry.command === "project.add" &&
+            entry.key === "mod+shift+o" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isFalse(
+        persisted.some((entry) => entry.command === "editor.openFavorite" && entry.key === "mod+o"),
       );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );

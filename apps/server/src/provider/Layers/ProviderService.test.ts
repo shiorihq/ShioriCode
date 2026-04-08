@@ -618,6 +618,45 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("rejects structured approval decisions for non-codex providers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      routing.claude.startSession.mockClear();
+      routing.claude.respondToRequest.mockClear();
+
+      const session = yield* provider.startSession(asThreadId("thread-claude"), {
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-claude"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      assert.equal(session.provider, "claudeAgent");
+
+      const result = yield* Effect.result(
+        provider.respondToRequest({
+          threadId: session.threadId,
+          requestId: asRequestId("req-structured-1"),
+          decision: {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: ['allow: ["git", "status"]'],
+            },
+          },
+        }),
+      );
+      assertFailure(
+        result,
+        new ProviderValidationError({
+          operation: "ProviderService.respondToRequest",
+          issue:
+            "Structured approval decisions are only supported for provider 'codex'; received 'claudeAgent'.",
+        }),
+      );
+      assert.equal(routing.claude.respondToRequest.mock.calls.length, 0);
+      routing.claude.startSession.mockClear();
+      routing.claude.respondToRequest.mockClear();
+    }),
+  );
+
   it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;

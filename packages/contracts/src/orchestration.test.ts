@@ -9,6 +9,8 @@ import {
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  ProjectionPendingApprovalDecision,
+  ProviderApprovalDecision,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -37,6 +39,10 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeProviderApprovalDecision = Schema.decodeUnknownEffect(ProviderApprovalDecision);
+const decodeProjectionPendingApprovalDecision = Schema.decodeUnknownEffect(
+  ProjectionPendingApprovalDecision,
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -522,5 +528,33 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
     });
     assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
     assert.strictEqual(parsed.implementationThreadId, "thread-2");
+  }),
+);
+
+it.effect("decodes codex execpolicy amendment approval decisions", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProviderApprovalDecision({
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: ['allow: ["git", "status"]'],
+      },
+    });
+    assert.deepStrictEqual(parsed, {
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: ['allow: ["git", "status"]'],
+      },
+    });
+  }),
+);
+
+it.effect("rejects structured decisions in pending approval projection rows", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeProjectionPendingApprovalDecision({
+        acceptWithExecpolicyAmendment: {
+          execpolicy_amendment: ['allow: ["git", "status"]'],
+        },
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
   }),
 );

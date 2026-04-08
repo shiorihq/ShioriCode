@@ -748,6 +748,55 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "normalizes structured approval decisions while preserving the raw resolution payload",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+        const decision = {
+          acceptWithExecpolicyAmendment: {
+            execpolicy_amendment: ['allow: ["git", "status"]'],
+          },
+        };
+        const event: ProviderEvent = {
+          id: asEventId("evt-structured-request-decision"),
+          kind: "notification",
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          createdAt: new Date().toISOString(),
+          method: "item/requestApproval/decision",
+          requestId: ApprovalRequestId.makeUnsafe("req-structured-1"),
+          requestKind: "command",
+          payload: {
+            requestId: "req-structured-1",
+            requestKind: "command",
+            decision,
+          },
+        };
+
+        lifecycleManager.emit("event", event);
+        const firstEvent = yield* Fiber.join(firstEventFiber);
+
+        assert.equal(firstEvent._tag, "Some");
+        if (firstEvent._tag !== "Some") {
+          return;
+        }
+        assert.equal(firstEvent.value.type, "request.resolved");
+        if (firstEvent.value.type !== "request.resolved") {
+          return;
+        }
+        assert.equal(firstEvent.value.payload.requestType, "command_execution_approval");
+        assert.equal(firstEvent.value.payload.decision, "accept");
+        assert.deepEqual(firstEvent.value.payload.resolution, {
+          requestId: "req-structured-1",
+          requestKind: "command",
+          decision,
+        });
+      }),
+  );
+
   it.effect("preserves explicit empty multi-select user-input answers", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -891,6 +940,71 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           });
         }
       }),
+  );
+
+  it.effect("maps tool/requestUserInput method aliases to canonical user-input events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-user-input-requested-alias"),
+        kind: "request",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "tool/requestUserInput",
+        requestId: ApprovalRequestId.makeUnsafe("req-user-input-alias-1"),
+        payload: {
+          questions: [
+            {
+              id: "runtime_mode",
+              header: "Runtime mode",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "default",
+                  description: "Restore the base permission mode",
+                },
+              ],
+            },
+          ],
+        },
+      } satisfies ProviderEvent);
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-user-input-resolved-alias"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "tool/requestUserInput/answered",
+        requestId: ApprovalRequestId.makeUnsafe("req-user-input-alias-1"),
+        payload: {
+          answers: {
+            runtime_mode: {
+              answers: ["default"],
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "user-input.requested");
+      if (events[0]?.type === "user-input.requested") {
+        assert.equal(events[0].requestId, "req-user-input-alias-1");
+        assert.equal(events[0].payload.questions[0]?.id, "runtime_mode");
+      }
+
+      assert.equal(events[1]?.type, "user-input.resolved");
+      if (events[1]?.type === "user-input.resolved") {
+        assert.equal(events[1].requestId, "req-user-input-alias-1");
+        assert.deepEqual(events[1].payload.answers, {
+          runtime_mode: "default",
+        });
+      }
+    }),
   );
 
   it.effect("maps Codex task and reasoning event chunks into canonical runtime events", () =>

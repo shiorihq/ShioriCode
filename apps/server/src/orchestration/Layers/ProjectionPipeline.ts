@@ -43,6 +43,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import { normalizeProviderApprovalDecision } from "../../provider/providerApprovalDecision.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -1117,13 +1118,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               "decision" in event.payload.activity.payload
                 ? (event.payload.activity.payload as { decision?: unknown }).decision
                 : null;
-            const resolvedDecision =
-              resolvedDecisionRaw === "accept" ||
-              resolvedDecisionRaw === "acceptForSession" ||
-              resolvedDecisionRaw === "decline" ||
-              resolvedDecisionRaw === "cancel"
-                ? resolvedDecisionRaw
-                : null;
+            const resolvedDecision = normalizeProviderApprovalDecision(resolvedDecisionRaw);
             yield* projectionPendingApprovalRepository.upsert({
               requestId,
               threadId: Option.isSome(existingRow)
@@ -1169,7 +1164,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : event.payload.threadId,
             turnId: Option.isSome(existingRow) ? existingRow.value.turnId : null,
             status: "resolved",
-            decision: event.payload.decision,
+            decision: normalizeProviderApprovalDecision(event.payload.decision),
             createdAt: Option.isSome(existingRow)
               ? existingRow.value.createdAt
               : event.payload.createdAt,

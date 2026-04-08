@@ -79,11 +79,23 @@ export const ProviderRequestKind = Schema.Literals(["command", "file-read", "fil
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
 export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
-export const ProviderApprovalDecision = Schema.Literals([
+export const ProviderSimpleApprovalDecision = Schema.Literals([
   "accept",
   "acceptForSession",
   "decline",
   "cancel",
+]);
+export type ProviderSimpleApprovalDecision = typeof ProviderSimpleApprovalDecision.Type;
+export const ProviderAcceptWithExecpolicyAmendmentDecision = Schema.Struct({
+  acceptWithExecpolicyAmendment: Schema.Struct({
+    execpolicy_amendment: Schema.Array(TrimmedNonEmptyString),
+  }),
+});
+export type ProviderAcceptWithExecpolicyAmendmentDecision =
+  typeof ProviderAcceptWithExecpolicyAmendmentDecision.Type;
+export const ProviderApprovalDecision = Schema.Union([
+  ProviderSimpleApprovalDecision,
+  ProviderAcceptWithExecpolicyAmendmentDecision,
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
@@ -1011,7 +1023,7 @@ export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
 export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
 export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;
 
-export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
+export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderSimpleApprovalDecision);
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
 
 export const DispatchResult = Schema.Struct({

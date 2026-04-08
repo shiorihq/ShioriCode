@@ -42,6 +42,7 @@ import { ServerConfig } from "../../config.ts";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
+import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import {
   buildProviderMcpToolRuntime,
   type ProviderMcpToolExecutor,
@@ -1539,8 +1540,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         toolName: string;
         requestKind?: ApprovalRequestKind;
         decision: ProviderApprovalDecision;
-      }) =>
-        emit({
+      }) => {
+        const resolvedDecision = isSimpleApprovalDecision(input.decision)
+          ? input.decision
+          : "decline";
+        return emit({
           ...runtimeEventBase({
             threadId: input.threadId,
             turnId: input.turnId,
@@ -1556,9 +1560,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   : input.requestKind === "file-read"
                     ? "file_read_approval"
                     : "file_change_approval",
-            decision: input.decision,
+            decision: resolvedDecision,
           },
         } satisfies ProviderRuntimeEvent);
+      };
 
       const emitUserInputRequest = Effect.fn("emitUserInputRequest")(function* (input: {
         threadId: ThreadId;
@@ -2773,7 +2778,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       return {
         provider: PROVIDER,
         capabilities: {
-          sessionModelSwitch: "restart-session",
+          sessionModelSwitch: "in-session",
         },
         startSession: (input) => {
           const providerError = ensureProvider("startSession", input.provider);

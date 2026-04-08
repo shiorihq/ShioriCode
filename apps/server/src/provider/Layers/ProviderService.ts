@@ -36,6 +36,10 @@ import {
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  isSimpleApprovalDecision,
+  normalizeProviderApprovalDecision,
+} from "../providerApprovalDecision.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
@@ -418,10 +422,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.respondToRequest",
         allowRecovery: true,
       });
+      if (routed.adapter.provider !== "codex" && !isSimpleApprovalDecision(input.decision)) {
+        return yield* Effect.fail(
+          toValidationError(
+            "ProviderService.respondToRequest",
+            `Structured approval decisions are only supported for provider 'codex'; received '${routed.adapter.provider}'.`,
+          ),
+        );
+      }
       yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
+      const normalizedDecision = normalizeProviderApprovalDecision(input.decision);
       yield* analytics.record("provider.request.responded", {
         provider: routed.adapter.provider,
-        decision: input.decision,
+        decision: normalizedDecision ?? "unknown",
       });
     },
   );

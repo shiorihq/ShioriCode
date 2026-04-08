@@ -57,7 +57,7 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
-  { key: "mod+shift+o", command: "project.add", when: "!terminalFocus" },
+  { key: "mod+o", command: "project.add", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
@@ -65,7 +65,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
-  { key: "mod+o", command: "editor.openFavorite" },
+  { key: "mod+shift+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
@@ -380,27 +380,85 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
 
 function migrateLegacyDefaultKeybindings(keybindings: readonly KeybindingRule[]): {
   keybindings: KeybindingRule[];
-  migratedLegacyChatNewShiftO: boolean;
+  migratedLegacyDefaults: boolean;
 } {
-  let migratedLegacyChatNewShiftO = false;
-  const migrated = keybindings.map((rule) => {
+  let migratedLegacyDefaults = false;
+  let migrated = keybindings.map((rule) => {
     if (
       rule.command === "chat.new" &&
       rule.key === "mod+shift+o" &&
       (rule.when ?? undefined) === "!terminalFocus"
     ) {
-      migratedLegacyChatNewShiftO = true;
+      migratedLegacyDefaults = true;
       return {
         ...rule,
         command: "project.add" as const,
+        key: "mod+o",
       };
     }
     return rule;
   });
 
+  const hasLegacyProjectAddDefault = migrated.some(
+    (rule) =>
+      rule.command === "project.add" &&
+      rule.key === "mod+shift+o" &&
+      (rule.when ?? undefined) === "!terminalFocus",
+  );
+  const hasLegacyEditorOpenFavoriteDefault = migrated.some(
+    (rule) =>
+      rule.command === "editor.openFavorite" &&
+      rule.key === "mod+o" &&
+      (rule.when ?? undefined) === undefined,
+  );
+  const hasCurrentProjectAddDefault = migrated.some(
+    (rule) =>
+      rule.command === "project.add" &&
+      rule.key === "mod+o" &&
+      (rule.when ?? undefined) === "!terminalFocus",
+  );
+  const hasCurrentEditorOpenFavoriteDefault = migrated.some(
+    (rule) =>
+      rule.command === "editor.openFavorite" &&
+      rule.key === "mod+shift+o" &&
+      (rule.when ?? undefined) === undefined,
+  );
+
+  if (
+    hasLegacyProjectAddDefault &&
+    hasLegacyEditorOpenFavoriteDefault &&
+    !hasCurrentProjectAddDefault &&
+    !hasCurrentEditorOpenFavoriteDefault
+  ) {
+    migratedLegacyDefaults = true;
+    migrated = migrated.map((rule) => {
+      if (
+        rule.command === "project.add" &&
+        rule.key === "mod+shift+o" &&
+        (rule.when ?? undefined) === "!terminalFocus"
+      ) {
+        return {
+          ...rule,
+          key: "mod+o",
+        };
+      }
+      if (
+        rule.command === "editor.openFavorite" &&
+        rule.key === "mod+o" &&
+        (rule.when ?? undefined) === undefined
+      ) {
+        return {
+          ...rule,
+          key: "mod+shift+o",
+        };
+      }
+      return rule;
+    });
+  }
+
   return {
     keybindings: migrated,
-    migratedLegacyChatNewShiftO,
+    migratedLegacyDefaults,
   };
 }
 
@@ -757,7 +815,7 @@ const makeKeybindings = Effect.gen(function* () {
       }
       const migratedConfig = migrateLegacyDefaultKeybindings(runtimeConfig.keybindings);
       const customConfig = migratedConfig.keybindings;
-      if (migratedConfig.migratedLegacyChatNewShiftO) {
+      if (migratedConfig.migratedLegacyDefaults) {
         yield* writeConfigAtomically(customConfig);
       }
       const existingCommands = new Set(customConfig.map((entry) => entry.command));

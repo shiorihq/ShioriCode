@@ -138,6 +138,52 @@ function createPendingUserInputHarness() {
   return { manager, context, requireSession, writeMessage, emitEvent };
 }
 
+function createPendingApprovalHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
+      resumeCursor: { threadId: "thread_1" },
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    pendingApprovals: new Map([
+      [
+        ApprovalRequestId.makeUnsafe("req-approval-1"),
+        {
+          requestId: ApprovalRequestId.makeUnsafe("req-approval-1"),
+          jsonRpcId: 42,
+          method: "item/commandExecution/requestApproval",
+          requestKind: "command",
+          threadId: asThreadId("thread_1"),
+          turnId: "turn_1",
+          itemId: "item_1",
+        },
+      ],
+    ]),
+    collabReceiverTurns: new Map(),
+  };
+
+  const requireSession = vi
+    .spyOn(
+      manager as unknown as { requireSession: (sessionId: string) => unknown },
+      "requireSession",
+    )
+    .mockReturnValue(context);
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
+  const emitEvent = vi
+    .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+    .mockImplementation(() => {});
+
+  return { manager, context, requireSession, writeMessage, emitEvent };
+}
+
 function createCollabNotificationHarness() {
   const manager = new CodexAppServerManager();
   const context = {
@@ -787,6 +833,42 @@ describe("thread checkpoint control", () => {
   });
 });
 
+describe("respondToRequest", () => {
+  it("passes structured codex approval decisions through to JSON-RPC responses", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingApprovalHarness();
+    const decision = {
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: ['allow: ["git", "status"]'],
+      },
+    } as const;
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-approval-1"),
+      decision,
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        decision,
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/requestApproval/decision",
+        payload: expect.objectContaining({
+          requestId: "req-approval-1",
+          requestKind: "command",
+          decision,
+        }),
+      }),
+    );
+  });
+});
+
 describe("respondToUserInput", () => {
   it("serializes canonical answers to Codex native answer objects", async () => {
     const { manager, context, requireSession, writeMessage, emitEvent } =
@@ -859,6 +941,69 @@ describe("respondToUserInput", () => {
     );
   });
 
+  it("emits the matching answered method for tool/requestUserInput requests", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingUserInputs: new Map([
+        [
+          ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          {
+            requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+            jsonRpcId: 42,
+            threadId: asThreadId("thread_1"),
+            requestMethod: "tool/requestUserInput",
+          },
+        ],
+      ]),
+      collabReceiverTurns: new Map(),
+    };
+    const requireSession = vi
+      .spyOn(
+        manager as unknown as { requireSession: (sessionId: string) => unknown },
+        "requireSession",
+      )
+      .mockReturnValue(context);
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+    const emitEvent = vi
+      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+      .mockImplementation(() => {});
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        scope: "All request methods",
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          scope: { answers: ["All request methods"] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "tool/requestUserInput/answered",
+      }),
+    );
+  });
+
   it("tracks file-read approval requests with the correct method", () => {
     const manager = new CodexAppServerManager();
     const context = {
@@ -898,6 +1043,60 @@ describe("respondToUserInput", () => {
     const request = Array.from(context.pendingApprovals.values())[0];
     expect(request?.requestKind).toBe("file-read");
     expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+
+  it("tracks tool/requestUserInput requests without rejecting the server request", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+    };
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tool/requestUserInput",
+      params: {
+        questions: [
+          {
+            id: "runtime_mode",
+            header: "Runtime mode",
+            question: "Which mode should be used?",
+            options: [
+              {
+                label: "default",
+                description: "Restore the base permission mode.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const pendingRequest = Array.from(context.pendingUserInputs.values())[0];
+    expect(pendingRequest).toEqual(
+      expect.objectContaining({
+        requestMethod: "tool/requestUserInput",
+      }),
+    );
+    expect(writeMessage).not.toHaveBeenCalled();
   });
 });
 

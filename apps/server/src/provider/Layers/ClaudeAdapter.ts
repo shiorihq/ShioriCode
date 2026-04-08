@@ -70,6 +70,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { fetchClaudeUsageSnapshot } from "../claudeUsage.ts";
+import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import { filterMcpServersForProvider } from "../mcpServers.ts";
@@ -2698,6 +2699,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         const decision = yield* Deferred.await(decisionDeferred);
         pendingApprovals.delete(requestId);
+        const resolvedDecision = isSimpleApprovalDecision(decision) ? decision : "decline";
 
         const resolvedStamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -2710,7 +2712,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           requestId: asRuntimeRequestId(requestId),
           payload: {
             requestType,
-            decision,
+            decision: resolvedDecision,
           },
           providerRefs: nativeProviderRefs(context, {
             providerItemId: callbackOptions.toolUseID,
@@ -2724,11 +2726,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
 
-        if (decision === "accept" || decision === "acceptForSession") {
+        if (resolvedDecision === "accept" || resolvedDecision === "acceptForSession") {
           return {
             behavior: "allow",
             updatedInput: toolInput,
-            ...(decision === "acceptForSession" && pendingApproval.suggestions
+            ...(resolvedDecision === "acceptForSession" && pendingApproval.suggestions
               ? { updatedPermissions: [...pendingApproval.suggestions] }
               : {}),
           } satisfies PermissionResult;
@@ -2737,7 +2739,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return {
           behavior: "deny",
           message:
-            decision === "cancel"
+            resolvedDecision === "cancel"
               ? "User cancelled tool execution."
               : "User declined tool execution.",
         } satisfies PermissionResult;
@@ -2775,7 +2777,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? modelSelection.options.thinking
           : undefined;
       const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
-      const permissionMode = input.runtimeMode === "full-access" ? "bypassPermissions" : undefined;
+      const permissionMode: PermissionMode =
+        input.runtimeMode === "full-access" ? "bypassPermissions" : "default";
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -2787,7 +2790,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-        ...(permissionMode ? { permissionMode } : {}),
+        permissionMode,
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
@@ -2973,8 +2976,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
-        try: () =>
-          context.query.setPermissionMode(context.basePermissionMode ?? "bypassPermissions"),
+        try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
     }

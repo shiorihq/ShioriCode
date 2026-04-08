@@ -82,7 +82,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
-  { shortcut: modShortcut("o", { shiftKey: true }), command: "project.add" },
+  { shortcut: modShortcut("o"), command: "project.add" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -106,7 +106,7 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("n"), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
-  { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  { shortcut: modShortcut("o", { shiftKey: true }), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
@@ -272,12 +272,12 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.toggle", "MacIntel"),
       "⌘B",
     );
-    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⇧⌘O");
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⌘N");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
-      "Ctrl+O",
+      "Ctrl+Shift+O",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.jump.3", "MacIntel"),
@@ -406,20 +406,28 @@ describe("chat/editor shortcuts", () => {
 
   it("matches editor.openFavorite shortcut", () => {
     assert.isTrue(
-      isOpenFavoriteEditorShortcut(event({ key: "o", metaKey: true }), DEFAULT_BINDINGS, {
-        platform: "MacIntel",
-      }),
+      isOpenFavoriteEditorShortcut(
+        event({ key: "o", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+        },
+      ),
     );
     assert.isTrue(
-      isOpenFavoriteEditorShortcut(event({ key: "o", ctrlKey: true }), DEFAULT_BINDINGS, {
-        platform: "Linux",
-      }),
+      isOpenFavoriteEditorShortcut(
+        event({ key: "o", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+        },
+      ),
     );
   });
 
   it("resolves project.add shortcut", () => {
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "o", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "o", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false, terminalOpen: false },
       }),

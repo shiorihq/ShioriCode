@@ -69,6 +69,7 @@ interface PendingUserInputRequest {
   threadId: ThreadId;
   turnId?: TurnId;
   itemId?: ProviderItemId;
+  requestMethod?: "item/tool/requestUserInput" | "tool/requestUserInput";
 }
 
 interface CodexUserInputAnswer {
@@ -108,6 +109,12 @@ interface JsonRpcResponse {
 interface JsonRpcNotification {
   method: string;
   params?: unknown;
+}
+
+function isUserInputRequestMethod(
+  method: string,
+): method is "item/tool/requestUserInput" | "tool/requestUserInput" {
+  return method === "item/tool/requestUserInput" || method === "tool/requestUserInput";
 }
 
 export interface CodexAppServerSendTurnInput {
@@ -916,7 +923,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       provider: "codex",
       threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
-      method: "item/tool/requestUserInput/answered",
+      method:
+        pendingRequest.requestMethod === "tool/requestUserInput"
+          ? "tool/requestUserInput/answered"
+          : "item/tool/requestUserInput/answered",
       turnId: pendingRequest.turnId,
       itemId: pendingRequest.itemId,
       requestId: pendingRequest.requestId,
@@ -1187,7 +1197,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       context.pendingApprovals.set(requestId, pendingRequest);
     }
 
-    if (request.method === "item/tool/requestUserInput") {
+    if (isUserInputRequestMethod(request.method)) {
       requestId = ApprovalRequestId.makeUnsafe(randomUUID());
       context.pendingUserInputs.set(requestId, {
         requestId,
@@ -1195,6 +1205,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         threadId: context.session.threadId,
         ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
         ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+        requestMethod: request.method,
       });
     }
 
@@ -1216,7 +1227,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return;
     }
 
-    if (request.method === "item/tool/requestUserInput") {
+    if (isUserInputRequestMethod(request.method)) {
       return;
     }
 
