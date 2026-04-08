@@ -47,6 +47,7 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
+import { BrailleLoader } from "../ui/braille-loader";
 import { type TimestampFormat } from "contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
@@ -834,7 +835,8 @@ const WorkingIndicator = memo(function WorkingIndicator(props: { createdAt: stri
     : "Working";
 
   return (
-    <p className={cn(CHAT_THREAD_BODY_CLASS, "shimmer shimmer-spread-200 text-foreground/70")}>
+    <p className={cn(CHAT_THREAD_BODY_CLASS, "text-foreground/70")}>
+      <BrailleLoader className="mr-1.5 text-foreground/50" />
       {label}
     </p>
   );

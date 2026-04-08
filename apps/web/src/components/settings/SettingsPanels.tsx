@@ -7,10 +7,10 @@ import {
   FootprintsIcon,
   GamepadDirectionalIcon,
   InfoIcon,
-  NavigationIcon,
   PlusIcon,
   RefreshCwIcon,
   ShipIcon,
+  SquarePenIcon,
   Trash2,
   Undo2Icon,
   XIcon,
@@ -116,7 +116,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const NEW_THREAD_ICON_LABELS: Record<NewThreadIcon, string> = {
-  navigation: "Navigation",
+  navigation: "Square Pen",
   binoculars: "Binoculars",
   "gamepad-directional": "Gamepad",
   footprints: "Footprints",
@@ -125,7 +125,7 @@ const NEW_THREAD_ICON_LABELS: Record<NewThreadIcon, string> = {
 };
 
 const NEW_THREAD_ICON_OPTIONS = [
-  { value: "navigation" as const, label: "Navigation", icon: NavigationIcon },
+  { value: "navigation" as const, label: "Square Pen", icon: SquarePenIcon },
   { value: "binoculars" as const, label: "Binoculars", icon: BinocularsIcon },
   { value: "gamepad-directional" as const, label: "Gamepad", icon: GamepadDirectionalIcon },
   { value: "footprints" as const, label: "Footprints", icon: FootprintsIcon },

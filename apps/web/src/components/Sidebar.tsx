@@ -9,7 +9,6 @@ import {
   GamepadDirectionalIcon,
   GitBranchIcon,
   GitPullRequestIcon,
-  NavigationIcon,
   SettingsIcon,
   ShipIcon,
   SquarePenIcon,
@@ -29,6 +28,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import { BrailleLoader } from "./ui/braille-loader";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -131,8 +131,8 @@ import { useSidebarThreadSummaryById } from "../storeSelectors";
 import type { NewThreadIcon } from "contracts/settings";
 import type { Project } from "../types";
 
-const NEW_THREAD_ICON_COMPONENTS: Record<NewThreadIcon, typeof NavigationIcon> = {
-  navigation: NavigationIcon,
+const NEW_THREAD_ICON_COMPONENTS: Record<NewThreadIcon, typeof SquarePenIcon> = {
+  navigation: SquarePenIcon,
   binoculars: BinocularsIcon,
   "gamepad-directional": GamepadDirectionalIcon,
   footprints: FootprintsIcon,
@@ -221,25 +221,9 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   return null;
 }
 
-/** Thread running: loader 6 (× / +), 700ms. Text in DOM; CSS `content` keyframes are unreliable in WebKit. */
-const SIDEBAR_THREAD_ASCII_LOADER_6_FRAME_MS = 350;
-
-function SidebarThreadAsciiLoader6() {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setFrame((value) => (value + 1) % 2);
-    }, SIDEBAR_THREAD_ASCII_LOADER_6_FRAME_MS);
-    return () => window.clearInterval(id);
-  }, []);
+function SidebarThreadBrailleLoader() {
   return (
-    <span
-      role="img"
-      aria-label="Response in progress"
-      className="inline-flex size-3 shrink-0 items-center justify-center font-mono text-sm leading-none text-current opacity-70"
-    >
-      {frame === 0 ? "\u00d7" : "+"}
-    </span>
+    <BrailleLoader className="inline-flex size-3 shrink-0 items-center justify-center text-sm leading-none text-current opacity-70" />
   );
 }
 
@@ -336,7 +320,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <span className="mr-2 inline-flex w-3 shrink-0 items-center justify-center pl-1">
             {isThreadRunning ? (
-              <SidebarThreadAsciiLoader6 />
+              <SidebarThreadBrailleLoader />
             ) : (
               <span className="size-1.5 rounded-full bg-current opacity-50" aria-hidden />
             )}
@@ -488,7 +472,7 @@ function ShioriWordmark() {
   return (
     <span className="flex items-baseline gap-0.5 shrink-0">
       <span className="font-sans text-sm font-normal tracking-tight text-foreground">Shiori</span>
-      <span className="font-mono text-sm font-medium italic text-primary">Code</span>
+      <span className="font-mono text-sm font-bold italic text-primary">Code</span>
     </span>
   );
 }
@@ -1968,14 +1952,14 @@ export default function Sidebar() {
   }, []);
 
   const wordmark = (
-    <div className="flex items-center gap-2">
-      <SidebarTrigger className="shrink-0 md:hidden" />
+    <div className="relative flex w-full items-center justify-center">
+      <SidebarTrigger className="absolute left-0 shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
           render={
             <Link
               aria-label="Go to threads"
-              className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
+              className="flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
               <ShioriWordmark />
@@ -1989,13 +1973,17 @@ export default function Sidebar() {
     </div>
   );
   const macWindowControlsInset = useDesktopWindowControlsInset();
+  const macTitlebarHorizontalInset = Math.max(16, macWindowControlsInset);
 
   return (
     <>
       {isElectron ? (
         <SidebarHeader
           className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0"
-          style={{ paddingLeft: `${Math.max(16, macWindowControlsInset)}px` }}
+          style={{
+            paddingLeft: `${macTitlebarHorizontalInset}px`,
+            paddingRight: `${macTitlebarHorizontalInset}px`,
+          }}
         >
           {wordmark}
         </SidebarHeader>

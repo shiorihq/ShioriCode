@@ -45,6 +45,19 @@ export function killCodexChildProcess(child: ChildProcessWithoutNullStreams): vo
   child.kill();
 }
 
+function subscribeToAbort(
+  signal: AbortSignal | undefined,
+  listener: () => void,
+): (() => void) | undefined {
+  if (!signal) {
+    return undefined;
+  }
+  signal.addEventListener("abort", listener, { once: true });
+  return () => {
+    signal.removeEventListener("abort", listener);
+  };
+}
+
 export async function probeCodexAccount(input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -62,8 +75,11 @@ export async function probeCodexAccount(input: {
     const output = readline.createInterface({ input: child.stdout });
 
     let completed = false;
+    let unsubscribeAbort: (() => void) | undefined;
 
     const cleanup = () => {
+      unsubscribeAbort?.();
+      unsubscribeAbort = undefined;
       output.removeAllListeners();
       output.close();
       child.removeAllListeners();
@@ -92,7 +108,9 @@ export async function probeCodexAccount(input: {
       fail(new Error("Codex account probe aborted."));
       return;
     }
-    input.signal?.addEventListener("abort", () => fail(new Error("Codex account probe aborted.")));
+    unsubscribeAbort = subscribeToAbort(input.signal, () =>
+      fail(new Error("Codex account probe aborted.")),
+    );
 
     const writeMessage = (message: unknown) => {
       if (!child.stdin.writable) {
@@ -175,8 +193,11 @@ export async function probeCodexUsage(input: {
     const output = readline.createInterface({ input: child.stdout });
 
     let completed = false;
+    let unsubscribeAbort: (() => void) | undefined;
 
     const cleanup = () => {
+      unsubscribeAbort?.();
+      unsubscribeAbort = undefined;
       output.removeAllListeners();
       output.close();
       child.removeAllListeners();
@@ -203,7 +224,9 @@ export async function probeCodexUsage(input: {
       fail(new Error("Codex usage probe aborted."));
       return;
     }
-    input.signal?.addEventListener("abort", () => fail(new Error("Codex usage probe aborted.")));
+    unsubscribeAbort = subscribeToAbort(input.signal, () =>
+      fail(new Error("Codex usage probe aborted.")),
+    );
 
     const writeMessage = (message: unknown) => {
       if (!child.stdin.writable) {
