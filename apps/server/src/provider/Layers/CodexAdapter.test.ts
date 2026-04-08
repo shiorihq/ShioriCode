@@ -27,6 +27,7 @@ import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { CodexUsageSnapshot } from "../Services/ProviderUsage.ts";
+import { resolvePreferredCodexBinaryPath, supportsCodexReasoningSummary } from "../codexBinaryPath";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -216,10 +217,12 @@ validationLayer("CodexAdapterLive validation", (it) => {
         runtimeMode: "full-access",
       });
 
+      const binaryPath = resolvePreferredCodexBinaryPath("codex");
       assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
         provider: "codex",
         threadId: asThreadId("thread-1"),
-        binaryPath: "codex",
+        binaryPath,
+        supportsReasoningSummary: supportsCodexReasoningSummary(binaryPath),
         model: "gpt-5.3-codex",
         serviceTier: "fast",
         runtimeMode: "full-access",
@@ -463,6 +466,64 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.itemId, "msg_1");
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.payload.itemType, "assistant_message");
+    }),
+  );
+
+  it.effect("maps Codex tool items into structured runtime tool metadata", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-tool-started"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("tool_1"),
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "tool_1",
+            name: "Read",
+            input: {
+              file_path: "/tmp/app.ts",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.type, "item.started");
+      if (firstEvent.value.type !== "item.started") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.itemType, "dynamic_tool_call");
+      assert.equal(firstEvent.value.payload.title, "Read");
+      assert.equal(firstEvent.value.payload.detail, "Read: /tmp/app.ts");
+      assert.deepEqual(firstEvent.value.payload.data, {
+        toolName: "Read",
+        input: {
+          file_path: "/tmp/app.ts",
+        },
+        item: {
+          type: "dynamicToolCall",
+          id: "tool_1",
+          name: "Read",
+          input: {
+            file_path: "/tmp/app.ts",
+          },
+        },
+      });
     }),
   );
 
@@ -1121,6 +1182,47 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         assert.equal(events[4].turnId, "turn-structured-1");
         assert.equal(events[4].payload.planMarkdown, "# Ship it");
       }
+    }),
+  );
+
+  it.effect("maps reasoning summary-part notifications with inline text into deltas", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-summary-part"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-summary-1"),
+        itemId: asItemId("reasoning-item-1"),
+        createdAt: new Date().toISOString(),
+        method: "item/reasoning/summaryPartAdded",
+        payload: {
+          summaryPart: {
+            text: "Compare protocol adapters before patching.",
+            index: 1,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.type, "content.delta");
+      if (firstEvent.value.type !== "content.delta") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.streamKind, "reasoning_summary_text");
+      assert.equal(firstEvent.value.payload.delta, "Compare protocol adapters before patching.");
+      assert.equal(firstEvent.value.payload.summaryIndex, 1);
+      assert.equal(String(firstEvent.value.turnId), "turn-summary-1");
+      assert.equal(String(firstEvent.value.itemId), "reasoning-item-1");
     }),
   );
 

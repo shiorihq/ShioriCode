@@ -5,6 +5,7 @@ import {
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "contracts";
+import { normalizeProjectTitle } from "shared/String";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore";
 import { ServerConfig } from "../config";
@@ -31,14 +32,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     if (command.type === "project.create") {
       return {
         ...command,
+        title: normalizeProjectTitle(command.title),
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(command.workspaceRoot),
       } satisfies OrchestrationCommand;
     }
 
-    if (command.type === "project.meta.update" && command.workspaceRoot !== undefined) {
+    if (command.type === "project.meta.update") {
       return {
         ...command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(command.workspaceRoot),
+        ...(command.title !== undefined ? { title: normalizeProjectTitle(command.title) } : {}),
+        ...(command.workspaceRoot !== undefined
+          ? { workspaceRoot: yield* normalizeProjectWorkspaceRoot(command.workspaceRoot) }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 

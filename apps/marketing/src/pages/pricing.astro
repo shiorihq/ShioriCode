@@ -1,0 +1,291 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Pricing — ShioriCode" description="Simple, flat-rate pricing for ShioriCode. Start free, upgrade when you need more.">
+  <h1 class="heading">Pricing</h1>
+  <p class="subline">One app. Every model. Flat rate.</p>
+
+  <div class="plans">
+    <!-- Free -->
+    <div class="plan">
+      <div class="plan-top">
+        <h2 class="plan-name">Free</h2>
+        <div class="plan-price">
+          <span class="price-amount">$0</span>
+        </div>
+      </div>
+      <ul class="plan-features">
+        <li>Starter usage</li>
+        <li>Fast models — GPT-4o Mini, Gemini Flash, Claude Haiku</li>
+        <li>File uploads</li>
+        <li>Chat history saved</li>
+        <li>No credit card</li>
+      </ul>
+      <a href="/download" class="plan-cta plan-cta--ghost">Download</a>
+    </div>
+
+    <!-- Plus -->
+    <div class="plan plan--accent">
+      <div class="plan-tag">Most popular</div>
+      <div class="plan-top">
+        <h2 class="plan-name">Plus</h2>
+        <div class="plan-price">
+          <span class="price-amount">$10</span>
+          <span class="price-period">/mo</span>
+        </div>
+      </div>
+      <ul class="plan-features">
+        <li>Higher monthly usage</li>
+        <li>45+ models — GPT-5, Claude Opus 4.5, Gemini 2.5 Pro</li>
+        <li>Image generation — 10+ models</li>
+        <li>Video generation — 5 models</li>
+        <li>Web search, memory, TTS</li>
+        <li>Notion + YouTube integrations</li>
+      </ul>
+      <a href="https://shiori.ai/pricing" class="plan-cta">Get Plus</a>
+    </div>
+
+    <!-- Pro -->
+    <div class="plan">
+      <div class="plan-tag">Power users</div>
+      <div class="plan-top">
+        <h2 class="plan-name">Pro</h2>
+        <div class="plan-price">
+          <span class="price-amount">$30</span>
+          <span class="price-period">/mo</span>
+        </div>
+      </div>
+      <ul class="plan-features">
+        <li>Everything in Plus</li>
+        <li>Higher usage</li>
+        <li>Exclusive — GPT-5.2 Pro & Opus 4.6 Fast</li>
+        <li>Premium video — Veo 3, Kling Pro</li>
+        <li>Priority support</li>
+      </ul>
+      <a href="https://shiori.ai/pricing" class="plan-cta plan-cta--ghost">Get Pro</a>
+    </div>
+
+    <!-- Max -->
+    <div class="plan">
+      <div class="plan-tag">Highest tier</div>
+      <div class="plan-top">
+        <h2 class="plan-name">Max</h2>
+        <div class="plan-price">
+          <span class="price-amount">$100</span>
+          <span class="price-period">/mo</span>
+        </div>
+      </div>
+      <ul class="plan-features">
+        <li>Everything in Pro</li>
+        <li>8x Pro's monthly allowance</li>
+        <li>Highest throughput and concurrency</li>
+        <li>Dedicated priority support</li>
+        <li>Built for heavy production workflows</li>
+      </ul>
+      <a href="https://shiori.ai/pricing" class="plan-cta plan-cta--ghost">Get Max</a>
+    </div>
+  </div>
+
+  <p class="fine-print">Cancel anytime. All plans include the desktop app for macOS, Windows, and Linux.</p>
+</Layout>
+
+<style>
+  .main {
+    padding: 8vh 1.5rem 4rem;
+  }
+
+  /* ── Heading ── */
+
+  .heading {
+    font-weight: 500;
+    font-size: clamp(1.75rem, 4vw, 2.75rem);
+    letter-spacing: -0.04em;
+    line-height: 1.15;
+    text-align: center;
+    margin-bottom: 0.35rem;
+    opacity: 0;
+    animation: fade-in 0.8s ease-out forwards;
+  }
+
+  .subline {
+    color: var(--fg-dim);
+    font-size: 0.95rem;
+    text-align: center;
+    margin-bottom: 4rem;
+    letter-spacing: -0.01em;
+    opacity: 0;
+    animation: fade-in 0.8s ease-out 0.08s forwards;
+  }
+
+  /* ── Plans grid ── */
+
+  .plans {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    width: 100%;
+    max-width: 1080px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    opacity: 0;
+    animation: fade-in 0.8s ease-out 0.16s forwards;
+  }
+
+  /* ── Single plan ── */
+
+  .plan {
+    display: flex;
+    flex-direction: column;
+    padding: 1.75rem 1.5rem;
+    background: var(--bg);
+    position: relative;
+  }
+
+  .plan--accent {
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .plan-tag {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    margin-bottom: 1rem;
+  }
+
+  .plan--accent .plan-tag {
+    color: var(--fg-muted);
+  }
+
+  .plan-top {
+    margin-bottom: 1.5rem;
+  }
+
+  .plan-name {
+    font-weight: 500;
+    font-size: 1.15rem;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+
+  .price-amount {
+    font-weight: 600;
+    font-size: 2rem;
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+
+  .price-period {
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+    margin-left: 0.15rem;
+  }
+
+  /* ── Features ── */
+
+  .plan-features {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    flex: 1;
+    margin-bottom: 1.75rem;
+  }
+
+  .plan-features li {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--fg-muted);
+    padding-left: 1.15rem;
+    position: relative;
+  }
+
+  .plan-features li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.45em;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--fg-dim);
+  }
+
+  .plan--accent .plan-features li::before {
+    background: var(--fg-muted);
+  }
+
+  /* ── CTA ── */
+
+  .plan-cta {
+    display: block;
+    text-align: center;
+    padding: 0.6rem 0;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    border-radius: 8px;
+    background: var(--fg);
+    color: var(--bg);
+    transition: opacity 0.2s ease, transform 0.15s ease;
+    margin-top: auto;
+  }
+
+  .plan-cta:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
+  }
+
+  .plan-cta:active {
+    transform: translateY(0);
+  }
+
+  .plan-cta--ghost {
+    background: transparent;
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+  }
+
+  .plan-cta--ghost:hover {
+    opacity: 1;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--fg);
+  }
+
+  /* ── Fine print ── */
+
+  .fine-print {
+    margin-top: 2rem;
+    font-size: 0.75rem;
+    color: var(--fg-dim);
+    text-align: center;
+    opacity: 0;
+    animation: fade-in 0.8s ease-out 0.28s forwards;
+  }
+
+  /* ── Responsive ── */
+
+  @media (max-width: 960px) {
+    .plans {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 600px) {
+    .main {
+      padding: 5vh 1.25rem 4rem;
+    }
+
+    .subline {
+      margin-bottom: 2.5rem;
+    }
+
+    .plans {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

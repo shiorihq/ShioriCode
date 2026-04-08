@@ -17,6 +17,7 @@ import {
   type OrchestrationThread,
 } from "contracts";
 import { decodeServerInstanceRecord, getServerInstancePath } from "shared/serverInstance";
+import { normalizeProjectTitle } from "shared/String";
 import { createWsRpcClient, type WsRpcClient } from "shared/wsRpc";
 
 export interface CliContext {
@@ -175,7 +176,7 @@ export async function ensureProjectForCwd(
     type: "project.create",
     commandId: CommandId.makeUnsafe(randomUUID()),
     projectId,
-    title: title?.trim() || path.basename(normalizedCwd) || normalizedCwd,
+    title: normalizeProjectTitle(title?.trim() || path.basename(normalizedCwd) || normalizedCwd),
     workspaceRoot: normalizedCwd,
     defaultModelSelection: settings.defaultModelSelection,
     createdAt,

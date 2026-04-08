@@ -79,12 +79,19 @@ interface CodexUserInputAnswer {
 interface CodexSessionContext {
   session: ProviderSession;
   account: CodexAccountSnapshot;
+  supportsReasoningSummary: boolean;
   child: ChildProcessWithoutNullStreams;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
   pendingApprovals: Map<ApprovalRequestId, PendingApprovalRequest>;
   pendingUserInputs: Map<ApprovalRequestId, PendingUserInputRequest>;
-  collabReceiverTurns: Map<string, TurnId>;
+  collabReceiverTurns: Map<
+    string,
+    {
+      parentTurnId: TurnId;
+      parentItemId?: ProviderItemId;
+    }
+  >;
   nextRequestId: number;
   stopping: boolean;
 }
@@ -136,6 +143,7 @@ export interface CodexAppServerStartSessionInput {
   readonly resumeCursor?: unknown;
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly supportsReasoningSummary?: boolean;
   readonly runtimeMode: RuntimeMode;
 }
 
@@ -519,6 +527,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           planType: null,
           sparkEnabled: true,
         },
+        supportsReasoningSummary: input.supportsReasoningSummary === true,
         child,
         output,
         pending: new Map(),
@@ -569,7 +578,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const threadStartParams = {
         ...sessionOverrides,
-        experimentalRawEvents: false,
+        experimentalRawEvents: context.supportsReasoningSummary,
+        persistExtendedHistory: context.supportsReasoningSummary,
       };
       const resumeThreadId = readResumeThreadId(input);
       this.emitLifecycleEvent(
@@ -595,6 +605,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           threadOpenResponse = await this.sendRequest(context, "thread/resume", {
             ...sessionOverrides,
             threadId: resumeThreadId,
+            persistExtendedHistory: context.supportsReasoningSummary,
           });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
@@ -726,6 +737,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       model?: string;
       serviceTier?: string | null;
       effort?: string;
+      summary?: "detailed";
       collaborationMode?: {
         mode: "default" | "plan";
         settings: {
@@ -750,6 +762,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     if (input.effort) {
       turnStartParams.effort = input.effort;
+    }
+    if (context.supportsReasoningSummary) {
+      turnStartParams.summary = "detailed";
     }
     const developerInstructionsAppendix = await this.readAssistantPersonalityAppendix();
     const collaborationMode = buildCodexCollaborationMode({
@@ -1092,8 +1107,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   ): void {
     const rawRoute = this.readRouteFields(notification.params);
     this.rememberCollabReceiverTurns(context, notification.params, rawRoute.turnId);
-    const childParentTurnId = this.readChildParentTurnId(context, notification.params);
-    const isChildConversation = childParentTurnId !== undefined;
+    const childRoute = this.readChildRoute(context, notification.params);
+    const childParentTurnId = childRoute?.parentTurnId;
+    const isChildConversation = childRoute !== undefined;
     if (
       isChildConversation &&
       this.shouldSuppressChildConversationNotification(notification.method)
@@ -1117,7 +1133,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         : {}),
       ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
       textDelta,
-      payload: notification.params,
+      payload: this.attachChildParentItemId(notification.params, childRoute?.parentItemId),
     });
 
     if (notification.method === "thread/started") {
@@ -1174,7 +1190,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
     const rawRoute = this.readRouteFields(request.params);
-    const childParentTurnId = this.readChildParentTurnId(context, request.params);
+    const childRoute = this.readChildRoute(context, request.params);
+    const childParentTurnId = childRoute?.parentTurnId;
     const effectiveTurnId = childParentTurnId ?? rawRoute.turnId;
     const requestKind = this.requestKindForMethod(request.method);
     let requestId: ApprovalRequestId | undefined;
@@ -1220,7 +1237,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
       requestId,
       requestKind,
-      payload: request.params,
+      payload: this.attachChildParentItemId(request.params, childRoute?.parentItemId),
     });
 
     if (requestKind) {
@@ -1468,12 +1485,34 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     );
   }
 
-  private readChildParentTurnId(context: CodexSessionContext, params: unknown): TurnId | undefined {
+  private readChildRoute(
+    context: CodexSessionContext,
+    params: unknown,
+  ):
+    | {
+        parentTurnId: TurnId;
+        parentItemId?: ProviderItemId;
+      }
+    | undefined {
     const providerConversationId = this.readProviderConversationId(params);
     if (!providerConversationId) {
       return undefined;
     }
     return context.collabReceiverTurns.get(providerConversationId);
+  }
+
+  private attachChildParentItemId(
+    params: unknown,
+    parentItemId: ProviderItemId | undefined,
+  ): unknown {
+    if (!parentItemId || !params || typeof params !== "object") {
+      return params;
+    }
+
+    return {
+      ...(params as Record<string, unknown>),
+      parentItemId,
+    };
   }
 
   private rememberCollabReceiverTurns(
@@ -1490,13 +1529,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (itemType !== "collabAgentToolCall") {
       return;
     }
+    const parentItemId = toProviderItemId(this.readString(item, "id"));
 
     const receiverThreadIds =
       this.readArray(item, "receiverThreadIds")
         ?.map((value) => (typeof value === "string" ? value : null))
         .filter((value): value is string => value !== null) ?? [];
     for (const receiverThreadId of receiverThreadIds) {
-      context.collabReceiverTurns.set(receiverThreadId, parentTurnId);
+      context.collabReceiverTurns.set(receiverThreadId, {
+        parentTurnId,
+        ...(parentItemId ? { parentItemId } : {}),
+      });
     }
   }
 

@@ -54,4 +54,24 @@ describe("showDesktopConfirmDialog", () => {
       }),
     );
   });
+
+  it("supports custom button labels for destructive confirmations", async () => {
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
+
+    const result = await showDesktopConfirmDialog("Quit ShioriCode?", null, {
+      cancelLabel: "Cancel",
+      confirmLabel: "Quit",
+      detail: "Your running sessions will disconnect.",
+      title: "ShioriCode",
+    });
+
+    expect(result).toBe(true);
+    expect(showMessageBoxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buttons: ["Cancel", "Quit"],
+        detail: "Your running sessions will disconnect.",
+        title: "ShioriCode",
+      }),
+    );
+  });
 });

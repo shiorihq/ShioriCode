@@ -1,33 +1,20 @@
 import {
   ArchiveIcon,
   ArchiveX,
-  BinocularsIcon,
   ChevronDownIcon,
-  CompassIcon,
-  FootprintsIcon,
-  GamepadDirectionalIcon,
   InfoIcon,
   PlusIcon,
   RefreshCwIcon,
-  ShipIcon,
-  SquarePenIcon,
   Trash2,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  type ChangeEvent,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type DesktopCompanionCliState,
+  type OnboardingStepId,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
@@ -37,13 +24,11 @@ import {
 import {
   DEFAULT_ASSISTANT_PERSONALITY,
   DEFAULT_CODE_FONT_FAMILY,
-  DEFAULT_DARK_THEME_ID,
-  DEFAULT_LIGHT_THEME_ID,
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_UNIFIED_SETTINGS,
-  type NewThreadIcon,
 } from "contracts/settings";
 import { normalizeModelSlug } from "shared/model";
+import { resolveOnboardingState } from "shared/onboarding";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
 import {
@@ -57,10 +42,10 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
-import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useMergedServerProviders } from "../../convex/shioriProvider";
+import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -78,6 +63,7 @@ import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampForm
 import { cn } from "../../lib/utils";
 import { HostedShioriAuthPanel } from "../auth/HostedShioriAuthPanel";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
@@ -94,44 +80,11 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-  },
-  {
-    value: "light",
-    label: "Light",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-  },
-] as const;
-
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
-
-const NEW_THREAD_ICON_LABELS: Record<NewThreadIcon, string> = {
-  navigation: "Square Pen",
-  binoculars: "Binoculars",
-  "gamepad-directional": "Gamepad",
-  footprints: "Footprints",
-  compass: "Compass",
-  ship: "Ship",
-};
-
-const NEW_THREAD_ICON_OPTIONS = [
-  { value: "navigation" as const, label: "Square Pen", icon: SquarePenIcon },
-  { value: "binoculars" as const, label: "Binoculars", icon: BinocularsIcon },
-  { value: "gamepad-directional" as const, label: "Gamepad", icon: GamepadDirectionalIcon },
-  { value: "footprints" as const, label: "Footprints", icon: FootprintsIcon },
-  { value: "compass" as const, label: "Compass", icon: CompassIcon },
-  { value: "ship" as const, label: "Ship", icon: ShipIcon },
-];
 
 type FontOption = {
   value: string;
@@ -175,11 +128,6 @@ const ASSISTANT_PERSONALITY_OPTIONS = [
     description: "Practical, grounded, and focused on the shortest reliable path to the result.",
   },
 ] as const;
-
-const APPEARANCE_THEME_LABELS = {
-  light: "Light theme",
-  dark: "Dark theme",
-} as const;
 
 function buildFontOptions(
   fontFamilies: readonly string[],
@@ -369,7 +317,7 @@ export function SettingsSection({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        <h2 className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           {icon}
           {title}
         </h2>
@@ -758,6 +706,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.quitWithoutConfirmation !== DEFAULT_UNIFIED_SETTINGS.quitWithoutConfirmation
+        ? ["Quit confirmation"]
+        : []),
+      ...(!Equal.equals(settings.onboarding, DEFAULT_UNIFIED_SETTINGS.onboarding)
+        ? ["Onboarding"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
@@ -773,6 +727,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.importedThemes.length,
       settings.lightThemeId,
+      settings.onboarding,
+      settings.quitWithoutConfirmation,
       settings.uiFontFamily,
       settings.assistantPersonality,
       settings.themeMode,
@@ -801,22 +757,20 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const {
-    theme,
-    setTheme,
-    importedThemes,
-    lightThemeId,
-    darkThemeId,
-    setThemeAssignment,
-    importTheme,
-    removeImportedTheme,
-    themeOptionsByAppearance,
-  } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const { viewer } = useHostedShioriState();
+  const canTriggerOnboarding = import.meta.env.DEV && Boolean(viewer?.isAdmin);
+  const onboardingState = useMemo(
+    () => resolveOnboardingState(settings.onboarding),
+    [settings.onboarding],
+  );
+  const [pendingOnboardingStepId, setPendingOnboardingStepId] = useState<OnboardingStepId | null>(
+    null,
+  );
+  const [isResettingOnboarding, setIsResettingOnboarding] = useState(false);
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
-  const [isImportingThemes, setIsImportingThemes] = useState(false);
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
     shiori: Boolean(
       settings.providers.shiori.apiBaseUrl !==
@@ -853,7 +807,6 @@ export function GeneralSettingsPanel() {
   const [isLoadingFonts, setIsLoadingFonts] = useState(false);
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
-  const themeImportInputRef = useRef<HTMLInputElement | null>(null);
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
@@ -867,6 +820,42 @@ export function GeneralSettingsPanel() {
       .finally(() => {
         refreshingRef.current = false;
         setIsRefreshingProviders(false);
+      });
+  }, []);
+
+  const completeOnboardingStep = useCallback((stepId: OnboardingStepId) => {
+    setPendingOnboardingStepId(stepId);
+    void ensureNativeApi()
+      .onboarding.completeStep({ stepId })
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not complete onboarding step",
+          description:
+            error instanceof Error ? error.message : "The onboarding step could not be completed.",
+        });
+      })
+      .finally(() => {
+        setPendingOnboardingStepId((currentStepId) =>
+          currentStepId === stepId ? null : currentStepId,
+        );
+      });
+  }, []);
+
+  const resetOnboarding = useCallback(() => {
+    setIsResettingOnboarding(true);
+    void ensureNativeApi()
+      .onboarding.reset()
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not reset onboarding",
+          description:
+            error instanceof Error ? error.message : "The onboarding progress could not be reset.",
+        });
+      })
+      .finally(() => {
+        setIsResettingOnboarding(false);
       });
   }, []);
 
@@ -975,53 +964,6 @@ export function GeneralSettingsPanel() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
-
-  const openThemeImportDialog = useCallback(() => {
-    themeImportInputRef.current?.click();
-  }, []);
-
-  const handleThemeImport = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      event.target.value = "";
-      if (files.length === 0) {
-        return;
-      }
-
-      setIsImportingThemes(true);
-      const importedThemeNames: string[] = [];
-
-      for (const file of files) {
-        try {
-          const importedTheme = importTheme(await file.text());
-          importedThemeNames.push(importedTheme.name);
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: `Could not import ${file.name}`,
-            description: error instanceof Error ? error.message : "The theme file is invalid JSON.",
-          });
-        }
-      }
-
-      if (importedThemeNames.length > 0) {
-        toastManager.add({
-          type: "success",
-          title:
-            importedThemeNames.length === 1
-              ? `Imported ${importedThemeNames[0]}`
-              : `Imported ${importedThemeNames.length} themes`,
-          description:
-            importedThemeNames.length === 1
-              ? "The imported theme is now selected for its appearance."
-              : "Each imported theme is now selected for its matching appearance.",
-        });
-      }
-
-      setIsImportingThemes(false);
-    },
-    [importTheme],
-  );
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -1160,195 +1102,72 @@ export function GeneralSettingsPanel() {
       : null;
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Themes">
+      <SettingsSection
+        title="Onboarding"
+        headerAction={
+          canTriggerOnboarding ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={isResettingOnboarding}
+              onClick={resetOnboarding}
+            >
+              {isResettingOnboarding ? "Triggering..." : "Trigger onboarding"}
+            </Button>
+          ) : undefined
+        }
+      >
         <SettingsRow
-          title="Theme mode"
-          description="Choose when the app resolves to its light or dark appearance."
-          resetAction={
-            theme !== DEFAULT_UNIFIED_SETTINGS.themeMode ? (
-              <SettingResetButton label="theme mode" onClick={() => setTheme("system")} />
-            ) : null
+          title="Flow status"
+          description="Track first-run setup and jump back into the guided welcome flow when you need it."
+          status={
+            onboardingState.completed
+              ? "All steps completed."
+              : `${onboardingState.completedCount}/${onboardingState.totalSteps} steps completed.`
           }
           control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={isResettingOnboarding || onboardingState.completedCount === 0}
+              onClick={resetOnboarding}
             >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+              {isResettingOnboarding ? "Resetting..." : "Reset"}
+            </Button>
           }
         />
+        {onboardingState.steps.map((step) => {
+          const locked =
+            !step.completed &&
+            onboardingState.currentStepId !== null &&
+            onboardingState.currentStepId !== step.id;
+          const pending = pendingOnboardingStepId === step.id;
 
-        <SettingsRow
-          title={APPEARANCE_THEME_LABELS.light}
-          description="Used whenever the app resolves to its light appearance."
-          resetAction={
-            lightThemeId !== DEFAULT_LIGHT_THEME_ID ? (
-              <SettingResetButton
-                label="light theme"
-                onClick={() => setThemeAssignment("light", DEFAULT_LIGHT_THEME_ID)}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={lightThemeId}
-              onValueChange={(value) => {
-                if (value) {
-                  setThemeAssignment("light", value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-52" aria-label="Light theme">
-                <SelectValue>
-                  {themeOptionsByAppearance.light.find((option) => option.id === lightThemeId)
-                    ?.name ?? "Shiori Light"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {themeOptionsByAppearance.light.map((option) => (
-                  <SelectItem hideIndicator key={option.id} value={option.id}>
-                    {option.name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title={APPEARANCE_THEME_LABELS.dark}
-          description="Used whenever the app resolves to its dark appearance."
-          resetAction={
-            darkThemeId !== DEFAULT_DARK_THEME_ID ? (
-              <SettingResetButton
-                label="dark theme"
-                onClick={() => setThemeAssignment("dark", DEFAULT_DARK_THEME_ID)}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={darkThemeId}
-              onValueChange={(value) => {
-                if (value) {
-                  setThemeAssignment("dark", value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-52" aria-label="Dark theme">
-                <SelectValue>
-                  {themeOptionsByAppearance.dark.find((option) => option.id === darkThemeId)
-                    ?.name ?? "Shiori Dark"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {themeOptionsByAppearance.dark.map((option) => (
-                  <SelectItem hideIndicator key={option.id} value={option.id}>
-                    {option.name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Import themes"
-          description="Import JSON theme files. Each file targets either the light or dark appearance and becomes the active theme for that appearance."
-          control={
-            <>
-              <input
-                ref={themeImportInputRef}
-                type="file"
-                accept=".json,application/json"
-                multiple
-                className="hidden"
-                onChange={handleThemeImport}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={isImportingThemes}
-                onClick={openThemeImportDialog}
-              >
-                {isImportingThemes ? <LoadingText>Importing themes</LoadingText> : "Import JSON"}
-              </Button>
-            </>
-          }
-        >
-          {importedThemes.length > 0 ? (
-            <div className="mt-4 space-y-2">
-              {importedThemes.map((customTheme) => (
-                <div
-                  key={customTheme.id}
-                  className="flex flex-col gap-2 rounded-xl border border-border/80 bg-background/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+          return (
+            <SettingsRow
+              key={step.id}
+              title={step.title}
+              description={step.description}
+              status={
+                step.completed
+                  ? "Completed"
+                  : locked
+                    ? "Locked until previous steps are completed."
+                    : "Current step"
+              }
+              control={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={step.completed || locked || pending}
+                  onClick={() => completeOnboardingStep(step.id)}
                 >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-foreground">{customTheme.name}</p>
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                        {customTheme.appearance}
-                      </span>
-                      {customTheme.appearance === "light" && lightThemeId === customTheme.id ? (
-                        <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-primary">
-                          Active
-                        </span>
-                      ) : null}
-                      {customTheme.appearance === "dark" && darkThemeId === customTheme.id ? (
-                        <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-primary">
-                          Active
-                        </span>
-                      ) : null}
-                    </div>
-                    {customTheme.description ? (
-                      <p className="text-xs text-muted-foreground">{customTheme.description}</p>
-                    ) : null}
-                    <p className="text-[11px] text-muted-foreground/80">
-                      {customTheme.author ? `By ${customTheme.author}` : "Imported theme"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => setThemeAssignment(customTheme.appearance, customTheme.id)}
-                    >
-                      Use
-                    </Button>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label={`Remove ${customTheme.name}`}
-                      onClick={() => removeImportedTheme(customTheme.id)}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-dashed border-border/80 bg-background/40 px-3 py-4 text-xs text-muted-foreground">
-              Imported themes will appear here after you add a JSON file.
-            </div>
-          )}
-        </SettingsRow>
+                  {step.completed ? "Done" : pending ? "Saving..." : "Complete step"}
+                </Button>
+              }
+            />
+          );
+        })}
       </SettingsSection>
 
       {isElectron ? (
@@ -1589,47 +1408,6 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="New thread icon"
-          description="Choose the icon displayed on the New Thread button in the sidebar."
-          resetAction={
-            settings.newThreadIcon !== DEFAULT_UNIFIED_SETTINGS.newThreadIcon ? (
-              <SettingResetButton
-                label="new thread icon"
-                onClick={() =>
-                  updateSettings({
-                    newThreadIcon: DEFAULT_UNIFIED_SETTINGS.newThreadIcon,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.newThreadIcon}
-              onValueChange={(value) => {
-                if (value) {
-                  updateSettings({ newThreadIcon: value as NewThreadIcon });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-56" aria-label="New thread icon">
-                <SelectValue>{NEW_THREAD_ICON_LABELS[settings.newThreadIcon]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {NEW_THREAD_ICON_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} hideIndicator value={opt.value}>
-                    <span className="flex items-center gap-2">
-                      <opt.icon className="size-4" />
-                      {opt.label}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
           resetAction={
@@ -1742,6 +1520,36 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Quit without asking"
+          description="Skip the desktop quit confirmation window."
+          resetAction={
+            settings.quitWithoutConfirmation !==
+            DEFAULT_UNIFIED_SETTINGS.quitWithoutConfirmation ? (
+              <SettingResetButton
+                label="quit confirmation"
+                onClick={() =>
+                  updateSettings({
+                    quitWithoutConfirmation: DEFAULT_UNIFIED_SETTINGS.quitWithoutConfirmation,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <Checkbox
+                checked={settings.quitWithoutConfirmation}
+                onCheckedChange={(checked) =>
+                  updateSettings({ quitWithoutConfirmation: Boolean(checked) })
+                }
+                aria-label="Quit without asking"
+              />
+              <span className="select-none">Quit without asking</span>
+            </label>
           }
         />
 

@@ -10,10 +10,25 @@
   "module": "./dist/index.mjs",
   "types": "./src/index.ts",
   "exports": {
+    "./orchestration": {
+      "types": "./src/orchestration.ts",
+      "import": "./src/orchestration.ts",
+      "require": "./src/orchestration.ts"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts",
+      "require": "./src/server.ts"
+    },
     "./settings": {
       "types": "./src/settings.ts",
       "import": "./src/settings.ts",
       "require": "./src/settings.ts"
+    },
+    "./telemetry": {
+      "types": "./src/telemetry.ts",
+      "import": "./src/telemetry.ts",
+      "require": "./src/telemetry.ts"
     },
     ".": {
       "types": "./src/index.ts",

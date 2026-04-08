@@ -121,6 +121,11 @@ function rawPayloadFromEvent(event: ProviderRuntimeEvent): Record<string, unknow
 
 function parentItemIdFromRuntimeEvent(event: ProviderRuntimeEvent): string | undefined {
   const rawPayload = rawPayloadFromEvent(event);
+  const parentItemId = asString(rawPayload?.parentItemId) ?? asString(rawPayload?.parent_item_id);
+  if (parentItemId) {
+    return parentItemId;
+  }
+
   const parentToolUseId = asString(rawPayload?.parent_tool_use_id);
   if (parentToolUseId) {
     return parentToolUseId;
@@ -507,6 +512,7 @@ function runtimeEventToActivities(
             status: event.payload.status,
             ...(parentItemId ? { parentItemId } : {}),
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
+            ...(event.payload.outputFile ? { outputFile: event.payload.outputFile } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -581,6 +587,27 @@ function runtimeEventToActivities(
     }
 
     case "item.updated": {
+      if (event.payload.itemType === "reasoning") {
+        const detail = event.payload.detail ? truncateDetail(event.payload.detail) : undefined;
+        if (!detail) {
+          return [];
+        }
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "info",
+            kind: "reasoning.delta",
+            summary: "Thinking",
+            payload: {
+              ...(event.itemId ? { itemId: event.itemId } : {}),
+              delta: detail,
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }

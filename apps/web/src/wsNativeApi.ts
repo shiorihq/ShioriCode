@@ -89,17 +89,30 @@ export function createWsNativeApi(): NativeApi {
       updateSettings: rpcClient.server.updateSettings,
       setShioriAuthToken: (token) => rpcClient.server.setShioriAuthToken(token),
       getProviderUsage: (provider) => rpcClient.server.getProviderUsage({ provider }),
+      getHostedBillingSnapshot: () => rpcClient.server.getHostedBillingSnapshot(),
+      createHostedBillingCheckout: (input) => rpcClient.server.createHostedBillingCheckout(input),
+      createHostedBillingPortal: (flow) => rpcClient.server.createHostedBillingPortal({ flow }),
     },
     orchestration: {
       getSnapshot: rpcClient.orchestration.getSnapshot,
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,
       getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
+      getSubagentDetail: rpcClient.orchestration.getSubagentDetail,
       replayEvents: (fromSequenceExclusive) =>
         rpcClient.orchestration
           .replayEvents({ fromSequenceExclusive })
           .then((events) => [...events]),
       onDomainEvent: (callback) => rpcClient.orchestration.onDomainEvent(callback),
+    },
+    onboarding: {
+      getState: rpcClient.onboarding.getState,
+      completeStep: (input) => rpcClient.onboarding.completeStep(input),
+      reset: rpcClient.onboarding.reset,
+    },
+    telemetry: {
+      capture: (input) => rpcClient.telemetry.capture(input),
+      log: (input) => rpcClient.telemetry.log(input),
     },
   };
 

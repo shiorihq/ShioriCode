@@ -28,6 +28,14 @@
       "types": "./src/wsRpc.ts",
       "import": "./src/wsRpc.ts"
     },
+    "./onboarding": {
+      "types": "./src/onboarding.ts",
+      "import": "./src/onboarding.ts"
+    },
+    "./providerTool": {
+      "types": "./src/providerTool.ts",
+      "import": "./src/providerTool.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

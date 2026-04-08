@@ -230,3 +230,68 @@ export const ServerProviderUsageSnapshot = Schema.Union([
   ServerClaudeUsageSnapshot,
 ]);
 export type ServerProviderUsageSnapshot = typeof ServerProviderUsageSnapshot.Type;
+
+export const HostedBillingPlanId = Schema.Literals(["plus", "pro", "max"]);
+export type HostedBillingPlanId = typeof HostedBillingPlanId.Type;
+
+export const HostedBillingPortalFlow = Schema.Literals(["manage", "cancel"]);
+export type HostedBillingPortalFlow = typeof HostedBillingPortalFlow.Type;
+
+export const HostedBillingPlan = Schema.Struct({
+  id: HostedBillingPlanId,
+  name: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  monthlyPrice: NonNegativeInt,
+  annualPrice: Schema.NullOr(NonNegativeInt),
+  sortOrder: NonNegativeInt,
+  highlighted: Schema.Boolean,
+  buttonText: Schema.NullOr(TrimmedNonEmptyString),
+  features: Schema.Array(TrimmedNonEmptyString),
+});
+export type HostedBillingPlan = typeof HostedBillingPlan.Type;
+
+export const HostedBillingSnapshot = Schema.Struct({
+  plans: Schema.Array(HostedBillingPlan),
+});
+export type HostedBillingSnapshot = typeof HostedBillingSnapshot.Type;
+
+export const HostedBillingCheckoutInput = Schema.Struct({
+  planId: HostedBillingPlanId,
+  isAnnual: Schema.Boolean,
+});
+export type HostedBillingCheckoutInput = typeof HostedBillingCheckoutInput.Type;
+
+export const HostedBillingCheckoutResult = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+});
+export type HostedBillingCheckoutResult = typeof HostedBillingCheckoutResult.Type;
+
+export const HostedBillingPortalInput = Schema.Struct({
+  flow: HostedBillingPortalFlow,
+});
+export type HostedBillingPortalInput = typeof HostedBillingPortalInput.Type;
+
+export const HostedBillingPortalResult = Schema.Struct({
+  url: TrimmedNonEmptyString,
+});
+export type HostedBillingPortalResult = typeof HostedBillingPortalResult.Type;
+
+export const HostedBillingErrorCode = Schema.Literals([
+  "configuration",
+  "authentication",
+  "authorization",
+  "unavailable",
+  "requestFailed",
+]);
+export type HostedBillingErrorCode = typeof HostedBillingErrorCode.Type;
+
+export class HostedBillingError extends Schema.TaggedErrorClass<HostedBillingError>()(
+  "HostedBillingError",
+  {
+    code: HostedBillingErrorCode,
+    message: TrimmedNonEmptyString,
+    status: Schema.optional(NonNegativeInt),
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}

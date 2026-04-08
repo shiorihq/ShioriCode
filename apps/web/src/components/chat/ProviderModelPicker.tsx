@@ -45,39 +45,47 @@ function providerIconClassName(
   return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
 }
 
+function shouldShowLockedProviderModelSearch(provider: ProviderKind): boolean {
+  return provider === "shiori";
+}
+
 function LockedProviderModelList(props: {
   model: string;
   lockedProvider: ProviderKind;
   modelOptions: ReadonlyArray<{ slug: string; name: string }>;
+  searchEnabled: boolean;
   searchQuery: string;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   onSearchChange: (query: string) => void;
   onModelChange: (provider: ProviderKind, model: string) => void;
   onClose: () => void;
 }) {
+  const effectiveSearchQuery = props.searchEnabled ? props.searchQuery : "";
   const filteredModels = useMemo(() => {
-    if (!props.searchQuery) return props.modelOptions;
-    const q = props.searchQuery.toLowerCase();
+    if (!effectiveSearchQuery) return props.modelOptions;
+    const q = effectiveSearchQuery.toLowerCase();
     return props.modelOptions.filter((m) => m.name.toLowerCase().includes(q));
-  }, [props.modelOptions, props.searchQuery]);
+  }, [effectiveSearchQuery, props.modelOptions]);
 
   return (
     <>
-      <div className="sticky top-0 z-10 bg-popover px-1 pb-1">
-        <div className="flex items-center gap-2 rounded-md border border-input bg-transparent px-2 py-1.5">
-          <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
-          <input
-            ref={props.searchInputRef}
-            autoFocus
-            type="text"
-            value={props.searchQuery}
-            placeholder="Search models…"
-            className="h-5 w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
-            onChange={(e) => props.onSearchChange(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
+      {props.searchEnabled ? (
+        <div className="sticky top-0 z-10 bg-popover px-1 pb-1">
+          <div className="flex items-center gap-2 rounded-md border border-input bg-transparent px-2 py-1.5">
+            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+            <input
+              ref={props.searchInputRef}
+              autoFocus
+              type="text"
+              value={props.searchQuery}
+              placeholder="Search models…"
+              className="h-5 w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+              onChange={(e) => props.onSearchChange(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+          </div>
         </div>
-      </div>
+      ) : null}
       <MenuGroup>
         <MenuRadioGroup
           value={props.model}
@@ -197,6 +205,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             model={props.model}
             lockedProvider={props.lockedProvider}
             modelOptions={props.modelOptionsByProvider[props.lockedProvider]}
+            searchEnabled={shouldShowLockedProviderModelSearch(props.lockedProvider)}
             searchQuery={searchQuery}
             searchInputRef={searchInputRef}
             onSearchChange={setSearchQuery}

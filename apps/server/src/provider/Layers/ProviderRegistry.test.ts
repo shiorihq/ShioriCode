@@ -526,7 +526,10 @@ it.layer(
             mockCommandSpawnerLayer((command, args) => {
               const joined = args.join(" ");
               if (joined === "--version") {
-                if (command === "codex") {
+                if (
+                  command === "codex" ||
+                  command === "/Applications/Codex.app/Contents/Resources/codex"
+                ) {
                   return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
                 }
                 return { stdout: "", stderr: "spawn ENOENT", code: 1 };

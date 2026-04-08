@@ -29,6 +29,7 @@ import {
   toJsonSchemaObject,
 } from "../Utils.ts";
 import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
+import { resolvePreferredCodexBinaryPath } from "../../provider/codexBinaryPath";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { normalizeCodexModelOptionsWithCapabilities } from "shared/model";
 
@@ -161,8 +162,9 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       );
       const reasoningEffort =
         modelSelection.options?.reasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
+      const binaryPath = resolvePreferredCodexBinaryPath(codexSettings?.binaryPath || "codex");
       const command = ChildProcess.make(
-        codexSettings?.binaryPath || "codex",
+        binaryPath,
         [
           "exec",
           "--ephemeral",

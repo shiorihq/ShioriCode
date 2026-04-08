@@ -6,13 +6,13 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
   planTitle: string | null;
 }) {
   return (
-    <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-      <p className="truncate text-sm text-muted-foreground">
+    <div className="px-4 py-2 sm:px-5">
+      <p className="truncate text-xs text-muted-foreground/60">
         Plan ready
         {planTitle ? (
           <>
-            {" "}
-            &mdash; <span className="font-medium text-foreground/80">{planTitle}</span>
+            {" — "}
+            <span className="text-foreground/60">{planTitle}</span>
           </>
         ) : null}
       </p>

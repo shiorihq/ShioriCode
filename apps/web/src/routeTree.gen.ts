@@ -13,11 +13,13 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
+import { Route as SettingsThemeBuilderRouteImport } from './routes/settings.theme-builder'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsFeedbackRouteImport } from './routes/settings.feedback'
 import { Route as SettingsCreditsRouteImport } from './routes/settings.credits'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
 
@@ -38,6 +40,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const SettingsUsageRoute = SettingsUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsThemeBuilderRoute = SettingsThemeBuilderRouteImport.update({
+  id: '/theme-builder',
+  path: '/theme-builder',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
@@ -65,6 +72,11 @@ const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   path: '/archived',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
   id: '/account',
   path: '/account',
@@ -81,22 +93,26 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
 }
 export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/': typeof ChatIndexRoute
 }
@@ -106,11 +122,13 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/_chat/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
   '/_chat/': typeof ChatIndexRoute
 }
@@ -121,22 +139,26 @@ export interface FileRouteTypes {
     | '/settings'
     | '/$threadId'
     | '/settings/account'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
     | '/settings/skills'
+    | '/settings/theme-builder'
     | '/settings/usage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/settings'
     | '/$threadId'
     | '/settings/account'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
     | '/settings/skills'
+    | '/settings/theme-builder'
     | '/settings/usage'
     | '/'
   id:
@@ -145,11 +167,13 @@ export interface FileRouteTypes {
     | '/settings'
     | '/_chat/$threadId'
     | '/settings/account'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
     | '/settings/skills'
+    | '/settings/theme-builder'
     | '/settings/usage'
     | '/_chat/'
   fileRoutesById: FileRoutesById
@@ -189,6 +213,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsUsageRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/theme-builder': {
+      id: '/settings/theme-builder'
+      path: '/theme-builder'
+      fullPath: '/settings/theme-builder'
+      preLoaderRoute: typeof SettingsThemeBuilderRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/skills': {
       id: '/settings/skills'
       path: '/skills'
@@ -224,6 +255,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsArchivedRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/account': {
       id: '/settings/account'
       path: '/account'
@@ -255,21 +293,25 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsAccountRoute: typeof SettingsAccountRoute
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsCreditsRoute: typeof SettingsCreditsRoute
   SettingsFeedbackRoute: typeof SettingsFeedbackRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsThemeBuilderRoute: typeof SettingsThemeBuilderRoute
   SettingsUsageRoute: typeof SettingsUsageRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAccountRoute: SettingsAccountRoute,
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsCreditsRoute: SettingsCreditsRoute,
   SettingsFeedbackRoute: SettingsFeedbackRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsThemeBuilderRoute: SettingsThemeBuilderRoute,
   SettingsUsageRoute: SettingsUsageRoute,
 }
 

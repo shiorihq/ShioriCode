@@ -299,6 +299,14 @@ function diffFromStructuredPatch(
 // ---------------------------------------------------------------------------
 
 const MAX_DIFF_LINES = 80;
+const WRITE_TOOL_NAME_ALIASES = new Set(["write", "write_file", "writefile"]);
+
+function normalizeToolName(value: string): string {
+  return value
+    .replace(/[.\s-]+/g, "_")
+    .trim()
+    .toLowerCase();
+}
 
 export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff | null {
   const detailKey = detail ?? "";
@@ -343,7 +351,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   const data = resolveInnerData(output);
   if (!data) return storeParsedDiff(null);
   const topInput = asRecord(top?.input);
-  const topToolName = asString(top?.toolName)?.toLowerCase() ?? null;
+  const topToolName = asString(top?.toolName) ?? null;
 
   // Extract file path from various locations
   const filePath =
@@ -385,8 +393,16 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
 
   // Strategy 4: old_string / new_string from input (Claude Edit tool)
   const input = asRecord(data.input);
-  const oldString = asString(input?.old_string) ?? asString(data.oldString);
-  const newString = asString(input?.new_string) ?? asString(data.newString);
+  const oldString =
+    asString(input?.old_string) ??
+    asString(topInput?.old_string) ??
+    asString(data.oldString) ??
+    asString(top?.oldString);
+  const newString =
+    asString(input?.new_string) ??
+    asString(topInput?.new_string) ??
+    asString(data.newString) ??
+    asString(top?.newString);
   if (oldString != null && newString != null) {
     const lines = diffFromOldNew(oldString, newString);
     if (lines.length > 0) {
@@ -395,10 +411,11 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   }
 
   // Strategy 5: Claude Write tool — show the attempted file contents as a full write diff.
-  const writeContent =
-    topToolName === "write"
-      ? (asString(topInput?.content) ?? asString((asRecord(data.input) ?? {}).content))
-      : null;
+  const isWriteTool =
+    topToolName !== null && WRITE_TOOL_NAME_ALIASES.has(normalizeToolName(topToolName));
+  const writeContent = isWriteTool
+    ? (asString(topInput?.content) ?? asString((asRecord(data.input) ?? {}).content))
+    : null;
   if (writeContent != null) {
     const lines = diffFromOldNew("", writeContent);
     if (lines.length > 0) {
@@ -515,7 +532,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
       <div
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-muted-foreground",
+          "flex items-center gap-2 border-b border-border/50 px-3 py-1.5 font-mono text-muted-foreground",
         )}
       >
         {diff.filePath && (
@@ -546,7 +563,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
 
       {/* Diff body */}
       <div className="overflow-x-auto">
-        <pre className={cn(CHAT_THREAD_BODY_CLASS, "leading-5")}>
+        <pre className={cn(CHAT_THREAD_BODY_CLASS, "font-mono leading-5")}>
           {diff.lines.map((line, lineIndex) => (
             <div
               key={`${line.type}:${line.oldLineNo ?? "n"}:${line.newLineNo ?? "n"}`}
@@ -584,7 +601,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
         <div
           className={cn(
             CHAT_THREAD_BODY_CLASS,
-            "border-t border-border/50 px-3 py-1 text-center text-muted-foreground/70",
+            "border-t border-border/50 px-3 py-1 text-center font-mono text-muted-foreground/70",
           )}
         >
           Diff truncated

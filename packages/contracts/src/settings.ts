@@ -9,6 +9,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ShioriModelOptions,
 } from "./model";
+import { OnboardingProgress, OnboardingStepId } from "./onboarding";
 import { ModelSelection, ProviderKind } from "./orchestration";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -161,21 +162,9 @@ export const ImportedTheme = Schema.Struct({
 });
 export type ImportedTheme = typeof ImportedTheme.Type;
 
-export const NewThreadIcon = Schema.Literals([
-  "navigation",
-  "binoculars",
-  "gamepad-directional",
-  "footprints",
-  "compass",
-  "ship",
-]);
-export type NewThreadIcon = typeof NewThreadIcon.Type;
-export const DEFAULT_NEW_THREAD_ICON: NewThreadIcon = "navigation";
-
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  newThreadIcon: NewThreadIcon.pipe(Schema.withDecodingDefault(() => DEFAULT_NEW_THREAD_ICON)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),
@@ -279,6 +268,7 @@ export type McpServersConfig = typeof McpServersConfig.Type;
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  quitWithoutConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_PERSONALITY),
   ),
@@ -297,6 +287,7 @@ export const ServerSettings = Schema.Struct({
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
     })),
   ),
+  onboarding: OnboardingProgress.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -384,12 +375,19 @@ const ClaudeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const OnboardingProgressPatch = Schema.Struct({
+  completedStepIds: Schema.optionalKey(Schema.Array(OnboardingStepId)),
+  dismissed: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
+  quitWithoutConfirmation: Schema.optionalKey(Schema.Boolean),
   assistantPersonality: Schema.optionalKey(AssistantPersonality),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   defaultModelSelection: Schema.optionalKey(ModelSelectionPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  onboarding: Schema.optionalKey(OnboardingProgressPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

@@ -1,7 +1,10 @@
 import {
+  type OnboardingCompleteStepInput,
   type NativeApi,
   ORCHESTRATION_WS_METHODS,
   type ServerSettingsPatch,
+  type TelemetryCaptureInput,
+  type TelemetryLogInput,
   WsRpcGroup,
   WS_METHODS,
 } from "contracts";
@@ -184,14 +187,35 @@ export interface WsRpcClient {
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
     readonly setShioriAuthToken: (token: string | null) => Promise<void>;
     readonly getProviderUsage: RpcUnaryMethod<typeof WS_METHODS.serverGetProviderUsage>;
+    readonly getHostedBillingSnapshot: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetHostedBillingSnapshot
+    >;
+    readonly createHostedBillingCheckout: RpcUnaryMethod<
+      typeof WS_METHODS.serverCreateHostedBillingCheckout
+    >;
+    readonly createHostedBillingPortal: RpcUnaryMethod<
+      typeof WS_METHODS.serverCreateHostedBillingPortal
+    >;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
+  };
+  readonly onboarding: {
+    readonly getState: RpcUnaryNoArgMethod<typeof WS_METHODS.onboardingGetState>;
+    readonly completeStep: (
+      input: OnboardingCompleteStepInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.onboardingCompleteStep>>;
+    readonly reset: RpcUnaryNoArgMethod<typeof WS_METHODS.onboardingReset>;
+  };
+  readonly telemetry: {
+    readonly capture: (input: TelemetryCaptureInput) => Promise<void>;
+    readonly log: (input: TelemetryLogInput) => Promise<void>;
   };
   readonly orchestration: {
     readonly getSnapshot: RpcUnaryNoArgMethod<typeof ORCHESTRATION_WS_METHODS.getSnapshot>;
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
+    readonly getSubagentDetail: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getSubagentDetail>;
     readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
     readonly onDomainEvent: RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>;
   };
@@ -257,10 +281,30 @@ export function createWsRpcClient(options: {
           .then(() => undefined),
       getProviderUsage: (input) =>
         transport.request((client) => client[WS_METHODS.serverGetProviderUsage](input)),
+      getHostedBillingSnapshot: () =>
+        transport.request((client) => client[WS_METHODS.serverGetHostedBillingSnapshot]({})),
+      createHostedBillingCheckout: (input) =>
+        transport.request((client) => client[WS_METHODS.serverCreateHostedBillingCheckout](input)),
+      createHostedBillingPortal: (input) =>
+        transport.request((client) => client[WS_METHODS.serverCreateHostedBillingPortal](input)),
       subscribeConfig: (listener) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener),
       subscribeLifecycle: (listener) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerLifecycle]({}), listener),
+    },
+    onboarding: {
+      getState: () => transport.request((client) => client[WS_METHODS.onboardingGetState]({})),
+      completeStep: (input) =>
+        transport.request((client) => client[WS_METHODS.onboardingCompleteStep](input)),
+      reset: () => transport.request((client) => client[WS_METHODS.onboardingReset]({})),
+    },
+    telemetry: {
+      capture: (input) =>
+        transport
+          .request((client) => client[WS_METHODS.telemetryCapture](input))
+          .then(() => undefined),
+      log: (input) =>
+        transport.request((client) => client[WS_METHODS.telemetryLog](input)).then(() => undefined),
     },
     orchestration: {
       getSnapshot: () =>
@@ -271,6 +315,8 @@ export function createWsRpcClient(options: {
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getFullThreadDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getFullThreadDiff](input)),
+      getSubagentDetail: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.getSubagentDetail](input)),
       replayEvents: (input) =>
         transport
           .request((client) => client[ORCHESTRATION_WS_METHODS.replayEvents](input))

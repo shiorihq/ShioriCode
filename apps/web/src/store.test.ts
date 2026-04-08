@@ -398,7 +398,49 @@ describe("incremental orchestration updates", () => {
     expect(next.projects).toHaveLength(1);
     expect(next.projects[0]?.id).toBe(recreatedProjectId);
     expect(next.projects[0]?.cwd).toBe("/tmp/project");
-    expect(next.projects[0]?.name).toBe("Project Recreated");
+    expect(next.projects[0]?.name).toBe("project recreated");
+  });
+
+  it("puts new projects at the front of the in-memory project list", () => {
+    const state: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-existing"),
+          name: "Existing",
+          cwd: "/tmp/existing",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          scripts: [],
+        },
+      ],
+      threads: [],
+      sidebarThreadsById: {},
+      threadIdsByProjectId: {},
+      bootstrapComplete: true,
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("project.created", {
+        projectId: ProjectId.makeUnsafe("project-new"),
+        title: "New",
+        workspaceRoot: "/tmp/new",
+        defaultModelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        scripts: [],
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-new"),
+      ProjectId.makeUnsafe("project-existing"),
+    ]);
   });
 
   it("removes stale project index entries when thread.created recreates a thread under a new project", () => {

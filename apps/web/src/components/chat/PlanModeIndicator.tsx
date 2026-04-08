@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { SlidersHorizontalIcon, XCircleIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 
 interface PlanModeIndicatorProps {
   onDisable: () => void;
@@ -13,11 +13,10 @@ export const PlanModeIndicator = memo(function PlanModeIndicator({
       type="button"
       onClick={onDisable}
       title="Click to exit plan mode"
-      className="group/plan flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-0.5 transition-colors duration-150 hover:bg-primary/10 sm:px-1.5"
+      className="group/plan flex cursor-pointer items-center gap-1 rounded-md bg-primary/8 px-1.5 py-0.5 transition-colors duration-120 hover:bg-primary/14"
     >
-      <SlidersHorizontalIcon className="size-4 text-primary group-hover/plan:hidden" />
-      <XCircleIcon className="hidden size-4 fill-primary text-white group-hover/plan:block" />
-      <span className="text-sm font-medium text-primary">Plan</span>
+      <span className="text-xs font-medium text-primary">Plan</span>
+      <XIcon className="size-3 text-primary/50 transition-colors group-hover/plan:text-primary" />
     </button>
   );
 });

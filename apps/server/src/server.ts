@@ -39,6 +39,7 @@ import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus"
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
+import { SubagentDetailQueryLive } from "./orchestration/Layers/SubagentDetailQuery";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
 import { ShioriProviderLive } from "./provider/Layers/ShioriProvider";
 import { ServerSettingsLive } from "./serverSettings";
@@ -47,6 +48,7 @@ import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore";
+import { HostedBillingLive } from "./hostedBilling";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -191,6 +193,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(SubagentDetailQueryLive),
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
@@ -200,6 +203,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(HostedShioriAuthTokenStoreLive),
+  Layer.provideMerge(HostedBillingLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
 
@@ -267,12 +271,10 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
-// Important: Only `ServerConfig` should be provided by the CLI layer!!! Don't let other requirements leak into the launch layer.
-export const runServer = Layer.launch(makeServerLayer) satisfies Effect.Effect<
-  never,
-  any,
-  ServerConfig
->;
+// Important: Only `ServerConfig` should be provided by the CLI layer.
+const RunServerDependencies = Layer.mergeAll(ServerSettingsLive, HostedShioriAuthTokenStoreLive);
+
+export const runServer = Layer.launch(makeServerLayer).pipe(Effect.provide(RunServerDependencies));
 
 function buildServerInstanceUrl(config: ServerConfigShape) {
   const host =

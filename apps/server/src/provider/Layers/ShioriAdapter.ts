@@ -20,10 +20,12 @@ import {
   type ProviderUserInputAnswers,
   type UserInputQuestion,
   type McpServerEntry,
+  type CanonicalItemType,
   RuntimeItemId,
   RuntimeRequestId,
   type ShioriModelOptions,
   type AssistantPersonality,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "contracts";
@@ -35,6 +37,11 @@ import {
   uiMessageChunkSchema,
 } from "ai";
 import { Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
+import {
+  classifyProviderToolLifecycleItemType,
+  classifyProviderToolRequestKind,
+  providerToolTitle,
+} from "shared/providerTool";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts";
@@ -215,6 +222,17 @@ const MAX_PERSISTED_MESSAGES = 48;
 const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
 const LOCAL_TOOL_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_TOOL_FILE_CHARS = 20_000;
+const MAX_SUBAGENT_TOOL_ROUNDS = 16;
+const SUBAGENT_NOTIFICATION_OPEN_TAG = "<subagent_notification>";
+const SUBAGENT_NOTIFICATION_CLOSE_TAG = "</subagent_notification>";
+const SUBAGENT_TOOL_NAMES = new Set([
+  "spawn_agent",
+  "send_input",
+  "wait_agent",
+  "close_agent",
+  "agent",
+  "send_message",
+]);
 
 export type ApprovalRequestKind = "command" | "file-read" | "file-change";
 
@@ -292,6 +310,46 @@ interface PendingToolCall {
   reasoningBlockIds?: string[];
 }
 
+type ShioriSubagentLifecycleStatus =
+  | "pending_init"
+  | "running"
+  | "completed"
+  | "failed"
+  | "shutdown";
+
+interface ShioriSubagentQueuedInput {
+  id: string;
+  prompt: string;
+  submittedAt: string;
+}
+
+interface ShioriSubagentState {
+  id: string;
+  taskName: string;
+  nickname: string | null;
+  toolStyle: "codex" | "claude";
+  description: string;
+  subagentType: string | null;
+  modelId: string;
+  status: ShioriSubagentLifecycleStatus;
+  queuedInputs: ReadonlyArray<ShioriSubagentQueuedInput>;
+  history: ReadonlyArray<HostedShioriMessage>;
+  runnerActive: boolean;
+  terminalSequence: number;
+  createdAt: string;
+  updatedAt: string;
+  parentTurnId?: TurnId;
+  parentToolUseId?: string;
+  currentRun?:
+    | {
+        inputId: string;
+        controller: AbortController;
+      }
+    | undefined;
+  lastSummary?: string;
+  lastError?: string;
+}
+
 interface ShioriSessionContext {
   session: ProviderSession;
   messages: HostedShioriMessage[];
@@ -300,6 +358,9 @@ interface ShioriSessionContext {
   pendingApprovals: Map<ApprovalRequestId, PendingToolCall>;
   pendingUserInputs: Map<ApprovalRequestId, PendingToolCall>;
   allowedRequestKinds: Set<ApprovalRequestKind>;
+  subagents: Map<string, ShioriSubagentState>;
+  subagentSequence: number;
+  pendingSubagentNotifications: string[];
 }
 
 export interface ShioriAdapterLiveOptions {
@@ -467,18 +528,72 @@ function assistantToolMessage(input: {
 }
 
 export function toolRequestKind(toolName: string): ApprovalRequestKind | undefined {
-  switch (toolName) {
-    case "exec_command":
-      return "command";
-    case "list_directory":
-    case "read_file":
-      return "file-read";
-    case "write_file":
-    case "apply_patch":
-      return "file-change";
-    default:
-      return undefined;
+  return classifyProviderToolRequestKind(toolName);
+}
+
+function isSubagentToolName(toolName: string): boolean {
+  return SUBAGENT_TOOL_NAMES.has(toolName);
+}
+
+function sanitizeTaskName(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const normalized = raw
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized.length > 0
+    ? normalized.slice(0, 48)
+    : `agent_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function formatSubagentNotificationPayload(input: {
+  agentPath: string;
+  status: ShioriSubagentLifecycleStatus;
+  summary?: string;
+}): string {
+  const payload = JSON.stringify({
+    agent_path: input.agentPath,
+    status: input.status,
+    ...(input.summary && input.summary.trim().length > 0 ? { summary: input.summary } : {}),
+  });
+  return `${SUBAGENT_NOTIFICATION_OPEN_TAG}${payload}${SUBAGENT_NOTIFICATION_CLOSE_TAG}`;
+}
+
+function isSubagentTerminalStatus(status: ShioriSubagentLifecycleStatus): boolean {
+  return status === "completed" || status === "failed" || status === "shutdown";
+}
+
+function extractAssistantTextFromMessage(message: HostedShioriMessage | null | undefined): string {
+  if (!message || !Array.isArray(message.parts)) {
+    return "";
   }
+  return message.parts
+    .flatMap((part) =>
+      part && typeof part === "object" && "type" in part && part.type === "text"
+        ? [typeof (part as { text?: unknown }).text === "string" ? part.text : ""]
+        : [],
+    )
+    .join("")
+    .trim();
+}
+
+function normalizeSubagentSummary(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed.length > 600 ? `${trimmed.slice(0, 600)}...` : trimmed;
+}
+
+function clampSubagentWaitTimeout(value: unknown): number {
+  const fallback = 30_000;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(120_000, Math.round(value)));
 }
 
 export function buildHostedToolDescriptors(input: HostedToolContext): HostedToolDescriptor[] {
@@ -590,6 +705,135 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
           },
         },
         required: ["question"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "spawn_agent",
+      title: "Spawn agent",
+      description:
+        "Spawn a background subagent for a scoped task. Returns a stable task name that can be used with send_input, wait_agent, and close_agent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task_name: {
+            type: "string",
+            description:
+              "Optional canonical task name. Use lowercase letters, digits, and underscores.",
+          },
+          message: {
+            type: "string",
+            description: "Initial task prompt for the new subagent.",
+          },
+          agent_type: {
+            type: "string",
+            description: "Optional role label, such as researcher or verifier.",
+          },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "send_input",
+      title: "Send input",
+      description:
+        "Queue a follow-up message for an existing subagent. The target can be an agent id or task name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: {
+            type: "string",
+            description: "Agent id or task name returned by spawn_agent.",
+          },
+          message: {
+            type: "string",
+            description: "Follow-up prompt to queue for that subagent.",
+          },
+        },
+        required: ["target", "message"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "wait_agent",
+      title: "Wait agent",
+      description:
+        "Wait for one or more subagents to finish. Returns final statuses keyed by target.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          targets: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Optional list of agent ids or task names. If omitted, waits for any tracked subagent.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: "Optional timeout in milliseconds. Defaults to 30000.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "close_agent",
+      title: "Close agent",
+      description:
+        "Stop a subagent and mark it as closed. Use after completion to release resources.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: {
+            type: "string",
+            description: "Agent id or task name returned by spawn_agent.",
+          },
+        },
+        required: ["target"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "agent",
+      title: "Agent",
+      description:
+        "Claude-style agent spawn. Starts a subagent for the provided prompt and description.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          description: { type: "string", description: "Short summary of the delegated task." },
+          prompt: { type: "string", description: "Detailed delegated prompt." },
+          subagent_type: {
+            type: "string",
+            description: "Optional agent type label, such as explore or code-reviewer.",
+          },
+          run_in_background: {
+            type: "boolean",
+            description:
+              "When true (default), return immediately after launch. When false, wait for completion.",
+          },
+          name: {
+            type: "string",
+            description: "Optional stable task name for follow-up messages.",
+          },
+        },
+        required: ["description", "prompt"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "send_message",
+      title: "Send message",
+      description:
+        "Claude-style follow-up for a running subagent. Equivalent to send_input with fields to/message.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "Agent id or task name." },
+          message: { type: "string", description: "Follow-up prompt." },
+        },
+        required: ["to", "message"],
         additionalProperties: false,
       },
     },
@@ -1309,37 +1553,12 @@ export function buildInterruptedTurnEvents(input: {
   return events;
 }
 
-function runtimeItemTypeForTool(
-  toolName: string,
-): "command_execution" | "file_change" | "dynamic_tool_call" {
-  switch (toolName) {
-    case "exec_command":
-      return "command_execution";
-    case "write_file":
-    case "apply_patch":
-      return "file_change";
-    default:
-      return "dynamic_tool_call";
-  }
+function runtimeItemTypeForTool(toolName: string): CanonicalItemType {
+  return classifyProviderToolLifecycleItemType(toolName);
 }
 
 function toolTitle(toolName: string): string {
-  switch (toolName) {
-    case "exec_command":
-      return "Run command";
-    case "list_directory":
-      return "List directory";
-    case "read_file":
-      return "Read file";
-    case "write_file":
-      return "Write file";
-    case "apply_patch":
-      return "Apply patch";
-    case "ask_user":
-      return "Ask user";
-    default:
-      return toolName;
-  }
+  return providerToolTitle(toolName);
 }
 
 function ensureReasoningBlock(
@@ -1786,6 +2005,1092 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...(input.data !== undefined ? { data: input.data } : {}),
           },
         } satisfies ProviderRuntimeEvent);
+
+      const resolveSubagentTarget = (
+        context: ShioriSessionContext,
+        target: unknown,
+      ): ShioriSubagentState | null => {
+        const value = typeof target === "string" ? target.trim() : "";
+        if (value.length === 0) {
+          return null;
+        }
+        const byId = context.subagents.get(value);
+        if (byId) {
+          return byId;
+        }
+        for (const state of context.subagents.values()) {
+          if (state.taskName === value) {
+            return state;
+          }
+        }
+        return null;
+      };
+
+      const subagentWaitSnapshot = (
+        state: ShioriSubagentState,
+        target: string,
+      ): {
+        target: string;
+        id: string;
+        task_name: string;
+        status: ShioriSubagentLifecycleStatus;
+        summary?: string;
+        error?: string;
+      } => ({
+        target,
+        id: state.id,
+        task_name: state.taskName,
+        status: state.status,
+        ...(state.lastSummary ? { summary: state.lastSummary } : {}),
+        ...(state.lastError ? { error: state.lastError } : {}),
+      });
+
+      const allocateSubagentTaskName = (
+        context: ShioriSessionContext,
+        preferred: unknown,
+      ): string => {
+        const base = sanitizeTaskName(preferred);
+        const existing = new Set(
+          Array.from(context.subagents.values()).map((state) => state.taskName),
+        );
+        if (!existing.has(base)) {
+          return base;
+        }
+        for (let index = 2; index <= 999; index += 1) {
+          const candidate = `${base}_${index}`;
+          if (!existing.has(candidate)) {
+            return candidate;
+          }
+        }
+        return `${base}_${crypto.randomUUID().slice(0, 6)}`;
+      };
+
+      const appendSubagentNotification = (input: {
+        threadId: ThreadId;
+        agentPath: string;
+        status: ShioriSubagentLifecycleStatus;
+        summary?: string;
+      }) =>
+        updateContext(input.threadId, (context) => ({
+          ...context,
+          pendingSubagentNotifications: [
+            ...context.pendingSubagentNotifications,
+            formatSubagentNotificationPayload({
+              agentPath: input.agentPath,
+              status: input.status,
+              ...(input.summary ? { summary: input.summary } : {}),
+            }),
+          ],
+        }));
+
+      const emitSubagentTaskStarted = (input: {
+        threadId: ThreadId;
+        taskId: string;
+        turnId?: TurnId;
+        description?: string;
+        taskType?: string;
+        toolUseId?: string;
+      }) =>
+        emit({
+          ...runtimeEventBase({
+            threadId: input.threadId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+          }),
+          type: "task.started",
+          payload: {
+            taskId: RuntimeTaskId.makeUnsafe(input.taskId),
+            ...(input.description ? { description: input.description } : {}),
+            ...(input.taskType ? { taskType: input.taskType } : {}),
+          },
+          raw: {
+            source: "claude.sdk.message",
+            method: "shiori/subagent/task_started",
+            payload: {
+              task_id: input.taskId,
+              ...(input.toolUseId ? { tool_use_id: input.toolUseId } : {}),
+            },
+          },
+        } satisfies ProviderRuntimeEvent);
+
+      const emitSubagentTaskProgress = (input: {
+        threadId: ThreadId;
+        taskId: string;
+        turnId?: TurnId;
+        description: string;
+        summary?: string;
+        toolUseId?: string;
+      }) =>
+        emit({
+          ...runtimeEventBase({
+            threadId: input.threadId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+          }),
+          type: "task.progress",
+          payload: {
+            taskId: RuntimeTaskId.makeUnsafe(input.taskId),
+            description: input.description,
+            ...(input.summary ? { summary: input.summary } : {}),
+          },
+          raw: {
+            source: "claude.sdk.message",
+            method: "shiori/subagent/task_progress",
+            payload: {
+              task_id: input.taskId,
+              ...(input.toolUseId ? { tool_use_id: input.toolUseId } : {}),
+            },
+          },
+        } satisfies ProviderRuntimeEvent);
+
+      const emitSubagentTaskCompleted = (input: {
+        threadId: ThreadId;
+        taskId: string;
+        turnId?: TurnId;
+        status: "completed" | "failed" | "stopped";
+        summary?: string;
+        toolUseId?: string;
+      }) =>
+        emit({
+          ...runtimeEventBase({
+            threadId: input.threadId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+          }),
+          type: "task.completed",
+          payload: {
+            taskId: RuntimeTaskId.makeUnsafe(input.taskId),
+            status: input.status,
+            ...(input.summary ? { summary: input.summary } : {}),
+          },
+          raw: {
+            source: "claude.sdk.message",
+            method: "shiori/subagent/task_completed",
+            payload: {
+              task_id: input.taskId,
+              status: input.status,
+              ...(input.toolUseId ? { tool_use_id: input.toolUseId } : {}),
+            },
+          },
+        } satisfies ProviderRuntimeEvent);
+
+      const waitForSubagents = Effect.fn("waitForSubagents")(function* (input: {
+        threadId: ThreadId;
+        targets: ReadonlyArray<string>;
+        timeoutMs: number;
+      }) {
+        const normalizedTargets = Array.from(
+          new Set(
+            input.targets.map((target) => target.trim()).filter((target) => target.length > 0),
+          ),
+        );
+        const deadline = Date.now() + input.timeoutMs;
+
+        for (;;) {
+          const context = yield* getContext(input.threadId);
+          if (normalizedTargets.length === 0) {
+            const statuses = Array.from(context.subagents.values()).map((state) =>
+              subagentWaitSnapshot(state, state.taskName),
+            );
+            const hasTerminal = statuses.some((status) => isSubagentTerminalStatus(status.status));
+            if (statuses.length === 0 || hasTerminal) {
+              return {
+                timeout: false,
+                statuses,
+              };
+            }
+          } else {
+            const statuses = normalizedTargets.flatMap((target) => {
+              const state = resolveSubagentTarget(context, target);
+              if (!state) {
+                return [];
+              }
+              return [subagentWaitSnapshot(state, target)];
+            });
+            if (
+              statuses.length > 0 &&
+              statuses.every((status) => isSubagentTerminalStatus(status.status))
+            ) {
+              return {
+                timeout: false,
+                statuses,
+              };
+            }
+          }
+
+          if (Date.now() >= deadline) {
+            const context = yield* getContext(input.threadId);
+            const statuses =
+              normalizedTargets.length === 0
+                ? Array.from(context.subagents.values()).map((state) =>
+                    subagentWaitSnapshot(state, state.taskName),
+                  )
+                : normalizedTargets.flatMap((target) => {
+                    const state = resolveSubagentTarget(context, target);
+                    return state ? [subagentWaitSnapshot(state, target)] : [];
+                  });
+            return {
+              timeout: true,
+              statuses,
+            };
+          }
+
+          yield* Effect.sleep("100 millis");
+        }
+      });
+
+      const runSubagentHostedRequest = Effect.fn("runSubagentHostedRequest")(function* (input: {
+        threadId: ThreadId;
+        modelId: string;
+        requestMessages: ReadonlyArray<HostedShioriMessage>;
+        authToken: string;
+        signal: AbortSignal;
+      }) {
+        const settings = yield* serverSettings.getSettings;
+        const apiBaseUrl = resolveApiBaseUrl(settings.providers.shiori.apiBaseUrl);
+        const sessionContext = yield* getContext(input.threadId);
+        const requestBody = JSON.stringify({
+          sessionId: `${String(input.threadId)}:subagent`,
+          turnId: crypto.randomUUID(),
+          messages: input.requestMessages,
+          model: {
+            provider: PROVIDER,
+            modelId: input.modelId,
+          },
+          workspaceContext: {
+            rules: buildShioriWorkspaceRules({
+              cwd: sessionContext.session.cwd,
+              personality: settings.assistantPersonality,
+            }),
+          },
+          tools: buildHostedToolDescriptors({
+            ...sessionContext,
+            interactionMode: "default",
+          })
+            .filter((descriptor) => descriptor.name !== "request_user_input")
+            .map((descriptor) => ({
+              name: descriptor.name,
+              description: descriptor.description,
+              inputSchema: descriptor.inputSchema,
+              ...(descriptor.title ? { title: descriptor.title } : {}),
+            })),
+        });
+
+        const response = yield* Effect.tryPromise({
+          try: () =>
+            fetch(`${apiBaseUrl}/api/shiori-code/agent/stream`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": String(Buffer.byteLength(requestBody)),
+                "X-Convex-Auth-Token": input.authToken,
+                "X-Shiori-Client": "electron",
+                "User-Agent": "ShioriCode-macOS/1.0",
+              },
+              body: Buffer.from(requestBody, "utf8"),
+              signal: input.signal,
+            }),
+          catch: (error) =>
+            requestError(
+              `shiori.subagent.start:${String(input.threadId)}`,
+              toMessage(error),
+              error,
+            ),
+        });
+
+        if (!response.ok || !response.body) {
+          const detail = yield* Effect.tryPromise({
+            try: async () => {
+              const text = await response.text();
+              return text.trim().length > 0
+                ? text
+                : `Shiori API returned ${response.status} ${response.statusText}`.trim();
+            },
+            catch: (error) =>
+              requestError(
+                `shiori.subagent.start:${String(input.threadId)}`,
+                `Shiori API returned ${response.status}.`,
+                error,
+              ),
+          });
+          return yield* Effect.fail(
+            requestError(`shiori.subagent.start:${String(input.threadId)}`, detail),
+          );
+        }
+
+        const reader = parseJsonEventStream({
+          stream: response.body,
+          schema: uiMessageChunkSchema,
+        }).getReader();
+
+        let assistantText = "";
+        let nextToolCall:
+          | {
+              toolCallId: string;
+              toolName: string;
+              toolInput: Record<string, unknown>;
+            }
+          | undefined;
+
+        try {
+          for (;;) {
+            const next = yield* Effect.tryPromise({
+              try: () => reader.read(),
+              catch: (error) =>
+                requestError(
+                  `shiori.subagent.stream:${String(input.threadId)}`,
+                  toMessage(error),
+                  error,
+                ),
+            });
+            if (next.done) {
+              break;
+            }
+            if (!next.value.success) {
+              return yield* Effect.fail(
+                requestError(
+                  `shiori.subagent.stream:${String(input.threadId)}`,
+                  next.value.error.message,
+                  next.value.error,
+                ),
+              );
+            }
+
+            const chunk = next.value.value as UIMessageChunk;
+            switch (chunk.type) {
+              case "text-delta":
+                assistantText += chunk.delta;
+                break;
+              case "tool-input-available": {
+                nextToolCall = {
+                  toolCallId: chunk.toolCallId,
+                  toolName: chunk.toolName,
+                  toolInput:
+                    chunk.input && typeof chunk.input === "object" && !Array.isArray(chunk.input)
+                      ? (chunk.input as Record<string, unknown>)
+                      : {},
+                };
+                return {
+                  assistantText,
+                  nextToolCall,
+                };
+              }
+              case "tool-input-error":
+                return yield* Effect.fail(
+                  requestError(
+                    `shiori.subagent.stream:${String(input.threadId)}`,
+                    `Invalid tool input for ${chunk.toolName}: ${chunk.errorText}`,
+                  ),
+                );
+              case "error":
+                return yield* Effect.fail(
+                  requestError(`shiori.subagent.stream:${String(input.threadId)}`, chunk.errorText),
+                );
+              default:
+                break;
+            }
+          }
+          return {
+            assistantText,
+            nextToolCall,
+          };
+        } finally {
+          yield* Effect.tryPromise({
+            try: () => reader.cancel(),
+            catch: (error) =>
+              requestError(
+                `shiori.subagent.stream:${String(input.threadId)}`,
+                toMessage(error),
+                error,
+              ),
+          }).pipe(Effect.ignore({ log: false }));
+        }
+      });
+
+      const runSubagentInput = Effect.fn("runSubagentInput")(function* (input: {
+        threadId: ThreadId;
+        subagentId: string;
+        parentTurnId?: TurnId;
+        modelId: string;
+        signal: AbortSignal;
+      }) {
+        const context = yield* getContext(input.threadId);
+        const subagent = context.subagents.get(input.subagentId);
+        if (!subagent) {
+          return yield* Effect.fail(
+            requestError(
+              "shiori.subagent.run",
+              `Unknown subagent '${input.subagentId}' for thread '${String(input.threadId)}'.`,
+            ),
+          );
+        }
+
+        const queuedInput = subagent.queuedInputs[0];
+        if (!queuedInput) {
+          return {
+            state: "idle" as const,
+          };
+        }
+
+        const authToken = yield* hostedAuthTokenStore.getToken;
+        if (!isJwtLikeToken(authToken)) {
+          return yield* Effect.fail(
+            requestError(
+              "shiori.subagent.run",
+              "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
+            ),
+          );
+        }
+
+        const startUserMessage: HostedShioriMessage = {
+          id: `subagent-user-${crypto.randomUUID()}`,
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text: queuedInput.prompt,
+            },
+          ],
+        };
+        let requestMessages: HostedShioriMessage[] = [...subagent.history, startUserMessage];
+        let rounds = 0;
+
+        for (;;) {
+          if (input.signal.aborted) {
+            return yield* Effect.fail(requestError("shiori.subagent.run", "Interrupted"));
+          }
+          if (rounds >= MAX_SUBAGENT_TOOL_ROUNDS) {
+            return yield* Effect.fail(
+              requestError(
+                "shiori.subagent.run",
+                `Subagent exceeded maximum tool rounds (${MAX_SUBAGENT_TOOL_ROUNDS}).`,
+              ),
+            );
+          }
+
+          const step = yield* runSubagentHostedRequest({
+            threadId: input.threadId,
+            modelId: input.modelId,
+            requestMessages,
+            authToken,
+            signal: input.signal,
+          });
+
+          const assistantPrefixText = step.assistantText.trim();
+          if (!step.nextToolCall) {
+            const assistantMessage = assistantMessageWithParts({
+              messageId: `subagent-assistant-${crypto.randomUUID()}`,
+              text: assistantPrefixText,
+            });
+            const nextHistory = hasMessageParts(assistantMessage)
+              ? [...requestMessages, assistantMessage]
+              : requestMessages;
+            return {
+              state: "completed" as const,
+              history: nextHistory,
+              summary:
+                normalizeSubagentSummary(assistantPrefixText) ??
+                normalizeSubagentSummary(extractAssistantTextFromMessage(nextHistory.at(-1))) ??
+                "Delegated task completed.",
+            };
+          }
+
+          rounds += 1;
+          const execution = yield* executeSubagentToolForTurn({
+            threadId: input.threadId,
+            ...(input.parentTurnId ? { turnId: input.parentTurnId } : {}),
+            toolCallId: step.nextToolCall.toolCallId,
+            toolName: step.nextToolCall.toolName,
+            toolInput: step.nextToolCall.toolInput,
+            selectedModel: input.modelId,
+            signal: input.signal,
+          });
+          const assistantMessage = assistantToolMessage({
+            messageId: `subagent-tool-${crypto.randomUUID()}`,
+            text: assistantPrefixText,
+            toolName: step.nextToolCall.toolName,
+            toolCallId: step.nextToolCall.toolCallId,
+            toolInput: step.nextToolCall.toolInput,
+            state: execution.state,
+            ...(execution.state === "output-available"
+              ? { output: execution.output }
+              : { errorText: execution.errorText }),
+          });
+          requestMessages = [...requestMessages, assistantMessage];
+        }
+      });
+
+      const runSubagentRunner = Effect.fn("runSubagentRunner")(function* (input: {
+        threadId: ThreadId;
+        subagentId: string;
+      }) {
+        for (;;) {
+          const contextResult = yield* Effect.result(getContext(input.threadId));
+          if (contextResult._tag === "Failure") {
+            return;
+          }
+          const context = contextResult.success;
+          const state = context.subagents.get(input.subagentId);
+          if (!state) {
+            return;
+          }
+          if (state.status === "shutdown") {
+            yield* updateContext(input.threadId, (current) => {
+              const currentState = current.subagents.get(input.subagentId);
+              if (!currentState) {
+                return current;
+              }
+              const nextSubagents = new Map(current.subagents);
+              nextSubagents.set(input.subagentId, {
+                ...currentState,
+                runnerActive: false,
+                currentRun: undefined,
+                updatedAt: nowIso(),
+              });
+              return {
+                ...current,
+                subagents: nextSubagents,
+              };
+            });
+            return;
+          }
+
+          if (state.queuedInputs.length === 0) {
+            yield* updateContext(input.threadId, (current) => {
+              const currentState = current.subagents.get(input.subagentId);
+              if (!currentState) {
+                return current;
+              }
+              const nextSubagents = new Map(current.subagents);
+              nextSubagents.set(input.subagentId, {
+                ...currentState,
+                runnerActive: false,
+                currentRun: undefined,
+                status: isSubagentTerminalStatus(currentState.status)
+                  ? currentState.status
+                  : "completed",
+                updatedAt: nowIso(),
+              });
+              return {
+                ...current,
+                subagents: nextSubagents,
+              };
+            });
+            return;
+          }
+
+          const runController = new AbortController();
+          const nextInput = state.queuedInputs[0];
+          const queuedSummary = normalizeSubagentSummary(nextInput?.prompt);
+          yield* updateContext(input.threadId, (current) => {
+            const currentState = current.subagents.get(input.subagentId);
+            if (!currentState || currentState.queuedInputs.length === 0) {
+              return current;
+            }
+            const nextSubagents = new Map(current.subagents);
+            nextSubagents.set(input.subagentId, {
+              ...currentState,
+              status: "running",
+              currentRun: {
+                inputId: currentState.queuedInputs[0]!.id,
+                controller: runController,
+              },
+              updatedAt: nowIso(),
+            });
+            return {
+              ...current,
+              subagents: nextSubagents,
+            };
+          });
+
+          yield* emitSubagentTaskProgress({
+            threadId: input.threadId,
+            taskId: state.id,
+            ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+            description: "Running delegated task",
+            ...(queuedSummary ? { summary: queuedSummary } : {}),
+            ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+          });
+
+          const attempt = yield* Effect.result(
+            runSubagentInput({
+              threadId: input.threadId,
+              subagentId: input.subagentId,
+              ...(state.parentTurnId ? { parentTurnId: state.parentTurnId } : {}),
+              modelId: state.modelId,
+              signal: runController.signal,
+            }),
+          );
+
+          if (attempt._tag === "Failure") {
+            const detail = toMessage(attempt.failure);
+            const aborted = runController.signal.aborted;
+            const updatedAt = nowIso();
+            yield* updateContext(input.threadId, (current) => {
+              const currentState = current.subagents.get(input.subagentId);
+              if (!currentState) {
+                return current;
+              }
+              const nextSubagents = new Map(current.subagents);
+              nextSubagents.set(input.subagentId, {
+                ...currentState,
+                runnerActive: false,
+                currentRun: undefined,
+                status: aborted ? "shutdown" : "failed",
+                lastError: detail,
+                updatedAt,
+              });
+              return {
+                ...current,
+                subagents: nextSubagents,
+              };
+            });
+
+            if (!aborted) {
+              yield* emitSubagentTaskCompleted({
+                threadId: input.threadId,
+                taskId: state.id,
+                ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+                status: "failed",
+                summary: detail,
+                ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+              });
+              yield* appendSubagentNotification({
+                threadId: input.threadId,
+                agentPath: state.taskName,
+                status: "failed",
+                summary: detail,
+              });
+            }
+            return;
+          }
+
+          if (attempt.success.state === "idle") {
+            continue;
+          }
+
+          const completedAttempt = attempt.success;
+          if (completedAttempt.state !== "completed") {
+            continue;
+          }
+
+          const runSummary = normalizeSubagentSummary(completedAttempt.summary);
+          let queuedInputCount = 0;
+          yield* updateContext(input.threadId, (current) => {
+            const currentState = current.subagents.get(input.subagentId);
+            if (!currentState) {
+              return current;
+            }
+            const remainingQueue = currentState.queuedInputs.slice(1);
+            queuedInputCount = remainingQueue.length;
+            const { lastError: _lastError, ...stateWithoutLastError } = currentState;
+            const nextSubagents = new Map(current.subagents);
+            nextSubagents.set(input.subagentId, {
+              ...stateWithoutLastError,
+              history: completedAttempt.history,
+              queuedInputs: remainingQueue,
+              currentRun: undefined,
+              status: remainingQueue.length === 0 ? "completed" : "running",
+              ...(runSummary ? { lastSummary: runSummary } : {}),
+              runnerActive: remainingQueue.length > 0,
+              updatedAt: nowIso(),
+            });
+            return {
+              ...current,
+              subagents: nextSubagents,
+            };
+          });
+
+          if (queuedInputCount > 0) {
+            yield* emitSubagentTaskProgress({
+              threadId: input.threadId,
+              taskId: state.id,
+              ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+              description: "Delegated task progressing",
+              ...(runSummary ? { summary: runSummary } : {}),
+              ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+            });
+            continue;
+          }
+
+          yield* emitSubagentTaskCompleted({
+            threadId: input.threadId,
+            taskId: state.id,
+            ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+            status: "completed",
+            ...(runSummary ? { summary: runSummary } : {}),
+            ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+          });
+          yield* appendSubagentNotification({
+            threadId: input.threadId,
+            agentPath: state.taskName,
+            status: "completed",
+            ...(runSummary ? { summary: runSummary } : {}),
+          });
+          return;
+        }
+      });
+
+      const ensureSubagentRunner = (threadId: ThreadId, subagentId: string) =>
+        Effect.gen(function* () {
+          const shouldStart = yield* Ref.modify(sessionsRef, (sessions) => {
+            const next = new Map(sessions);
+            const context = next.get(String(threadId));
+            if (!context) {
+              return [false, sessions] as const;
+            }
+            const state = context.subagents.get(subagentId);
+            if (
+              !state ||
+              state.runnerActive ||
+              state.status === "shutdown" ||
+              state.queuedInputs.length === 0
+            ) {
+              return [false, sessions] as const;
+            }
+            const nextSubagents = new Map(context.subagents);
+            nextSubagents.set(subagentId, {
+              ...state,
+              runnerActive: true,
+              status:
+                state.status === "pending_init" ||
+                state.status === "completed" ||
+                state.status === "failed"
+                  ? "running"
+                  : state.status,
+              updatedAt: nowIso(),
+            });
+            next.set(String(threadId), {
+              ...context,
+              subagents: nextSubagents,
+            });
+            return [true, next] as const;
+          });
+          if (!shouldStart) {
+            return;
+          }
+          void Effect.runFork(
+            runSubagentRunner({
+              threadId,
+              subagentId,
+            }),
+          );
+        });
+
+      const executeSubagentToolForTurn = Effect.fn("executeSubagentToolForTurn")(function* (input: {
+        threadId: ThreadId;
+        turnId?: TurnId;
+        toolCallId: string;
+        toolName: string;
+        toolInput: Record<string, unknown>;
+        selectedModel: string;
+        signal?: AbortSignal;
+      }) {
+        const toolName = input.toolName;
+        if (toolName === "update_plan") {
+          return {
+            state: "output-available" as const,
+            output: { ok: true },
+          };
+        }
+        if (isUserInputToolName(toolName)) {
+          return {
+            state: "output-error" as const,
+            errorText: "User input tools are unavailable inside subagents.",
+          };
+        }
+
+        if (toolName === "wait_agent") {
+          const targetList = Array.isArray(input.toolInput.targets)
+            ? input.toolInput.targets.flatMap((target) =>
+                typeof target === "string" ? [target] : [],
+              )
+            : typeof input.toolInput.target === "string"
+              ? [input.toolInput.target]
+              : [];
+          if (targetList.length > 0) {
+            const context = yield* getContext(input.threadId);
+            const missingTargets = targetList.filter(
+              (target) => resolveSubagentTarget(context, target) === null,
+            );
+            if (missingTargets.length > 0) {
+              return {
+                state: "output-error" as const,
+                errorText: `Unknown subagent target(s): ${missingTargets.join(", ")}`,
+              };
+            }
+          }
+          const timeoutMs = clampSubagentWaitTimeout(input.toolInput.timeout_ms);
+          const waitResult = yield* waitForSubagents({
+            threadId: input.threadId,
+            targets: targetList,
+            timeoutMs,
+          });
+          return {
+            state: "output-available" as const,
+            output: {
+              timeout: waitResult.timeout,
+              statuses: waitResult.statuses,
+            },
+          };
+        }
+
+        if (toolName === "close_agent") {
+          const context = yield* getContext(input.threadId);
+          const targetValue =
+            typeof input.toolInput.target === "string" ? input.toolInput.target : "";
+          const state = resolveSubagentTarget(context, targetValue);
+          if (!state) {
+            return {
+              state: "output-error" as const,
+              errorText: `Unknown subagent target '${targetValue}'.`,
+            };
+          }
+          state.currentRun?.controller.abort();
+          yield* updateContext(input.threadId, (current) => {
+            const currentState = current.subagents.get(state.id);
+            if (!currentState) {
+              return current;
+            }
+            const nextSubagents = new Map(current.subagents);
+            nextSubagents.set(state.id, {
+              ...currentState,
+              status: "shutdown",
+              runnerActive: false,
+              currentRun: undefined,
+              queuedInputs: [],
+              updatedAt: nowIso(),
+            });
+            return {
+              ...current,
+              subagents: nextSubagents,
+            };
+          });
+          yield* emitSubagentTaskCompleted({
+            threadId: input.threadId,
+            taskId: state.id,
+            ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+            status: "stopped",
+            summary: "Subagent closed by parent.",
+            ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+          });
+          yield* appendSubagentNotification({
+            threadId: input.threadId,
+            agentPath: state.taskName,
+            status: "shutdown",
+            summary: "Subagent closed by parent.",
+          });
+          return {
+            state: "output-available" as const,
+            output: {
+              closed: true,
+              id: state.id,
+              task_name: state.taskName,
+              status: "shutdown",
+            },
+          };
+        }
+
+        if (toolName === "send_input" || toolName === "send_message") {
+          const context = yield* getContext(input.threadId);
+          const targetValue =
+            typeof input.toolInput.target === "string"
+              ? input.toolInput.target
+              : typeof input.toolInput.to === "string"
+                ? input.toolInput.to
+                : "";
+          const message =
+            typeof input.toolInput.message === "string" ? input.toolInput.message.trim() : "";
+          const state = resolveSubagentTarget(context, targetValue);
+          if (!state) {
+            return {
+              state: "output-error" as const,
+              errorText: `Unknown subagent target '${targetValue}'.`,
+            };
+          }
+          if (message.length === 0) {
+            return {
+              state: "output-error" as const,
+              errorText: "Subagent message must be a non-empty string.",
+            };
+          }
+          if (state.status === "shutdown") {
+            return {
+              state: "output-error" as const,
+              errorText: `Subagent '${state.taskName}' is closed and cannot accept new input.`,
+            };
+          }
+
+          const queuedInput: ShioriSubagentQueuedInput = {
+            id: crypto.randomUUID(),
+            prompt: message,
+            submittedAt: nowIso(),
+          };
+          yield* updateContext(input.threadId, (current) => {
+            const currentState = current.subagents.get(state.id);
+            if (!currentState) {
+              return current;
+            }
+            const nextSubagents = new Map(current.subagents);
+            nextSubagents.set(state.id, {
+              ...currentState,
+              queuedInputs: [...currentState.queuedInputs, queuedInput],
+              status:
+                currentState.status === "shutdown"
+                  ? currentState.status
+                  : currentState.status === "failed" || currentState.status === "completed"
+                    ? "running"
+                    : currentState.status,
+              updatedAt: nowIso(),
+            });
+            return {
+              ...current,
+              subagents: nextSubagents,
+            };
+          });
+          yield* ensureSubagentRunner(input.threadId, state.id);
+          return {
+            state: "output-available" as const,
+            output: {
+              accepted: true,
+              id: state.id,
+              task_name: state.taskName,
+              queued: true,
+            },
+          };
+        }
+
+        if (toolName === "spawn_agent" || toolName === "agent") {
+          const context = yield* getContext(input.threadId);
+          const now = nowIso();
+          const prompt =
+            toolName === "agent"
+              ? typeof input.toolInput.prompt === "string"
+                ? input.toolInput.prompt.trim()
+                : ""
+              : typeof input.toolInput.message === "string"
+                ? input.toolInput.message.trim()
+                : "";
+          if (prompt.length === 0) {
+            return {
+              state: "output-error" as const,
+              errorText: "Subagent prompt must be a non-empty string.",
+            };
+          }
+
+          const description =
+            toolName === "agent"
+              ? typeof input.toolInput.description === "string" &&
+                input.toolInput.description.trim().length > 0
+                ? input.toolInput.description.trim()
+                : "Delegated task"
+              : prompt;
+          const preferredTaskName =
+            toolName === "agent"
+              ? (input.toolInput.name ?? description)
+              : (input.toolInput.task_name ?? description);
+          const taskName = allocateSubagentTaskName(context, preferredTaskName);
+          const state: ShioriSubagentState = {
+            id: `task-${crypto.randomUUID()}`,
+            taskName,
+            nickname:
+              typeof input.toolInput.agent_type === "string"
+                ? input.toolInput.agent_type
+                : typeof input.toolInput.subagent_type === "string"
+                  ? input.toolInput.subagent_type
+                  : null,
+            toolStyle: toolName === "agent" ? "claude" : "codex",
+            description,
+            subagentType:
+              typeof input.toolInput.subagent_type === "string"
+                ? input.toolInput.subagent_type
+                : typeof input.toolInput.agent_type === "string"
+                  ? input.toolInput.agent_type
+                  : null,
+            modelId: input.selectedModel,
+            status: "pending_init",
+            queuedInputs: [
+              {
+                id: crypto.randomUUID(),
+                prompt,
+                submittedAt: now,
+              },
+            ],
+            history: [],
+            runnerActive: false,
+            terminalSequence: 0,
+            createdAt: now,
+            updatedAt: now,
+            ...(input.turnId ? { parentTurnId: input.turnId } : {}),
+            parentToolUseId: input.toolCallId,
+          };
+          yield* updateContext(input.threadId, (current) => ({
+            ...current,
+            subagentSequence: current.subagentSequence + 1,
+            subagents: new Map(current.subagents).set(state.id, state),
+          }));
+          const startedDescription = normalizeSubagentSummary(description);
+          yield* emitSubagentTaskStarted({
+            threadId: input.threadId,
+            taskId: state.id,
+            ...(state.parentTurnId ? { turnId: state.parentTurnId } : {}),
+            ...(startedDescription ? { description: startedDescription } : {}),
+            taskType: state.subagentType ?? state.toolStyle,
+            ...(state.parentToolUseId ? { toolUseId: state.parentToolUseId } : {}),
+          });
+          yield* ensureSubagentRunner(input.threadId, state.id);
+
+          if (toolName === "agent" && input.toolInput.run_in_background === false) {
+            const waited = yield* waitForSubagents({
+              threadId: input.threadId,
+              targets: [state.id],
+              timeoutMs: clampSubagentWaitTimeout(input.toolInput.timeout_ms),
+            });
+            const status = waited.statuses[0];
+            return {
+              state: "output-available" as const,
+              output: {
+                task_id: state.id,
+                name: state.taskName,
+                run_in_background: false,
+                ...(status ? { result: status } : {}),
+              },
+            };
+          }
+
+          return {
+            state: "output-available" as const,
+            output:
+              toolName === "agent"
+                ? {
+                    task_id: state.id,
+                    name: state.taskName,
+                    run_in_background: true,
+                  }
+                : {
+                    id: state.id,
+                    task_name: state.taskName,
+                    status: state.status,
+                  },
+          };
+        }
+
+        const context = yield* getContext(input.threadId);
+        const requestKind = toolRequestKind(toolName);
+        if (
+          requestKind !== undefined &&
+          context.session.runtimeMode !== "full-access" &&
+          !context.allowedRequestKinds.has(requestKind)
+        ) {
+          return {
+            state: "output-error" as const,
+            errorText: `Tool '${toolName}' requires explicit user approval in the current runtime mode.`,
+          };
+        }
+        return yield* executeLocalToolForTurn({
+          toolName,
+          toolInput: input.toolInput,
+          cwd: context.session.cwd,
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+      });
 
       const executeLocalToolForTurn = Effect.fn("executeLocalToolForTurn")(function* (input: {
         toolName: string;
@@ -2341,12 +3646,14 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                       ? { callProviderMetadata: chunk.providerMetadata }
                       : {}),
                   });
-                  const resumedContext = withResumeCursor({
-                    ...input.context,
-                    messages: [...input.requestMessages, completedMessage],
-                  });
-                  yield* setContext(input.context.session.threadId, resumedContext);
-                  yield* persistContext(resumedContext);
+                  yield* updateContext(input.context.session.threadId, (context) =>
+                    withResumeCursor({
+                      ...context,
+                      messages: [...input.requestMessages, completedMessage],
+                    }),
+                  );
+                  const persistedAfterPlanTool = yield* getContext(input.context.session.threadId);
+                  yield* persistContext(persistedAfterPlanTool);
                   if (input.controller.signal.aborted || (yield* isTurnFinalized(input.turnId))) {
                     return yield* Effect.fail(
                       requestError(
@@ -2400,11 +3707,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                     : {}),
                 });
 
+                const latestContext = yield* getContext(input.context.session.threadId);
                 const nextContext = withResumeCursor({
-                  ...input.context,
+                  ...latestContext,
                   messages: [...input.requestMessages, pendingMessage],
-                  pendingApprovals: new Map(input.context.pendingApprovals),
-                  pendingUserInputs: new Map(input.context.pendingUserInputs),
+                  pendingApprovals: new Map(latestContext.pendingApprovals),
+                  pendingUserInputs: new Map(latestContext.pendingUserInputs),
                 });
 
                 if (isUserInputToolName(toolName)) {
@@ -2468,12 +3776,22 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                         errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
                       }),
                     })
-                  : yield* executeLocalToolForTurn({
-                      toolName,
-                      toolInput,
-                      cwd: input.context.session.cwd,
-                      signal: input.controller.signal,
-                    });
+                  : isSubagentToolName(toolName)
+                    ? yield* executeSubagentToolForTurn({
+                        threadId: input.context.session.threadId,
+                        turnId: input.turnId,
+                        toolCallId: chunk.toolCallId,
+                        toolName,
+                        toolInput,
+                        selectedModel: input.selectedModel,
+                        signal: input.controller.signal,
+                      })
+                    : yield* executeLocalToolForTurn({
+                        toolName,
+                        toolInput,
+                        cwd: input.context.session.cwd,
+                        signal: input.controller.signal,
+                      });
                 const completedMessage = assistantToolMessage({
                   messageId: assistantMessageId,
                   text: assistantCompletionText,
@@ -2511,7 +3829,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                       : { errorText: execution.errorText },
                 });
                 const resumedContext = withResumeCursor({
-                  ...input.context,
+                  ...(yield* getContext(input.context.session.threadId)),
                   messages: [...input.requestMessages, completedMessage],
                 });
                 yield* setContext(input.context.session.threadId, resumedContext);
@@ -2811,6 +4129,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             pendingApprovals: new Map(),
             pendingUserInputs: new Map(),
             allowedRequestKinds: new Set(),
+            subagents: new Map(),
+            subagentSequence: 0,
+            pendingSubagentNotifications: [],
           };
           return Ref.update(sessionsRef, (sessions) => {
             const next = new Map(sessions);
@@ -2890,7 +4211,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 ...attachmentParts,
               ],
             };
-            const requestMessages = [...context.messages, userMessage];
+            const notificationMessages = context.pendingSubagentNotifications.map((message) => ({
+              id: `user-subagent-notification-${crypto.randomUUID()}`,
+              role: "user" as const,
+              parts: [
+                {
+                  type: "text" as const,
+                  text: message,
+                },
+              ],
+            }));
+            const requestMessages = [...context.messages, ...notificationMessages, userMessage];
             const turnId = TurnId.makeUnsafe(crypto.randomUUID());
             const assistantItemId = RuntimeItemId.makeUnsafe(
               `${SHIORI_ASSISTANT_ITEM_PREFIX}:${String(turnId)}`,
@@ -2905,20 +4236,32 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 ),
               ),
             );
-            const mcpToolRuntime = yield* Effect.tryPromise({
-              try: () =>
-                (options?.buildMcpToolRuntime ?? buildProviderMcpToolRuntime)({
-                  provider: PROVIDER,
-                  servers: currentSettings.mcpServers.servers,
-                  ...(context.session.cwd ? { cwd: context.session.cwd } : {}),
+            const mcpToolRuntime: ProviderMcpToolRuntime = yield* Effect.tryPromise(() =>
+              (options?.buildMcpToolRuntime ?? buildProviderMcpToolRuntime)({
+                provider: PROVIDER,
+                servers: currentSettings.mcpServers.servers,
+                ...(context.session.cwd ? { cwd: context.session.cwd } : {}),
+              }),
+            ).pipe(
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    "shiori mcp runtime initialization failed; continuing without MCP tools",
+                  );
+                  yield* Effect.logWarning(
+                    toMessage(error).trim().length > 0
+                      ? toMessage(error)
+                      : "Failed to initialize MCP servers for Shiori.",
+                  );
+                  return {
+                    descriptors: [],
+                    executors: new Map(),
+                    warnings: [],
+                    close: async () => undefined,
+                  } satisfies ProviderMcpToolRuntime;
                 }),
-              catch: (error) =>
-                requestError(
-                  `shiori.turn.start:${String(input.threadId)}`,
-                  "Failed to initialize MCP servers for Shiori.",
-                  error,
-                ),
-            });
+              ),
+            );
             for (const warning of mcpToolRuntime.warnings) {
               yield* Effect.logWarning("shiori mcp runtime warning", {
                 threadId: input.threadId,
@@ -2929,6 +4272,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const runningContext = withResumeCursor({
               ...context,
               messages: requestMessages,
+              pendingSubagentNotifications: [],
               activeTurn: {
                 turnId,
                 controller,
@@ -3247,6 +4591,21 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             if (context?.activeTurn) {
               yield* finalizeInterruptedTurn(context, { resolvePendingRequests: true });
             }
+            if (context) {
+              for (const subagent of context.subagents.values()) {
+                subagent.currentRun?.controller.abort();
+                if (!isSubagentTerminalStatus(subagent.status)) {
+                  yield* emitSubagentTaskCompleted({
+                    threadId,
+                    taskId: subagent.id,
+                    ...(subagent.parentTurnId ? { turnId: subagent.parentTurnId } : {}),
+                    status: "stopped",
+                    summary: "Session stopped.",
+                    ...(subagent.parentToolUseId ? { toolUseId: subagent.parentToolUseId } : {}),
+                  });
+                }
+              }
+            }
             yield* Ref.update(sessionsRef, (sessions) => {
               const next = new Map(sessions);
               next.delete(String(threadId));
@@ -3317,6 +4676,23 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               context.activeTurn
                 ? finalizeInterruptedTurn(context, { resolvePendingRequests: true })
                 : Effect.void,
+            ).pipe(Effect.asVoid);
+            yield* Effect.forEach(contexts, (context) =>
+              Effect.forEach(Array.from(context.subagents.values()), (subagent) =>
+                Effect.gen(function* () {
+                  subagent.currentRun?.controller.abort();
+                  if (!isSubagentTerminalStatus(subagent.status)) {
+                    yield* emitSubagentTaskCompleted({
+                      threadId: context.session.threadId,
+                      taskId: subagent.id,
+                      ...(subagent.parentTurnId ? { turnId: subagent.parentTurnId } : {}),
+                      status: "stopped",
+                      summary: "All sessions stopped.",
+                      ...(subagent.parentToolUseId ? { toolUseId: subagent.parentToolUseId } : {}),
+                    });
+                  }
+                }),
+              ),
             ).pipe(Effect.asVoid);
             yield* Ref.set(sessionsRef, new Map()).pipe(Effect.asVoid);
           }),

@@ -1,6 +1,7 @@
 import "../index.css";
 
 import {
+  DEFAULT_ONBOARDING_PROGRESS,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -77,10 +78,12 @@ function createBaseServerConfig(): ServerConfig {
     availableEditors: [],
     settings: {
       enableAssistantStreaming: false,
+      quitWithoutConfirmation: false,
       assistantPersonality: "default",
       defaultThreadEnvMode: "local" as const,
       defaultModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
+      onboarding: DEFAULT_ONBOARDING_PROGRESS,
       mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },

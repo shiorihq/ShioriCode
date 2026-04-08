@@ -1,7 +1,12 @@
+import { copyFile, mkdir } from "node:fs/promises";
+import path from "node:path";
+
 import {
+  type ChatAttachment,
   CommandId,
   EventId,
   MessageId,
+  type ModelSelection,
   type ProjectId,
   ThreadId,
   TurnId,
@@ -16,7 +21,9 @@ import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
+import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
+import { type ProviderServiceError } from "../../provider/Errors.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -24,6 +31,8 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { ServerConfig } from "../../config.ts";
+import { type OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 
 type ReactorInput =
@@ -69,6 +78,7 @@ const make = Effect.gen(function* () {
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries;
+  const serverConfig = yield* ServerConfig;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -118,6 +128,34 @@ const make = Effect.gen(function* () {
       },
       createdAt: input.createdAt,
     });
+
+  const appendRetryFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly assistantMessageId: MessageId;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("turn-retry-failure"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "error",
+        kind: "turn.retry.failed",
+        summary: "Retry failed",
+        payload: {
+          assistantMessageId: input.assistantMessageId,
+          detail: input.detail,
+        },
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
+  const failWithMessage = <A = never>(message: string): Effect.Effect<A, Error> =>
+    Effect.fail(new Error(message));
 
   const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
@@ -183,6 +221,257 @@ const make = Effect.gen(function* () {
       return undefined;
     }
     return cwd;
+  });
+
+  interface ResolvedRetryTarget {
+    readonly threadId: ThreadId;
+    readonly assistantMessageId: MessageId;
+    readonly turnCountBeforeRetry: number;
+    readonly runtimeMode: "approval-required" | "full-access";
+    readonly interactionMode: "default" | "plan";
+    readonly message: {
+      readonly text: string;
+      readonly attachments: ReadonlyArray<ChatAttachment>;
+    };
+    readonly modelSelection?: ModelSelection;
+    readonly titleSeed?: Extract<
+      OrchestrationEvent,
+      { type: "thread.turn-start-requested" }
+    >["payload"]["titleSeed"];
+    readonly sourceProposedPlan?: NonNullable<
+      Extract<
+        OrchestrationEvent,
+        { type: "thread.turn-start-requested" }
+      >["payload"]["sourceProposedPlan"]
+    >;
+  }
+
+  const cloneRetryAttachments = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  }): Effect.fn.Return<ReadonlyArray<ChatAttachment>, Error> {
+    if (input.attachments.length === 0) {
+      return [];
+    }
+
+    return yield* Effect.forEach(input.attachments, (attachment) =>
+      Effect.tryPromise({
+        try: async () => {
+          const nextId = createAttachmentId(input.threadId);
+          if (!nextId) {
+            throw new Error("Failed to allocate a retry attachment id.");
+          }
+
+          const sourcePath = resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment,
+          });
+          if (!sourcePath) {
+            throw new Error(`Attachment '${attachment.id}' is unavailable for retry.`);
+          }
+
+          const nextAttachment = {
+            ...attachment,
+            id: nextId,
+          } satisfies ChatAttachment;
+          const targetPath = resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment: nextAttachment,
+          });
+          if (!targetPath) {
+            throw new Error(`Failed to resolve a retry attachment path for '${attachment.id}'.`);
+          }
+
+          await mkdir(path.dirname(targetPath), { recursive: true });
+          await copyFile(sourcePath, targetPath);
+          return nextAttachment;
+        },
+        catch: (error) =>
+          error instanceof Error
+            ? error
+            : new Error(`Failed to clone retry attachment: ${String(error)}`),
+      }),
+    );
+  });
+
+  const resolveRetryTarget = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly assistantMessageId: MessageId;
+  }): Effect.fn.Return<ResolvedRetryTarget, Error | OrchestrationEventStoreError> {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === input.threadId);
+    if (!thread) {
+      return yield* failWithMessage("Thread was not found in read model.");
+    }
+
+    const assistantIndex = thread.messages.findIndex(
+      (message) => message.role === "assistant" && message.id === input.assistantMessageId,
+    );
+    if (assistantIndex === -1) {
+      return yield* failWithMessage(
+        `Assistant message '${input.assistantMessageId}' is unavailable for retry.`,
+      );
+    }
+
+    const userMessage = thread.messages
+      .slice(0, assistantIndex)
+      .toReversed()
+      .find((message) => message.role === "user");
+    if (!userMessage) {
+      return yield* failWithMessage(
+        `No preceding user message was found for assistant message '${input.assistantMessageId}'.`,
+      );
+    }
+
+    const checkpoint =
+      thread.checkpoints.find((entry) => entry.assistantMessageId === input.assistantMessageId) ??
+      (thread.messages[assistantIndex]?.turnId
+        ? thread.checkpoints.find(
+            (entry) => entry.turnId === thread.messages[assistantIndex]?.turnId,
+          )
+        : undefined);
+
+    const turnCountBeforeRetry = checkpoint
+      ? Math.max(0, checkpoint.checkpointTurnCount - 1)
+      : thread.checkpoints.reduce((maxTurnCount, candidateCheckpoint) => {
+          const candidateAssistantIndex = candidateCheckpoint.assistantMessageId
+            ? thread.messages.findIndex(
+                (message) =>
+                  message.role === "assistant" &&
+                  message.id === candidateCheckpoint.assistantMessageId,
+              )
+            : candidateCheckpoint.turnId
+              ? thread.messages.findIndex(
+                  (message) =>
+                    message.role === "assistant" && message.turnId === candidateCheckpoint.turnId,
+                )
+              : -1;
+          if (candidateAssistantIndex === -1 || candidateAssistantIndex >= assistantIndex) {
+            return maxTurnCount;
+          }
+          return Math.max(maxTurnCount, candidateCheckpoint.checkpointTurnCount);
+        }, 0);
+
+    const events = yield* Stream.runCollect(orchestrationEngine.readEvents(0)).pipe(
+      Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+    );
+    const startEvent = events
+      .toReversed()
+      .find(
+        (event): event is Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }> =>
+          event.type === "thread.turn-start-requested" &&
+          event.payload.threadId === input.threadId &&
+          event.payload.messageId === userMessage.id,
+      );
+
+    return {
+      threadId: input.threadId,
+      assistantMessageId: input.assistantMessageId,
+      turnCountBeforeRetry,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      message: {
+        text: userMessage.text,
+        attachments: userMessage.attachments ?? [],
+      },
+      ...(startEvent?.payload.modelSelection !== undefined
+        ? { modelSelection: startEvent.payload.modelSelection }
+        : {}),
+      ...(startEvent?.payload.titleSeed !== undefined
+        ? { titleSeed: startEvent.payload.titleSeed }
+        : {}),
+      ...(startEvent?.payload.sourceProposedPlan !== undefined
+        ? { sourceProposedPlan: startEvent.payload.sourceProposedPlan }
+        : {}),
+    };
+  });
+
+  const rewindThreadState = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnCount: number;
+    readonly createdAt: string;
+    readonly requireFilesystemRestore: boolean;
+  }): Effect.fn.Return<
+    void,
+    Error | CheckpointStoreError | OrchestrationDispatchError | ProviderServiceError
+  > {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === input.threadId);
+    if (!thread) {
+      return yield* failWithMessage("Thread was not found in read model.");
+    }
+
+    const currentTurnCount = thread.checkpoints.reduce(
+      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+      0,
+    );
+    if (input.turnCount > currentTurnCount) {
+      return yield* failWithMessage(
+        `Checkpoint turn count ${input.turnCount} exceeds current turn count ${currentTurnCount}.`,
+      );
+    }
+
+    const checkpointCwd = yield* resolveCheckpointCwd({
+      threadId: input.threadId,
+      thread,
+      projects: readModel.projects,
+      preferSessionRuntime: true,
+    });
+
+    if (checkpointCwd) {
+      const targetCheckpointRef =
+        input.turnCount === 0
+          ? checkpointRefForThreadTurn(input.threadId, 0)
+          : thread.checkpoints.find(
+              (checkpoint) => checkpoint.checkpointTurnCount === input.turnCount,
+            )?.checkpointRef;
+      if (!targetCheckpointRef) {
+        return yield* failWithMessage(
+          `Checkpoint ref for turn ${input.turnCount} is unavailable in read model.`,
+        );
+      }
+
+      const restored = yield* checkpointStore.restoreCheckpoint({
+        cwd: checkpointCwd,
+        checkpointRef: targetCheckpointRef,
+        fallbackToHead: input.turnCount === 0,
+      });
+      if (!restored) {
+        return yield* failWithMessage(
+          `Filesystem checkpoint is unavailable for turn ${input.turnCount}.`,
+        );
+      }
+
+      yield* workspaceEntries.invalidate(checkpointCwd);
+
+      const staleCheckpointRefs = thread.checkpoints
+        .filter((checkpoint) => checkpoint.checkpointTurnCount > input.turnCount)
+        .map((checkpoint) => checkpoint.checkpointRef);
+      if (staleCheckpointRefs.length > 0) {
+        yield* checkpointStore.deleteCheckpointRefs({
+          cwd: checkpointCwd,
+          checkpointRefs: staleCheckpointRefs,
+        });
+      }
+    } else if (input.requireFilesystemRestore) {
+      return yield* failWithMessage("No checkpoint-capable workspace is bound to this thread.");
+    }
+
+    const rolledBackTurns = Math.max(0, currentTurnCount - input.turnCount);
+    if (rolledBackTurns > 0) {
+      yield* providerService.rollbackConversation({
+        threadId: input.threadId,
+        numTurns: rolledBackTurns,
+      });
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.revert.complete",
+      commandId: serverCommandId("checkpoint-revert-complete"),
+      threadId: input.threadId,
+      turnCount: input.turnCount,
+      createdAt: input.createdAt,
+    });
   });
 
   // Shared tail for both capture paths: creates the git checkpoint ref, diffs
@@ -560,129 +849,55 @@ const make = Effect.gen(function* () {
   const handleRevertRequested = Effect.fnUntraced(function* (
     event: Extract<OrchestrationEvent, { type: "thread.checkpoint-revert-requested" }>,
   ) {
-    const now = new Date().toISOString();
-
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
-    if (!thread) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Thread was not found in read model.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.payload.threadId);
-    if (Option.isNone(sessionRuntime)) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "No active provider session with workspace cwd is bound to this thread.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
-
-    if (event.payload.turnCount > currentTurnCount) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Checkpoint turn count ${event.payload.turnCount} exceeds current turn count ${currentTurnCount}.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    const targetCheckpointRef =
-      event.payload.turnCount === 0
-        ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-          )?.checkpointRef;
-
-    if (!targetCheckpointRef) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Checkpoint ref for turn ${event.payload.turnCount} is unavailable in read model.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-
-    const restored = yield* checkpointStore.restoreCheckpoint({
-      cwd: sessionRuntime.value.cwd,
-      checkpointRef: targetCheckpointRef,
-      fallbackToHead: event.payload.turnCount === 0,
+    yield* rewindThreadState({
+      threadId: event.payload.threadId,
+      turnCount: event.payload.turnCount,
+      createdAt: new Date().toISOString(),
+      requireFilesystemRestore: true,
     });
-    if (!restored) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
+  });
 
-    // Invalidate the workspace entry cache so the @-mention file picker
-    // reflects the reverted filesystem state.
-    yield* workspaceEntries.invalidate(sessionRuntime.value.cwd);
+  const handleRetryRequested = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.turn-retry-requested" }>,
+  ) {
+    const retryTarget = yield* resolveRetryTarget({
+      threadId: event.payload.threadId,
+      assistantMessageId: event.payload.assistantMessageId,
+    });
+    const retryAttachments = yield* cloneRetryAttachments({
+      threadId: retryTarget.threadId,
+      attachments: retryTarget.message.attachments,
+    });
+    const retryCreatedAt = new Date().toISOString();
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
+    yield* rewindThreadState({
+      threadId: retryTarget.threadId,
+      turnCount: retryTarget.turnCountBeforeRetry,
+      createdAt: retryCreatedAt,
+      requireFilesystemRestore: false,
+    });
 
-    const staleCheckpointRefs = thread.checkpoints
-      .filter((checkpoint) => checkpoint.checkpointTurnCount > event.payload.turnCount)
-      .map((checkpoint) => checkpoint.checkpointRef);
-
-    if (staleCheckpointRefs.length > 0) {
-      yield* checkpointStore.deleteCheckpointRefs({
-        cwd: sessionRuntime.value.cwd,
-        checkpointRefs: staleCheckpointRefs,
-      });
-    }
-
-    yield* orchestrationEngine
-      .dispatch({
-        type: "thread.revert.complete",
-        commandId: serverCommandId("checkpoint-revert-complete"),
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        createdAt: now,
-      })
-      .pipe(
-        Effect.catch((error) =>
-          appendRevertFailureActivity({
-            threadId: event.payload.threadId,
-            turnCount: event.payload.turnCount,
-            detail: error.message,
-            createdAt: now,
-          }),
-        ),
-        Effect.asVoid,
-      );
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: serverCommandId("turn-retry-start"),
+      threadId: retryTarget.threadId,
+      message: {
+        messageId: MessageId.makeUnsafe(crypto.randomUUID()),
+        role: "user",
+        text: retryTarget.message.text,
+        attachments: retryAttachments,
+      },
+      ...(retryTarget.modelSelection !== undefined
+        ? { modelSelection: retryTarget.modelSelection }
+        : {}),
+      ...(retryTarget.titleSeed !== undefined ? { titleSeed: retryTarget.titleSeed } : {}),
+      ...(retryTarget.sourceProposedPlan !== undefined
+        ? { sourceProposedPlan: retryTarget.sourceProposedPlan }
+        : {}),
+      runtimeMode: retryTarget.runtimeMode,
+      interactionMode: retryTarget.interactionMode,
+      createdAt: retryCreatedAt,
+    });
   });
 
   const processDomainEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
@@ -697,6 +912,20 @@ const make = Effect.gen(function* () {
           appendRevertFailureActivity({
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
+            detail: error.message,
+            createdAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      return;
+    }
+
+    if (event.type === "thread.turn-retry-requested") {
+      yield* handleRetryRequested(event).pipe(
+        Effect.catch((error) =>
+          appendRetryFailureActivity({
+            threadId: event.payload.threadId,
+            assistantMessageId: event.payload.assistantMessageId,
             detail: error.message,
             createdAt: new Date().toISOString(),
           }),
@@ -774,6 +1003,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.turn-retry-requested" &&
           event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;

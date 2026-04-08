@@ -44,6 +44,7 @@ import {
   codexAuthSubType,
   type CodexAccountSnapshot,
 } from "../codexAccount";
+import { resolvePreferredCodexBinaryPath } from "../codexBinaryPath";
 import { probeCodexAccount } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
@@ -311,14 +312,15 @@ const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyAr
   const codexSettings = yield* settingsService.getSettings.pipe(
     Effect.map((settings) => settings.providers.codex),
   );
-  const command = ChildProcess.make(codexSettings.binaryPath, [...args], {
+  const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
+  const command = ChildProcess.make(binaryPath, [...args], {
     shell: process.platform === "win32",
     env: {
       ...process.env,
       ...(codexSettings.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
     },
   });
-  return yield* spawnAndCollect(codexSettings.binaryPath, command);
+  return yield* spawnAndCollect(binaryPath, command);
 });
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
@@ -340,6 +342,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   );
   const checkedAt = new Date().toISOString();
   const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, codexSettings.customModels);
+  const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -458,7 +461,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   );
   const account = resolveAccount
     ? yield* resolveAccount({
-        binaryPath: codexSettings.binaryPath,
+        binaryPath,
         homePath: codexSettings.homePath,
       })
     : undefined;

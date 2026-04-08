@@ -23,6 +23,7 @@ import {
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { normalizeProjectTitle } from "shared/String";
 
 import {
   isPersistenceError,
@@ -657,7 +658,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
             id: row.projectId,
-            title: row.title,
+            title: normalizeProjectTitle(row.title),
             workspaceRoot: row.workspaceRoot,
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
@@ -741,7 +742,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           Option.map(
             (row): OrchestrationProject => ({
               id: row.projectId,
-              title: row.title,
+              title: normalizeProjectTitle(row.title),
               workspaceRoot: row.workspaceRoot,
               defaultModelSelection: row.defaultModelSelection,
               scripts: row.scripts,

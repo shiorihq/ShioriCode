@@ -16,6 +16,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  queuedTurnCount: number;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -45,6 +46,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  queuedTurnCount,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -103,16 +105,32 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (isRunning) {
     return (
-      <button
-        type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-        onClick={onInterrupt}
-        aria-label="Stop generation"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
-      </button>
+      <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        {queuedTurnCount > 0 && !hasSendableContent ? (
+          <span className="text-xs text-muted-foreground">{queuedTurnCount} queued</span>
+        ) : null}
+        {hasSendableContent ? (
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            className={cn("rounded-full", compact ? "px-3" : "px-4")}
+            disabled={isSendBusy || isConnecting || queuedTurnCount > 0}
+          >
+            {queuedTurnCount > 0 ? "Queued" : isSendBusy ? "Queueing..." : "Queue"}
+          </Button>
+        ) : null}
+        <button
+          type="button"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+          onClick={onInterrupt}
+          aria-label="Stop generation"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        </button>
+      </div>
     );
   }
 

@@ -52,6 +52,12 @@ import {
   trimOrNull,
 } from "shared/model";
 import {
+  classifyProviderToolLifecycleItemType,
+  classifyProviderToolRequestKind,
+  providerToolTitle,
+  summarizeProviderToolInvocation,
+} from "shared/providerTool";
+import {
   Cause,
   DateTime,
   Deferred,
@@ -453,91 +459,32 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
-  const normalized = toolName.toLowerCase();
-  if (normalized.includes("agent")) {
-    return "collab_agent_tool_call";
-  }
-  if (
-    normalized === "task" ||
-    normalized === "agent" ||
-    normalized.includes("subagent") ||
-    normalized.includes("sub-agent")
-  ) {
-    return "collab_agent_tool_call";
-  }
-  if (
-    normalized.includes("bash") ||
-    normalized.includes("command") ||
-    normalized.includes("shell") ||
-    normalized.includes("terminal")
-  ) {
-    return "command_execution";
-  }
-  if (
-    normalized.includes("edit") ||
-    normalized.includes("write") ||
-    normalized.includes("file") ||
-    normalized.includes("patch") ||
-    normalized.includes("replace") ||
-    normalized.includes("create") ||
-    normalized.includes("delete")
-  ) {
-    return "file_change";
-  }
-  if (normalized.includes("mcp")) {
-    return "mcp_tool_call";
-  }
-  if (normalized.includes("websearch") || normalized.includes("web search")) {
-    return "web_search";
-  }
-  if (normalized.includes("image")) {
-    return "image_view";
-  }
-  return "dynamic_tool_call";
-}
-
-function isReadOnlyToolName(toolName: string): boolean {
-  const normalized = toolName.toLowerCase();
-  return (
-    normalized === "read" ||
-    normalized.includes("read file") ||
-    normalized.includes("view") ||
-    normalized.includes("grep") ||
-    normalized.includes("glob") ||
-    normalized.includes("search")
-  );
+  return classifyProviderToolLifecycleItemType(toolName);
 }
 
 function classifyRequestType(toolName: string): CanonicalRequestType {
-  if (isReadOnlyToolName(toolName)) {
-    return "file_read_approval";
-  }
-  const itemType = classifyToolItemType(toolName);
-  return itemType === "command_execution"
-    ? "command_execution_approval"
-    : itemType === "file_change"
-      ? "file_change_approval"
-      : "dynamic_tool_call";
+  const requestKind = classifyProviderToolRequestKind(toolName);
+  return requestKind === "file-read"
+    ? "file_read_approval"
+    : requestKind === "command"
+      ? "command_execution_approval"
+      : requestKind === "file-change"
+        ? "file_change_approval"
+        : "dynamic_tool_call";
 }
 
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
-  const commandValue = input.command ?? input.cmd;
-  const command = typeof commandValue === "string" ? commandValue : undefined;
-  if (command && command.trim().length > 0) {
-    return `${toolName}: ${command.trim().slice(0, 400)}`;
-  }
-
-  const serialized = JSON.stringify(input);
-  if (serialized.length <= 400) {
-    return `${toolName}: ${serialized}`;
-  }
-  return `${toolName}: ${serialized.slice(0, 397)}...`;
+  return summarizeProviderToolInvocation(toolName, input) ?? providerToolTitle(toolName);
 }
 
-function titleForTool(itemType: CanonicalItemType): string {
+function titleForTool(itemType: CanonicalItemType, toolName?: string): string {
+  if (toolName) {
+    return providerToolTitle(toolName);
+  }
+
   switch (itemType) {
     case "command_execution":
-      return "Command run";
+      return "Run command";
     case "file_change":
       return "File change";
     case "mcp_tool_call":
@@ -1731,7 +1678,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
-        title: titleForTool(itemType),
+        title: titleForTool(itemType, toolName),
         detail,
         input: toolInput,
         partialInputJson: "",
@@ -2157,6 +2104,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.makeUnsafe(message.task_id),
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
+            ...(message.output_file ? { outputFile: message.output_file } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
           },
         });

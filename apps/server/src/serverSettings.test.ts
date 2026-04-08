@@ -57,6 +57,19 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
+
+      assert.deepEqual(
+        decodePatch({
+          onboarding: {
+            completedStepIds: ["connect-provider"],
+          },
+        }),
+        {
+          onboarding: {
+            completedStepIds: ["connect-provider"],
+          },
+        },
+      );
     }),
   );
 

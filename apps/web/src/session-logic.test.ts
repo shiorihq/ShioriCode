@@ -1037,6 +1037,60 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("merges started tool input with completed write_file output for collapsed entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "write-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Write file",
+        payload: {
+          itemId: "tool:write-1",
+          itemType: "file_change",
+          title: "Write file",
+          status: "inProgress",
+          detail: "apps/web/src/index.css",
+          data: {
+            toolName: "write_file",
+            input: {
+              path: "apps/web/src/index.css",
+              content: "body {\n  color: red;\n}",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "write-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Write file",
+        payload: {
+          itemId: "tool:write-1",
+          itemType: "file_change",
+          title: "Write file",
+          status: "completed",
+          detail: "apps/web/src/index.css",
+          data: {
+            path: "apps/web/src/index.css",
+            bytesWritten: 22,
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toBeDefined();
+    expect(entry?.output).toEqual({
+      toolName: "write_file",
+      input: {
+        path: "apps/web/src/index.css",
+        content: "body {\n  color: red;\n}",
+      },
+      path: "apps/web/src/index.css",
+      bytesWritten: 22,
+    });
+  });
+
   it("collapses tool lifecycle rows using normalized command metadata when completion detail differs", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1579,6 +1633,31 @@ describe("deriveReasoningEntries", () => {
         turnId: TurnId.makeUnsafe("turn-2"),
       },
     ]);
+  });
+
+  it("suppresses empty Shiori reasoning lifecycle entries when no visible reasoning text arrived", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "reasoning-started-shiori-empty",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "reasoning.started",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-shiori-empty",
+        payload: { itemId: "reasoning:turn-shiori-empty:block-1" },
+      }),
+      makeActivity({
+        id: "reasoning-completed-shiori-empty",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "reasoning.completed",
+        summary: "Thought",
+        tone: "info",
+        turnId: "turn-shiori-empty",
+        payload: { itemId: "reasoning:turn-shiori-empty:block-1" },
+      }),
+    ]);
+
+    expect(entries).toEqual([]);
   });
 
   it("ignores unrelated task completion events when no reasoning progress exists", () => {

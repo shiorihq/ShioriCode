@@ -13,7 +13,6 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
-import { Badge } from "../ui/badge";
 import {
   Dialog,
   DialogDescription,
@@ -129,19 +128,23 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">Plan</Badge>
-          <p className={cn(CHAT_THREAD_BODY_CLASS, "truncate font-medium text-foreground")}>
-            {title}
-          </p>
-        </div>
+    <div className="border-l-2 border-primary/25 pl-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className={cn(CHAT_THREAD_BODY_CLASS, "truncate font-medium text-foreground")}>
+          {title}
+        </p>
         <Menu>
           <MenuTrigger
-            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+            render={
+              <Button
+                aria-label="Plan actions"
+                size="icon-xs"
+                variant="ghost"
+                className="shrink-0 text-muted-foreground/40 hover:text-muted-foreground/70"
+              />
+            }
           >
-            <EllipsisIcon aria-hidden="true" className="size-4" />
+            <EllipsisIcon aria-hidden="true" className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={handleCopyPlan}>
@@ -154,28 +157,26 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           </MenuPopup>
         </Menu>
       </div>
-      <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
+      <div className="mt-2">
+        <div className={cn("relative", canCollapse && !expanded && "max-h-80 overflow-hidden")}>
           {canCollapse && !expanded ? (
             <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
           ) : (
             <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
           )}
           {canCollapse && !expanded ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-background via-background/80 to-transparent" />
           ) : null}
         </div>
         {canCollapse ? (
-          <div className="mt-4 flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Collapse plan" : "Expand plan"}
-            </Button>
-          </div>
+          <button
+            type="button"
+            data-scroll-anchor-ignore
+            onClick={() => setExpanded((value) => !value)}
+            className="mt-2 text-xs text-muted-foreground/50 transition-colors hover:text-muted-foreground/80"
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
         ) : null}
       </div>
 

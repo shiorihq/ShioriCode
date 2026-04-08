@@ -128,7 +128,7 @@ const BUILT_IN_THEME_RECORDS: readonly ThemeRecord[] = [
     description: "The default ShioriCode dark palette.",
     radius: "0.625rem",
     tokens: {
-      background: "color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white))",
+      background: "#101010",
       foreground: "var(--color-neutral-100)",
       card: "color-mix(in srgb, var(--background) 98%, var(--color-white))",
       cardForeground: "var(--color-neutral-100)",
@@ -155,7 +155,7 @@ const BUILT_IN_THEME_RECORDS: readonly ThemeRecord[] = [
       warningForeground: "var(--color-amber-400)",
     },
     terminal: {
-      background: "rgb(14, 18, 24)",
+      background: "rgb(16, 16, 16)",
       foreground: "rgb(237, 241, 247)",
       cursor: "rgb(180, 203, 255)",
       selectionBackground: "rgba(180, 203, 255, 0.25)",
@@ -894,6 +894,25 @@ function defaultBuiltinThemeForAppearance(appearance: ThemeAppearance): ThemeRec
   }
 
   throw new Error(`Missing builtin theme for appearance ${appearance}`);
+}
+
+export function getDefaultThemeSeed(appearance: ThemeAppearance): {
+  radius: string;
+  tokens: ThemeTokenValues;
+  terminal: TerminalThemeColors;
+} {
+  const theme = defaultBuiltinThemeForAppearance(appearance);
+  const terminal = theme.terminal;
+
+  if (!terminal) {
+    throw new Error(`Missing builtin terminal theme for appearance ${appearance}`);
+  }
+
+  return {
+    radius: theme.radius || "0.625rem",
+    tokens: { ...theme.tokens },
+    terminal: { ...terminal },
+  };
 }
 
 export function resolveThemeRecord(

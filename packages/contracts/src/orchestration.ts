@@ -20,6 +20,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getSubagentDetail: "orchestration.getSubagentDetail",
   replayEvents: "orchestration.replayEvents",
 } as const;
 
@@ -503,6 +504,14 @@ const ThreadCheckpointRevertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnRetryCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.retry"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  assistantMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadSessionStopCommand = Schema.Struct({
   type: Schema.Literal("thread.session.stop"),
   commandId: CommandId,
@@ -526,6 +535,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
+  ThreadTurnRetryCommand,
   ThreadSessionStopCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
@@ -547,6 +557,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
+  ThreadTurnRetryCommand,
   ThreadSessionStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -650,6 +661,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
+  "thread.turn-retry-requested",
   "thread.reverted",
   "thread.session-stop-requested",
   "thread.session-set",
@@ -796,6 +808,12 @@ export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnRetryRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  assistantMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
@@ -936,6 +954,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.turn-retry-requested"),
+    payload: ThreadTurnRetryRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.reverted"),
     payload: ThreadRevertedPayload,
   }),
@@ -1054,6 +1077,54 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationGetSubagentDetailInput = Schema.Struct({
+  threadId: ThreadId,
+  rootItemId: TrimmedNonEmptyString,
+});
+export type OrchestrationGetSubagentDetailInput = typeof OrchestrationGetSubagentDetailInput.Type;
+
+export const OrchestrationSubagentTranscriptEntryRole = Schema.Literals([
+  "user",
+  "assistant",
+  "system",
+]);
+export type OrchestrationSubagentTranscriptEntryRole =
+  typeof OrchestrationSubagentTranscriptEntryRole.Type;
+
+export const OrchestrationSubagentTranscriptEntry = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  role: OrchestrationSubagentTranscriptEntryRole,
+  text: Schema.String,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationSubagentTranscriptEntry = typeof OrchestrationSubagentTranscriptEntry.Type;
+
+export const OrchestrationSubagentDetailMode = Schema.Literals([
+  "foreground",
+  "background",
+  "unknown",
+]);
+export type OrchestrationSubagentDetailMode = typeof OrchestrationSubagentDetailMode.Type;
+
+export const OrchestrationSubagentDetail = Schema.Struct({
+  provider: ProviderKind,
+  rootItemId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  description: Schema.NullOr(Schema.String),
+  prompt: Schema.NullOr(Schema.String),
+  agentType: Schema.NullOr(TrimmedNonEmptyString),
+  mode: OrchestrationSubagentDetailMode,
+  providerThreadIds: Schema.Array(TrimmedNonEmptyString),
+  resultText: Schema.NullOr(Schema.String),
+  outputFilePath: Schema.NullOr(TrimmedNonEmptyString),
+  outputText: Schema.NullOr(Schema.String),
+  outputTextTruncated: Schema.Boolean,
+  activities: Schema.Array(OrchestrationThreadActivity),
+  transcript: Schema.Array(OrchestrationSubagentTranscriptEntry),
+});
+export type OrchestrationSubagentDetail = typeof OrchestrationSubagentDetail.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1078,6 +1149,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getSubagentDetail: {
+    input: OrchestrationGetSubagentDetailInput,
+    output: OrchestrationSubagentDetail,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
@@ -1111,6 +1186,14 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGetSubagentDetailError extends Schema.TaggedErrorClass<OrchestrationGetSubagentDetailError>()(
+  "OrchestrationGetSubagentDetailError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

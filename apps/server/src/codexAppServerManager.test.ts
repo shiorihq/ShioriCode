@@ -37,6 +37,7 @@ function createSendTurnHarness() {
       planType: null,
       sparkEnabled: true,
     },
+    supportsReasoningSummary: false,
     collabReceiverTurns: new Map(),
   };
 
@@ -734,6 +735,29 @@ describe("sendTurn", () => {
     });
   });
 
+  it("requests detailed reasoning summaries when the session supports them", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.supportsReasoningSummary = true;
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Determine whether 91 is prime.",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Determine whether 91 is prime.",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      summary: "detailed",
+    });
+  });
+
   it("rejects empty turn input", async () => {
     const { manager } = createSendTurnHarness();
 
@@ -1140,6 +1164,9 @@ describe("collab child conversation routing", () => {
         method: "item/agentMessage/delta",
         turnId: "turn_parent",
         itemId: "msg_child_1",
+        payload: expect.objectContaining({
+          parentItemId: "call_collab_1",
+        }),
       }),
     );
   });
@@ -1241,6 +1268,9 @@ describe("collab child conversation routing", () => {
         method: "item/commandExecution/requestApproval",
         turnId: "turn_parent",
         itemId: "call_child_1",
+        payload: expect.objectContaining({
+          parentItemId: "call_collab_1",
+        }),
       }),
     );
   });

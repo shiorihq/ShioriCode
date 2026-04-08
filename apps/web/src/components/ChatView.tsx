@@ -2,7 +2,7 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeEffort,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type ProviderKind,
   type ProjectEntry,
@@ -144,6 +144,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { SubagentDetailSheet } from "./chat/SubagentDetailSheet";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -192,6 +193,7 @@ import {
   useServerConfig,
   useServerKeybindings,
 } from "~/rpc/serverState";
+import { type QueuedTurnDraft, useQueuedTurnsStore } from "../queuedTurnsStore";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -210,6 +212,23 @@ const threadPlanCatalogCache = new LRUCache<{
   proposedPlans: Thread["proposedPlans"];
   entry: ThreadPlanCatalogEntry;
 }>(MAX_THREAD_PLAN_CATALOG_CACHE_ENTRIES, MAX_THREAD_PLAN_CATALOG_CACHE_MEMORY_BYTES);
+
+async function uploadAttachmentToComposerImageAttachment(
+  attachment: Extract<QueuedTurnDraft["attachments"][number], { type: "image" }>,
+): Promise<ComposerImageAttachment> {
+  const response = await fetch(attachment.dataUrl);
+  const blob = await response.blob();
+  const file = new File([blob], attachment.name, { type: attachment.mimeType });
+  return {
+    type: "image",
+    id: randomUUID(),
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    previewUrl: attachment.dataUrl,
+    file,
+  };
+}
 
 function estimateThreadPlanCatalogEntrySize(thread: Thread): number {
   return Math.max(
@@ -498,6 +517,32 @@ function PersistentThreadTerminalDrawer({
   const storeSetActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((state) => state.closeTerminal);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
+  const terminalOpen = Boolean(terminalState.terminalOpen);
+  const [mounted, setMounted] = useState(terminalOpen);
+  const [animState, setAnimState] = useState<"open" | "closed">(terminalOpen ? "open" : "closed");
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (terminalOpen) {
+      setMounted(true);
+      // Force a layout read so the browser paints the closed state before transitioning.
+      requestAnimationFrame(() => {
+        setAnimState("open");
+      });
+    } else {
+      setAnimState("closed");
+    }
+  }, [terminalOpen]);
+
+  useEffect(() => {
+    const el = drawerRef.current;
+    if (!el || terminalOpen) return;
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target === el) setMounted(false);
+    };
+    el.addEventListener("transitionend", onEnd);
+    return () => el.removeEventListener("transitionend", onEnd);
+  }, [terminalOpen]);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const cwd = useMemo(
     () => (project ? (worktreePath ?? project.cwd) : null),
@@ -585,33 +630,49 @@ function PersistentThreadTerminalDrawer({
     [onAddTerminalContext, visible],
   );
 
-  if (!project || !terminalState.terminalOpen || !cwd) {
+  if (!project || !mounted || !cwd) {
     return null;
   }
 
+  // Non-active thread terminals stay hidden without animation.
+  const isAnimatingOut = !terminalOpen && mounted;
+  const shouldHide = !visible && !isAnimatingOut;
+
   return (
-    <div className={visible ? undefined : "hidden"}>
-      <ThreadTerminalDrawer
-        threadId={threadId}
-        cwd={cwd}
-        runtimeEnv={runtimeEnv}
-        visible={visible}
-        height={terminalState.terminalHeight}
-        terminalIds={terminalState.terminalIds}
-        activeTerminalId={terminalState.activeTerminalId}
-        terminalGroups={terminalState.terminalGroups}
-        activeTerminalGroupId={terminalState.activeTerminalGroupId}
-        focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
-        onSplitTerminal={splitTerminal}
-        onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-        onActiveTerminalChange={activateTerminal}
-        onCloseTerminal={closeTerminal}
-        onHeightChange={setTerminalHeight}
-        onAddTerminalContext={handleAddTerminalContext}
-      />
+    <div
+      ref={drawerRef}
+      style={{
+        display: shouldHide ? "none" : "grid",
+        gridTemplateRows: animState === "open" ? "1fr" : "0fr",
+        transition:
+          animState === "open"
+            ? "grid-template-rows 200ms ease-in"
+            : "grid-template-rows 200ms ease-out",
+      }}
+    >
+      <div style={{ overflow: "hidden", minHeight: 0 }}>
+        <ThreadTerminalDrawer
+          threadId={threadId}
+          cwd={cwd}
+          runtimeEnv={runtimeEnv}
+          visible={visible}
+          height={terminalState.terminalHeight}
+          terminalIds={terminalState.terminalIds}
+          activeTerminalId={terminalState.activeTerminalId}
+          terminalGroups={terminalState.terminalGroups}
+          activeTerminalGroupId={terminalState.activeTerminalGroupId}
+          focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
+          onSplitTerminal={splitTerminal}
+          onNewTerminal={createNewTerminal}
+          splitShortcutLabel={visible ? splitShortcutLabel : undefined}
+          newShortcutLabel={visible ? newShortcutLabel : undefined}
+          closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+          onActiveTerminalChange={activateTerminal}
+          onCloseTerminal={closeTerminal}
+          onHeightChange={setTerminalHeight}
+          onAddTerminalContext={handleAddTerminalContext}
+        />
+      </div>
     </div>
   );
 }
@@ -696,6 +757,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isScrolledFromTop, setIsScrolledFromTop] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [selectedSubagentRootItemId, setSelectedSubagentRootItemId] = useState<string | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -714,6 +776,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
+  useEffect(() => {
+    setSelectedSubagentRootItemId(null);
+  }, [threadId]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
@@ -763,6 +828,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const processingQueuedTurnRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -787,6 +853,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
   const { branchThread } = useThreadActions();
+  const queuedTurn = useQueuedTurnsStore((state) =>
+    threadId ? (state.queuedTurnsByThreadId[threadId] ?? null) : null,
+  );
+  const enqueueQueuedTurn = useQueuedTurnsStore((state) => state.enqueueQueuedTurn);
+  const clearQueuedTurn = useQueuedTurnsStore((state) => state.clearQueuedTurn);
   const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
   const draftThreadIds = useMemo(
     () => Object.keys(draftThreadsByThreadId) as ThreadId[],
@@ -1473,7 +1544,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!latestTurnHasToolActivity) return null;
 
     const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
-    return elapsed ? `Completed in ${elapsed}` : null;
+    return elapsed ? `Worked for ${elapsed}` : null;
   }, [
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
@@ -1999,6 +2070,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scrollMessagesToBottom();
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
+  const pauseTimelineAutoScroll = useCallback(() => {
+    shouldAutoScrollRef.current = false;
+    pendingUserScrollUpIntentRef.current = false;
+
+    const scrollContainer = messagesScrollRef.current;
+    const canScroll =
+      scrollContainer !== null && scrollContainer.scrollHeight > scrollContainer.clientHeight;
+    setShowScrollToBottom(canScroll);
+  }, []);
+  const autoScrollOnSend = useCallback(() => {
+    shouldAutoScrollRef.current = true;
+    forceStickToBottom();
+  }, [forceStickToBottom]);
   const onMessagesScroll = useCallback(() => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
@@ -2657,11 +2741,120 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, isTurnRunning, setThreadError],
   );
 
+  const processQueuedTurn = useCallback(
+    async (queuedDraft: QueuedTurnDraft) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || queuedDraft.threadId !== activeThread.id) {
+        return;
+      }
+
+      processingQueuedTurnRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(queuedDraft.threadId, null);
+
+      try {
+        autoScrollOnSend();
+        await persistThreadSettingsForNextTurn({
+          threadId: queuedDraft.threadId,
+          createdAt: queuedDraft.createdAt,
+          modelSelection: queuedDraft.modelSelection,
+          runtimeMode: queuedDraft.runtimeMode,
+          interactionMode: queuedDraft.interactionMode,
+        });
+        await ensureHostedShioriAuthTokenSynced();
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: queuedDraft.threadId,
+          message: {
+            messageId: MessageId.makeUnsafe(queuedDraft.messageId),
+            role: "user",
+            text: queuedDraft.text,
+            attachments: queuedDraft.attachments,
+          },
+          modelSelection: queuedDraft.modelSelection,
+          titleSeed: queuedDraft.titleSeed,
+          runtimeMode: queuedDraft.runtimeMode,
+          interactionMode: queuedDraft.interactionMode,
+          createdAt: queuedDraft.createdAt,
+        });
+        clearQueuedTurn(queuedDraft.threadId);
+        toastManager.add({
+          type: "info",
+          title: "Queued message sent",
+          description: "Your queued message started as soon as the previous turn finished.",
+        });
+      } catch (error) {
+        clearQueuedTurn(queuedDraft.threadId);
+
+        if (promptRef.current.length === 0 && composerImagesRef.current.length === 0) {
+          promptRef.current = queuedDraft.text;
+          setPrompt(queuedDraft.text);
+          setComposerCursor(
+            collapseExpandedComposerCursor(queuedDraft.text, queuedDraft.text.length),
+          );
+          setComposerTrigger(null);
+
+          const restoredImages = await Promise.all(
+            queuedDraft.attachments.flatMap((attachment) =>
+              attachment.type === "image"
+                ? [uploadAttachmentToComposerImageAttachment(attachment)]
+                : [],
+            ),
+          );
+          if (restoredImages.length > 0) {
+            addComposerImagesToDraft(restoredImages);
+          }
+        }
+
+        setThreadError(
+          queuedDraft.threadId,
+          error instanceof Error ? error.message : "Failed to send queued message.",
+        );
+        resetLocalDispatch();
+      } finally {
+        processingQueuedTurnRef.current = false;
+      }
+    },
+    [
+      activeThread,
+      addComposerImagesToDraft,
+      autoScrollOnSend,
+      beginLocalDispatch,
+      clearQueuedTurn,
+      ensureHostedShioriAuthTokenSynced,
+      persistThreadSettingsForNextTurn,
+      resetLocalDispatch,
+      setPrompt,
+      setThreadError,
+    ],
+  );
+
+  useEffect(() => {
+    if (
+      !queuedTurn ||
+      !activeThread ||
+      queuedTurn.threadId !== activeThread.id ||
+      isTurnRunning ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      processingQueuedTurnRef.current
+    ) {
+      return;
+    }
+
+    void processQueuedTurn(queuedTurn);
+  }, [activeThread, isConnecting, isSendBusy, isTurnRunning, processQueuedTurn, queuedTurn]);
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingProgress) {
+      if (activePendingProgress.isLastQuestion && activePendingResolvedAnswers) {
+        autoScrollOnSend();
+      }
       onAdvanceActivePendingUserInput();
       return;
     }
@@ -2785,6 +2978,60 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
+
+    if (isTurnRunning) {
+      autoScrollOnSend();
+      if (queuedTurn) {
+        setThreadError(
+          threadIdForSend,
+          "Only one queued message is supported per thread right now. Wait for it to send first.",
+        );
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        return;
+      }
+
+      const queuedAttachments = await turnAttachmentsPromise;
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+
+      enqueueQueuedTurn({
+        id: randomUUID(),
+        threadId: threadIdForSend,
+        messageId: String(messageIdForSend),
+        text: outgoingMessageText,
+        attachments: queuedAttachments,
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        titleSeed: activeThread.title.trim() || "New Thread",
+        createdAt: messageCreatedAt,
+      });
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForSend);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      setThreadError(threadIdForSend, null);
+      toastManager.add({
+        type: "info",
+        title: "Message queued",
+        description: "It will send automatically when the current turn finishes.",
+      });
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      return;
+    }
+
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -2797,8 +3044,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     ]);
     // Sending a message should always bring the latest user turn into view.
-    shouldAutoScrollRef.current = true;
-    forceStickToBottom();
+    autoScrollOnSend();
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -3183,8 +3429,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           streaming: false,
         },
       ]);
-      shouldAutoScrollRef.current = true;
-      forceStickToBottom();
+      autoScrollOnSend();
 
       try {
         await persistThreadSettingsForNextTurn({
@@ -3247,9 +3492,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeThread,
       activeProposedPlan,
+      autoScrollOnSend,
       beginLocalDispatch,
       ensureHostedShioriAuthTokenSynced,
-      forceStickToBottom,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -3738,14 +3983,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return false;
   };
-  const onToggleWorkGroup = useCallback((groupId: string) => {
-    setExpandedWorkGroups((existing) => ({
-      ...existing,
-      [groupId]: !(existing[groupId] ?? false),
-    }));
-  }, []);
+  const onToggleWorkGroup = useCallback(
+    (groupId: string, currentlyExpanded: boolean) => {
+      if (currentlyExpanded) {
+        pauseTimelineAutoScroll();
+      }
+      setExpandedWorkGroups((existing) => ({
+        ...existing,
+        [groupId]: !currentlyExpanded,
+      }));
+    },
+    [pauseTimelineAutoScroll],
+  );
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
+  }, []);
+  const onOpenSubagentDetail = useCallback((rootItemId: string) => {
+    setSelectedSubagentRootItemId(rootItemId);
+  }, []);
+  const onCloseSubagentDetail = useCallback(() => {
+    setSelectedSubagentRootItemId(null);
   }, []);
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
@@ -3770,6 +4027,47 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+
+  const onRetryAssistantMessage = useCallback(
+    async (assistantMessageId: MessageId) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        isRevertingCheckpoint ||
+        isTurnRunning ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      )
+        return;
+
+      try {
+        autoScrollOnSend();
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.retry",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          assistantMessageId,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to retry message.",
+        );
+      }
+    },
+    [
+      activeThread,
+      autoScrollOnSend,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSendBusy,
+      isTurnRunning,
+      setThreadError,
+    ],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3894,9 +4192,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                   expandedWorkGroups={expandedWorkGroups}
                   onToggleWorkGroup={onToggleWorkGroup}
+                  onOpenSubagentDetail={onOpenSubagentDetail}
                   onOpenTurnDiff={onOpenTurnDiff}
                   revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                   onRevertUserMessage={onRevertUserMessage}
+                  onRetryAssistantMessage={onRetryAssistantMessage}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImage}
                   markdownCwd={gitCwd ?? undefined}
@@ -3905,6 +4205,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   workspaceRoot={activeProject?.cwd ?? undefined}
                 />
               </div>
+              <SubagentDetailSheet
+                open={selectedSubagentRootItemId !== null}
+                onClose={onCloseSubagentDetail}
+                threadId={activeThread.id}
+                provider={activeThread.session?.provider ?? activeThread.modelSelection.provider}
+                rootItemId={selectedSubagentRootItemId}
+                workEntries={workLogEntries}
+                markdownCwd={gitCwd ?? undefined}
+                timestampFormat={timestampFormat}
+              />
 
               {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
               {showScrollToBottom && (
@@ -4318,6 +4628,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               : null
                           }
                           isRunning={isTurnRunning}
+                          queuedTurnCount={queuedTurn ? 1 : 0}
                           showPlanFollowUpPrompt={
                             pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                           }

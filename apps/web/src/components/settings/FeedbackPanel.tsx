@@ -137,7 +137,7 @@ export function FeedbackPanel() {
         {/* Submit feedback */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            <h2 className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
               <MessageSquareIcon className="size-3.5" />
               Send Feedback
             </h2>
@@ -195,7 +195,7 @@ export function FeedbackPanel() {
         {/* Ticket history */}
         {shioricodeTickets.length > 0 ? (
           <section className="space-y-3">
-            <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            <h2 className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
               Your Tickets
             </h2>
             <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">

@@ -22,6 +22,7 @@ import {
   GitStatusResult,
 } from "./git";
 import { KeybindingsConfigError } from "./keybindings";
+import { OnboardingCompleteStepInput, OnboardingError, OnboardingState } from "./onboarding";
 import {
   ClientOrchestrationCommand,
   OrchestrationEvent,
@@ -29,6 +30,7 @@ import {
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetSubagentDetailError,
   OrchestrationGetSnapshotError,
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffError,
@@ -59,6 +61,12 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  HostedBillingCheckoutInput,
+  HostedBillingCheckoutResult,
+  HostedBillingError,
+  HostedBillingPortalInput,
+  HostedBillingPortalResult,
+  HostedBillingSnapshot,
   ServerLifecycleStreamEvent,
   ServerProviderUsageSnapshot,
   ServerProviderUpdatedPayload,
@@ -67,6 +75,7 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings";
+import { TelemetryCaptureInput, TelemetryLogInput } from "./telemetry";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -106,6 +115,18 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverSetShioriAuthToken: "server.setShioriAuthToken",
   serverGetProviderUsage: "server.getProviderUsage",
+  serverGetHostedBillingSnapshot: "server.getHostedBillingSnapshot",
+  serverCreateHostedBillingCheckout: "server.createHostedBillingCheckout",
+  serverCreateHostedBillingPortal: "server.createHostedBillingPortal",
+
+  // Onboarding
+  onboardingGetState: "onboarding.getState",
+  onboardingCompleteStep: "onboarding.completeStep",
+  onboardingReset: "onboarding.reset",
+
+  // Telemetry
+  telemetryCapture: "telemetry.capture",
+  telemetryLog: "telemetry.log",
 
   // Streaming subscriptions
   subscribeOrchestrationDomainEvents: "subscribeOrchestrationDomainEvents",
@@ -151,6 +172,61 @@ export const WsServerSetShioriAuthTokenRpc = Rpc.make(WS_METHODS.serverSetShiori
 export const WsServerGetProviderUsageRpc = Rpc.make(WS_METHODS.serverGetProviderUsage, {
   payload: Schema.Struct({ provider: ServerUsageProviderKind }),
   success: ServerProviderUsageSnapshot,
+});
+
+export const WsServerGetHostedBillingSnapshotRpc = Rpc.make(
+  WS_METHODS.serverGetHostedBillingSnapshot,
+  {
+    payload: Schema.Struct({}),
+    success: HostedBillingSnapshot,
+    error: HostedBillingError,
+  },
+);
+
+export const WsServerCreateHostedBillingCheckoutRpc = Rpc.make(
+  WS_METHODS.serverCreateHostedBillingCheckout,
+  {
+    payload: HostedBillingCheckoutInput,
+    success: HostedBillingCheckoutResult,
+    error: HostedBillingError,
+  },
+);
+
+export const WsServerCreateHostedBillingPortalRpc = Rpc.make(
+  WS_METHODS.serverCreateHostedBillingPortal,
+  {
+    payload: HostedBillingPortalInput,
+    success: HostedBillingPortalResult,
+    error: HostedBillingError,
+  },
+);
+
+export const WsOnboardingGetStateRpc = Rpc.make(WS_METHODS.onboardingGetState, {
+  payload: Schema.Struct({}),
+  success: OnboardingState,
+  error: OnboardingError,
+});
+
+export const WsOnboardingCompleteStepRpc = Rpc.make(WS_METHODS.onboardingCompleteStep, {
+  payload: OnboardingCompleteStepInput,
+  success: OnboardingState,
+  error: OnboardingError,
+});
+
+export const WsOnboardingResetRpc = Rpc.make(WS_METHODS.onboardingReset, {
+  payload: Schema.Struct({}),
+  success: OnboardingState,
+  error: OnboardingError,
+});
+
+export const WsTelemetryCaptureRpc = Rpc.make(WS_METHODS.telemetryCapture, {
+  payload: TelemetryCaptureInput,
+  success: Schema.Struct({}),
+});
+
+export const WsTelemetryLogRpc = Rpc.make(WS_METHODS.telemetryLog, {
+  payload: TelemetryLogInput,
+  success: Schema.Struct({}),
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -282,6 +358,15 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetSubagentDetailRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getSubagentDetail,
+  {
+    payload: OrchestrationRpcSchemas.getSubagentDetail.input,
+    success: OrchestrationRpcSchemas.getSubagentDetail.output,
+    error: OrchestrationGetSubagentDetailError,
+  },
+);
+
 export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.replayEvents, {
   payload: OrchestrationReplayEventsInput,
   success: OrchestrationRpcSchemas.replayEvents.output,
@@ -324,6 +409,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsServerSetShioriAuthTokenRpc,
   WsServerGetProviderUsageRpc,
+  WsServerGetHostedBillingSnapshotRpc,
+  WsServerCreateHostedBillingCheckoutRpc,
+  WsServerCreateHostedBillingPortalRpc,
+  WsOnboardingGetStateRpc,
+  WsOnboardingCompleteStepRpc,
+  WsOnboardingResetRpc,
+  WsTelemetryCaptureRpc,
+  WsTelemetryLogRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
@@ -350,5 +443,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationGetSubagentDetailRpc,
   WsOrchestrationReplayEventsRpc,
 );

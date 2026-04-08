@@ -1,14 +1,16 @@
-import { Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Duration, Effect, Layer, Option, Queue, Ref, Result, Schema, Stream } from "effect";
 import {
+  OnboardingError,
   OrchestrationDispatchCommandError,
-  type OrchestrationEvent,
   OrchestrationGetFullThreadDiffError,
+  OrchestrationGetSubagentDetailError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  type ServerProvider,
   type ServerProviderUsageSnapshot,
   type TerminalEvent,
   WS_METHODS,
@@ -17,6 +19,11 @@ import {
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import {
+  completeOnboardingStep,
+  resetOnboardingProgress,
+  resolveOnboardingState,
+} from "shared/onboarding";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
@@ -26,7 +33,7 @@ import { Keybindings } from "./keybindings";
 import { Open, resolveAvailableEditors } from "./open";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
+import { SubagentDetailQuery } from "./orchestration/Services/SubagentDetailQuery.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ProviderService } from "./provider/Services/ProviderService";
 import type { ClaudeUsageSnapshot, CodexUsageSnapshot } from "./provider/Services/ProviderUsage.ts";
@@ -34,6 +41,13 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
 import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore";
+import { HostedBillingService } from "./hostedBilling";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import {
+  summarizeClientCommand,
+  summarizeSettingsPatch,
+  withTelemetrySource,
+} from "./telemetry/RpcTelemetry.ts";
 import { TerminalManager } from "./terminal/Services/Manager";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
@@ -93,9 +107,9 @@ function toServerProviderUsageSnapshot(
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const checkpointDiffQuery = yield* CheckpointDiffQuery;
+    const subagentDetailQuery = yield* SubagentDetailQuery;
     const keybindings = yield* Keybindings;
     const open = yield* Open;
     const gitManager = yield* GitManager;
@@ -107,13 +121,30 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const lifecycleEvents = yield* ServerLifecycleEvents;
     const serverSettings = yield* ServerSettingsService;
     const hostedShioriAuthTokenStore = yield* HostedShioriAuthTokenStore;
+    const hostedBilling = yield* HostedBillingService;
     const startup = yield* ServerRuntimeStartup;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
+    const analytics = yield* AnalyticsService;
+    const latestProvidersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+
+    const readProvidersForConfig = Effect.gen(function* () {
+      const providersResult = yield* providerRegistry.getProviders.pipe(
+        Effect.tap((providers) => Ref.set(latestProvidersRef, providers)),
+        Effect.timeoutOption(Duration.millis(750)),
+        Effect.result,
+      );
+
+      if (Result.isSuccess(providersResult) && Option.isSome(providersResult.success)) {
+        return providersResult.success.value;
+      }
+
+      return yield* Ref.get(latestProvidersRef);
+    });
 
     const loadServerConfig = Effect.gen(function* () {
       const keybindingsConfig = yield* keybindings.loadConfigState;
-      const providers = yield* providerRegistry.getProviders;
+      const providers = yield* readProvidersForConfig;
       const settings = yield* serverSettings.getSettings;
 
       return {
@@ -130,7 +161,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
 
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
-        projectionSnapshotQuery.getSnapshot().pipe(
+        orchestrationEngine.getReadModel().pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationGetSnapshotError({
@@ -144,6 +175,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           const normalizedCommand = yield* normalizeDispatchCommand(command);
           const result = yield* startup.enqueueCommand(
             orchestrationEngine.dispatch(normalizedCommand),
+          );
+          yield* analytics.record(
+            "orchestration.command.dispatched",
+            summarizeClientCommand(command as Parameters<typeof summarizeClientCommand>[0]),
           );
           if (normalizedCommand.type === "thread.archive") {
             yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
@@ -186,6 +221,16 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               }),
           ),
         ),
+      [ORCHESTRATION_WS_METHODS.getSubagentDetail]: (input) =>
+        subagentDetailQuery.getSubagentDetail(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetSubagentDetailError({
+                message: "Failed to load subagent details",
+                cause,
+              }),
+          ),
+        ),
       [ORCHESTRATION_WS_METHODS.replayEvents]: (input) =>
         Stream.runCollect(
           orchestrationEngine.readEvents(
@@ -202,84 +247,144 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
         ),
       [WS_METHODS.subscribeOrchestrationDomainEvents]: (_input) =>
-        Stream.unwrap(
-          Effect.gen(function* () {
-            const snapshot = yield* orchestrationEngine.getReadModel();
-            const fromSequenceExclusive = snapshot.snapshotSequence;
-            const replayEvents: Array<OrchestrationEvent> = yield* Stream.runCollect(
-              orchestrationEngine.readEvents(fromSequenceExclusive),
-            ).pipe(
-              Effect.map((events) => Array.from(events)),
-              Effect.catch(() => Effect.succeed([] as Array<OrchestrationEvent>)),
-            );
-            const replayStream = Stream.fromIterable(replayEvents);
-            const source = Stream.merge(replayStream, orchestrationEngine.streamDomainEvents);
-            type SequenceState = {
-              readonly nextSequence: number;
-              readonly pendingBySequence: Map<number, OrchestrationEvent>;
-            };
-            const state = yield* Ref.make<SequenceState>({
-              nextSequence: fromSequenceExclusive + 1,
-              pendingBySequence: new Map<number, OrchestrationEvent>(),
-            });
-
-            return source.pipe(
-              Stream.mapEffect((event) =>
-                Ref.modify(
-                  state,
-                  ({
-                    nextSequence,
-                    pendingBySequence,
-                  }): [Array<OrchestrationEvent>, SequenceState] => {
-                    if (event.sequence < nextSequence || pendingBySequence.has(event.sequence)) {
-                      return [[], { nextSequence, pendingBySequence }];
-                    }
-
-                    const updatedPending = new Map(pendingBySequence);
-                    updatedPending.set(event.sequence, event);
-
-                    const emit: Array<OrchestrationEvent> = [];
-                    let expected = nextSequence;
-                    for (;;) {
-                      const expectedEvent = updatedPending.get(expected);
-                      if (!expectedEvent) {
-                        break;
-                      }
-                      emit.push(expectedEvent);
-                      updatedPending.delete(expected);
-                      expected += 1;
-                    }
-
-                    return [emit, { nextSequence: expected, pendingBySequence: updatedPending }];
-                  },
-                ),
-              ),
-              Stream.flatMap((events) => Stream.fromIterable(events)),
-            );
-          }),
-        ),
+        orchestrationEngine.streamDomainEvents,
       [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig,
       [WS_METHODS.serverRefreshProviders]: (_input) =>
-        providerRegistry.refresh().pipe(Effect.map((providers) => ({ providers }))),
+        providerRegistry.refresh().pipe(
+          Effect.tap((providers) =>
+            analytics.record("server.providers.refreshed", {
+              providerCount: providers.length,
+            }),
+          ),
+          Effect.map((providers) => ({ providers })),
+        ),
       [WS_METHODS.serverUpsertKeybinding]: (rule) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
           return { keybindings: keybindingsConfig, issues: [] };
         }),
       [WS_METHODS.serverGetSettings]: (_input) => serverSettings.getSettings,
-      [WS_METHODS.serverUpdateSettings]: ({ patch }) => serverSettings.updateSettings(patch),
+      [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
+        serverSettings
+          .updateSettings(patch)
+          .pipe(
+            Effect.tap(() =>
+              analytics.record("server.settings.updated", summarizeSettingsPatch(patch)),
+            ),
+          ),
       [WS_METHODS.serverSetShioriAuthToken]: ({ token }) =>
         Effect.gen(function* () {
           yield* Effect.logInfo("shiori account auth token updated", {
             present: token !== null,
           });
           yield* hostedShioriAuthTokenStore.setToken(token);
+          yield* analytics.record("server.shiori_auth.updated", {
+            hasToken: token !== null,
+          });
           return {};
         }),
       [WS_METHODS.serverGetProviderUsage]: ({ provider }) =>
         providerService
           .readUsage(provider)
           .pipe(Effect.map(toServerProviderUsageSnapshot), Effect.orDie),
+      [WS_METHODS.serverGetHostedBillingSnapshot]: (_input) => hostedBilling.getSnapshot,
+      [WS_METHODS.serverCreateHostedBillingCheckout]: (input) =>
+        hostedBilling.createCheckout(input),
+      [WS_METHODS.serverCreateHostedBillingPortal]: (input) => hostedBilling.createPortal(input),
+      [WS_METHODS.onboardingGetState]: (_input) =>
+        serverSettings.getSettings.pipe(
+          Effect.map((settings) => resolveOnboardingState(settings.onboarding)),
+          Effect.mapError(
+            (cause) =>
+              new OnboardingError({
+                message: "Failed to load onboarding state",
+                cause,
+              }),
+          ),
+        ),
+      [WS_METHODS.onboardingCompleteStep]: (input) =>
+        Effect.gen(function* () {
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new OnboardingError({
+                  message: "Failed to load onboarding state",
+                  cause,
+                }),
+            ),
+          );
+          const completion = completeOnboardingStep(settings.onboarding, input.stepId);
+
+          if (!completion.accepted) {
+            const expectedStepId = completion.expectedStepId;
+            return yield* new OnboardingError({
+              message:
+                expectedStepId === null
+                  ? "Onboarding is already complete."
+                  : `Step "${input.stepId}" cannot be completed yet. Complete "${expectedStepId}" first.`,
+            });
+          }
+
+          if (!completion.changed) {
+            return resolveOnboardingState(completion.progress);
+          }
+
+          const nextSettings = yield* serverSettings
+            .updateSettings({
+              onboarding: completion.progress,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OnboardingError({
+                    message: "Failed to persist onboarding state",
+                    cause,
+                  }),
+              ),
+            );
+          yield* analytics.record("onboarding.step.completed", {
+            stepId: input.stepId,
+            completed: resolveOnboardingState(nextSettings.onboarding).completed,
+          });
+          return resolveOnboardingState(nextSettings.onboarding);
+        }),
+      [WS_METHODS.onboardingReset]: (_input) =>
+        serverSettings
+          .updateSettings({
+            onboarding: resetOnboardingProgress(),
+          })
+          .pipe(
+            Effect.tap(() => analytics.record("onboarding.reset")),
+            Effect.map((settings) => resolveOnboardingState(settings.onboarding)),
+            Effect.mapError(
+              (cause) =>
+                new OnboardingError({
+                  message: "Failed to reset onboarding state",
+                  cause,
+                }),
+            ),
+          ),
+      [WS_METHODS.telemetryCapture]: (input) =>
+        analytics
+          .record(input.event, withTelemetrySource("web-client", input.properties))
+          .pipe(Effect.as({})),
+      [WS_METHODS.telemetryLog]: (input) =>
+        Effect.gen(function* () {
+          const context = withTelemetrySource("web-client", input.context);
+          switch (input.level) {
+            case "warn":
+              yield* Effect.logWarning(input.message, context);
+              break;
+            case "error":
+              yield* Effect.logError(input.message, context);
+              break;
+            case "info":
+            default:
+              yield* Effect.logInfo(input.message, context);
+              break;
+          }
+          return {};
+        }),
       [WS_METHODS.projectsSearchEntries]: (input) =>
         workspaceEntries.search(input).pipe(
           Effect.mapError(
@@ -339,11 +444,15 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               })),
             );
             const providerStatuses = providerRegistry.streamChanges.pipe(
-              Stream.map((providers) => ({
-                version: 1 as const,
-                type: "providerStatuses" as const,
-                payload: { providers },
-              })),
+              Stream.mapEffect((providers) =>
+                Ref.set(latestProvidersRef, providers).pipe(
+                  Effect.as({
+                    version: 1 as const,
+                    type: "providerStatuses" as const,
+                    payload: { providers },
+                  }),
+                ),
+              ),
             );
             const settingsUpdates = serverSettings.streamChanges.pipe(
               Stream.map((settings) => ({

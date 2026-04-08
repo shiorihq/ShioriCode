@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
+  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -102,6 +103,11 @@ const DIFF_PANEL_UNSAFE_CSS = `
   text-decoration-color: currentColor;
 }
 `;
+
+const DIFF_PANEL_FONT_STYLE = {
+  "--diffs-font-family": "var(--font-mono)",
+  "--diffs-header-font-family": "var(--font-mono)",
+} as CSSProperties;
 
 type RenderablePatch =
   | {
@@ -573,6 +579,7 @@ export default function DiffPanel({ mode = "inline", onClose }: DiffPanelProps) 
           <div
             ref={patchViewportRef}
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
+            style={DIFF_PANEL_FONT_STYLE}
           >
             {checkpointDiffError && !renderablePatch && (
               <div className="px-3">

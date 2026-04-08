@@ -42,7 +42,10 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { PersistenceSqlError } from "./persistence/Errors.ts";
+import {
+  SubagentDetailQuery,
+  type SubagentDetailQueryShape,
+} from "./orchestration/Services/SubagentDetailQuery.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -51,12 +54,14 @@ import { ProviderService, type ProviderServiceShape } from "./provider/Services/
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore.ts";
+import { HostedBillingService, type HostedBillingShape } from "./hostedBilling.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -132,9 +137,11 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
+    subagentDetailQuery?: Partial<SubagentDetailQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    hostedBilling?: Partial<HostedBillingShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -206,6 +213,12 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(AnalyticsService)({
+          record: () => Effect.void,
+          flush: Effect.void,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(Open)({
           ...options?.layers?.open,
         }),
@@ -241,6 +254,12 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(SubagentDetailQuery)({
+          getSubagentDetail: () => Effect.die("unused"),
+          ...options?.layers?.subagentDetailQuery,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(CheckpointDiffQuery)({
           getTurnDiff: () =>
             Effect.succeed({
@@ -273,6 +292,11 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        HostedBillingService.layerTest({
+          ...options?.layers?.hostedBilling,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -836,6 +860,80 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc hosted billing methods", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          hostedBilling: {
+            getSnapshot: Effect.succeed({
+              plans: [
+                {
+                  id: "plus",
+                  name: "Plus",
+                  description: "Starter paid plan",
+                  monthlyPrice: 10,
+                  annualPrice: 96,
+                  sortOrder: 0,
+                  highlighted: true,
+                  buttonText: "Get Plus",
+                  features: ["Feature A"],
+                },
+              ],
+            }),
+            createCheckout: () =>
+              Effect.succeed({
+                sessionId: "cs_test_1",
+                url: "https://checkout.stripe.test/session",
+              }),
+            createPortal: () =>
+              Effect.succeed({
+                url: "https://billing.stripe.test/session",
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            snapshot: client[WS_METHODS.serverGetHostedBillingSnapshot]({}),
+            checkout: client[WS_METHODS.serverCreateHostedBillingCheckout]({
+              planId: "pro",
+              isAnnual: true,
+            }),
+            portal: client[WS_METHODS.serverCreateHostedBillingPortal]({
+              flow: "manage",
+            }),
+          }),
+        ),
+      );
+
+      assert.deepEqual(result.snapshot, {
+        plans: [
+          {
+            id: "plus",
+            name: "Plus",
+            description: "Starter paid plan",
+            monthlyPrice: 10,
+            annualPrice: 96,
+            sortOrder: 0,
+            highlighted: true,
+            buttonText: "Get Plus",
+            features: ["Feature A"],
+          },
+        ],
+      });
+      assert.deepEqual(result.checkout, {
+        sessionId: "cs_test_1",
+        url: "https://checkout.stripe.test/session",
+      });
+      assert.deepEqual(result.portal, {
+        url: "https://billing.stripe.test/session",
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc git methods", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -1036,10 +1134,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
-          projectionSnapshotQuery: {
-            getSnapshot: () => Effect.succeed(snapshot),
-          },
           orchestrationEngine: {
+            getReadModel: () => Effect.succeed(snapshot),
             dispatch: () => Effect.succeed({ sequence: 7 }),
             readEvents: () => Stream.empty,
           },
@@ -1147,92 +1243,79 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect(
-    "routes websocket rpc subscribeOrchestrationDomainEvents with replay/live overlap resilience",
-    () =>
-      Effect.gen(function* () {
-        const now = new Date().toISOString();
-        const threadId = ThreadId.makeUnsafe("thread-1");
-        let replayCursor: number | null = null;
-        const makeEvent = (sequence: number): OrchestrationEvent =>
-          ({
-            sequence,
-            eventId: `event-${sequence}`,
-            aggregateKind: "thread",
-            aggregateId: threadId,
-            occurredAt: now,
-            commandId: null,
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "thread.reverted",
-            payload: {
-              threadId,
-              turnCount: sequence,
-            },
-          }) as OrchestrationEvent;
-
-        yield* buildAppUnderTest({
-          layers: {
-            orchestrationEngine: {
-              getReadModel: () =>
-                Effect.succeed({
-                  ...makeDefaultOrchestrationReadModel(),
-                  snapshotSequence: 1,
-                }),
-              readEvents: (fromSequenceExclusive) => {
-                replayCursor = fromSequenceExclusive;
-                return Stream.make(makeEvent(2), makeEvent(3));
-              },
-              streamDomainEvents: Stream.make(makeEvent(3), makeEvent(4)),
-            },
-          },
-        });
-
-        const wsUrl = yield* getWsServerUrl("/ws");
-        const events = yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
-              Stream.take(3),
-              Stream.runCollect,
-            ),
-          ),
-        );
-
-        assert.equal(replayCursor, 1);
-        assert.deepEqual(
-          Array.from(events).map((event) => event.sequence),
-          [2, 3, 4],
-        );
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc orchestration.getSnapshot errors", () =>
+  it.effect("routes websocket rpc subscribeOrchestrationDomainEvents as a live-only stream", () =>
     Effect.gen(function* () {
+      const now = new Date().toISOString();
+      const threadId = ThreadId.makeUnsafe("thread-1");
+      const makeEvent = (sequence: number): OrchestrationEvent =>
+        ({
+          sequence,
+          eventId: `event-${sequence}`,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.reverted",
+          payload: {
+            threadId,
+            turnCount: sequence,
+          },
+        }) as OrchestrationEvent;
+
       yield* buildAppUnderTest({
         layers: {
-          projectionSnapshotQuery: {
-            getSnapshot: () =>
-              Effect.fail(
-                new PersistenceSqlError({
-                  operation: "ProjectionSnapshotQuery.getSnapshot",
-                  detail: "projection unavailable",
-                }),
-              ),
+          orchestrationEngine: {
+            getReadModel: () =>
+              Effect.succeed({
+                ...makeDefaultOrchestrationReadModel(),
+                snapshotSequence: 3,
+              }),
+            streamDomainEvents: Stream.make(makeEvent(4), makeEvent(5)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        Array.from(events).map((event) => event.sequence),
+        [4, 5],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc orchestration.getSnapshot from the live read model", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        ...makeDefaultOrchestrationReadModel(),
+        snapshotSequence: 42,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            getReadModel: () => Effect.succeed(snapshot),
           },
         },
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})).pipe(
-          Effect.result,
-        ),
+        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
-      assertInclude(result.failure.message, "Failed to load orchestration snapshot");
+      assert.equal(result.snapshotSequence, 42);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

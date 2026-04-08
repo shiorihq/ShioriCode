@@ -25,11 +25,13 @@ This document covers how to run desktop releases from one tag, first without sig
   - Background checks run on startup delay + interval.
   - No automatic download or install.
   - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
-- Provider: GitHub Releases (`provider: github`) configured at build time.
-- Repository slug source:
+- Provider: generic update feed (`provider: generic`) when `SHIORICODE_DESKTOP_UPDATE_URL` is set.
+- Current release workflow target: `https://shiori-code.shiori.ai`.
+- GitHub Releases remains a supported fallback when `SHIORICODE_DESKTOP_UPDATE_URL` is unset.
+- GitHub repository slug source for that fallback:
   - `SHIORICODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
-- Temporary private-repo auth workaround:
+- Temporary private-repo auth workaround for the GitHub fallback:
   - set `SHIORICODE_DESKTOP_UPDATE_GITHUB_TOKEN` (or `GH_TOKEN`) in the desktop app runtime environment.
   - the app forwards it as an `Authorization: Bearer <token>` request header for updater HTTP calls.
 - Required release assets for updater:

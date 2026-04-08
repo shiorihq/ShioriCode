@@ -1,21 +1,39 @@
-import { OrchestrationEvent, ThreadId, type ServerLifecycleWelcomePayload } from "contracts";
+import {
+  OrchestrationEvent,
+  ThreadId,
+  type OnboardingState,
+  type OnboardingStepId,
+  type ServerLifecycleWelcomePayload,
+} from "contracts";
 import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
+import { resolveOnboardingState } from "shared/onboarding";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { HostedShioriAuthPanel } from "../components/auth/HostedShioriAuthPanel";
+import { HostedBillingPanel } from "../components/billing/HostedBillingPanel";
+import { OnboardingScreen } from "../components/onboarding/OnboardingScreen";
+import { TelemetryBridge } from "../components/TelemetryBridge";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { readNativeApi } from "../nativeApi";
+import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -34,11 +52,13 @@ import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import { logTelemetryErrorOnce, recordTelemetry } from "../telemetry";
 import { getWsRpcClient } from "~/wsRpcClient";
 
 export const Route = createRootRouteWithContext<{
@@ -68,11 +88,14 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <ServerStateBootstrap />
+        <TelemetryBridge />
         <EventRouter />
         <AuthGate>
-          <AppSidebarLayout>
-            <Outlet />
-          </AppSidebarLayout>
+          <OnboardingGate>
+            <AppSidebarLayout>
+              <Outlet />
+            </AppSidebarLayout>
+          </OnboardingGate>
         </AuthGate>
       </AnchoredToastProvider>
     </ToastProvider>
@@ -105,6 +128,11 @@ export function AuthGateScreenContent() {
             </p>
 
             <HostedShioriAuthPanel heading="" description="" />
+            {requiresPaidPlan ? (
+              <div className="mt-6">
+                <HostedBillingPanel mode="gate" />
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -151,6 +179,26 @@ export function AuthGateScreenContent() {
 function AuthGate({ children }: { children: ReactNode }) {
   const { isAuthenticated, isAuthLoading, isSubscriptionLoading, isPaidSubscriber } =
     useHostedShioriState();
+  const lastGateReasonRef = useRef<string | null>(null);
+
+  const gateReason =
+    isAuthLoading || (isAuthenticated && isSubscriptionLoading)
+      ? null
+      : !isAuthenticated
+        ? "sign_in_required"
+        : !isPaidSubscriber
+          ? "paid_subscription_required"
+          : null;
+
+  useEffect(() => {
+    if (gateReason === null || lastGateReasonRef.current === gateReason) {
+      return;
+    }
+    lastGateReasonRef.current = gateReason;
+    recordTelemetry("web.auth_gate.viewed", {
+      reason: gateReason,
+    });
+  }, [gateReason]);
 
   if (isAuthLoading || (isAuthenticated && isSubscriptionLoading) || !isAuthenticated) {
     return <AuthGateScreenContent />;
@@ -163,10 +211,159 @@ function AuthGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function OnboardingGate({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isSubscriptionLoading, isPaidSubscriber } = useHostedShioriState();
+  const serverConfig = useServerConfig();
+  const { defaultProjectId, handleNewThread } = useHandleNewThread();
+  const canRunOnboarding = isAuthenticated && !isSubscriptionLoading && isPaidSubscriber;
+  const [onboardingOverrideState, setOnboardingOverrideState] = useState<OnboardingState | null>(
+    null,
+  );
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [pendingStepId, setPendingStepId] = useState<OnboardingStepId | null>(null);
+  const lastViewedStepRef = useRef<OnboardingStepId | null>(null);
+
+  const serverOnboardingState = useMemo(() => {
+    if (!canRunOnboarding || serverConfig === null) {
+      return null;
+    }
+    return resolveOnboardingState(serverConfig.settings.onboarding);
+  }, [canRunOnboarding, serverConfig]);
+
+  const onboardingState = onboardingOverrideState ?? serverOnboardingState;
+
+  const completeOnboardingStep = useCallback(async (stepId: OnboardingStepId) => {
+    setPendingStepId(stepId);
+    setOnboardingError(null);
+    try {
+      const state = await ensureNativeApi().onboarding.completeStep({ stepId });
+      setOnboardingOverrideState(state);
+      return state;
+    } catch (error: unknown) {
+      setOnboardingError(
+        error instanceof Error ? error.message : "Failed to complete onboarding step.",
+      );
+      return null;
+    } finally {
+      setPendingStepId((currentStepId) => (currentStepId === stepId ? null : currentStepId));
+    }
+  }, []);
+
+  const startCoding = useCallback(async () => {
+    const state = await completeOnboardingStep("start-first-thread");
+    if (!state?.completed || !defaultProjectId) {
+      return;
+    }
+    await handleNewThread(defaultProjectId);
+  }, [completeOnboardingStep, defaultProjectId, handleNewThread]);
+
+  useEffect(() => {
+    if (!canRunOnboarding) {
+      setOnboardingOverrideState(null);
+      setOnboardingError(null);
+      setPendingStepId(null);
+    }
+  }, [canRunOnboarding]);
+
+  useEffect(() => {
+    if (!onboardingOverrideState || !serverOnboardingState) {
+      return;
+    }
+
+    if (onboardingStatesEqual(onboardingOverrideState, serverOnboardingState)) {
+      setOnboardingOverrideState(null);
+    }
+  }, [onboardingOverrideState, serverOnboardingState]);
+
+  useEffect(() => {
+    if (!canRunOnboarding || !onboardingState) {
+      return;
+    }
+    if (onboardingState.completed || onboardingState.currentStepId !== "sign-in") {
+      return;
+    }
+    if (pendingStepId !== null) {
+      return;
+    }
+
+    completeOnboardingStep("sign-in");
+  }, [canRunOnboarding, completeOnboardingStep, onboardingState, pendingStepId]);
+
+  useEffect(() => {
+    if (!canRunOnboarding || onboardingState === null || onboardingState.completed) {
+      lastViewedStepRef.current = null;
+      return;
+    }
+    if (lastViewedStepRef.current === onboardingState.currentStepId) {
+      return;
+    }
+    lastViewedStepRef.current = onboardingState.currentStepId;
+    recordTelemetry("web.onboarding.step_viewed", {
+      stepId: onboardingState.currentStepId,
+    });
+  }, [canRunOnboarding, onboardingState]);
+
+  if (!canRunOnboarding) {
+    return null;
+  }
+
+  if (onboardingState === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+        <p className="shimmer shimmer-spread-200 text-sm text-muted-foreground">
+          Loading onboarding...
+        </p>
+      </div>
+    );
+  }
+
+  if (!onboardingState.completed) {
+    return (
+      <OnboardingScreen
+        onboardingState={onboardingState}
+        pendingStepId={pendingStepId}
+        onboardingError={onboardingError}
+        onCompleteStep={completeOnboardingStep}
+        onStartCoding={startCoding}
+      />
+    );
+  }
+
+  return <>{children}</>;
+}
+
+function onboardingStatesEqual(left: OnboardingState, right: OnboardingState): boolean {
+  if (
+    left.completed !== right.completed ||
+    left.completedCount !== right.completedCount ||
+    left.totalSteps !== right.totalSteps ||
+    left.currentStepId !== right.currentStepId ||
+    left.steps.length !== right.steps.length
+  ) {
+    return false;
+  }
+
+  for (const [index, leftStep] of left.steps.entries()) {
+    const rightStep = right.steps[index];
+    if (!rightStep || rightStep.id !== leftStep.id || rightStep.completed !== leftStep.completed) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const message = errorMessage(error);
   const details = errorDetails(error);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    logTelemetryErrorOnce("web.route_error_boundary", {
+      message,
+      details,
+    });
+  }, [details, message]);
 
   const copyTrace = useCallback(() => {
     void navigator.clipboard.writeText(details).then(() => {

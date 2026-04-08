@@ -1,6 +1,7 @@
 import { ApprovalRequestId, type ChatAttachment, type OrchestrationEvent } from "contracts";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { normalizeProjectTitle } from "shared/String";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
@@ -377,7 +378,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "project.created":
           yield* projectionProjectRepository.upsert({
             projectId: event.payload.projectId,
-            title: event.payload.title,
+            title: normalizeProjectTitle(event.payload.title),
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
@@ -396,7 +397,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionProjectRepository.upsert({
             ...existingRow.value,
-            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.title !== undefined
+              ? { title: normalizeProjectTitle(event.payload.title) }
+              : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
               : {}),

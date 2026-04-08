@@ -268,9 +268,7 @@ export function UsagePanel() {
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
         <section className="space-y-3">
           <div className="space-y-1">
-            <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Usage
-            </h2>
+            <h2 className="text-[11px] font-medium text-muted-foreground">Usage</h2>
             <p className="text-sm text-muted-foreground">
               Only percentage-based progress is shown here.
             </p>

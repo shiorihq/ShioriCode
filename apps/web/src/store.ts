@@ -12,6 +12,7 @@ import {
   type OrchestrationSessionStatus,
 } from "contracts";
 import { resolveModelSlugForProvider } from "shared/model";
+import { normalizeProjectTitle } from "shared/String";
 import { create } from "zustand";
 import {
   findLatestProposedPlan,
@@ -184,7 +185,7 @@ function mapThread(thread: OrchestrationThread): Thread {
 function mapProject(project: OrchestrationReadModel["projects"][number]): Project {
   return {
     id: project.id,
-    name: project.title,
+    name: normalizeProjectTitle(project.title),
     cwd: project.workspaceRoot,
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
@@ -619,14 +620,16 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           ? state.projects.map((project, index) =>
               index === existingIndex ? nextProject : project,
             )
-          : [...state.projects, nextProject];
+          : [nextProject, ...state.projects];
       return { ...state, projects };
     }
 
     case "project.meta-updated": {
       const projects = updateProject(state.projects, event.payload.projectId, (project) => ({
         ...project,
-        ...(event.payload.title !== undefined ? { name: event.payload.title } : {}),
+        ...(event.payload.title !== undefined
+          ? { name: normalizeProjectTitle(event.payload.title) }
+          : {}),
         ...(event.payload.workspaceRoot !== undefined ? { cwd: event.payload.workspaceRoot } : {}),
         ...(event.payload.defaultModelSelection !== undefined
           ? {

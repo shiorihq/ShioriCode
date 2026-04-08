@@ -31,6 +31,7 @@ export interface HostedViewer {
   name: string | null;
   email: string | null;
   image: string | null;
+  isAdmin?: boolean;
 }
 
 /** Normalized Shiori billing tier (see `~/Developer/shiori/convex/schema.ts` subscriptions.plan). */

@@ -47,6 +47,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { shouldConfirmBeforeQuit } from "./quitConfirmation";
 import { MACOS_TRAFFIC_LIGHT_POSITION, resolveDesktopWindowControlsInset } from "./windowControls";
 
 syncShellEnvironment();
@@ -70,6 +71,7 @@ const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const BASE_DIR = process.env.SHIORICODE_HOME?.trim() || Path.join(OS.homedir(), ".shiori");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
+const SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const DESKTOP_SCHEME = "shioricode";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -91,6 +93,8 @@ const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 const COMPANION_CLI_PACKAGE_NAME = "shiori-cli";
 const COMPANION_CLI_BINARY_NAME = "shiori";
+const TOGGLE_DEVTOOLS_ACCELERATOR =
+  process.platform === "darwin" ? "Command+Option+I" : "Ctrl+Shift+I";
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -110,6 +114,8 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let quitConfirmationApproved = false;
+let quitConfirmationInFlight = false;
 let companionCliState: DesktopCompanionCliState = {
   status: "not-installed",
   version: null,
@@ -1000,7 +1006,11 @@ function configureApplicationMenu(): void {
       submenu: [
         { role: "reload" },
         { role: "forceReload" },
-        { role: "toggleDevTools" },
+        {
+          label: "Toggle Developer Tools",
+          accelerator: TOGGLE_DEVTOOLS_ACCELERATOR,
+          click: () => toggleFocusedDevTools(),
+        },
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
@@ -1023,6 +1033,16 @@ function configureApplicationMenu(): void {
   );
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function toggleFocusedDevTools(): void {
+  const window =
+    BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (!window) {
+    return;
+  }
+
+  window.webContents.toggleDevTools();
 }
 
 function resolveResourcePath(fileName: string): string | null {
@@ -1695,6 +1715,57 @@ function getIconOption(): { icon: string } | Record<string, never> {
   return iconPath ? { icon: iconPath } : {};
 }
 
+function finalizeDesktopQuit(): void {
+  if (isQuitting) {
+    return;
+  }
+
+  isQuitting = true;
+  updateInstallInFlight = false;
+  writeDesktopLogHeader("quit finalization started");
+  clearUpdatePollTimer();
+  stopBackend();
+  restoreStdIoCapture?.();
+}
+
+function shouldPromptForQuit(): boolean {
+  if (quitConfirmationApproved || isQuitting || updateInstallInFlight) {
+    return false;
+  }
+
+  return shouldConfirmBeforeQuit(SETTINGS_PATH, (message, error) => {
+    console.warn(`[desktop] ${message}`, error);
+  });
+}
+
+function promptForQuitConfirmation(): void {
+  if (quitConfirmationInFlight) {
+    return;
+  }
+
+  quitConfirmationInFlight = true;
+  const ownerWindow =
+    BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+
+  void showDesktopConfirmDialog("Quit ShioriCode?", ownerWindow, {
+    title: APP_DISPLAY_NAME,
+    detail: "Your running sessions will disconnect.",
+    cancelLabel: "Cancel",
+    confirmLabel: "Quit",
+  })
+    .then((confirmed) => {
+      if (!confirmed) {
+        return;
+      }
+
+      quitConfirmationApproved = true;
+      app.quit();
+    })
+    .finally(() => {
+      quitConfirmationInFlight = false;
+    });
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
@@ -1765,10 +1836,25 @@ function createWindow(): BrowserWindow {
 
   if (isDevelopment) {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-    window.webContents.openDevTools({ mode: "detach" });
   } else {
     void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
   }
+
+  window.on("close", (event) => {
+    if (process.platform === "darwin" || !shouldPromptForQuit()) {
+      return;
+    }
+
+    const otherOpenWindows = BrowserWindow.getAllWindows().filter(
+      (candidate) => candidate !== window && !candidate.isDestroyed(),
+    );
+    if (otherOpenWindows.length > 0) {
+      return;
+    }
+
+    event.preventDefault();
+    promptForQuitConfirmation();
+  });
 
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -1807,13 +1893,14 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap main window created");
 }
 
-app.on("before-quit", () => {
-  isQuitting = true;
-  updateInstallInFlight = false;
-  writeDesktopLogHeader("before-quit received");
-  clearUpdatePollTimer();
-  stopBackend();
-  restoreStdIoCapture?.();
+app.on("before-quit", (event) => {
+  if (shouldPromptForQuit()) {
+    event.preventDefault();
+    promptForQuitConfirmation();
+    return;
+  }
+
+  finalizeDesktopQuit();
 });
 
 app
@@ -1847,21 +1934,17 @@ app.on("window-all-closed", () => {
 if (process.platform !== "win32") {
   process.on("SIGINT", () => {
     if (isQuitting) return;
-    isQuitting = true;
+    quitConfirmationApproved = true;
     writeDesktopLogHeader("SIGINT received");
-    clearUpdatePollTimer();
-    stopBackend();
-    restoreStdIoCapture?.();
+    finalizeDesktopQuit();
     app.quit();
   });
 
   process.on("SIGTERM", () => {
     if (isQuitting) return;
-    isQuitting = true;
+    quitConfirmationApproved = true;
     writeDesktopLogHeader("SIGTERM received");
-    clearUpdatePollTimer();
-    stopBackend();
-    restoreStdIoCapture?.();
+    finalizeDesktopQuit();
     app.quit();
   });
 }

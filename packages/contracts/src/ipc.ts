@@ -21,6 +21,11 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type {
+  HostedBillingCheckoutInput,
+  HostedBillingCheckoutResult,
+  HostedBillingPortalFlow,
+  HostedBillingPortalResult,
+  HostedBillingSnapshot,
   ServerConfig,
   ServerProviderUsageSnapshot,
   ServerProviderUpdatedPayload,
@@ -41,13 +46,17 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetSubagentDetailInput,
+  OrchestrationSubagentDetail,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type { OnboardingCompleteStepInput, OnboardingState } from "./onboarding";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
+import type { TelemetryCaptureInput, TelemetryLogInput } from "./telemetry";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -195,6 +204,13 @@ export interface NativeApi {
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     setShioriAuthToken: (token: string | null) => Promise<void>;
     getProviderUsage: (provider: "codex" | "claudeAgent") => Promise<ServerProviderUsageSnapshot>;
+    getHostedBillingSnapshot: () => Promise<HostedBillingSnapshot>;
+    createHostedBillingCheckout: (
+      input: HostedBillingCheckoutInput,
+    ) => Promise<HostedBillingCheckoutResult>;
+    createHostedBillingPortal: (
+      flow: HostedBillingPortalFlow,
+    ) => Promise<HostedBillingPortalResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
@@ -203,7 +219,19 @@ export interface NativeApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    getSubagentDetail: (
+      input: OrchestrationGetSubagentDetailInput,
+    ) => Promise<OrchestrationSubagentDetail>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+  };
+  onboarding: {
+    getState: () => Promise<OnboardingState>;
+    completeStep: (input: OnboardingCompleteStepInput) => Promise<OnboardingState>;
+    reset: () => Promise<OnboardingState>;
+  };
+  telemetry: {
+    capture: (input: TelemetryCaptureInput) => Promise<void>;
+    log: (input: TelemetryLogInput) => Promise<void>;
   };
 }

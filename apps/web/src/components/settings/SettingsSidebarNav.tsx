@@ -5,6 +5,7 @@ import {
   BarChart3Icon,
   BlocksIcon,
   MessageSquareIcon,
+  PaletteIcon,
   Settings2Icon,
   UserIcon,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/appearance"
   | "/settings/skills"
   | "/settings/account"
   | "/settings/archived"
@@ -33,6 +35,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
   { label: "Account", to: "/settings/account", icon: UserIcon },
   { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },

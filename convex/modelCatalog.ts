@@ -103,4 +103,26 @@ export const DEFAULT_HOSTED_MODEL_CATALOG: ReadonlyArray<HostedCatalogProvider> 
       },
     ],
   },
+  {
+    id: "qwen",
+    title: "Qwen",
+    description: "Qwen models for large-context coding, agent workflows, and reasoning variants.",
+    websiteUrl: "https://qwen.aliyun.com/",
+    sortOrder: 40,
+    models: [
+      {
+        id: "qwen/qwen3.5-plus-02-15",
+        name: "Qwen3.5 Plus",
+        description: "1M context multimodal Qwen model with a separate thinking variant.",
+        reasoning: false,
+        reasoningId: "qwen/qwen3.5-plus-02-15-thinking",
+        toolCalling: true,
+        multiModal: true,
+        coding: true,
+        isEnabled: true,
+        isPremiumModel: true,
+        contextWindow: 1_000_000,
+      },
+    ],
+  },
 ];

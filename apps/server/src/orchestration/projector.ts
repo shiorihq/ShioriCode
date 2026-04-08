@@ -6,6 +6,7 @@ import {
   OrchestrationThread,
 } from "contracts";
 import { Effect, Schema } from "effect";
+import { normalizeProjectTitle } from "shared/String";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -181,7 +182,7 @@ export function projectEvent(
           const existing = nextBase.projects.find((entry) => entry.id === payload.projectId);
           const nextProject = {
             id: payload.projectId,
-            title: payload.title,
+            title: normalizeProjectTitle(payload.title),
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
@@ -209,7 +210,9 @@ export function projectEvent(
             project.id === payload.projectId
               ? {
                   ...project,
-                  ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.title !== undefined
+                    ? { title: normalizeProjectTitle(payload.title) }
+                    : {}),
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
                     : {}),

@@ -157,6 +157,48 @@ describe("flattenHostedShioriModels", () => {
     ]);
   });
 
+  it("keeps thinking toggle support for hosted models that expose only a reasoning variant id", () => {
+    expect(
+      flattenHostedShioriModels([
+        {
+          id: "qwen",
+          title: "Qwen",
+          description: "",
+          websiteUrl: "https://qwen.aliyun.com",
+          sortOrder: 10,
+          models: [
+            {
+              id: "qwen/qwen3.5-plus-02-15",
+              name: "Qwen3.5 Plus",
+              description: "",
+              reasoning: false,
+              reasoningId: "qwen/qwen3.5-plus-02-15-thinking",
+              toolCalling: true,
+              multiModal: true,
+              coding: true,
+              isEnabled: true,
+              isPremiumModel: true,
+              contextWindow: 1_000_000,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        slug: "qwen/qwen3.5-plus-02-15",
+        name: "Qwen3.5 Plus",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ]);
+  });
+
   it("does not double-prefix catalog ids that are already canonical", () => {
     expect(
       flattenHostedShioriModels([

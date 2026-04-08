@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { truncate } from "./String";
+import { normalizeProjectTitle, truncate } from "./String";
 
 describe("truncate", () => {
   it("trims surrounding whitespace", () => {
@@ -13,5 +13,19 @@ describe("truncate", () => {
 
   it("truncates long strings and appends an ellipsis", () => {
     expect(truncate("abcdefghij", 5)).toBe("abcde...");
+  });
+});
+
+describe("normalizeProjectTitle", () => {
+  it("trims and lowercases project titles", () => {
+    expect(normalizeProjectTitle("  My-Project  ")).toBe("my-project");
+  });
+
+  it("keeps already lowercase names unchanged", () => {
+    expect(normalizeProjectTitle("demo")).toBe("demo");
+  });
+
+  it("falls back to project when the title is blank", () => {
+    expect(normalizeProjectTitle("   ")).toBe("project");
   });
 });

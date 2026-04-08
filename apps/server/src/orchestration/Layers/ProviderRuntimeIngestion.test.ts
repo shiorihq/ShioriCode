@@ -2691,6 +2691,50 @@ describe("ProviderRuntimeIngestion", () => {
     expect(payload?.parentItemId).toBe("agent-tool-2");
   });
 
+  it("projects Codex child parent ids from raw payloads onto tool activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-codex-child-tool-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-codex-child-1"),
+      itemId: asItemId("child-tool-1"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "inProgress",
+        title: "Read",
+        detail: "Read: src/index.ts",
+      },
+      raw: {
+        source: "codex.app-server.notification",
+        method: "item/started",
+        payload: {
+          parentItemId: "agent-tool-codex-1",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-codex-child-tool-started",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-codex-child-tool-started",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(payload?.parentItemId).toBe("agent-tool-codex-1");
+  });
+
   it("projects reasoning lifecycle and deltas into thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -2765,6 +2809,43 @@ describe("ProviderRuntimeIngestion", () => {
     expect(deltaPayload?.delta).toBe("Tracing the event stream.");
     expect(completed?.kind).toBe("reasoning.completed");
     expect(completed?.summary).toBe("Thought");
+  });
+
+  it("projects reasoning item updates with detail as reasoning deltas", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-reasoning-updated"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-update"),
+      itemId: asItemId("reasoning-item-2"),
+      payload: {
+        itemType: "reasoning",
+        detail: "Comparing adapters before applying edits.",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-updated",
+      ),
+    );
+
+    const updated = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-updated",
+    );
+    const payload =
+      updated?.payload && typeof updated.payload === "object"
+        ? (updated.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(updated?.kind).toBe("reasoning.delta");
+    expect(updated?.summary).toBe("Thinking");
+    expect(payload?.delta).toBe("Comparing adapters before applying edits.");
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

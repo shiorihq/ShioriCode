@@ -26,6 +26,18 @@ export interface ProviderMcpToolRuntime {
   readonly close: () => Promise<void>;
 }
 
+export interface BuildProviderMcpToolRuntimeOptions {
+  readonly createClient?: (input: {
+    readonly entry: McpServerEntry;
+    readonly cwd?: string;
+  }) => Promise<MCPClient>;
+  readonly connectTimeoutMs?: number;
+  readonly listToolsTimeoutMs?: number;
+}
+
+const DEFAULT_MCP_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_MCP_LIST_TOOLS_TIMEOUT_MS = 10_000;
+
 export function filterMcpServersForProvider(
   provider: ProviderKind,
   servers: ReadonlyArray<McpServerEntry>,
@@ -100,93 +112,179 @@ async function createMcpClientForEntry(input: {
   }
 }
 
-export async function buildProviderMcpToolRuntime(input: {
-  readonly provider: ProviderKind;
-  readonly servers: ReadonlyArray<McpServerEntry>;
-  readonly cwd?: string;
-}): Promise<ProviderMcpToolRuntime> {
+function normalizeErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  return fallback;
+}
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    return operation;
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function safelyCloseClient(client: MCPClient): Promise<void> {
+  await Promise.allSettled([client.close()]);
+}
+
+export async function buildProviderMcpToolRuntime(
+  input: {
+    readonly provider: ProviderKind;
+    readonly servers: ReadonlyArray<McpServerEntry>;
+    readonly cwd?: string;
+  },
+  options: BuildProviderMcpToolRuntimeOptions = {},
+): Promise<ProviderMcpToolRuntime> {
+  // ShioriCode-native MCP runtime:
+  // - resolves provider-scoped servers from ShioriCode settings
+  // - connects to each server in isolation (no single-server fail-stop)
+  // - exposes namespaced tool descriptors/executors for hosted Shiori turns
+  const createClient = options.createClient ?? createMcpClientForEntry;
+  const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_MCP_CONNECT_TIMEOUT_MS;
+  const listToolsTimeoutMs = options.listToolsTimeoutMs ?? DEFAULT_MCP_LIST_TOOLS_TIMEOUT_MS;
+  const providerServers = filterMcpServersForProvider(input.provider, input.servers);
+
   const clients: MCPClient[] = [];
   const descriptors: ProviderMcpDescriptor[] = [];
   const executors = new Map<string, ProviderMcpToolExecutor>();
   const warnings: string[] = [];
   let closed = false;
 
-  try {
-    for (const entry of filterMcpServersForProvider(input.provider, input.servers)) {
-      const client = await createMcpClientForEntry({
-        entry,
-        ...(input.cwd ? { cwd: input.cwd } : {}),
-      });
-      clients.push(client);
-      const definitions = await client.listTools();
-      const toolSet = client.toolsFromDefinitions(definitions);
+  const serverResults = await Promise.allSettled(
+    providerServers.map(async (entry) => {
+      let client: MCPClient | null = null;
+      try {
+        client = await withTimeout(
+          createClient({
+            entry,
+            ...(input.cwd ? { cwd: input.cwd } : {}),
+          }),
+          connectTimeoutMs,
+          `Timed out connecting to MCP server '${entry.name}' after ${connectTimeoutMs}ms.`,
+        );
 
-      for (const tool of definitions.tools) {
-        const prefixedName = prefixedShioriToolName(entry.name, tool.name);
-        if (executors.has(prefixedName)) {
-          warnings.push(`Skipping duplicate MCP tool '${tool.name}' from server '${entry.name}'.`);
-          continue;
+        const definitions = await withTimeout(
+          client.listTools(),
+          listToolsTimeoutMs,
+          `Timed out loading tools from MCP server '${entry.name}' after ${listToolsTimeoutMs}ms.`,
+        );
+
+        const toolSet = client.toolsFromDefinitions(definitions);
+        return { entry, client, definitions, toolSet };
+      } catch (error) {
+        if (client) {
+          await safelyCloseClient(client);
         }
-
-        const executable = toolSet[tool.name as keyof typeof toolSet] as
-          | {
-              execute: (input: Record<string, unknown>, options: unknown) => unknown;
-            }
-          | undefined;
-        if (!executable || typeof executable.execute !== "function") {
-          warnings.push(
-            `Skipping MCP tool '${tool.name}' from server '${entry.name}' because it is not executable.`,
-          );
-          continue;
-        }
-
-        descriptors.push({
-          name: prefixedName,
-          title:
-            typeof tool.title === "string" && tool.title.trim().length > 0
-              ? `${entry.name} · ${tool.title}`
-              : `${entry.name} · ${tool.name}`,
-          description: resolveMcpToolDescription(tool),
-          inputSchema:
-            tool.inputSchema && typeof tool.inputSchema === "object"
-              ? (tool.inputSchema as Record<string, unknown>)
-              : {
-                  type: "object",
-                  properties: {},
-                  additionalProperties: true,
-                },
-        });
-
-        executors.set(prefixedName, {
-          title:
-            typeof tool.title === "string" && tool.title.trim().length > 0
-              ? `${entry.name} · ${tool.title}`
-              : `${entry.name} · ${tool.name}`,
-          execute: async (toolInput) =>
-            await Promise.resolve(
-              executable.execute(toolInput, {
-                messages: [],
-                toolCallId: prefixedName,
-              } as unknown),
-            ),
-        });
+        throw error;
       }
+    }),
+  );
+
+  for (let index = 0; index < serverResults.length; index += 1) {
+    const result = serverResults[index];
+    const entry = providerServers[index];
+    if (!result || !entry) {
+      continue;
     }
 
-    return {
-      descriptors,
-      executors,
-      warnings,
-      close: async () => {
-        if (closed) return;
-        closed = true;
-        await Promise.allSettled(clients.map((client) => client.close()));
-      },
-    };
-  } catch (error) {
-    await Promise.allSettled(clients.map((client) => client.close()));
-    throw error;
+    if (result.status === "rejected") {
+      warnings.push(
+        `Failed to initialize MCP server '${entry.name}' (${entry.transport}): ${normalizeErrorMessage(
+          result.reason,
+          "unknown error",
+        )}`,
+      );
+      continue;
+    }
+
+    const { client, definitions, toolSet } = result.value;
+    clients.push(client);
+
+    for (const tool of definitions.tools) {
+      const prefixedName = prefixedShioriToolName(entry.name, tool.name);
+      if (executors.has(prefixedName)) {
+        warnings.push(`Skipping duplicate MCP tool '${tool.name}' from server '${entry.name}'.`);
+        continue;
+      }
+
+      const executable = toolSet[tool.name as keyof typeof toolSet] as
+        | {
+            execute: (input: Record<string, unknown>, options: unknown) => unknown;
+          }
+        | undefined;
+      if (!executable || typeof executable.execute !== "function") {
+        warnings.push(
+          `Skipping MCP tool '${tool.name}' from server '${entry.name}' because it is not executable.`,
+        );
+        continue;
+      }
+
+      descriptors.push({
+        name: prefixedName,
+        title:
+          typeof tool.title === "string" && tool.title.trim().length > 0
+            ? `${entry.name} · ${tool.title}`
+            : `${entry.name} · ${tool.name}`,
+        description: resolveMcpToolDescription(tool),
+        inputSchema:
+          tool.inputSchema && typeof tool.inputSchema === "object"
+            ? (tool.inputSchema as Record<string, unknown>)
+            : {
+                type: "object",
+                properties: {},
+                additionalProperties: true,
+              },
+      });
+
+      executors.set(prefixedName, {
+        title:
+          typeof tool.title === "string" && tool.title.trim().length > 0
+            ? `${entry.name} · ${tool.title}`
+            : `${entry.name} · ${tool.name}`,
+        execute: async (toolInput) =>
+          await Promise.resolve(
+            executable.execute(toolInput, {
+              messages: [],
+              toolCallId: prefixedName,
+            } as unknown),
+          ),
+      });
+    }
   }
+
+  return {
+    descriptors,
+    executors,
+    warnings,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await Promise.allSettled(clients.map((client) => client.close()));
+    },
+  };
 }
 
 function escapeTomlString(value: string): string {

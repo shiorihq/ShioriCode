@@ -117,6 +117,7 @@ async function waitForThread(
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
+    messages: ReadonlyArray<{ role: string; text: string; id: string }>;
   }) => boolean,
   timeoutMs = 15_000,
 ) {
@@ -125,6 +126,7 @@ async function waitForThread(
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
+    messages: ReadonlyArray<{ role: string; text: string; id: string }>;
   }> => {
     const readModel = await Effect.runPromise(engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
@@ -942,6 +944,258 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       numTurns: 1,
     });
+  });
+
+  it("retries an assistant turn by rewinding server state before dispatching a fresh turn", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+    const originalUserMessageId = MessageId.makeUnsafe("msg-user-original");
+    const originalAssistantMessageId = MessageId.makeUnsafe("msg-assistant-original");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-retry-original-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: originalUserMessageId,
+          role: "user",
+          text: "retry this",
+          attachments: [],
+        },
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-retry-assistant-delta"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: originalAssistantMessageId,
+        delta: "first answer",
+        turnId: asTurnId("turn-retry-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-retry-assistant-complete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: originalAssistantMessageId,
+        turnId: asTurnId("turn-retry-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-retry-diff-complete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-retry-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "ready",
+        files: [],
+        assistantMessageId: originalAssistantMessageId,
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.retry",
+        commandId: CommandId.makeUnsafe("cmd-turn-retry"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        assistantMessageId: originalAssistantMessageId,
+        createdAt,
+      }),
+    );
+
+    const events = await waitForEvent(harness.engine, (event) => {
+      const typedEvent = event as { type: string; payload?: { messageId?: string } };
+      return (
+        typedEvent.type === "thread.turn-start-requested" &&
+        typedEvent.payload?.messageId !== String(originalUserMessageId)
+      );
+    });
+    const retryStartIndex = events.findIndex((event) => {
+      if (event.type !== "thread.turn-start-requested") {
+        return false;
+      }
+      return event.payload.messageId !== originalUserMessageId;
+    });
+    const revertIndex = events.findIndex((event) => event.type === "thread.reverted");
+
+    expect(revertIndex).toBeGreaterThan(-1);
+    expect(retryStartIndex).toBeGreaterThan(revertIndex);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      numTurns: 1,
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.messages.length === 1);
+    expect(thread.checkpoints).toHaveLength(0);
+    expect(thread.messages[0]).toMatchObject({
+      role: "user",
+      text: "retry this",
+    });
+    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
+  });
+
+  it("retries an interrupted assistant turn even when that turn has no completed checkpoint", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+    const firstUserMessageId = MessageId.makeUnsafe("msg-user-first");
+    const firstAssistantMessageId = MessageId.makeUnsafe("msg-assistant-first");
+    const interruptedUserMessageId = MessageId.makeUnsafe("msg-user-interrupted");
+    const interruptedAssistantMessageId = MessageId.makeUnsafe("msg-assistant-interrupted");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-start-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: firstUserMessageId,
+          role: "user",
+          text: "first turn",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-assistant-delta-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: firstAssistantMessageId,
+        delta: "first answer",
+        turnId: asTurnId("turn-retry-interrupted-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-assistant-complete-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: firstAssistantMessageId,
+        turnId: asTurnId("turn-retry-interrupted-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-diff-complete-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-retry-interrupted-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "ready",
+        files: [],
+        assistantMessageId: firstAssistantMessageId,
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-start-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: interruptedUserMessageId,
+          role: "user",
+          text: "retry interrupted turn",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-assistant-delta-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: interruptedAssistantMessageId,
+        delta: "partial answer",
+        turnId: asTurnId("turn-retry-interrupted-2"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-retry-interrupted-assistant-complete-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: interruptedAssistantMessageId,
+        turnId: asTurnId("turn-retry-interrupted-2"),
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.retry",
+        commandId: CommandId.makeUnsafe("cmd-turn-retry-interrupted"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        assistantMessageId: interruptedAssistantMessageId,
+        createdAt,
+      }),
+    );
+
+    const events = await waitForEvent(harness.engine, (event) => {
+      const typedEvent = event as { type: string; payload?: { messageId?: string } };
+      return (
+        typedEvent.type === "thread.turn-start-requested" &&
+        typedEvent.payload?.messageId !== String(firstUserMessageId) &&
+        typedEvent.payload?.messageId !== String(interruptedUserMessageId)
+      );
+    });
+
+    const retryStartIndex = events.findIndex((event) => {
+      if (event.type !== "thread.turn-start-requested") {
+        return false;
+      }
+      return (
+        event.payload.messageId !== firstUserMessageId &&
+        event.payload.messageId !== interruptedUserMessageId
+      );
+    });
+    const revertIndex = events.findIndex((event) => event.type === "thread.reverted");
+
+    expect(revertIndex).toBeGreaterThan(-1);
+    expect(retryStartIndex).toBeGreaterThan(revertIndex);
+    expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      const retryUserMessageCount = entry.messages.filter(
+        (message) => message.role === "user" && message.text === "retry interrupted turn",
+      ).length;
+      return retryUserMessageCount === 1 && entry.messages.length === 3;
+    });
+    expect(thread.checkpoints).toHaveLength(1);
+    expect(thread.messages.map((message) => message.text)).toEqual([
+      "first turn",
+      "first answer",
+      "retry interrupted turn",
+    ]);
   });
 
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {

@@ -1,6 +1,9 @@
 import { Effect } from "effect";
-
-const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
+import {
+  createHostedShioriHeaders,
+  isHostedShioriAuthToken,
+  normalizeHostedShioriApiBaseUrl,
+} from "../hostedShioriApi";
 
 export interface ShioriCodeEntitlements {
   readonly allowed: boolean;
@@ -13,20 +16,14 @@ export interface ShioriCodeEntitlementsProbe {
   readonly message: string | null;
 }
 
-function normalizeApiBaseUrl(apiBaseUrl: string): string {
-  return apiBaseUrl.replace(/\/+$/, "");
-}
-
-function isJwtLikeToken(token: string | null): token is string {
-  return typeof token === "string" && JWT_LIKE_TOKEN_PATTERN.test(token.trim());
-}
+const ENTITLEMENTS_REQUEST_TIMEOUT_MS = 2_500;
 
 export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlements")(
   function* (input: {
     readonly apiBaseUrl: string;
     readonly authToken: string | null;
   }): Effect.fn.Return<ShioriCodeEntitlementsProbe> {
-    if (!isJwtLikeToken(input.authToken)) {
+    if (!isHostedShioriAuthToken(input.authToken)) {
       return {
         entitlements: null,
         message: null,
@@ -34,15 +31,21 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
     }
     const authToken = input.authToken;
 
-    const response = yield* Effect.promise(() =>
-      fetch(`${normalizeApiBaseUrl(input.apiBaseUrl)}/api/shiori-code/entitlements`, {
-        headers: {
-          "X-Convex-Auth-Token": authToken,
-          "X-Shiori-Client": "electron",
-          "User-Agent": "ShioriCode-macOS/1.0",
+    const response = yield* Effect.promise(() => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), ENTITLEMENTS_REQUEST_TIMEOUT_MS);
+      return fetch(
+        `${normalizeHostedShioriApiBaseUrl(input.apiBaseUrl)}/api/shiori-code/entitlements`,
+        {
+          headers: createHostedShioriHeaders(authToken),
+          signal: controller.signal,
         },
-      }).catch(() => null),
-    );
+      )
+        .catch(() => null)
+        .finally(() => {
+          clearTimeout(timeoutId);
+        });
+    });
 
     if (!response) {
       return {

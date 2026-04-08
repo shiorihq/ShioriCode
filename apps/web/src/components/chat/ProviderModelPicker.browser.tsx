@@ -123,6 +123,19 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   };
 }
 
+function buildShioriProvider(models: ServerProvider["models"]): ServerProvider {
+  return {
+    provider: "shiori",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: new Date().toISOString(),
+    models,
+  };
+}
+
 async function mountPicker(props: {
   provider: ProviderKind;
   model: string;
@@ -314,6 +327,83 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude Sonnet 4.6");
         expect(text).toContain("Claude Haiku 4.5");
         expect(text).not.toContain("Codex");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("hides search when a non-shiori provider is locked", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: "claudeAgent",
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Claude Sonnet 4.6");
+      });
+      expect(document.querySelector('input[placeholder="Search models…"]')).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows search when the shiori provider is locked", async () => {
+    const mounted = await mountPicker({
+      provider: "shiori",
+      model: "openai/gpt-5",
+      lockedProvider: "shiori",
+      providers: [
+        buildShioriProvider([
+          {
+            slug: "openai/gpt-5",
+            name: "GPT-5",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: false,
+              supportsThinkingToggle: true,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "anthropic/claude-sonnet-4-5",
+            name: "Claude Sonnet 4.5",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: false,
+              supportsThinkingToggle: true,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+          {
+            slug: "google/gemini-2.5-pro",
+            name: "Gemini 2.5 Pro",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+              supportsFastMode: false,
+              supportsThinkingToggle: true,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ]),
+      ],
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('input[placeholder="Search models…"]')).not.toBeNull();
       });
     } finally {
       await mounted.cleanup();

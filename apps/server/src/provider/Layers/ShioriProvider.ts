@@ -78,6 +78,18 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,
   },
+  {
+    slug: "qwen/qwen3.5-plus-02-15",
+    name: "Qwen3.5 Plus",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: true,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    } satisfies ModelCapabilities,
+  },
 ];
 
 function hasHostedShioriAuthToken(token: string | null): boolean {

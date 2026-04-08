@@ -1,16 +1,11 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
-  BinocularsIcon,
   ChevronDownIcon,
-  CompassIcon,
   FolderIcon,
-  FootprintsIcon,
-  GamepadDirectionalIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   SettingsIcon,
-  ShipIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -128,24 +123,10 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
-import type { NewThreadIcon } from "contracts/settings";
 import type { Project } from "../types";
+import { normalizeProjectTitle } from "shared/String";
 
-const NEW_THREAD_ICON_COMPONENTS: Record<NewThreadIcon, typeof SquarePenIcon> = {
-  navigation: SquarePenIcon,
-  binoculars: BinocularsIcon,
-  "gamepad-directional": GamepadDirectionalIcon,
-  footprints: FootprintsIcon,
-  compass: CompassIcon,
-  ship: ShipIcon,
-};
-
-function NewThreadIconComponent({ icon }: { icon: NewThreadIcon }) {
-  const Icon = NEW_THREAD_ICON_COMPONENTS[icon];
-  return <Icon className="size-4 shrink-0" aria-hidden />;
-}
-
-const THREAD_PREVIEW_LIMIT = 6;
+const THREAD_PREVIEW_LIMIT = 10;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -223,7 +204,7 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
 
 function SidebarThreadBrailleLoader() {
   return (
-    <BrailleLoader className="inline-flex size-3 shrink-0 items-center justify-center text-sm leading-none text-current opacity-70" />
+    <BrailleLoader className="inline-flex size-3 shrink-0 items-center justify-center font-normal text-sm leading-none text-current opacity-70" />
   );
 }
 
@@ -591,11 +572,11 @@ function UserAvatar(props: { src: string | null | undefined; name: string | null
     <img
       src={props.src}
       alt=""
-      className="size-6 shrink-0 rounded-lg object-cover"
+      className="size-6 shrink-0 rounded-md object-cover"
       referrerPolicy="no-referrer"
     />
   ) : (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-medium text-muted-foreground">
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-sm font-medium text-muted-foreground">
       {initials}
     </span>
   );
@@ -631,16 +612,16 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
     <div className="flex items-center gap-1.5">
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
         onClick={props.onSettingsClick}
       >
-        <span className="mt-0.5 shrink-0">
+        <span className="shrink-0">
           <UserAvatar src={viewer.image} name={viewer.name} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-          <span className="block truncate text-sm font-medium text-foreground">{displayName}</span>
+          <span className="block truncate text-xs font-medium text-foreground">{displayName}</span>
           {subscriptionPlanLabel ? (
-            <span className="block truncate text-sm leading-tight text-muted-foreground">
+            <span className="block truncate text-[10px] leading-tight text-muted-foreground">
               {subscriptionPlanLabel}
             </span>
           ) : null}
@@ -650,7 +631,7 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
         {props.sortMenu}
         <button
           type="button"
-          className="flex size-7 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
           onClick={props.onSettingsClick}
         >
           <SettingsIcon className="size-3.5" />
@@ -756,53 +737,6 @@ export default function Sidebar() {
     }),
     [platform, routeTerminalOpen],
   );
-  const threadGitTargets = useMemo(
-    () =>
-      sidebarThreads.map((thread) => ({
-        threadId: thread.id,
-        branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
-      })),
-    [projectCwdById, sidebarThreads],
-  );
-  const threadGitStatusCwds = useMemo(
-    () => [
-      ...new Set(
-        threadGitTargets
-          .filter((target) => target.branch !== null)
-          .map((target) => target.cwd)
-          .filter((cwd): cwd is string => cwd !== null),
-      ),
-    ],
-    [threadGitTargets],
-  );
-  const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
-      staleTime: 30_000,
-      refetchInterval: 60_000,
-    })),
-  });
-  const prByThreadId = useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
-      const status = threadGitStatusQueries[index]?.data;
-      if (status) {
-        statusByCwd.set(cwd, status);
-      }
-    }
-
-    const map = new Map<ThreadId, ThreadPr>();
-    for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
-      const branchMatches =
-        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
-      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
-    }
-    return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -884,7 +818,7 @@ export default function Sidebar() {
 
       const projectId = newProjectId();
       const createdAt = new Date().toISOString();
-      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+      const title = normalizeProjectTitle(cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd);
       try {
         await api.orchestration.dispatchCommand({
           type: "project.create",
@@ -1472,6 +1406,60 @@ export default function Sidebar() {
     () => getVisibleSidebarThreadIds(renderedProjects),
     [renderedProjects],
   );
+  const visibleSidebarThreadsForGit = useMemo(
+    () =>
+      visibleSidebarThreadIds
+        .map((threadId) => sidebarThreadsById[threadId])
+        .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined),
+    [sidebarThreadsById, visibleSidebarThreadIds],
+  );
+  const threadGitTargets = useMemo(
+    () =>
+      visibleSidebarThreadsForGit.map((thread) => ({
+        threadId: thread.id,
+        branch: thread.branch,
+        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+      })),
+    [projectCwdById, visibleSidebarThreadsForGit],
+  );
+  const threadGitStatusCwds = useMemo(
+    () => [
+      ...new Set(
+        threadGitTargets
+          .filter((target) => target.branch !== null)
+          .map((target) => target.cwd)
+          .filter((cwd): cwd is string => cwd !== null),
+      ),
+    ],
+    [threadGitTargets],
+  );
+  const threadGitStatusQueries = useQueries({
+    queries: threadGitStatusCwds.map((cwd) => ({
+      ...gitStatusQueryOptions(cwd),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  });
+  const prByThreadId = useMemo(() => {
+    const statusByCwd = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
+      const cwd = threadGitStatusCwds[index];
+      if (!cwd) continue;
+      const status = threadGitStatusQueries[index]?.data;
+      if (status) {
+        statusByCwd.set(cwd, status);
+      }
+    }
+
+    const map = new Map<ThreadId, ThreadPr>();
+    for (const target of threadGitTargets) {
+      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const branchMatches =
+        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
+      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
+    }
+    return map;
+  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
   const threadJumpCommandById = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadId] of visibleSidebarThreadIds.entries()) {
@@ -1624,7 +1612,7 @@ export default function Sidebar() {
               });
             }}
           >
-            <span className="min-w-0 shrink truncate text-[13px] text-muted-foreground">
+            <span className="min-w-0 shrink truncate text-[13px] text-muted-foreground/50">
               {project.name}
             </span>
             <ChevronDownIcon
@@ -1866,9 +1854,11 @@ export default function Sidebar() {
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
       : null;
-  const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.newLocal", sidebarShortcutLabelOptions) ??
-    shortcutLabelForCommand(keybindings, "chat.new", sidebarShortcutLabelOptions);
+  const newThreadShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "chat.new",
+    sidebarShortcutLabelOptions,
+  );
   const projectListTopSpacingClassName = shouldShowProjectPathEntry ? "" : "mt-2";
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
@@ -2018,7 +2008,7 @@ export default function Sidebar() {
                       });
                     }}
                   >
-                    <NewThreadIconComponent icon={appSettings.newThreadIcon} />
+                    <SquarePenIcon className="size-4 shrink-0" aria-hidden />
                     <span className="min-w-0 flex-1 truncate">New Thread</span>
                     {newThreadShortcutLabel ? (
                       <span className="ml-auto text-sm text-muted-foreground/50">

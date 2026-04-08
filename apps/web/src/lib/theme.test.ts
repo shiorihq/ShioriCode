@@ -9,6 +9,7 @@ import {
 } from "contracts/settings";
 import {
   getThemeOptions,
+  getDefaultThemeSeed,
   parseImportedThemeJson,
   removeImportedThemeFromSettings,
   upsertImportedTheme,
@@ -18,7 +19,6 @@ function makeSettings(overrides: Partial<ClientSettings> = {}): ClientSettings {
   return {
     confirmThreadDelete: true,
     diffWordWrap: false,
-    newThreadIcon: "navigation",
     sidebarProjectSortOrder: "updated_at",
     sidebarThreadSortOrder: "updated_at",
     sidebarTranslucent: true,
@@ -125,6 +125,14 @@ describe("theme helpers", () => {
 
     expect(options.map((option) => option.id)).toContain("builtin:catppuccin-mocha");
     expect(options.map((option) => option.id)).toContain("builtin:tokyo-night");
+  });
+
+  it("uses the builtin Shiori dark palette as the default dark theme seed", () => {
+    const seed = getDefaultThemeSeed("dark");
+
+    expect(seed.radius).toBe("0.625rem");
+    expect(seed.tokens.background).toBe("#101010");
+    expect(seed.terminal.background).toBe("rgb(16, 16, 16)");
   });
 
   it("falls back to built-in themes when an imported theme is removed", () => {

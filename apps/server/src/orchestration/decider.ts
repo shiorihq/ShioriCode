@@ -550,6 +550,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.turn.retry": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-retry-requested",
+        payload: {
+          threadId: command.threadId,
+          assistantMessageId: command.assistantMessageId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.session.stop": {
       yield* requireThread({
         readModel,

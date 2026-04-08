@@ -106,6 +106,7 @@ const PROVIDER_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "codex", label: PROVIDER_DISPLAY_NAMES.codex },
   { value: "shiori", label: PROVIDER_DISPLAY_NAMES.shiori },
 ];
+const EMPTY_MCP_SERVERS: readonly McpServerEntry[] = [];
 
 function AddMcpServerDialog({ onAdd }: { onAdd: (entry: McpServerEntry) => void }) {
   const [open, setOpen] = useState(false);
@@ -315,12 +316,12 @@ function CodexInfoSection() {
   return (
     <SettingsSection title="Codex" icon={<TerminalIcon className="size-3.5" />}>
       <SettingsRow
-        title="MCP via config.toml"
-        description="Codex loads MCP servers from ~/.codex/config.toml at startup. Edit the file to add or remove servers."
+        title="Managed MCP at session start"
+        description="ShioriCode injects configured stdio MCP servers into an isolated Codex runtime home for each session. HTTP and SSE servers are not passed to Codex yet."
         control={
           <Button size="sm" variant="outline" className="gap-1.5" onClick={handleOpenConfig}>
             <ExternalLinkIcon className="size-3" />
-            Open config.toml
+            Open global config.toml
           </Button>
         }
       />
@@ -332,8 +333,8 @@ function ShioriInfoSection() {
   return (
     <SettingsSection title="Shiori" icon={<GlobeIcon className="size-3.5" />}>
       <SettingsRow
-        title="MCP support coming soon"
-        description="The Shiori provider will support MCP servers in a future update. Configure MCP servers in your Shiori account settings in the meantime."
+        title="ShioriCode-native MCP runtime"
+        description="The Shiori provider connects directly to configured MCP servers in this app process, namespaces tools per server, and executes them locally during the turn."
       />
     </SettingsSection>
   );
@@ -344,7 +345,7 @@ function ShioriInfoSection() {
 export function SkillsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const servers = settings.mcpServers?.servers ?? [];
+  const servers = settings.mcpServers?.servers ?? EMPTY_MCP_SERVERS;
 
   const persistServers = useCallback(
     (next: McpServerEntry[]) => {
@@ -353,27 +354,18 @@ export function SkillsPanel() {
     [updateSettings],
   );
 
-  const handleAdd = useCallback(
-    (entry: McpServerEntry) => {
-      persistServers([...servers, entry]);
-    },
-    [servers, persistServers],
-  );
+  const handleAdd = (entry: McpServerEntry) => {
+    persistServers([...servers, entry]);
+  };
 
-  const handleToggle = useCallback(
-    (index: number) => {
-      const next = servers.map((s, i) => (i === index ? { ...s, enabled: !s.enabled } : s));
-      persistServers(next);
-    },
-    [servers, persistServers],
-  );
+  const handleToggle = (index: number) => {
+    const next = servers.map((s, i) => (i === index ? { ...s, enabled: !s.enabled } : s));
+    persistServers(next);
+  };
 
-  const handleDelete = useCallback(
-    (index: number) => {
-      persistServers(servers.filter((_, i) => i !== index));
-    },
-    [servers, persistServers],
-  );
+  const handleDelete = (index: number) => {
+    persistServers(servers.filter((_, i) => i !== index));
+  };
 
   return (
     <SettingsPageContainer>
@@ -397,7 +389,14 @@ export function SkillsPanel() {
         ) : (
           servers.map((server, index) => (
             <McpServerCard
-              key={`${server.name}-${index}`}
+              key={[
+                server.name,
+                server.transport,
+                server.transport === "stdio"
+                  ? [server.command ?? "", ...(server.args ?? [])].join(" ")
+                  : (server.url ?? ""),
+                server.providers.join(","),
+              ].join("|")}
               server={server}
               onToggle={() => handleToggle(index)}
               onDelete={() => handleDelete(index)}
@@ -409,7 +408,7 @@ export function SkillsPanel() {
       <SettingsSection title="How it works" icon={<InfoIcon className="size-3.5" />}>
         <SettingsRow
           title="Global server registry"
-          description="MCP servers configured here are passed to provider sessions at startup. Use the provider filter on each server to control which providers receive it. Claude Agent has full support, Codex uses its own config file, and Shiori support is coming soon."
+          description="MCP servers configured here are passed into provider runtimes at session start. Use provider filters per server to control delivery. Claude Agent and Shiori consume configured servers directly, while Codex currently supports stdio servers via managed runtime config."
         />
       </SettingsSection>
 

@@ -22,6 +22,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { LoadingText } from "../ui/loading-text";
 import { toastManager } from "../ui/toast";
+import { HostedBillingPanel } from "../billing/HostedBillingPanel";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./SettingsPanels";
 
 // ---------------------------------------------------------------------------
@@ -488,6 +489,12 @@ export function AccountPanel() {
               </Button>
             }
           />
+        </SettingsSection>
+
+        <SettingsSection title="Subscription">
+          <div className="px-4 py-4 sm:px-5">
+            <HostedBillingPanel mode="account" />
+          </div>
         </SettingsSection>
 
         <SettingsSection title="Session">

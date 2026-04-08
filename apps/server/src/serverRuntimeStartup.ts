@@ -19,6 +19,8 @@ import {
   Scope,
   ServiceMap,
 } from "effect";
+import { execFileSync } from "node:child_process";
+import { normalizeProjectTitle } from "shared/String";
 
 import { ServerConfig } from "./config";
 import { Keybindings } from "./keybindings";
@@ -29,6 +31,33 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+
+/**
+ * Tries to resolve the project title from the git remote origin URL as `owner/repo`.
+ * Falls back to the basename of the cwd if not a git repo or no parseable remote.
+ */
+function resolveProjectTitle(cwd: string, pathService: Path.Path): string {
+  try {
+    const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd,
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+
+    const match = /[/:]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/.exec(remoteUrl);
+    if (match?.[1]) {
+      const normalizedTitle = normalizeProjectTitle(match[1]);
+      if (normalizedTitle.length > 0) {
+        return normalizedTitle;
+      }
+    }
+  } catch {
+    // Not a git repo or no origin remote — fall through
+  }
+  const fallbackTitle = normalizeProjectTitle(pathService.basename(cwd));
+  return fallbackTitle.length > 0 ? fallbackTitle : "project";
+}
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
@@ -168,7 +197,7 @@ const autoBootstrapWelcome = Effect.gen(function* () {
       if (Option.isNone(existingProject)) {
         const createdAt = new Date().toISOString();
         nextProjectId = ProjectId.makeUnsafe(crypto.randomUUID());
-        const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
+        const bootstrapProjectTitle = resolveProjectTitle(serverConfig.cwd, path);
         const settings = yield* serverSettings.getSettings;
         nextProjectDefaultModelSelection =
           settings.defaultModelSelection ?? DEFAULT_SERVER_SETTINGS.defaultModelSelection;
@@ -219,7 +248,8 @@ const autoBootstrapWelcome = Effect.gen(function* () {
   }
 
   const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
-  const projectName = segments[segments.length - 1] ?? "project";
+  const rawProjectName = segments[segments.length - 1] ?? "project";
+  const projectName = normalizeProjectTitle(rawProjectName) || "project";
 
   return {
     cwd: serverConfig.cwd,

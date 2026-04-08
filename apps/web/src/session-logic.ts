@@ -80,6 +80,10 @@ export interface ReasoningEntry {
   turnId: TurnId | null;
 }
 
+function isShioriReasoningItemId(itemId: string | null): boolean {
+  return itemId?.startsWith("reasoning:") ?? false;
+}
+
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -732,7 +736,7 @@ function mergeDerivedWorkLogEntries(
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const lifecycleStatus = next.lifecycleStatus ?? previous.lifecycleStatus;
-  const output = next.output ?? previous.output;
+  const output = mergeWorkLogOutput(previous.output, next.output);
   return {
     ...previous,
     ...next,
@@ -747,6 +751,26 @@ function mergeDerivedWorkLogEntries(
     ...(lifecycleStatus ? { lifecycleStatus } : {}),
     ...(output !== undefined ? { output } : {}),
   };
+}
+
+function mergeWorkLogOutput(previous: unknown, next: unknown): unknown {
+  if (next === undefined) {
+    return previous;
+  }
+  if (previous === undefined) {
+    return next;
+  }
+
+  const previousRecord = asRecord(previous);
+  const nextRecord = asRecord(next);
+  if (previousRecord && nextRecord && !Array.isArray(previous) && !Array.isArray(next)) {
+    return {
+      ...previousRecord,
+      ...nextRecord,
+    };
+  }
+
+  return next;
 }
 
 function mergeChangedFiles(
@@ -1070,6 +1094,7 @@ export function deriveReasoningEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entriesById = new Map<string, ReasoningEntry>();
   const orderedIds: string[] = [];
+  const suppressEmptyEntryIds = new Set<string>();
 
   for (const activity of ordered) {
     const reasoningProgress = isReasoningProgressActivity(activity);
@@ -1108,6 +1133,9 @@ export function deriveReasoningEntries(
     if (!existing) {
       entriesById.set(entryId, nextEntry);
       orderedIds.push(entryId);
+      if (isShioriReasoningItemId(itemId)) {
+        suppressEmptyEntryIds.add(entryId);
+      }
     }
 
     if (activity.kind === "reasoning.delta" && typeof payload?.delta === "string") {
@@ -1152,9 +1180,16 @@ export function deriveReasoningEntries(
   return orderedIds
     .map((id) => entriesById.get(id))
     .filter((entry): entry is ReasoningEntry => !!entry)
-    .filter(
-      (entry) => entry.streaming || entry.completedAt !== undefined || entry.text.trim().length > 0,
-    );
+    .filter((entry) => {
+      const hasVisibleText = entry.text.trim().length > 0;
+      if (hasVisibleText) {
+        return true;
+      }
+      if (suppressEmptyEntryIds.has(entry.id)) {
+        return false;
+      }
+      return entry.streaming || entry.completedAt !== undefined;
+    });
 }
 
 export function deriveTimelineEntries(

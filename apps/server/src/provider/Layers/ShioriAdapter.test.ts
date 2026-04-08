@@ -1544,6 +1544,242 @@ describe("ShioriAdapterLive session state", () => {
       ),
     );
   });
+
+  it("continues turn execution when MCP runtime initialization fails", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+      return responseFromChunks([
+        { type: "text-start", id: "text-no-mcp" },
+        { type: "text-delta", id: "text-no-mcp", delta: "Fallback response." },
+        { type: "text-end", id: "text-no-mcp" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const layer = makeShioriAdapterTestLayer({
+      buildMcpToolRuntime: async () => {
+        throw new Error("MCP unavailable");
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-mcp-fallback");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            runtimeMode: "full-access",
+          });
+
+          const completionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Proceed even if MCP is unavailable.",
+          });
+
+          const completed = yield* Fiber.join(completionFiber);
+          assert.equal(completed._tag, "Some");
+          assert.equal(completed.value.type, "turn.completed");
+          assert.equal(requestBodies.length, 1);
+
+          const requestTools = Array.isArray(requestBodies[0]?.tools)
+            ? (requestBodies[0].tools as Array<Record<string, unknown>>)
+            : [];
+          assert.ok(requestTools.every((tool) => !String(tool.name ?? "").startsWith("mcp__")));
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+  });
+
+  it("runs subagents via spawn/wait and forwards completion notifications to the next turn", async () => {
+    const parentRequestBodies: Array<Record<string, unknown>> = [];
+    const subagentRequestBodies: Array<Record<string, unknown>> = [];
+    let parentCallCount = 0;
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const requestBody = JSON.parse(bodyToString(init?.body));
+      const sessionId =
+        typeof requestBody?.sessionId === "string" ? (requestBody.sessionId as string) : "";
+
+      if (sessionId.includes(":subagent")) {
+        subagentRequestBodies.push(requestBody);
+        return responseFromChunks([
+          { type: "text-start", id: `subagent-text-${subagentRequestBodies.length}` },
+          {
+            type: "text-delta",
+            id: `subagent-text-${subagentRequestBodies.length}`,
+            delta: "Background review completed.",
+          },
+          { type: "text-end", id: `subagent-text-${subagentRequestBodies.length}` },
+          { type: "finish", finishReason: "stop" },
+        ]);
+      }
+
+      parentCallCount += 1;
+      parentRequestBodies.push(requestBody);
+
+      if (parentCallCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-subagent-spawn-1",
+            toolName: "spawn_agent",
+            input: {
+              task_name: "reviewer",
+              message: "Review the changed files and report back.",
+              agent_type: "researcher",
+            },
+          },
+        ]);
+      }
+
+      if (parentCallCount === 2) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-subagent-wait-1",
+            toolName: "wait_agent",
+            input: {
+              targets: ["reviewer"],
+              timeout_ms: 5_000,
+            },
+          },
+        ]);
+      }
+
+      if (parentCallCount === 3) {
+        return responseFromChunks([
+          { type: "text-start", id: "parent-text-1" },
+          { type: "text-delta", id: "parent-text-1", delta: "Subagent completed successfully." },
+          { type: "text-end", id: "parent-text-1" },
+          { type: "finish", finishReason: "stop" },
+        ]);
+      }
+
+      return responseFromChunks([
+        { type: "text-start", id: "parent-text-2" },
+        { type: "text-delta", id: "parent-text-2", delta: "Notification consumed." },
+        { type: "text-end", id: "parent-text-2" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-subagents");
+          const observedEvents: ProviderRuntimeEvent[] = [];
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          yield* Effect.forkScoped(
+            Stream.runForEach(adapter.streamEvents, (event) =>
+              Effect.sync(() => {
+                observedEvents.push(event);
+              }),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          const firstCompletionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Delegate this task to a teammate and wait for completion.",
+          });
+
+          const firstCompletion = yield* Fiber.join(firstCompletionFiber);
+          assert.equal(firstCompletion._tag, "Some");
+
+          const secondCompletionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Use any pending subagent updates before answering.",
+          });
+
+          const secondCompletion = yield* Fiber.join(secondCompletionFiber);
+          assert.equal(secondCompletion._tag, "Some");
+
+          assert.equal(parentRequestBodies.length, 4);
+          assert.equal(subagentRequestBodies.length, 1);
+
+          const taskStarted = observedEvents.find((event) => event.type === "task.started");
+          const taskCompleted = observedEvents.find(
+            (event) => event.type === "task.completed" && event.payload.status === "completed",
+          );
+          assert.ok(taskStarted);
+          assert.ok(taskCompleted);
+          if (taskStarted?.type === "task.started") {
+            assert.equal(taskStarted.payload.taskType, "researcher");
+          }
+
+          const secondTurnMessages = Array.isArray(parentRequestBodies[3]?.messages)
+            ? (parentRequestBodies[3]!.messages as Array<Record<string, unknown>>)
+            : [];
+          const notificationMessage = secondTurnMessages.find(
+            (message) =>
+              typeof message?.id === "string" &&
+              message.id.startsWith("user-subagent-notification-"),
+          );
+          assert.ok(notificationMessage);
+          const notificationParts = Array.isArray(notificationMessage?.parts)
+            ? (notificationMessage?.parts as Array<Record<string, unknown>>)
+            : [];
+          const notificationText =
+            typeof notificationParts[0]?.text === "string" ? notificationParts[0].text : "";
+          assert.match(notificationText, /<subagent_notification>/);
+          assert.match(notificationText, /"agent_path":"reviewer"/);
+          assert.match(notificationText, /"status":"completed"/);
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
 });
 
 describe("hosted tools", () => {

@@ -4,8 +4,17 @@ import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { parseEditDiff } from "./InlineEditDiff";
+import { summarizeToolOutput } from "./toolOutput";
+import {
+  extractStructuredProviderToolData,
+  getProviderToolInputPath,
+  getProviderToolInputQuery,
+  isSubagentToolName,
+  isUserInputToolName,
+  normalizeProviderToolName,
+} from "shared/providerTool";
 
-export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+export const MAX_VISIBLE_WORK_LOG_ENTRIES = 5;
 
 export type WorkEntryDisplayKind = "read" | "list" | "search" | "edit" | "command" | "other";
 
@@ -31,6 +40,32 @@ export interface WorkTimelineRow {
   groupedEntries: WorkLogEntry[];
   stickyInProgress: boolean;
   childRows: WorkTimelineRow[];
+}
+
+export function isWorkRowInProgress(row: WorkTimelineRow): boolean {
+  if (row.groupedEntries.some((entry) => entry.running) || row.stickyInProgress) {
+    return true;
+  }
+  return row.childRows.some((childRow) => isWorkRowInProgress(childRow));
+}
+
+export function isWorkRowExpanded(
+  row: WorkTimelineRow,
+  expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
+): boolean {
+  // Respect explicit user preference (collapse/expand) even while in-progress.
+  const explicit = expandedWorkGroups?.[row.id];
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  // Default: always collapsed.  The summary header shows a shimmer when
+  // in-progress so the user can tell work is happening without being forced
+  // to watch every streaming item.  They can expand manually if curious.
+  return false;
+}
+
+export function getGroupedWorkEntryExpansionKey(entryId: string): string {
+  return `work-entry:${entryId}`;
 }
 
 export type MessagesTimelineRow =
@@ -133,22 +168,13 @@ function asTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeToolName(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
 function parseToolNameFromDetail(detail: string | undefined): string | null {
   if (!detail) {
     return null;
   }
 
   const match = /^([A-Za-z][A-Za-z0-9 _-]{1,48}):\s*[[{"]/u.exec(detail.trim());
-  return normalizeToolName(match?.[1] ?? null);
+  return normalizeProviderToolName(match?.[1] ?? null);
 }
 
 function parseToolInputFromDetail(detail: string | undefined): Record<string, unknown> | null {
@@ -169,8 +195,9 @@ function parseToolInputFromDetail(detail: string | undefined): Record<string, un
 }
 
 function getEntryToolName(entry: WorkLogEntry): string | null {
-  const output = asRecord(entry.output);
-  const directToolName = normalizeToolName(asTrimmedString(output?.toolName));
+  const directToolName = normalizeProviderToolName(
+    extractStructuredProviderToolData(entry.output)?.toolName ?? null,
+  );
   if (directToolName) {
     return directToolName;
   }
@@ -179,8 +206,7 @@ function getEntryToolName(entry: WorkLogEntry): string | null {
 }
 
 function getEntryToolInput(entry: WorkLogEntry): Record<string, unknown> | null {
-  const output = asRecord(entry.output);
-  const directInput = asRecord(output?.input);
+  const directInput = extractStructuredProviderToolData(entry.output)?.input ?? null;
   if (directInput) {
     return directInput;
   }
@@ -202,25 +228,6 @@ function classifyToolName(toolName: string | null): WorkEntryDisplayKind | null 
     return "search";
   }
   return null;
-}
-
-function getToolInputPath(input: Record<string, unknown> | null): string | null {
-  return (
-    asTrimmedString(input?.file_path) ??
-    asTrimmedString(input?.path) ??
-    asTrimmedString(input?.filePath) ??
-    asTrimmedString(input?.relativePath) ??
-    asTrimmedString(input?.filename)
-  );
-}
-
-function getToolInputQuery(input: Record<string, unknown> | null): string | null {
-  return (
-    asTrimmedString(input?.query) ??
-    asTrimmedString(input?.pattern) ??
-    asTrimmedString(input?.q) ??
-    asTrimmedString(input?.search)
-  );
 }
 
 function isEmptyStructuredToolDetail(detail: string | null | undefined): boolean {
@@ -310,6 +317,64 @@ function formatSkillToolDetail(input: Record<string, unknown> | null): string | 
     asTrimmedString(input.skillName) ??
     asTrimmedString(input.name)
   );
+}
+
+function formatUserInputToolDetail(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const directQuestion = asTrimmedString(input.question);
+  if (directQuestion) {
+    return directQuestion;
+  }
+
+  const questions = Array.isArray(input.questions) ? input.questions : null;
+  const firstQuestion = questions?.[0] ? asRecord(questions[0]) : null;
+  return asTrimmedString(firstQuestion?.question);
+}
+
+function formatPlanToolDetail(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const explanation = asTrimmedString(input.explanation);
+  const stepCount = Array.isArray(input.plan) ? input.plan.length : 0;
+  if (explanation && stepCount > 0) {
+    return `${explanation} (${stepCount} steps)`;
+  }
+  if (explanation) {
+    return explanation;
+  }
+  if (stepCount > 0) {
+    return `${stepCount} steps`;
+  }
+  return null;
+}
+
+function formatAgentTargetDetail(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const directTarget =
+    asTrimmedString(input.target) ??
+    asTrimmedString(input.task_id) ??
+    asTrimmedString(input.taskId);
+  if (directTarget) {
+    return directTarget;
+  }
+
+  const targets = Array.isArray(input.targets) ? input.targets : null;
+  if (!targets || targets.length === 0) {
+    return null;
+  }
+
+  const normalizedTargets = targets
+    .map((target) => asTrimmedString(target))
+    .filter((target): target is string => target !== null);
+  return normalizedTargets.length > 0 ? normalizedTargets.join(", ") : null;
 }
 
 const COMMAND_TOKEN_PATTERN = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|[^\s]+/g;
@@ -483,18 +548,31 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   const normalizedLabel = normalizeWorkEntryTitle(entry);
   const explicitDetail = getExplicitDetail(entry);
   const running = entry.running === true;
-  const providerToolKind = classifyToolName(getEntryToolName(entry));
   const providerToolInput = getEntryToolInput(entry);
   const providerToolName = getEntryToolName(entry);
-  const providerToolPath = getToolInputPath(providerToolInput);
-  const providerToolQuery = getToolInputQuery(providerToolInput);
+  const providerToolKind = classifyToolName(providerToolName);
+  const providerToolPath = getProviderToolInputPath(providerToolInput);
+  const providerToolQuery = getProviderToolInputQuery(providerToolInput);
   const subagentTaskDetail = formatSubagentTaskDetail(providerToolInput);
   const skillToolDetail = formatSkillToolDetail(providerToolInput);
+  const userInputToolDetail = formatUserInputToolDetail(providerToolInput);
+  const planToolDetail = formatPlanToolDetail(providerToolInput);
+  const agentTargetDetail = formatAgentTargetDetail(providerToolInput);
 
   if (entry.itemType === "collab_agent_tool_call") {
     return {
       kind: "other",
-      action: running ? "Delegating" : "Delegated",
+      action: "",
+      detail: subagentTaskDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName && isSubagentToolName(providerToolName)) {
+    return {
+      kind: "other",
+      action: "",
       detail: subagentTaskDetail ?? explicitDetail,
       monospace: false,
       dedupeKey: null,
@@ -506,6 +584,46 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
       kind: "other",
       action: running ? "Launching skill" : "Launched skill",
       detail: skillToolDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "wait agent") {
+    return {
+      kind: "other",
+      action: running ? "Waiting for agent" : "Waited for agent",
+      detail: agentTargetDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "send input" || providerToolName === "send message") {
+    return {
+      kind: "other",
+      action: running ? "Sending input" : "Sent input",
+      detail: agentTargetDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "update plan") {
+    return {
+      kind: "other",
+      action: running ? "Updating plan" : "Updated plan",
+      detail: planToolDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName && isUserInputToolName(providerToolName)) {
+    return {
+      kind: "other",
+      action: running ? "Requesting input" : "Requested input",
+      detail: userInputToolDetail ?? explicitDetail,
       monospace: false,
       dedupeKey: null,
     };
@@ -526,7 +644,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
       kind: "edit",
       action: running ? "Editing" : "Edited",
       detail: explicitDetail,
-      monospace: false,
+      monospace: true,
       dedupeKey: null,
     };
   }
@@ -682,10 +800,36 @@ export function buildWorkGroupSummary(
   const isInProgress = entries.some((entry) => entry.running) || stickyInProgress;
 
   switch (primaryGroupKey) {
-    case "edit":
-      return isInProgress ? "Editing" : "Edited";
-    case "command":
-      return isInProgress ? "Executing" : "Executed";
+    case "edit": {
+      const editedFiles = new Set<string>();
+      let unknownFileCount = 0;
+
+      for (const entry of entries) {
+        const formattedEntry = formatWorkEntry(entry);
+        if (formattedEntry.detail) {
+          editedFiles.add(formattedEntry.detail);
+        } else {
+          unknownFileCount += 1;
+        }
+      }
+
+      const editedFileCount = editedFiles.size + unknownFileCount;
+      if (editedFileCount === 0) {
+        return isInProgress ? "Editing" : "Edited";
+      }
+
+      return `${isInProgress ? "Editing" : "Edited"} ${pluralizeCount(editedFileCount, "file")}`;
+    }
+    case "command": {
+      const commandCount = getDisplayedWorkEntries(entries).length;
+      const commandLabel =
+        commandCount <= 1
+          ? isInProgress
+            ? "Executing command"
+            : "Executed command"
+          : `${isInProgress ? "Executing" : "Executed"} ${pluralizeCount(commandCount, "command")}`;
+      return commandLabel;
+    }
     case "explore": {
       const displayedEntries = getDisplayedWorkEntries(entries);
       const readKeys = new Set<string>();
@@ -953,11 +1097,23 @@ function estimateWorkRowHeight(
     expandedWorkGroups?: Readonly<Record<string, boolean>>;
   },
 ): number {
+  const estimateExpandedWorkEntryHeight = (entry: WorkLogEntry): number => {
+    const isFileChange = entry.requestKind === "file-change" || entry.itemType === "file_change";
+    const diff = isFileChange ? parseEditDiff(entry.output, entry.detail) : null;
+    if (diff) {
+      // header (28px) + lines (20px each) + border/padding (8px) + outer margin
+      return 16 + 26 + 28 + diff.lines.length * 20 + 8;
+    }
+    const outputLines = estimateOutputLineCount(entry.output);
+    // max-h-48 = 192px cap in the UI
+    return 16 + 26 + Math.min(Math.max(outputLines, 1) * 18, 192);
+  };
+
   const nestedRowsHeight = (childRows: ReadonlyArray<WorkTimelineRow>): number =>
     childRows.reduce((total, childRow) => total + estimateWorkRowHeight(childRow, input) + 6, 0);
 
   if (row.childRows.length > 0) {
-    const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
+    const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
     return 16 + 26 + (isExpanded ? nestedRowsHeight(row.childRows) + 8 : 0);
   }
 
@@ -969,39 +1125,29 @@ function estimateWorkRowHeight(
     if (!entry.running) {
       const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
       if (isExpanded) {
-        const isFileChange =
-          entry.requestKind === "file-change" || entry.itemType === "file_change";
-        const diff = isFileChange ? parseEditDiff(entry.output, entry.detail) : null;
-        if (diff) {
-          // header (28px) + lines (20px each) + border/padding (8px) + outer margin
-          return 16 + 26 + 28 + diff.lines.length * 20 + 8;
-        }
-        const outputLines = estimateOutputLineCount(entry.output);
-        // max-h-48 = 192px cap in the UI
-        return 16 + 26 + Math.min(Math.max(outputLines, 1) * 18, 192);
+        return estimateExpandedWorkEntryHeight(entry);
       }
       return 16 + 26;
     }
     return 16 + 24;
   }
 
-  const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
-  const visibleEntryCount = isExpanded ? Math.min(entryCount, MAX_VISIBLE_WORK_LOG_ENTRIES) : 0;
+  const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
+  const visibleEntries = isExpanded ? displayedEntries.slice(0, MAX_VISIBLE_WORK_LOG_ENTRIES) : [];
   const showMoreToggleHeight = isExpanded && entryCount > MAX_VISIBLE_WORK_LOG_ENTRIES ? 24 : 0;
-  return 16 + 26 + visibleEntryCount * 22 + showMoreToggleHeight;
+  const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
+    if (entry.running) {
+      return total + 22;
+    }
+    const isEntryExpanded =
+      input.expandedWorkGroups?.[getGroupedWorkEntryExpansionKey(entry.id)] ?? false;
+    return total + (isEntryExpanded ? estimateExpandedWorkEntryHeight(entry) : 26);
+  }, 0);
+  return 16 + 26 + visibleEntriesHeight + showMoreToggleHeight;
 }
 
 function estimateOutputLineCount(output: unknown): number {
-  if (output == null) return 0;
-  if (typeof output === "string") return Math.max(1, output.split("\n").length);
-  if (typeof output === "object" && "entries" in output && Array.isArray((output as any).entries)) {
-    return Math.max(1, (output as any).entries.length);
-  }
-  try {
-    return Math.max(1, JSON.stringify(output, null, 2).split("\n").length);
-  } catch {
-    return 1;
-  }
+  return summarizeToolOutput(output).lineCount;
 }
 
 function estimateTimelineProposedPlanHeight(proposedPlan: ProposedPlan): number {

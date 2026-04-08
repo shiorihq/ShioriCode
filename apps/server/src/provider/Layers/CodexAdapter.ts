@@ -22,6 +22,12 @@ import {
   ProviderSendTurnInput,
 } from "contracts";
 import { Effect, FileSystem, Layer, Queue, Ref, ServiceMap, Stream } from "effect";
+import {
+  classifyProviderToolLifecycleItemType,
+  extractStructuredProviderToolData,
+  providerToolTitle,
+  summarizeProviderToolInvocation,
+} from "shared/providerTool";
 
 import {
   ProviderAdapterProcessError,
@@ -41,6 +47,10 @@ import { ServerConfig } from "../../config.ts";
 import { probeCodexUsage } from "../codexAppServer.ts";
 import { fetchCodexOAuthUsageSnapshot } from "../codexUsage.ts";
 import { prepareCodexHomeWithManagedMcpServers } from "../mcpServers.ts";
+import {
+  resolvePreferredCodexBinaryPath,
+  supportsCodexReasoningSummary,
+} from "../codexBinaryPath.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import type { CodexUsageSnapshot } from "../Services/ProviderUsage.ts";
@@ -246,6 +256,8 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
       return "File change";
     case "mcp_tool_call":
       return "MCP tool call";
+    case "collab_agent_tool_call":
+      return "Subagent task";
     case "dynamic_tool_call":
       return "Tool call";
     case "web_search":
@@ -257,6 +269,59 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
     default:
       return undefined;
   }
+}
+
+function normalizedCodexToolData(input: {
+  item: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  itemType: CanonicalItemType;
+}) {
+  const directToolData =
+    extractStructuredProviderToolData(input.item) ??
+    extractStructuredProviderToolData(input.payload);
+  if (directToolData) {
+    return {
+      toolName: directToolData.toolName,
+      input: directToolData.input,
+      ...(directToolData.result !== undefined ? { result: directToolData.result } : {}),
+      item: input.item,
+    };
+  }
+
+  if (input.itemType === "command_execution") {
+    const command =
+      asString(input.item.command) ??
+      asString(asObject(input.item.result)?.command) ??
+      asString(input.payload.command);
+    if (command) {
+      return {
+        toolName: "exec_command",
+        input: { command },
+        item: input.item,
+      };
+    }
+  }
+
+  if (input.itemType === "collab_agent_tool_call") {
+    const prompt = asString(input.item.prompt) ?? asString(input.payload.prompt);
+    const description =
+      asString(input.item.summary) ?? asString(input.item.title) ?? asString(input.item.text);
+    const receiverThreadIds =
+      asArray(input.item.receiverThreadIds)?.filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      ) ?? [];
+    return {
+      toolName: "spawn_agent",
+      input: {
+        ...(description ? { description } : {}),
+        ...(prompt ? { prompt } : {}),
+        ...(receiverThreadIds.length > 0 ? { targets: receiverThreadIds } : {}),
+      },
+      item: input.item,
+    };
+  }
+
+  return null;
 }
 
 function itemDetail(
@@ -283,6 +348,58 @@ function itemDetail(
     return trimmed;
   }
   return undefined;
+}
+
+function extractTextDelta(
+  event: ProviderEvent,
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  const content = asObject(payload?.content);
+  const item = asObject(payload?.item);
+  const summary = asObject(payload?.summary);
+  const summaryPart = asObject(payload?.summaryPart) ?? asObject(payload?.summary_part);
+  const part = asObject(payload?.part);
+  const msg = codexEventMessage(payload);
+  const candidates = [
+    event.textDelta,
+    asString(payload?.delta),
+    asString(payload?.text),
+    asString(payload?.textDelta),
+    asString(payload?.text_delta),
+    asString(content?.delta),
+    asString(content?.text),
+    asString(content?.textDelta),
+    asString(content?.text_delta),
+    asString(item?.delta),
+    asString(item?.text),
+    asString(summary?.delta),
+    asString(summary?.text),
+    asString(summaryPart?.delta),
+    asString(summaryPart?.text),
+    asString(part?.delta),
+    asString(part?.text),
+    asString(msg?.delta),
+    asString(msg?.text),
+    asString(msg?.text_delta),
+  ];
+  return candidates.find((candidate) => typeof candidate === "string" && candidate.length > 0);
+}
+
+function extractSummaryIndex(payload: Record<string, unknown> | undefined): number | undefined {
+  const summaryPart = asObject(payload?.summaryPart) ?? asObject(payload?.summary_part);
+  const summary = asObject(payload?.summary);
+  const msg = codexEventMessage(payload);
+  return (
+    asNumber(payload?.summaryIndex) ??
+    asNumber(payload?.summary_index) ??
+    asNumber(summaryPart?.summaryIndex) ??
+    asNumber(summaryPart?.summary_index) ??
+    asNumber(summaryPart?.index) ??
+    asNumber(summary?.summaryIndex) ??
+    asNumber(summary?.summary_index) ??
+    asNumber(summary?.index) ??
+    asNumber(msg?.summary_index)
+  );
 }
 
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
@@ -568,12 +685,22 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const itemType = toCanonicalItemType(source.type ?? source.kind);
+  const inferredToolData = normalizedCodexToolData({
+    item: source,
+    payload: payload ?? {},
+    itemType: toCanonicalItemType(source.type ?? source.kind),
+  });
+  const itemType = inferredToolData
+    ? classifyProviderToolLifecycleItemType(inferredToolData.toolName)
+    : toCanonicalItemType(source.type ?? source.kind);
   if (itemType === "unknown" && lifecycle !== "item.updated") {
     return undefined;
   }
 
-  const detail = itemDetail(source, payload ?? {});
+  const detail =
+    (inferredToolData
+      ? summarizeProviderToolInvocation(inferredToolData.toolName, inferredToolData.input)
+      : undefined) ?? itemDetail(source, payload ?? {});
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -587,9 +714,17 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(inferredToolData
+        ? { title: providerToolTitle(inferredToolData.toolName) }
+        : itemTitle(itemType)
+          ? { title: itemTitle(itemType) }
+          : {}),
       ...(detail ? { detail } : {}),
-      ...(event.payload !== undefined ? { data: event.payload } : {}),
+      ...(inferredToolData
+        ? { data: inferredToolData }
+        : event.payload !== undefined
+          ? { data: event.payload }
+          : {}),
     },
   };
 }
@@ -917,10 +1052,27 @@ function mapToRuntimeEvents(
     return completed ? [completed] : [];
   }
 
-  if (
-    event.method === "item/reasoning/summaryPartAdded" ||
-    event.method === "item/commandExecution/terminalInteraction"
-  ) {
+  if (event.method === "item/reasoning/summaryPartAdded") {
+    const delta = extractTextDelta(event, payload);
+    if (delta && delta.length > 0) {
+      const summaryIndex = extractSummaryIndex(payload);
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "content.delta",
+          payload: {
+            streamKind: "reasoning_summary_text",
+            delta,
+            ...(summaryIndex !== undefined ? { summaryIndex } : {}),
+          },
+        },
+      ];
+    }
+    const updated = mapItemLifecycle(event, canonicalThreadId, "item.updated");
+    return updated ? [updated] : [];
+  }
+
+  if (event.method === "item/commandExecution/terminalInteraction") {
     const updated = mapItemLifecycle(event, canonicalThreadId, "item.updated");
     return updated ? [updated] : [];
   }
@@ -952,11 +1104,8 @@ function mapToRuntimeEvents(
     event.method === "item/reasoning/summaryTextDelta" ||
     event.method === "item/reasoning/textDelta"
   ) {
-    const delta =
-      event.textDelta ??
-      asString(payload?.delta) ??
-      asString(payload?.text) ??
-      asString(asObject(payload?.content)?.text);
+    const delta = extractTextDelta(event, payload);
+    const summaryIndex = extractSummaryIndex(payload);
     if (!delta || delta.length === 0) {
       return [];
     }
@@ -970,9 +1119,7 @@ function mapToRuntimeEvents(
           ...(typeof payload?.contentIndex === "number"
             ? { contentIndex: payload.contentIndex }
             : {}),
-          ...(typeof payload?.summaryIndex === "number"
-            ? { summaryIndex: payload.summaryIndex }
-            : {}),
+          ...(summaryIndex !== undefined ? { summaryIndex } : {}),
         },
       },
     ];
@@ -1452,23 +1599,28 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ),
       );
       const codexSettings = settings.providers.codex;
-      const binaryPath = codexSettings.binaryPath;
-      const preparedHome = yield* Effect.tryPromise({
-        try: () =>
-          prepareCodexHomeWithManagedMcpServers({
-            threadId: String(input.threadId),
-            runtimeRootDir: serverConfig.stateDir,
-            homePath: codexSettings.homePath,
-            servers: settings.mcpServers.servers,
+      const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
+      const supportsReasoningSummary = supportsCodexReasoningSummary(binaryPath);
+      const preparedHome = yield* Effect.tryPromise(() =>
+        prepareCodexHomeWithManagedMcpServers({
+          threadId: String(input.threadId),
+          runtimeRootDir: serverConfig.stateDir,
+          homePath: codexSettings.homePath,
+          servers: settings.mcpServers.servers,
+        }),
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(
+              "codex mcp configuration preparation failed; continuing without managed MCP servers",
+            );
+            yield* Effect.logWarning(
+              toMessage(cause, "Failed to prepare the Codex MCP configuration."),
+            );
+            return null;
           }),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId: input.threadId,
-            detail: toMessage(cause, "Failed to prepare the Codex MCP configuration."),
-            cause,
-          }),
-      });
+        ),
+      );
       const homePath = preparedHome?.homePath ?? codexSettings.homePath;
       const managerInput: CodexAppServerStartSessionInput = {
         threadId: input.threadId,
@@ -1477,6 +1629,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: input.runtimeMode,
         binaryPath,
+        supportsReasoningSummary,
         ...(homePath ? { homePath } : {}),
         ...(input.modelSelection?.provider === "codex"
           ? { model: input.modelSelection.model }
@@ -1676,7 +1829,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         return activeSession
           ? manager.readUsage(activeSession.threadId)
           : (options?.probeUsage ?? probeCodexUsage)({
-              binaryPath: codexSettings.binaryPath,
+              binaryPath: resolvePreferredCodexBinaryPath(codexSettings.binaryPath),
               ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
             });
       },

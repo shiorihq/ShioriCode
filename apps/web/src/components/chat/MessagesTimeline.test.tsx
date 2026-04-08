@@ -2,6 +2,8 @@ import { MessageId, TurnId } from "contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { getGroupedWorkEntryExpansionKey } from "./MessagesTimeline.logic";
+
 function matchMedia() {
   return {
     matches: false,
@@ -82,6 +84,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -126,6 +129,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -169,6 +173,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -221,6 +226,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -271,6 +277,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -331,6 +338,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -395,6 +403,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -452,6 +461,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -466,6 +476,62 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Explore the app");
     expect(markup).toContain("Background");
     expect(markup).not.toContain("&quot;subagent_type&quot;");
+  });
+
+  it("renders spawn_agent tool calls as delegated agent workflow cards", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-spawn-agent-tool",
+            kind: "work",
+            createdAt: "2026-04-06T15:29:01.000Z",
+            entry: {
+              id: "work-spawn-agent-tool",
+              createdAt: "2026-04-06T15:29:01.000Z",
+              label: "Subagent task",
+              tone: "tool",
+              itemType: "collab_agent_tool_call",
+              output: {
+                toolName: "spawn_agent",
+                input: {
+                  description: "Audit the billing reducer",
+                  prompt: "Look for race conditions in state updates",
+                  agent_type: "code-reviewer",
+                  run_in_background: true,
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "entry-spawn-agent-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Delegated agent");
+    expect(markup).toContain("Audit the billing reducer");
+    expect(markup).toContain("Look for race conditions in state updates");
+    expect(markup).toContain("code-reviewer");
   });
 
   it("renders Claude Write tool calls with a diff preview and error message", async () => {
@@ -513,6 +579,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -526,7 +593,65 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("/Users/choki/Developer/shiori/dogfood-output/report.md");
     expect(markup).toContain("Dogfood Report: Shiori");
     expect(markup).toContain("File has not been read yet. Read it first before writing to it.");
+    expect(markup).toContain("font-mono");
     expect(markup).not.toContain("&quot;toolName&quot;");
+  });
+
+  it("renders write_file lifecycle output as an inline diff instead of bytes-only fallback text", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-write-file-tool",
+            kind: "work",
+            createdAt: "2026-04-06T16:12:01.000Z",
+            entry: {
+              id: "work-write-file-tool",
+              createdAt: "2026-04-06T16:12:01.000Z",
+              label: "Write file",
+              tone: "tool",
+              itemType: "file_change",
+              detail: "apps/web/src/index.css",
+              output: {
+                toolName: "write_file",
+                input: {
+                  path: "apps/web/src/index.css",
+                  content: "body {\n  color: red;\n}",
+                },
+                path: "apps/web/src/index.css",
+                bytesWritten: 22,
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "entry-write-file-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Edited");
+    expect(markup).toContain("index.css");
+    expect(markup).toContain("color: red;");
+    expect(markup).not.toContain("Wrote 22 bytes to apps/web/src/index.css");
   });
 
   it("renders read details in monospace within work log rows", async () => {
@@ -563,6 +688,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -615,6 +741,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -662,6 +789,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -751,6 +879,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -816,6 +945,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -876,6 +1006,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -887,6 +1018,312 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Exploring 1 file, 1 list");
     expect(markup).not.toContain("Explored");
+  });
+
+  it("keeps in-progress exploration groups collapsed by default (user can expand manually)", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-capped-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-capped-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-1.ts",
+            },
+          },
+          {
+            id: "entry-capped-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-capped-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-2.ts",
+            },
+          },
+          {
+            id: "entry-capped-3",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-capped-3",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-3.ts",
+            },
+          },
+          {
+            id: "entry-capped-4",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-capped-4",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-4.ts",
+            },
+          },
+          {
+            id: "entry-capped-5",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            entry: {
+              id: "work-capped-5",
+              createdAt: "2026-03-17T19:12:32.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-5.ts",
+            },
+          },
+          {
+            id: "entry-capped-6",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:33.000Z",
+            entry: {
+              id: "work-capped-6",
+              createdAt: "2026-03-17T19:12:33.000Z",
+              label: "Read file started",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-6.ts",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    // In-progress groups default to collapsed; summary header is visible.
+    expect(markup).toContain("Exploring 6 files");
+    expect(markup).toContain('aria-expanded="false"');
+    // Individual entries are hidden behind the collapsed panel.
+    expect(markup).not.toContain("Show 1 more");
+  });
+
+  it("shows capped entries when in-progress group is explicitly expanded", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-capped-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-capped-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-1.ts",
+            },
+          },
+          {
+            id: "entry-capped-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-capped-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-2.ts",
+            },
+          },
+          {
+            id: "entry-capped-3",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-capped-3",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-3.ts",
+            },
+          },
+          {
+            id: "entry-capped-4",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-capped-4",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-4.ts",
+            },
+          },
+          {
+            id: "entry-capped-5",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            entry: {
+              id: "work-capped-5",
+              createdAt: "2026-03-17T19:12:32.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-5.ts",
+            },
+          },
+          {
+            id: "entry-capped-6",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:33.000Z",
+            entry: {
+              id: "work-capped-6",
+              createdAt: "2026-03-17T19:12:33.000Z",
+              label: "Read file started",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-6.ts",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-capped-1": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Exploring 6 files");
+    expect(markup).toContain("<ul");
+    expect(markup).toContain("file-1.ts");
+    expect(markup).toContain("file-5.ts");
+    // The running entry (file-6) is beyond the MAX_VISIBLE cap.
+    expect(markup).not.toContain("file-6.ts");
+    expect(markup).toContain("Show 1 more");
+  });
+
+  it("keeps completed exploration groups collapsed by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-complete-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-complete-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-a.ts",
+            },
+          },
+          {
+            id: "entry-complete-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-complete-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-b.ts",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Explored 2 files");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Show 1 more");
   });
 
   it("uses edited for completed edit groups and editing while any edit entry is still running", async () => {
@@ -935,6 +1372,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -988,6 +1426,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -997,9 +1436,88 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(completedMarkup).toContain("Edited");
+    expect(completedMarkup).toContain("Edited 2 files");
     expect(completedMarkup).not.toContain("Editing");
-    expect(runningMarkup).toContain("Editing");
+    expect(completedMarkup).toContain("font-mono");
+    expect(completedMarkup).toContain("a.ts");
+    expect(runningMarkup).toContain("Editing 2 files");
+    expect(runningMarkup).toContain("font-mono");
+    expect(runningMarkup).toContain("b.ts");
+  });
+
+  it("supports expanding entries inside an expanded workgroup", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const innerEntryExpansionKey = getGroupedWorkEntryExpansionKey("work-edit-group-1");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-edit-group-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-edit-group-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Edited a.ts",
+              tone: "tool",
+              itemType: "file_change",
+              detail: "a.ts",
+              output: {
+                item: {
+                  changes: [
+                    {
+                      path: "a.ts",
+                      diff: "@@ -1 +1 @@\n-oldValue\n+newValue",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          {
+            id: "entry-edit-group-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-edit-group-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Edited b.ts",
+              tone: "tool",
+              itemType: "file_change",
+              detail: "b.ts",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{
+          "work-edit-group-1": true,
+          [innerEntryExpansionKey]: true,
+        }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Edited 2 files");
+    expect(markup).toContain('aria-controls="work-entry-details-work-edit-group-1"');
+    expect(markup).toContain("newValue");
+    expect(markup).toContain("oldValue");
   });
 
   it("uses running while any command entry in a command group is still running", async () => {
@@ -1050,6 +1568,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -1096,6 +1615,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -1134,6 +1654,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -1181,6 +1702,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -1242,6 +1764,7 @@ describe("MessagesTimeline", () => {
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
         onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
         isRevertingCheckpoint={false}
         onImageExpand={() => {}}
         markdownCwd={undefined}
@@ -1252,5 +1775,65 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("Copy message");
+  });
+
+  it("keeps top-level assistant and activity rows on a shared leading edge", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress={false}
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "assistant-alignment",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-alignment"),
+              role: "assistant",
+              text: "Assistant body copy should share the same leading edge.",
+              turnId: TurnId.makeUnsafe("turn-alignment"),
+              createdAt: "2026-03-17T19:12:28.000Z",
+              completedAt: "2026-03-17T19:12:55.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "status-update-alignment",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-status-update-alignment",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Status update",
+              detail: "Activity copy should line up with assistant prose.",
+              tone: "info",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary="All rows should align"
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain("min-w-0 px-1 py-0.5");
+    expect(markup).not.toContain('class="py-0.5 pl-1"');
+    expect(markup).not.toContain("mb-1.5 pl-1 text-foreground/60");
   });
 });

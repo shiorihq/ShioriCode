@@ -55,12 +55,12 @@ function MessagesTimelineBrowserHarness(
     () => props.expandedWorkGroups,
   );
   const handleToggleWorkGroup = useCallback(
-    (groupId: string) => {
+    (groupId: string, currentlyExpanded: boolean) => {
       setExpandedWorkGroups((current) => ({
         ...current,
-        [groupId]: !(current[groupId] ?? false),
+        [groupId]: !currentlyExpanded,
       }));
-      props.onToggleWorkGroup(groupId);
+      props.onToggleWorkGroup(groupId, currentlyExpanded);
     },
     [props],
   );
@@ -169,6 +169,7 @@ function createBaseTimelineProps(input: {
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
+    onRetryAssistantMessage: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     markdownCwd: MARKDOWN_CWD,

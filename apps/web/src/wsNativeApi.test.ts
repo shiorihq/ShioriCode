@@ -69,15 +69,29 @@ const rpcClientMock = {
     upsertKeybinding: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    setShioriAuthToken: vi.fn(),
     getProviderUsage: vi.fn(),
+    getHostedBillingSnapshot: vi.fn(),
+    createHostedBillingCheckout: vi.fn(),
+    createHostedBillingPortal: vi.fn(),
     subscribeConfig: vi.fn(),
     subscribeLifecycle: vi.fn(),
+  },
+  onboarding: {
+    getState: vi.fn(),
+    completeStep: vi.fn(),
+    reset: vi.fn(),
+  },
+  telemetry: {
+    capture: vi.fn(),
+    log: vi.fn(),
   },
   orchestration: {
     getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
     getTurnDiff: vi.fn(),
     getFullThreadDiff: vi.fn(),
+    getSubagentDetail: vi.fn(),
     replayEvents: vi.fn(),
     onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
       registerListener(orchestrationEventListeners, listener),
@@ -384,6 +398,162 @@ describe("wsNativeApi", () => {
       },
     });
     expect(rpcClientMock.server.getProviderUsage).toHaveBeenCalledWith({ provider: "codex" });
+  });
+
+  it("forwards hosted billing actions directly to the RPC client", async () => {
+    rpcClientMock.server.getHostedBillingSnapshot.mockResolvedValue({
+      plans: [
+        {
+          id: "plus",
+          name: "Plus",
+          description: "Starter paid plan",
+          monthlyPrice: 10,
+          annualPrice: 96,
+          sortOrder: 0,
+          highlighted: true,
+          buttonText: "Get Plus",
+          features: ["Feature A"],
+        },
+      ],
+    });
+    rpcClientMock.server.createHostedBillingCheckout.mockResolvedValue({
+      sessionId: "cs_test_1",
+      url: "https://checkout.stripe.test/session",
+    });
+    rpcClientMock.server.createHostedBillingPortal.mockResolvedValue({
+      url: "https://billing.stripe.test/session",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(api.server.getHostedBillingSnapshot()).resolves.toEqual({
+      plans: [
+        {
+          id: "plus",
+          name: "Plus",
+          description: "Starter paid plan",
+          monthlyPrice: 10,
+          annualPrice: 96,
+          sortOrder: 0,
+          highlighted: true,
+          buttonText: "Get Plus",
+          features: ["Feature A"],
+        },
+      ],
+    });
+    await expect(
+      api.server.createHostedBillingCheckout({ planId: "pro", isAnnual: true }),
+    ).resolves.toEqual({
+      sessionId: "cs_test_1",
+      url: "https://checkout.stripe.test/session",
+    });
+    await expect(api.server.createHostedBillingPortal("manage")).resolves.toEqual({
+      url: "https://billing.stripe.test/session",
+    });
+
+    expect(rpcClientMock.server.getHostedBillingSnapshot).toHaveBeenCalledWith();
+    expect(rpcClientMock.server.createHostedBillingCheckout).toHaveBeenCalledWith({
+      planId: "pro",
+      isAnnual: true,
+    });
+    expect(rpcClientMock.server.createHostedBillingPortal).toHaveBeenCalledWith({
+      flow: "manage",
+    });
+  });
+
+  it("forwards onboarding actions directly to the RPC client", async () => {
+    const onboardingState = {
+      version: 1 as const,
+      dismissed: false,
+      completed: false,
+      currentStepId: "connect-provider" as const,
+      completedCount: 1,
+      totalSteps: 3,
+      steps: [
+        {
+          id: "sign-in" as const,
+          order: 0,
+          title: "Step 1: Sign in",
+          description: "Authenticate with your Shiori account.",
+          completed: true,
+        },
+        {
+          id: "connect-provider" as const,
+          order: 1,
+          title: "Step 2: Connect a provider",
+          description: "Placeholder: connect at least one coding provider.",
+          completed: false,
+        },
+        {
+          id: "start-first-thread" as const,
+          order: 2,
+          title: "Step 3: Start your first thread",
+          description: "Placeholder: create and open the first thread.",
+          completed: false,
+        },
+      ],
+    };
+    rpcClientMock.onboarding.getState.mockResolvedValue(onboardingState);
+    rpcClientMock.onboarding.completeStep.mockResolvedValue(onboardingState);
+    rpcClientMock.onboarding.reset.mockResolvedValue({
+      ...onboardingState,
+      currentStepId: "sign-in",
+      completedCount: 0,
+      steps: onboardingState.steps.map((step, index) => ({
+        ...step,
+        order: index,
+        completed: false,
+      })),
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await expect(api.onboarding.getState()).resolves.toEqual(onboardingState);
+    await expect(api.onboarding.completeStep({ stepId: "connect-provider" })).resolves.toEqual(
+      onboardingState,
+    );
+    await api.onboarding.reset();
+
+    expect(rpcClientMock.onboarding.getState).toHaveBeenCalledWith();
+    expect(rpcClientMock.onboarding.completeStep).toHaveBeenCalledWith({
+      stepId: "connect-provider",
+    });
+    expect(rpcClientMock.onboarding.reset).toHaveBeenCalledWith();
+  });
+
+  it("forwards telemetry actions directly to the RPC client", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await api.telemetry.capture({
+      event: "web.route.viewed",
+      properties: {
+        path: "/settings/general",
+      },
+    });
+    await api.telemetry.log({
+      level: "error",
+      message: "web.unhandled_error",
+      context: {
+        path: "/",
+      },
+    });
+
+    expect(rpcClientMock.telemetry.capture).toHaveBeenCalledWith({
+      event: "web.route.viewed",
+      properties: {
+        path: "/settings/general",
+      },
+    });
+    expect(rpcClientMock.telemetry.log).toHaveBeenCalledWith({
+      level: "error",
+      message: "web.unhandled_error",
+      context: {
+        path: "/",
+      },
+    });
   });
 
   it("forwards context menu metadata to the desktop bridge", async () => {

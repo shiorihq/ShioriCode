@@ -152,6 +152,40 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary([claudeSearchEntry], false)).toBe("Explored 1 search");
   });
 
+  it("counts unique edited files in edit work group summaries", () => {
+    const entries = [
+      {
+        id: "edit-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Edited package.json",
+        tone: "tool" as const,
+        itemType: "file_change" as const,
+        detail: "package.json",
+      },
+      {
+        id: "edit-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        label: "Edited src/index.ts",
+        tone: "tool" as const,
+        itemType: "file_change" as const,
+        detail: "src/index.ts",
+      },
+      {
+        id: "edit-3",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        label: "Edited package.json again",
+        tone: "tool" as const,
+        itemType: "file_change" as const,
+        detail: "package.json",
+      },
+    ];
+
+    expect(buildWorkGroupSummary(entries, false)).toBe("Edited 2 files");
+    expect(
+      buildWorkGroupSummary([...entries, { ...entries[2]!, id: "edit-4", running: true }], false),
+    ).toBe("Editing 2 files");
+  });
+
   it("classifies generic provider tool calls from serialized detail prefixes", () => {
     const codexReadEntry = {
       id: "codex-read",
@@ -184,7 +218,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(formatWorkEntry(subagentEntry)).toMatchObject({
       kind: "other",
-      action: "Delegated",
+      action: "",
       detail: "Review the database layer (code-reviewer)",
       monospace: false,
     });
