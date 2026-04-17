@@ -17,6 +17,7 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   { name: "/interrupt", description: "Interrupt the current turn" },
   { name: "/archive", description: "Archive the current thread" },
   { name: "/clear", description: "Clear the composer" },
+  { name: "/vim", description: "Toggle Vim editing mode" },
   { name: "/exit", description: "Quit shiori", aliases: ["/quit"] },
 ];
 
@@ -42,7 +43,16 @@ export function SlashMenu({
     return null;
   }
   return (
-    <Box flexDirection="column" paddingX={1} marginBottom={0}>
+    <Box
+      borderStyle="round"
+      borderColor={palette.accent}
+      flexDirection="column"
+      paddingX={1}
+      marginX={1}
+    >
+      <Text color={palette.accent} bold>
+        commands
+      </Text>
       {matches.map((command, index) => {
         const selected = index === selectedIndex;
         return (
@@ -57,6 +67,9 @@ export function SlashMenu({
           </Box>
         );
       })}
+      <Box marginTop={1}>
+        <Text dimColor>↑↓ select · tab complete · enter run · esc close</Text>
+      </Box>
     </Box>
   );
 }

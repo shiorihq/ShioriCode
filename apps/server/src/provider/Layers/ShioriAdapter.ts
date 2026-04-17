@@ -232,6 +232,7 @@ const LOCAL_TOOL_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_TOOL_FILE_CHARS = 20_000;
 const MAX_TOOL_COMMAND_OUTPUT_CHARS = 12_000;
 const MAX_SUBAGENT_TOOL_ROUNDS = 16;
+const HOSTED_BOOTSTRAP_CACHE_TTL_MS = 60_000;
 const SUBAGENT_NOTIFICATION_OPEN_TAG = "<subagent_notification>";
 const SUBAGENT_NOTIFICATION_CLOSE_TAG = "</subagent_notification>";
 const INTERNAL_HOSTED_TOOL_NAMES = new Set(["wait_for_response"]);
@@ -459,6 +460,8 @@ interface ShioriSessionContext {
   messages: HostedShioriMessage[];
   turns: ShioriTurnState[];
   activeTurn: ActiveTurnState | null;
+  hostedBootstrap?: ShioriCodeBootstrapConfig | null;
+  hostedBootstrapFetchedAt?: number;
   toolRuntime: ShioriSessionToolRuntime | null;
   pendingApprovals: Map<ApprovalRequestId, PendingToolCall>;
   pendingUserInputs: Map<ApprovalRequestId, PendingToolCall>;
@@ -3064,12 +3067,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const resolveHostedBootstrapForContext = Effect.fn("resolveHostedBootstrapForContext")(
         function* (input: { threadId: ThreadId; authToken: string }) {
           const context = yield* getContext(input.threadId);
-          const existing = context.activeTurn?.hostedBootstrap;
-          if (existing !== undefined) {
+          const existing = context.hostedBootstrap ?? context.activeTurn?.hostedBootstrap;
+          const fetchedAt = context.hostedBootstrapFetchedAt ?? 0;
+          if (existing !== undefined && Date.now() - fetchedAt < HOSTED_BOOTSTRAP_CACHE_TTL_MS) {
             return existing;
           }
 
           const bootstrap = yield* fetchHostedBootstrapForToken(input.authToken);
+          context.hostedBootstrap = bootstrap;
+          context.hostedBootstrapFetchedAt = Date.now();
           if (context.activeTurn) {
             context.activeTurn.hostedBootstrap = bootstrap;
           }
@@ -6134,12 +6140,18 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             );
             const controller = new AbortController();
             const toolRuntime = yield* getOrCreateSessionToolRuntime(context);
-            const hostedBootstrap = yield* fetchHostedBootstrapForToken(authToken);
+            const hostedBootstrap =
+              context.hostedBootstrap !== undefined &&
+              Date.now() - (context.hostedBootstrapFetchedAt ?? 0) < HOSTED_BOOTSTRAP_CACHE_TTL_MS
+                ? context.hostedBootstrap
+                : yield* fetchHostedBootstrapForToken(authToken);
 
             const runningContext = withResumeCursor({
               ...context,
               messages: requestMessages,
               pendingSubagentNotifications: [],
+              hostedBootstrap,
+              hostedBootstrapFetchedAt: Date.now(),
               activeTurn: {
                 turnId,
                 controller,

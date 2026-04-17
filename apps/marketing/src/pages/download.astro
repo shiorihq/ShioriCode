@@ -2,12 +2,16 @@
 import Layout from "../layouts/Layout.astro";
 ---
 
-<Layout title="Download — ShioriCode" description="Download ShioriCode for macOS, Windows, or Linux.">
+<Layout
+  title="Download — ShioriCode"
+  description="Download ShioriCode for macOS, Windows, or Linux. Requires an active paid Shiori subscription."
+>
   <h1 class="heading">Download ShioriCode</h1>
   <p class="subheading">
     <span id="version-label">Loading the latest stable release&hellip;</span>
     <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
   </p>
+  <p class="access-note">Requires an active Shiori Plus, Pro, or Max subscription.</p>
 
   <div class="platforms" id="platforms">
     <!-- macOS -->
@@ -138,6 +142,15 @@ import Layout from "../layouts/Layout.astro";
     gap: 0.75rem;
   }
 
+  .access-note {
+    margin-bottom: 2rem;
+    font-size: 0.84rem;
+    color: var(--fg-muted);
+    text-align: center;
+    opacity: 0;
+    animation: fade-in 1s ease-out 0.14s forwards;
+  }
+
   .changelog-link {
     color: var(--fg-muted);
     font-size: 0.8rem;
@@ -258,6 +271,11 @@ import Layout from "../layouts/Layout.astro";
   @media (max-width: 640px) {
     .main {
       padding: 5vh 1.25rem 4rem;
+    }
+
+    .subheading {
+      flex-direction: column;
+      gap: 0.35rem;
     }
 
     .platforms {

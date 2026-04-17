@@ -65,7 +65,6 @@ import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { LoadingText } from "../ui/loading-text";
-import { loadFontCatalog } from "../../lib/fonts";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
@@ -77,7 +76,7 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 
-const TIMESTAMP_FORMAT_LABELS = {
+export const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
   "24-hour": "24-hour",
@@ -88,12 +87,12 @@ type FontOption = {
   label: string;
 };
 
-const DEFAULT_UI_FONT_OPTION: FontOption = {
+export const DEFAULT_UI_FONT_OPTION: FontOption = {
   value: DEFAULT_UI_FONT_FAMILY,
   label: "System Sans",
 };
 
-const DEFAULT_CODE_FONT_OPTION: FontOption = {
+export const DEFAULT_CODE_FONT_OPTION: FontOption = {
   value: DEFAULT_CODE_FONT_FAMILY,
   label: "System Monospace",
 };
@@ -126,7 +125,7 @@ const ASSISTANT_PERSONALITY_OPTIONS = [
   },
 ] as const;
 
-function buildFontOptions(
+export function buildFontOptions(
   fontFamilies: readonly string[],
   currentValue: string,
   defaultOption: FontOption,
@@ -152,7 +151,7 @@ function buildFontOptions(
   return options;
 }
 
-function filterFontOptions(options: readonly FontOption[], query: string): FontOption[] {
+export function filterFontOptions(options: readonly FontOption[], query: string): FontOption[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (normalizedQuery.length === 0) {
     return [...options];
@@ -785,13 +784,6 @@ export function GeneralSettingsPanel() {
       settings.providers.claudeAgent.customModels.length > 0,
     ),
   });
-  const [fontCatalog, setFontCatalog] = useState<{ all: string[]; monospace: string[] }>({
-    all: [],
-    monospace: [],
-  });
-  const [uiFontSearch, setUiFontSearch] = useState("");
-  const [codeFontSearch, setCodeFontSearch] = useState("");
-  const [isLoadingFonts, setIsLoadingFonts] = useState(false);
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
@@ -846,27 +838,6 @@ export function GeneralSettingsPanel() {
       });
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoadingFonts(true);
-
-    void loadFontCatalog()
-      .then((catalog) => {
-        if (!cancelled) {
-          setFontCatalog(catalog);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingFonts(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const baseServerProviders = useServerProviders();
@@ -910,26 +881,6 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  const uiFontOptions = useMemo(
-    () => buildFontOptions(fontCatalog.all, settings.uiFontFamily, DEFAULT_UI_FONT_OPTION),
-    [fontCatalog.all, settings.uiFontFamily],
-  );
-  const filteredUiFontOptions = useMemo(
-    () => filterFontOptions(uiFontOptions, uiFontSearch),
-    [uiFontOptions, uiFontSearch],
-  );
-  const codeFontOptions = useMemo(
-    () =>
-      buildFontOptions(fontCatalog.monospace, settings.codeFontFamily, DEFAULT_CODE_FONT_OPTION),
-    [fontCatalog.monospace, settings.codeFontFamily],
-  );
-  const filteredCodeFontOptions = useMemo(
-    () => filterFontOptions(codeFontOptions, codeFontSearch),
-    [codeFontOptions, codeFontSearch],
-  );
-  const installedUiFontCount = Math.max(0, uiFontOptions.length - 1);
-  const installedCodeFontCount = Math.max(0, codeFontOptions.length - 1);
-
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
     setOpenKeybindingsError(null);
@@ -1083,243 +1034,7 @@ export function GeneralSettingsPanel() {
         })}
       </SettingsSection>
 
-      {isElectron ? (
-        <SettingsSection title="Appearance">
-          <SettingsRow
-            title="Translucent sidebar"
-            description="Make the sidebar translucent so desktop content is visible behind it. macOS only."
-            resetAction={
-              settings.sidebarTranslucent !== DEFAULT_UNIFIED_SETTINGS.sidebarTranslucent ? (
-                <SettingResetButton
-                  label="translucent sidebar"
-                  onClick={() => updateSettings({ sidebarTranslucent: false })}
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={settings.sidebarTranslucent}
-                onCheckedChange={(checked) =>
-                  updateSettings({ sidebarTranslucent: Boolean(checked) })
-                }
-                aria-label="Enable translucent sidebar"
-              />
-            }
-          />
-        </SettingsSection>
-      ) : null}
-
       <SettingsSection title="General">
-        <SettingsRow
-          title="UI font"
-          description="Choose the interface font. Installed fonts load from your system when available."
-          status={
-            isLoadingFonts
-              ? "Loading installed fonts..."
-              : installedUiFontCount > 0
-                ? `${installedUiFontCount} installed fonts available.`
-                : "Using system defaults only."
-          }
-          resetAction={
-            settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? (
-              <SettingResetButton
-                label="UI font"
-                onClick={() =>
-                  updateSettings({
-                    uiFontFamily: DEFAULT_UNIFIED_SETTINGS.uiFontFamily,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.uiFontFamily}
-              onOpenChange={(open) => {
-                if (!open) {
-                  setUiFontSearch("");
-                }
-              }}
-              onValueChange={(value) => {
-                if (value) {
-                  updateSettings({ uiFontFamily: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-56" aria-label="UI font">
-                <SelectValue>
-                  {uiFontOptions.find((option) => option.value === settings.uiFontFamily)?.label ??
-                    DEFAULT_UI_FONT_OPTION.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup
-                align="end"
-                alignItemWithTrigger={false}
-                header={
-                  <Input
-                    autoFocus
-                    value={uiFontSearch}
-                    placeholder="Search fonts"
-                    aria-label="Search UI fonts"
-                    className="h-8"
-                    onChange={(event) => setUiFontSearch(event.target.value)}
-                    onKeyDown={(event) => event.stopPropagation()}
-                  />
-                }
-                listClassName="max-h-[min(var(--available-height),18rem)]"
-              >
-                {filteredUiFontOptions.length > 0 ? (
-                  filteredUiFontOptions.map((option) => (
-                    <SelectItem hideIndicator key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">No fonts found.</div>
-                )}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Code font"
-          description="Choose the monospace font used for code, diffs, terminals, and inline shortcuts."
-          status={
-            isLoadingFonts
-              ? "Loading installed fonts..."
-              : installedCodeFontCount > 0
-                ? `${installedCodeFontCount} monospace fonts available.`
-                : "Using system monospace by default."
-          }
-          resetAction={
-            settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? (
-              <SettingResetButton
-                label="code font"
-                onClick={() =>
-                  updateSettings({
-                    codeFontFamily: DEFAULT_UNIFIED_SETTINGS.codeFontFamily,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.codeFontFamily}
-              onOpenChange={(open) => {
-                if (!open) {
-                  setCodeFontSearch("");
-                }
-              }}
-              onValueChange={(value) => {
-                if (value) {
-                  updateSettings({ codeFontFamily: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-56" aria-label="Code font">
-                <SelectValue>
-                  {codeFontOptions.find((option) => option.value === settings.codeFontFamily)
-                    ?.label ?? DEFAULT_CODE_FONT_OPTION.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup
-                align="end"
-                alignItemWithTrigger={false}
-                header={
-                  <Input
-                    autoFocus
-                    value={codeFontSearch}
-                    placeholder="Search fonts"
-                    aria-label="Search code fonts"
-                    className="h-8"
-                    onChange={(event) => setCodeFontSearch(event.target.value)}
-                    onKeyDown={(event) => event.stopPropagation()}
-                  />
-                }
-                listClassName="max-h-[min(var(--available-height),18rem)]"
-              >
-                {filteredCodeFontOptions.length > 0 ? (
-                  filteredCodeFontOptions.map((option) => (
-                    <SelectItem hideIndicator key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">No fonts found.</div>
-                )}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Time format"
-          description="System default follows your browser or OS clock preference."
-          resetAction={
-            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
-              <SettingResetButton
-                label="time format"
-                onClick={() =>
-                  updateSettings({
-                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.timestampFormat}
-              onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
-                  updateSettings({ timestampFormat: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {TIMESTAMP_FORMAT_LABELS.locale}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
-          resetAction={
-            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
-              <SettingResetButton
-                label="diff line wrapping"
-                onClick={() =>
-                  updateSettings({
-                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.diffWordWrap}
-              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
-              aria-label="Wrap diff lines by default"
-            />
-          }
-        />
-
         <SettingsRow
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."

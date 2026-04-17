@@ -154,6 +154,7 @@ const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
 };
+const SIDEBAR_HOVER_SURFACE_CLASS = "hover:bg-sidebar-hover hover:text-sidebar-hover-foreground";
 const SIDEBAR_ROW_LABEL_CLASS = "min-w-0 flex-1 truncate font-normal";
 const SIDEBAR_ROW_META_CLASS = "ml-auto font-normal text-muted-foreground/50";
 
@@ -696,7 +697,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
 
 function ShioriWordmark() {
   return (
-    <span className="flex items-baseline gap-0.5 shrink-0">
+    <span className="flex shrink-0 items-baseline gap-0.5">
       <span className="font-sans text-sm font-normal tracking-tight text-foreground">Shiori</span>
       <span className="font-mono text-sm font-bold italic text-primary">Code</span>
     </span>
@@ -724,7 +725,12 @@ function ProjectSortMenu({
       <Tooltip>
         <TooltipTrigger
           render={
-            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-accent hover:text-foreground" />
+            <MenuTrigger
+              className={cn(
+                "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-foreground transition-colors",
+                SIDEBAR_HOVER_SURFACE_CLASS,
+              )}
+            />
           }
         >
           <ArrowUpDownIcon className="size-3.5" />
@@ -841,7 +847,7 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
             <SidebarMenuButton
               size="sm"
               tooltip="Settings"
-              className="gap-2 px-2 py-1.5 text-foreground hover:bg-accent hover:text-foreground"
+              className="gap-2 px-2 py-1.5 text-foreground"
               onClick={props.onSettingsClick}
             >
               <SettingsIcon className="size-3.5" />
@@ -859,16 +865,21 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
     <div className="flex items-center gap-1.5">
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sidebar-foreground transition-colors group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0",
+          SIDEBAR_HOVER_SURFACE_CLASS,
+        )}
         onClick={props.onSettingsClick}
       >
         <span className="shrink-0">
           <UserAvatar src={viewer.image} name={viewer.name} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-          <span className="block truncate text-xs font-medium text-foreground">{displayName}</span>
+          <span className="block truncate text-xs font-medium text-sidebar-foreground">
+            {displayName}
+          </span>
           {subscriptionPlanLabel ? (
-            <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+            <span className="block truncate text-[10px] leading-tight text-sidebar-foreground/80">
               {subscriptionPlanLabel}
             </span>
           ) : null}
@@ -878,7 +889,10 @@ function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: Reac
         {props.sortMenu}
         <button
           type="button"
-          className="inline-flex size-5 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+          className={cn(
+            "inline-flex size-5 items-center justify-center rounded-md text-sidebar-foreground transition-colors",
+            SIDEBAR_HOVER_SURFACE_CLASS,
+          )}
           onClick={props.onSettingsClick}
         >
           <SettingsIcon className="size-3.5" />
@@ -1744,7 +1758,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                     />
                   }
                   showOnHover
-                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1890,7 +1904,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   render={<div role="button" tabIndex={0} />}
                   data-thread-selection-safe
                   size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60"
                   onClick={() => {
                     expandThreadListForProject(project.id);
                   }}
@@ -1907,7 +1921,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   render={<div role="button" tabIndex={0} />}
                   data-thread-selection-safe
                   size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60"
                   onClick={() => {
                     collapseThreadListForProject(project.id);
                   }}
@@ -2190,7 +2204,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                     render={<button type="button" />}
                     size="sm"
                     data-testid="search-button"
-                    className="h-7 gap-2 rounded-lg px-2 text-foreground hover:bg-accent hover:text-foreground"
+                    className="h-7 gap-2 rounded-lg px-2 text-foreground"
                     onClick={() => {
                       props.onSearchClick?.();
                     }}
@@ -2206,7 +2220,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                     size="sm"
                     isActive={pathname === "/pull-requests"}
                     data-testid="pull-requests-button"
-                    className="h-7 gap-2 rounded-lg px-2 text-foreground hover:bg-accent hover:text-foreground"
+                    className="h-7 gap-2 rounded-lg px-2 text-foreground"
                   >
                     <GitPullRequestIcon className="size-4 shrink-0" aria-hidden />
                     <span className={SIDEBAR_ROW_LABEL_CLASS}>Pull Requests</span>
@@ -2246,7 +2260,10 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   {isElectron && (
                     <button
                       type="button"
-                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-sm text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      className={cn(
+                        "mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-sm text-foreground/80 transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60",
+                        SIDEBAR_HOVER_SURFACE_CLASS,
+                      )}
                       onClick={() => void handlePickFolder()}
                       disabled={isPickingFolder || isAddingProject}
                     >

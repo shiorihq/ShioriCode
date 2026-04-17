@@ -3,6 +3,9 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { palette } from "../theme";
 
+export type EditorMode = "normal" | "vim";
+export type VimMode = "INSERT" | "NORMAL";
+
 export interface ComposerProps {
   readonly value: string;
   readonly onChange: (next: string) => void;
@@ -10,6 +13,9 @@ export interface ComposerProps {
   readonly placeholder?: string;
   readonly disabled?: boolean;
   readonly focused: boolean;
+  readonly editorMode: EditorMode;
+  readonly vimMode: VimMode;
+  readonly onVimModeChange: (mode: VimMode) => void;
   readonly onHistoryPrev?: () => void;
   readonly onHistoryNext?: () => void;
 }
@@ -36,6 +42,99 @@ function rowColToCursor(text: string, row: number, col: number): number {
   return cursor + safeCol;
 }
 
+function currentLineStart(text: string, cursor: number): number {
+  const { row } = cursorToRowCol(text, cursor);
+  return rowColToCursor(text, row, 0);
+}
+
+function currentLineEnd(text: string, cursor: number): number {
+  const { row } = cursorToRowCol(text, Math.min(cursor, text.length));
+  const line = splitLines(text)[row] ?? "";
+  const end = rowColToCursor(text, row, line.length);
+  return line.length === 0 ? end : end - 1;
+}
+
+function currentLineAppendPosition(text: string, cursor: number): number {
+  const { row } = cursorToRowCol(text, Math.min(cursor, text.length));
+  const line = splitLines(text)[row] ?? "";
+  return rowColToCursor(text, row, line.length);
+}
+
+function clampNormalCursor(text: string, cursor: number): number {
+  if (text.length === 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(cursor, text.length - 1));
+}
+
+function moveVerticalNormal(text: string, cursor: number, delta: number): number {
+  const { row, col } = cursorToRowCol(text, Math.min(cursor, text.length));
+  const lines = splitLines(text);
+  const nextRow = Math.max(0, Math.min(lines.length - 1, row + delta));
+  const nextLine = lines[nextRow] ?? "";
+  if (nextLine.length === 0) {
+    return rowColToCursor(text, nextRow, 0);
+  }
+  return clampNormalCursor(text, rowColToCursor(text, nextRow, Math.min(col, nextLine.length - 1)));
+}
+
+function isWordChar(char: string | undefined): boolean {
+  return typeof char === "string" && /^[A-Za-z0-9_]$/.test(char);
+}
+
+function nextWordStart(text: string, cursor: number): number {
+  if (text.length === 0) {
+    return 0;
+  }
+  let index = clampNormalCursor(text, cursor);
+  if (isWordChar(text[index])) {
+    while (index < text.length && isWordChar(text[index])) {
+      index += 1;
+    }
+  } else {
+    index += 1;
+  }
+  while (index < text.length && !isWordChar(text[index])) {
+    index += 1;
+  }
+  return clampNormalCursor(text, index >= text.length ? text.length - 1 : index);
+}
+
+function previousWordStart(text: string, cursor: number): number {
+  if (text.length === 0) {
+    return 0;
+  }
+  let index = clampNormalCursor(text, cursor);
+  if (index === 0) {
+    return 0;
+  }
+  index -= 1;
+  while (index > 0 && !isWordChar(text[index])) {
+    index -= 1;
+  }
+  while (index > 0 && isWordChar(text[index - 1])) {
+    index -= 1;
+  }
+  return index;
+}
+
+function endOfWord(text: string, cursor: number): number {
+  if (text.length === 0) {
+    return 0;
+  }
+  let index = clampNormalCursor(text, cursor);
+  while (index < text.length && !isWordChar(text[index])) {
+    index += 1;
+  }
+  if (index >= text.length) {
+    return text.length - 1;
+  }
+  while (index < text.length - 1 && isWordChar(text[index + 1])) {
+    index += 1;
+  }
+  return index;
+}
+
 export function Composer({
   value,
   onChange,
@@ -43,6 +142,9 @@ export function Composer({
   placeholder,
   disabled,
   focused,
+  editorMode,
+  vimMode,
+  onVimModeChange,
   onHistoryPrev,
   onHistoryNext,
 }: ComposerProps) {
@@ -52,6 +154,12 @@ export function Composer({
     setCursor((current) => Math.min(current, value.length));
   }, [value]);
 
+  useEffect(() => {
+    if (editorMode === "normal" && vimMode !== "INSERT") {
+      onVimModeChange("INSERT");
+    }
+  }, [editorMode, vimMode, onVimModeChange]);
+
   const setText = useCallback(
     (nextText: string, nextCursor: number) => {
       onChange(nextText);
@@ -60,10 +168,131 @@ export function Composer({
     [onChange],
   );
 
+  const enterInsertMode = useCallback(
+    (nextCursor: number) => {
+      setCursor(Math.max(0, Math.min(nextCursor, value.length)));
+      onVimModeChange("INSERT");
+    },
+    [onVimModeChange, value.length],
+  );
+
+  const enterNormalMode = useCallback(() => {
+    const nextCursor =
+      cursor > 0 && value[cursor - 1] !== "\n" ? cursor - 1 : Math.min(cursor, value.length);
+    setCursor(clampNormalCursor(value, nextCursor));
+    onVimModeChange("NORMAL");
+  }, [cursor, onVimModeChange, value]);
+
   useInput(
     (input, key) => {
       if (disabled) {
         return;
+      }
+
+      if (editorMode === "vim") {
+        if (key.escape && vimMode === "INSERT") {
+          enterNormalMode();
+          return;
+        }
+        if (key.escape && vimMode === "NORMAL") {
+          return;
+        }
+
+        if (vimMode === "NORMAL") {
+          if (key.return) {
+            const trimmed = value.trim();
+            if (trimmed.length === 0) {
+              return;
+            }
+            onSubmit(trimmed);
+            return;
+          }
+
+          if (key.leftArrow || input === "h") {
+            setCursor((current) => clampNormalCursor(value, current - 1));
+            return;
+          }
+          if (key.rightArrow || input === "l") {
+            setCursor((current) => clampNormalCursor(value, current + 1));
+            return;
+          }
+          if (key.upArrow || input === "k") {
+            const { row } = cursorToRowCol(value, Math.min(cursor, value.length));
+            if (row > 0) {
+              setCursor(moveVerticalNormal(value, cursor, -1));
+              return;
+            }
+            onHistoryPrev?.();
+            return;
+          }
+          if (key.downArrow || input === "j") {
+            const { row } = cursorToRowCol(value, Math.min(cursor, value.length));
+            const rowCount = splitLines(value).length;
+            if (row < rowCount - 1) {
+              setCursor(moveVerticalNormal(value, cursor, 1));
+              return;
+            }
+            onHistoryNext?.();
+            return;
+          }
+
+          switch (input) {
+            case "0":
+              setCursor(currentLineStart(value, cursor));
+              return;
+            case "$":
+              setCursor(currentLineEnd(value, cursor));
+              return;
+            case "w":
+              setCursor(nextWordStart(value, cursor));
+              return;
+            case "b":
+              setCursor(previousWordStart(value, cursor));
+              return;
+            case "e":
+              setCursor(endOfWord(value, cursor));
+              return;
+            case "i":
+              enterInsertMode(cursor);
+              return;
+            case "a":
+              enterInsertMode(Math.min(value.length, cursor + 1));
+              return;
+            case "I":
+              enterInsertMode(currentLineStart(value, cursor));
+              return;
+            case "A":
+              enterInsertMode(currentLineAppendPosition(value, cursor));
+              return;
+            case "o": {
+              const insertAt = currentLineAppendPosition(value, cursor);
+              setText(value.slice(0, insertAt) + "\n" + value.slice(insertAt), insertAt + 1);
+              onVimModeChange("INSERT");
+              return;
+            }
+            case "O": {
+              const insertAt = currentLineStart(value, cursor);
+              setText(value.slice(0, insertAt) + "\n" + value.slice(insertAt), insertAt);
+              onVimModeChange("INSERT");
+              return;
+            }
+            case "x":
+              if (value.length === 0) {
+                return;
+              }
+              setText(
+                value.slice(0, cursor) + value.slice(cursor + 1),
+                clampNormalCursor(value.slice(0, cursor) + value.slice(cursor + 1), cursor),
+              );
+              return;
+            case "/":
+              setText(value.slice(0, cursor) + "/" + value.slice(cursor), cursor + 1);
+              onVimModeChange("INSERT");
+              return;
+            default:
+              return;
+          }
+        }
       }
 
       if (key.return) {
@@ -160,20 +389,31 @@ export function Composer({
   );
 
   const rendered = useMemo(
-    () => renderValue(value, cursor, focused, placeholder),
-    [value, cursor, focused, placeholder],
+    () => renderValue(value, cursor, focused, placeholder, editorMode, vimMode),
+    [value, cursor, focused, placeholder, editorMode, vimMode],
   );
 
+  const footerHint =
+    editorMode === "vim"
+      ? vimMode === "NORMAL"
+        ? "vim normal · i/a/o insert · enter send"
+        : "vim insert · esc normal · shift+enter newline"
+      : "enter send · shift+enter newline · / commands";
   return (
     <Box
       borderStyle="round"
       borderColor={focused ? palette.accent : palette.neutral}
       paddingX={1}
-      flexDirection="row"
+      flexDirection="column"
     >
-      <Text color={focused ? palette.accent : palette.neutral}>{"› "}</Text>
-      <Box flexDirection="column" flexGrow={1}>
-        {rendered}
+      <Box flexDirection="row">
+        <Text color={focused ? palette.accent : palette.neutral}>{"› "}</Text>
+        <Box flexDirection="column" flexGrow={1}>
+          {rendered}
+        </Box>
+      </Box>
+      <Box>
+        <Text dimColor>{footerHint}</Text>
       </Box>
     </Box>
   );
@@ -184,11 +424,15 @@ function renderValue(
   cursor: number,
   focused: boolean,
   placeholder: string | undefined,
+  editorMode: EditorMode,
+  vimMode: VimMode,
 ) {
   if (value.length === 0) {
     return (
       <Text>
-        {focused ? <Text inverse> </Text> : null}
+        {focused ? (
+          <Text inverse>{editorMode === "vim" && vimMode === "NORMAL" ? "·" : " "}</Text>
+        ) : null}
         <Text dimColor>{placeholder ?? "Type a message…"}</Text>
       </Text>
     );
@@ -208,7 +452,7 @@ function renderValue(
     return (
       <Text key={rowKey}>
         {before}
-        <Text inverse>{at}</Text>
+        <Text inverse>{editorMode === "vim" && vimMode === "NORMAL" && at === " " ? "·" : at}</Text>
         {after}
       </Text>
     );

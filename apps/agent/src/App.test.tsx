@@ -282,6 +282,36 @@ describe("App", () => {
     expect(controller.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("supports vim mode editing via /vim", async () => {
+    const controller = new MockController(makeState(makeThread()));
+    const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
+
+    app.stdin.write("/vim");
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
+
+    expect(app.lastFrame()).toContain("-- INSERT --");
+
+    app.stdin.write("hello");
+    await flushUi();
+    app.stdin.write("\u001b");
+    await flushUi();
+
+    expect(app.lastFrame()).not.toContain("-- INSERT --");
+
+    app.stdin.write("0");
+    await flushUi();
+    app.stdin.write("i");
+    await flushUi();
+    app.stdin.write("Say ");
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
+
+    expect(controller.sendMessage).toHaveBeenCalledWith("Say hello");
+  });
+
   it("rerenders on streaming updates", async () => {
     const controller = new MockController(makeState(makeThread()));
     const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);

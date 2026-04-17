@@ -30,6 +30,8 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-sidebar-hover-foreground: var(--sidebar-hover-surface-foreground);
+  --color-sidebar-hover: var(--sidebar-hover-surface);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-border: var(--sidebar-border);
@@ -98,7 +100,7 @@
   --app-sidebar-shell-background: color-mix(in srgb, var(--color-white) 94%, transparent);
   --app-sidebar-shell-background-translucent: color-mix(
     in srgb,
-    var(--color-white) 24%,
+    var(--color-white) 55%,
     transparent
   );
   --app-sidebar-shell-border: color-mix(in srgb, var(--color-black) 10%, transparent);
@@ -114,14 +116,23 @@
   );
   --sidebar-interactive-surface-foreground: var(--foreground);
   --sidebar-interactive-outline: color-mix(in srgb, var(--background) 84%, var(--foreground) 16%);
-  --sidebar-thread-surface-active: var(--sidebar-interactive-surface);
-  --sidebar-thread-surface-selected: color-mix(in srgb, var(--background) 91%, var(--ring) 9%);
-  --sidebar-thread-surface-selected-active: var(--sidebar-interactive-surface);
+  --sidebar-hover-surface: --alpha(var(--color-black) / 4.75%);
+  --sidebar-hover-surface-foreground: var(--accent-foreground);
+  --sidebar-thread-surface-active: color-mix(in srgb, var(--accent) 84%, transparent);
+  --sidebar-thread-surface-active-hover: color-mix(in srgb, var(--accent) 100%, transparent);
+  --sidebar-thread-surface-selected: color-mix(in srgb, var(--primary) 15%, transparent);
+  --sidebar-thread-surface-selected-hover: color-mix(in srgb, var(--primary) 19%, transparent);
+  --sidebar-thread-surface-selected-active: color-mix(in srgb, var(--primary) 22%, transparent);
+  --sidebar-thread-surface-selected-active-hover: color-mix(
+    in srgb,
+    var(--primary) 26%,
+    transparent
+  );
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
-  --sidebar: var(--card);
+  --sidebar: color-mix(in srgb, var(--card) 94%, var(--muted));
   --sidebar-foreground: var(--card-foreground);
   --sidebar-border: var(--border);
   --sidebar-accent: var(--accent);
@@ -153,7 +164,7 @@
     --app-sidebar-shell-background: color-mix(in srgb, var(--color-white) 6%, var(--background));
     --app-sidebar-shell-background-translucent: color-mix(
       in srgb,
-      var(--background) 20%,
+      var(--background) 42%,
       transparent
     );
     --app-sidebar-shell-border: color-mix(in srgb, var(--color-white) 9%, transparent);
@@ -165,13 +176,23 @@
     );
     --sidebar-interactive-surface-foreground: var(--foreground);
     --sidebar-interactive-outline: color-mix(in srgb, var(--background) 76%, var(--foreground) 24%);
-    --sidebar-thread-surface-active: var(--sidebar-interactive-surface);
-    --sidebar-thread-surface-selected: color-mix(in srgb, var(--background) 84%, var(--ring) 16%);
-    --sidebar-thread-surface-selected-active: var(--sidebar-interactive-surface);
+    --sidebar-hover-surface: --alpha(var(--color-white) / 4.5%);
+    --sidebar-hover-surface-foreground: var(--accent-foreground);
+    --sidebar-thread-surface-active: color-mix(in srgb, var(--accent) 54%, transparent);
+    --sidebar-thread-surface-active-hover: color-mix(in srgb, var(--accent) 68%, transparent);
+    --sidebar-thread-surface-selected: color-mix(in srgb, var(--primary) 22%, transparent);
+    --sidebar-thread-surface-selected-hover: color-mix(in srgb, var(--primary) 28%, transparent);
+    --sidebar-thread-surface-selected-active: color-mix(in srgb, var(--primary) 30%, transparent);
+    --sidebar-thread-surface-selected-active-hover: color-mix(
+      in srgb,
+      var(--primary) 36%,
+      transparent
+    );
     --background: #101010;
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
+    --sidebar: color-mix(in srgb, var(--card) 92%, var(--muted));
     --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.771 0.101 241.4);
@@ -234,14 +255,24 @@ body {
 
 [data-app-sidebar-shell][data-slot="sidebar-container"] {
   background-color: transparent !important;
+  overflow: visible;
+}
+
+[data-app-sidebar-shell][data-slot="sidebar-container"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: calc(var(--app-sidebar-shell-radius) * -1);
+  width: var(--app-sidebar-shell-radius);
+  height: var(--app-sidebar-shell-radius);
+  background: var(--app-sidebar-shell-background);
+  pointer-events: none;
 }
 
 [data-app-sidebar-shell][data-slot="sidebar-container"] [data-slot="sidebar-inner"] {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  border-top-left-radius: var(--app-sidebar-shell-radius);
-  border-bottom-left-radius: var(--app-sidebar-shell-radius);
   background: transparent;
 }
 
@@ -249,18 +280,20 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  border-top-left-radius: inherit;
-  border-bottom-left-radius: inherit;
   background: var(--app-sidebar-shell-background);
   pointer-events: none;
 }
 
 [data-app-sidebar-shell][data-slot="sidebar-container"][data-translucent]
   [data-slot="sidebar-inner"]::before {
-  background: transparent;
-  box-shadow: none;
+  background: var(--app-sidebar-shell-background-translucent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-white) 16%, transparent);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+}
+
+:root[data-sidebar-translucent] [data-app-sidebar-shell][data-slot="sidebar-container"]::before {
+  background: var(--app-sidebar-shell-background-translucent);
 }
 
 :root[data-sidebar-translucent]
@@ -288,28 +321,40 @@ body {
 .sidebar-thread-row:not(.sidebar-thread-row--active):not(.sidebar-thread-row--selected):not(
     .sidebar-thread-row--selected-active
   ):hover {
-  background-color: var(--sidebar-accent);
-  color: var(--sidebar-accent-foreground);
+  background-color: var(--sidebar-hover-surface);
+  color: var(--sidebar-hover-surface-foreground);
 }
 
 .sidebar-thread-row.sidebar-thread-row--active,
-.sidebar-thread-row.sidebar-thread-row--active:hover,
 .sidebar-thread-row.sidebar-thread-row--active:focus-visible {
   background-color: var(--sidebar-thread-surface-active);
   color: var(--color-foreground);
 }
 
+.sidebar-thread-row.sidebar-thread-row--active:hover {
+  background-color: var(--sidebar-thread-surface-active-hover);
+  color: var(--color-foreground);
+}
+
 .sidebar-thread-row.sidebar-thread-row--selected,
-.sidebar-thread-row.sidebar-thread-row--selected:hover,
 .sidebar-thread-row.sidebar-thread-row--selected:focus-visible {
   background-color: var(--sidebar-thread-surface-selected);
   color: var(--color-foreground);
 }
 
+.sidebar-thread-row.sidebar-thread-row--selected:hover {
+  background-color: var(--sidebar-thread-surface-selected-hover);
+  color: var(--color-foreground);
+}
+
 .sidebar-thread-row.sidebar-thread-row--selected-active,
-.sidebar-thread-row.sidebar-thread-row--selected-active:hover,
 .sidebar-thread-row.sidebar-thread-row--selected-active:focus-visible {
   background-color: var(--sidebar-thread-surface-selected-active);
+  color: var(--color-foreground);
+}
+
+.sidebar-thread-row.sidebar-thread-row--selected-active:hover {
+  background-color: var(--sidebar-thread-surface-selected-active-hover);
   color: var(--color-foreground);
 }
 
@@ -331,8 +376,8 @@ body {
     [data-slot="sidebar-menu-action"],
     [data-slot="sidebar-trigger"]
   ):is(:hover, :focus-visible) {
-  background-color: var(--sidebar-interactive-surface);
-  color: var(--sidebar-interactive-surface-foreground);
+  background-color: var(--sidebar-hover-surface);
+  color: var(--sidebar-hover-surface-foreground);
 }
 
 :root[data-sidebar-translucent]

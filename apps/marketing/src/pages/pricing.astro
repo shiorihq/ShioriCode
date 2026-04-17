@@ -2,29 +2,15 @@
 import Layout from "../layouts/Layout.astro";
 ---
 
-<Layout title="Pricing — ShioriCode" description="Simple, flat-rate pricing for ShioriCode. Start free, upgrade when you need more.">
+<Layout
+  title="Pricing — ShioriCode"
+  description="ShioriCode is included with active Shiori Plus, Pro, and Max subscriptions."
+>
   <h1 class="heading">Pricing</h1>
-  <p class="subline">One app. Every model. Flat rate.</p>
+  <p class="subline">ShioriCode is included with active Shiori Plus, Pro, and Max subscriptions.</p>
+  <p class="availability-note">Shiori Free does not include ShioriCode access.</p>
 
   <div class="plans">
-    <!-- Free -->
-    <div class="plan">
-      <div class="plan-top">
-        <h2 class="plan-name">Free</h2>
-        <div class="plan-price">
-          <span class="price-amount">$0</span>
-        </div>
-      </div>
-      <ul class="plan-features">
-        <li>Starter usage</li>
-        <li>Fast models — GPT-4o Mini, Gemini Flash, Claude Haiku</li>
-        <li>File uploads</li>
-        <li>Chat history saved</li>
-        <li>No credit card</li>
-      </ul>
-      <a href="/download" class="plan-cta plan-cta--ghost">Download</a>
-    </div>
-
     <!-- Plus -->
     <div class="plan plan--accent">
       <div class="plan-tag">Most popular</div>
@@ -87,7 +73,7 @@ import Layout from "../layouts/Layout.astro";
     </div>
   </div>
 
-  <p class="fine-print">Cancel anytime. All plans include the desktop app for macOS, Windows, and Linux.</p>
+  <p class="fine-print">Cancel anytime. ShioriCode is included with every paid Shiori plan on macOS, Windows, and Linux.</p>
 </Layout>
 
 <style>
@@ -118,11 +104,20 @@ import Layout from "../layouts/Layout.astro";
     animation: fade-in 0.8s ease-out 0.08s forwards;
   }
 
+  .availability-note {
+    font-size: 0.84rem;
+    color: var(--fg-muted);
+    text-align: center;
+    margin-bottom: 3rem;
+    opacity: 0;
+    animation: fade-in 0.8s ease-out 0.12s forwards;
+  }
+
   /* ── Plans grid ── */
 
   .plans {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 1px;
     width: 100%;
     max-width: 1080px;

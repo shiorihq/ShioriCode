@@ -45,16 +45,15 @@ vi.mock("./CommandKModal", () => ({
 }));
 
 describe("AppSidebarLayout", () => {
-  it("keeps the curved content shell from intercepting sidebar resize drags", () => {
+  it("renders the curved content shell when the sidebar is open", () => {
     const html = renderToStaticMarkup(
       <AppSidebarLayout>
         <div>Content</div>
       </AppSidebarLayout>,
     );
 
-    expect(html).toContain("bg-transparent pointer-events-none");
-    expect(html).toContain(
-      "pointer-events-auto overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]",
-    );
+    expect(html).toContain("-ml-px overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]");
+    expect(html).not.toContain('data-app-sidebar-content-shell="true"');
+    expect(html).not.toContain("rounded-bl-[var(--app-sidebar-shell-radius)]");
   });
 });

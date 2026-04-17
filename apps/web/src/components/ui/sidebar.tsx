@@ -28,6 +28,11 @@ const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 const SIDEBAR_MENU_TEXT_SIZE_CLASS = "text-sm";
+const SIDEBAR_HOVER_SURFACE_CLASS = "hover:bg-sidebar-hover hover:text-sidebar-hover-foreground";
+const SIDEBAR_ACTIVE_SURFACE_CLASS =
+  "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground";
+const SIDEBAR_OPEN_HOVER_SURFACE_CLASS =
+  "data-[state=open]:hover:bg-sidebar-hover data-[state=open]:hover:text-sidebar-hover-foreground";
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
@@ -576,7 +581,7 @@ function SidebarRail({
       aria-label={railLabel}
       className={cn(
         /* disable pointer events only when offcanvas sidebar is collapsed, that's when the rail sits over the native scrollbar on windows and linux. icon mode stays fully clickable. */
-        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 transition-[background-color,transform] duration-relaxed ease-basic after:absolute after:left-1/2 after:top-1/4 after:h-1/2 after:w-px after:-translate-x-1/2 after:rounded-full after:bg-transparent group-data-[side=right]:left-0 motion-reduce:transition-none sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-30 hidden w-4 transition-[background-color,transform] duration-relaxed ease-basic after:absolute after:left-1/2 after:top-1/4 after:h-1/2 after:w-px after:-translate-x-1/2 after:rounded-full after:bg-transparent group-data-[side=right]:left-0 motion-reduce:transition-none sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
         "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
         "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
@@ -639,7 +644,10 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn(
+        "relative z-20 isolate flex flex-col gap-2 bg-sidebar text-sidebar-foreground",
+        className,
+      )}
       data-sidebar="footer"
       data-slot="sidebar-footer"
       {...props}
@@ -706,7 +714,8 @@ function SidebarGroupLabel({ className, render, ...props }: useRender.ComponentP
 function SidebarGroupAction({ className, render, ...props }: useRender.ComponentProps<"button">) {
   const defaultProps = {
     className: cn(
-      "absolute top-3.5 right-3 flex aspect-square w-5 items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
+      "absolute top-3.5 right-3 flex aspect-square w-5 items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform focus-visible:ring-2 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
+      SIDEBAR_HOVER_SURFACE_CLASS,
       // Increases the hit area of the button on mobile.
       "after:-inset-2 after:absolute md:after:hidden",
       "group-data-[collapsible=icon]:hidden",
@@ -757,7 +766,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  `peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left ${SIDEBAR_MENU_TEXT_SIZE_CLASS} outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0`,
+  `peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left ${SIDEBAR_MENU_TEXT_SIZE_CLASS} outline-hidden ring-ring transition-[width,height,padding] ${SIDEBAR_HOVER_SURFACE_CLASS} focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 ${SIDEBAR_ACTIVE_SURFACE_CLASS} data-[active=true]:font-medium ${SIDEBAR_OPEN_HOVER_SURFACE_CLASS} group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0`,
   {
     defaultVariants: {
       size: "default",
@@ -770,9 +779,8 @@ const sidebarMenuButtonVariants = cva(
         sm: "h-7",
       },
       variant: {
-        default: "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-        outline:
-          "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
+        default: "",
+        outline: `bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] ${SIDEBAR_HOVER_SURFACE_CLASS} hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]`,
       },
     },
   },
@@ -841,7 +849,8 @@ function SidebarMenuAction({
 }) {
   const defaultProps = {
     className: cn(
-      "absolute top-1.5 right-1 flex aspect-square w-5 cursor-pointer items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 peer-hover/menu-button:text-sidebar-accent-foreground [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
+      "absolute top-1.5 right-1 flex aspect-square w-5 cursor-pointer items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform focus-visible:ring-2 peer-hover/menu-button:text-sidebar-hover-foreground [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
+      SIDEBAR_HOVER_SURFACE_CLASS,
       // Increases the hit area of the button on mobile.
       "after:-inset-2 after:absolute md:after:hidden",
       "peer-data-[size=sm]/menu-button:top-1",
@@ -868,7 +877,7 @@ function SidebarMenuBadge({ className, ...props }: React.ComponentProps<"div">) 
     <div
       className={cn(
         "pointer-events-none absolute right-1 flex h-5 min-w-5 select-none items-center justify-center rounded-lg px-1 font-medium text-sidebar-foreground text-sm tabular-nums",
-        "peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground",
+        "peer-hover/menu-button:text-sidebar-hover-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground",
         "peer-data-[size=sm]/menu-button:top-1",
         "peer-data-[size=default]/menu-button:top-1.5",
         "peer-data-[size=lg]/menu-button:top-2.5",
@@ -953,8 +962,8 @@ function SidebarMenuSubButton({
 }) {
   const defaultProps = {
     className: cn(
-      `-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 ${SIDEBAR_MENU_TEXT_SIZE_CLASS} text-sidebar-foreground outline-hidden ring-ring transition-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground`,
-      "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
+      `-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 ${SIDEBAR_MENU_TEXT_SIZE_CLASS} text-sidebar-foreground outline-hidden ring-ring transition-none ${SIDEBAR_HOVER_SURFACE_CLASS} focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground`,
+      SIDEBAR_ACTIVE_SURFACE_CLASS,
       "group-data-[collapsible=icon]:hidden",
       className,
     ),

@@ -510,6 +510,28 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
     };
+    if (target === "dmg") {
+      buildConfig.dmg = {
+        background: "dmg-background.png",
+        iconSize: 128,
+        window: {
+          width: 660,
+          height: 420,
+        },
+        contents: [
+          {
+            x: 168,
+            y: 252,
+          },
+          {
+            x: 492,
+            y: 252,
+            type: "link",
+            path: "/Applications",
+          },
+        ],
+      };
+    }
   }
 
   if (platform === "linux") {

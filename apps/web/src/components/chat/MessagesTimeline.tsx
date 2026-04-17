@@ -43,13 +43,17 @@ import {
   buildWorkGroupSummary,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
+  extractDelegatedAgentWorkflowCard,
+  extractSkillWorkflowCard,
   formatWorkEntry,
   getGroupedWorkEntryExpansionKey,
   getDisplayedWorkEntries,
   isRuntimeDiagnosticWorkEntry,
   isWorkRowExpanded,
   isWorkRowInProgress,
+  type DelegatedAgentWorkflowCard,
   type MessagesTimelineRow,
+  type SkillWorkflowCard,
   type WorkTimelineRow,
 } from "./MessagesTimeline.logic";
 import { summarizeToolOutput } from "./toolOutput";
@@ -1604,6 +1608,85 @@ function stripLeadingRootLine(text: string | null, rootPath: string | null): str
   return newlineIndex === -1 ? "" : text.slice(newlineIndex + 1);
 }
 
+const SkillWorkflowCardView = memo(function SkillWorkflowCardView(props: {
+  card: SkillWorkflowCard;
+}) {
+  const { card } = props;
+  return (
+    <div
+      className={cn(
+        CHAT_THREAD_BODY_CLASS,
+        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 pl-4 text-foreground/80",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-foreground/75">Skill workflow</span>
+        {card.skillName && (
+          <span className="rounded-sm bg-foreground/10 px-1.5 py-0.5 font-mono text-foreground/75">
+            {card.skillName}
+          </span>
+        )}
+      </div>
+      {card.toolUseId && (
+        <div className="font-mono text-foreground/60">Tool call {card.toolUseId}</div>
+      )}
+      {card.resultText && (
+        <pre className="overflow-x-auto whitespace-pre-wrap text-foreground/70">
+          {card.resultText}
+        </pre>
+      )}
+    </div>
+  );
+});
+
+const DelegatedAgentCardView = memo(function DelegatedAgentCardView(props: {
+  card: DelegatedAgentWorkflowCard;
+}) {
+  const { card } = props;
+  return (
+    <div
+      className={cn(
+        CHAT_THREAD_BODY_CLASS,
+        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 pl-4 text-foreground/80",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground/75">Delegated agent</span>
+        {card.agentRole && (
+          <span className="rounded-sm bg-foreground/10 px-1.5 py-0.5 font-mono text-foreground/75">
+            {card.agentRole}
+          </span>
+        )}
+        {card.runInBackground && (
+          <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-foreground/65">
+            Background
+          </span>
+        )}
+      </div>
+      {card.description && (
+        <div className="text-foreground/80">
+          <span className="text-foreground/55">Task: </span>
+          {card.description}
+        </div>
+      )}
+      {card.prompt && (
+        <div className="text-foreground/75">
+          <span className="text-foreground/55">Prompt: </span>
+          {card.prompt}
+        </div>
+      )}
+      {card.toolUseId && (
+        <div className="font-mono text-foreground/60">Tool call {card.toolUseId}</div>
+      )}
+      {card.resultText && (
+        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-foreground/70">
+          {card.resultText}
+        </pre>
+      )}
+    </div>
+  );
+});
+
 interface ExpandableWorkEntryProps {
   workEntry: TimelineWorkEntry;
   isExpanded: boolean;
@@ -1640,9 +1723,15 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
     ? (workEntry.detail?.trim() ?? null)
     : null;
   const detailUsesMono = formattedEntry.monospace;
+  const skillWorkflowCard = useMemo(() => extractSkillWorkflowCard(workEntry), [workEntry]);
+  const delegatedAgentCard = useMemo(
+    () => extractDelegatedAgentWorkflowCard(workEntry),
+    [workEntry],
+  );
+  const hasStructuredWorkflowCard = Boolean(skillWorkflowCard ?? delegatedAgentCard);
   const outputSummary = useMemo(() => summarizeToolOutput(workEntry.output), [workEntry.output]);
   const outputText =
-    commandExecutionSummary || todoList || planProposalMarkdown
+    commandExecutionSummary || todoList || planProposalMarkdown || hasStructuredWorkflowCard
       ? null
       : stripLeadingRootLine(outputSummary.text, detail ?? null);
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
@@ -1724,6 +1813,8 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
 
       <AnimatedExpandPanel open={isExpanded}>
         <div id={expandedContentId}>
+          {skillWorkflowCard && <SkillWorkflowCardView card={skillWorkflowCard} />}
+          {delegatedAgentCard && <DelegatedAgentCardView card={delegatedAgentCard} />}
           {runtimeDiagnosticDetail && (
             <div className="mt-0.5 pl-4">
               <div className="mb-1 flex justify-end">

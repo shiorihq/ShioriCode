@@ -5,6 +5,11 @@ import Layout from "../layouts/Layout.astro";
 <Layout>
   <h1 class="tagline">ShioriCode is the best way to code with AI.</h1>
 
+  <p class="subscriber-note">
+    Available to active Shiori Plus, Pro, and Max subscribers.
+    <a href="/pricing">View plans</a>
+  </p>
+
   <a
     id="download-btn"
     href="/download"
@@ -108,6 +113,27 @@ import Layout from "../layouts/Layout.astro";
     margin: 0 0 6vh;
     opacity: 0;
     animation: fade-in 1s ease-out forwards;
+  }
+
+  .subscriber-note {
+    margin: 0 0 1.75rem;
+    color: var(--fg-muted);
+    font-size: 0.92rem;
+    text-align: center;
+    opacity: 0;
+    animation: fade-in 1s ease-out 0.08s forwards;
+  }
+
+  .subscriber-note a {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: rgba(250, 250, 250, 0.35);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 0.2s ease;
+  }
+
+  .subscriber-note a:hover {
+    text-decoration-color: rgba(250, 250, 250, 0.7);
   }
 
   /* ── Hero button ── */

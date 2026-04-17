@@ -7,6 +7,8 @@ describe("AuthGateScreenContent", () => {
   it("renders all supported sign-in methods on the lock screen", () => {
     const html = renderToStaticMarkup(<AuthGateScreenContent />);
 
+    expect(html).toContain("Shiori");
+    expect(html).toContain("Code");
     expect(html).toContain("Sign in required");
     expect(html).toContain("GitHub");
     expect(html).toContain("Google");

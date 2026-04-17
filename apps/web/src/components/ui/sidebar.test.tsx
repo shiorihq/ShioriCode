@@ -6,6 +6,7 @@ import {
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
+  SidebarRail,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
@@ -22,6 +23,7 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-button"');
     expect(html).toContain("cursor-pointer");
+    expect(html).toContain("hover:bg-sidebar-hover");
   });
 
   it("lets project drag handles override the default pointer cursor", () => {
@@ -40,6 +42,7 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-action"');
     expect(html).toContain("cursor-pointer");
+    expect(html).toContain("hover:bg-sidebar-hover");
   });
 
   it("uses a pointer cursor for submenu buttons", () => {
@@ -49,5 +52,17 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-sub-button"');
     expect(html).toContain("cursor-pointer");
+    expect(html).toContain("hover:bg-sidebar-hover");
+  });
+
+  it("keeps the resize rail above overlapping content shells", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarRail />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-slot="sidebar-rail"');
+    expect(html).toContain("z-30");
   });
 });

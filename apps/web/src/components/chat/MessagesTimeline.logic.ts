@@ -484,6 +484,92 @@ function formatSkillToolDetail(input: Record<string, unknown> | null): string | 
   );
 }
 
+function extractToolUseId(result: Record<string, unknown> | null): string | null {
+  return asTrimmedString(result?.tool_use_id) ?? asTrimmedString(result?.toolUseId);
+}
+
+function extractResultContentText(result: Record<string, unknown> | null): string | null {
+  if (!result) {
+    return null;
+  }
+  const direct = asTrimmedString(result.content);
+  if (direct) {
+    return direct;
+  }
+  if (Array.isArray(result.content)) {
+    const text = result.content
+      .map((block) => asTrimmedString(asRecord(block)?.text))
+      .filter((value): value is string => value !== null)
+      .join("\n\n");
+    return text.length > 0 ? text : null;
+  }
+  return null;
+}
+
+export interface SkillWorkflowCard {
+  skillName: string | null;
+  toolUseId: string | null;
+  resultText: string | null;
+}
+
+export function extractSkillWorkflowCard(entry: WorkLogEntry): SkillWorkflowCard | null {
+  const toolName = getEntryToolName(entry);
+  if (toolName !== "skill") {
+    return null;
+  }
+  const input = getEntryToolInput(entry);
+  const result = asRecord(extractStructuredProviderToolData(entry.output)?.result);
+  return {
+    skillName: formatSkillToolDetail(input),
+    toolUseId: extractToolUseId(result),
+    resultText: extractResultContentText(result),
+  };
+}
+
+export interface DelegatedAgentWorkflowCard {
+  description: string | null;
+  prompt: string | null;
+  agentRole: string | null;
+  runInBackground: boolean;
+  toolUseId: string | null;
+  resultText: string | null;
+}
+
+export function extractDelegatedAgentWorkflowCard(
+  entry: WorkLogEntry,
+): DelegatedAgentWorkflowCard | null {
+  if (entry.itemType !== "collab_agent_tool_call") {
+    return null;
+  }
+  const input = getEntryToolInput(entry);
+  if (!input) {
+    return null;
+  }
+  const structured = extractStructuredProviderToolData(entry.output);
+  const result = asRecord(structured?.result);
+  const description =
+    asTrimmedString(input.description) ??
+    asTrimmedString(input.task) ??
+    asTrimmedString(input.title);
+  const prompt = asTrimmedString(input.prompt) ?? asTrimmedString(input.message);
+  const agentRole =
+    asTrimmedString(input.subagent_type) ??
+    asTrimmedString(input.subagentType) ??
+    asTrimmedString(input.agent_type) ??
+    asTrimmedString(input.agentType);
+  if (!description && !prompt && !agentRole) {
+    return null;
+  }
+  return {
+    description,
+    prompt,
+    agentRole,
+    runInBackground: input.run_in_background === true || input.runInBackground === true,
+    toolUseId: extractToolUseId(result),
+    resultText: extractResultContentText(result),
+  };
+}
+
 function formatUserInputToolDetail(input: Record<string, unknown> | null): string | null {
   if (!input) {
     return null;

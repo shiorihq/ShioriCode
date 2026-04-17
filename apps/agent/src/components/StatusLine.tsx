@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import React, { useEffect, useState } from "react";
 import type { ProviderInteractionMode, ProviderKind, RuntimeMode } from "contracts";
 
+import type { EditorMode, VimMode } from "./Composer";
 import { palette } from "../theme";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -70,6 +71,8 @@ export interface StatusLineProps {
   readonly activeSince: string | null;
   readonly notice: string | null;
   readonly error: string | null;
+  readonly editorMode: EditorMode;
+  readonly vimMode: VimMode;
   readonly hint: string;
 }
 
@@ -82,6 +85,8 @@ export function StatusLine({
   activeSince,
   notice,
   error,
+  editorMode,
+  vimMode,
   hint,
 }: StatusLineProps) {
   const active = activeSince !== null;
@@ -110,6 +115,12 @@ export function StatusLine({
             <Text color={palette.warning}>{interactionLabel(interactionMode)}</Text>
           </>
         ) : null}
+        {editorMode === "vim" ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text color={palette.accentBright}>vim</Text>
+          </>
+        ) : null}
         <Text> </Text>
         {active ? (
           <Text color={palette.running}>
@@ -121,6 +132,12 @@ export function StatusLine({
         )}
       </Box>
       <Box>
+        {editorMode === "vim" && vimMode === "INSERT" ? (
+          <>
+            <Text dimColor>-- INSERT --</Text>
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
         <Text dimColor>{hint}</Text>
       </Box>
       {notice ? <Text color={palette.success}>{notice}</Text> : null}

@@ -78,10 +78,8 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        "relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background",
-        // Keep the decorative curved shell from swallowing pointer events meant for the resize rail.
-        showCurvedSidebarEdge &&
-          "z-20 -ml-[var(--app-sidebar-shell-radius)] pl-[var(--app-sidebar-shell-radius)] bg-transparent pointer-events-none",
+        "flex min-h-0 min-w-0 flex-1 flex-col",
+        showCurvedSidebarEdge ? "bg-transparent" : "bg-background",
       )}
       style={
         applyClosedSidebarMacPadding ? { paddingLeft: `${macWindowControlsInset}px` } : undefined
@@ -89,9 +87,9 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
     >
       <div
         className={cn(
-          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+          "relative z-10 flex min-h-0 min-w-0 flex-1 flex-col bg-background",
           showCurvedSidebarEdge &&
-            "pointer-events-auto overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)] rounded-bl-[var(--app-sidebar-shell-radius)] border-l border-border",
+            "-ml-px overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]",
         )}
       >
         {children}

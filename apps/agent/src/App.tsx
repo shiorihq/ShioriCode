@@ -15,9 +15,10 @@ import {
 import { listActiveThreadsByUpdatedAt } from "shared/orchestrationClientProjection";
 import type { Thread } from "shared/orchestrationClientTypes";
 
-import { Composer } from "./components/Composer";
+import { Composer, type EditorMode, type VimMode } from "./components/Composer";
 import {
   ApprovalBanner,
+  ErrorBanner,
   Panel,
   PromptOverlay,
   SettingsOverlay,
@@ -62,10 +63,10 @@ function useControllerState(controller: AgentController) {
   return useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
 }
 
-/** Rows reserved for chrome: welcome (3) + overlays (variable, 0 when none) + composer (3) + status (2). */
+/** Rows reserved for chrome: welcome (4) + overlays (variable, 0 when none) + composer (4) + status (2). */
 const WELCOME_ROWS = 4;
 const STATUS_ROWS = 2;
-const COMPOSER_ROWS = 3;
+const COMPOSER_ROWS = 4;
 const TIMELINE_STATUS_ROWS = 1;
 const TRANSCRIPT_FOOTER_ROWS = 1;
 
@@ -83,6 +84,8 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [promptValue, setPromptValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>("normal");
+  const [vimMode, setVimMode] = useState<VimMode>("INSERT");
   const [history, setHistory] = useState<string[]>([]);
   const [, setHistoryCursor] = useState<number | null>(null);
   const [pendingUserAnswers, setPendingUserAnswers] = useState<Record<string, unknown>>({});
@@ -190,6 +193,7 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
 
   const composerDisabled = transcriptMode || prompt !== null || overlay !== "none";
   const footerRows = transcriptMode ? TRANSCRIPT_FOOTER_ROWS : COMPOSER_ROWS;
+  const errorMessage = state.error ?? null;
 
   // Compute timeline viewport geometry.
   const overlayRows = computeOverlayRows({
@@ -204,6 +208,8 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
     proposedPlanRow: proposedPlan ? 1 : 0,
     recentThreadCount: recentThreads.length,
     slashMatchCount: slashMatches.length,
+    errorOpen: errorMessage !== null,
+    transcriptHeader: transcriptMode,
   });
 
   const timelineHeight = Math.max(
@@ -318,6 +324,10 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         case "/clear":
           setComposerValue("");
           return;
+        case "/vim":
+          setEditorMode((current) => (current === "normal" ? "vim" : "normal"));
+          setVimMode("INSERT");
+          return;
         case "/exit":
         case "/quit":
           void controller.dispose().finally(() => exit());
@@ -418,6 +428,9 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
       }
       if (transcriptMode) {
         exitTranscriptMode();
+        return;
+      }
+      if (editorMode === "vim" && !composerDisabled) {
         return;
       }
       if (overlay !== "none") {
@@ -733,6 +746,7 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
   }, [selectedThread]);
 
   const sessionStatus = sessionBadge(selectedThread);
+  const vimEnabled = editorMode === "vim";
   const composerPlaceholder = busy
     ? "Working…"
     : currentPendingQuestion
@@ -741,22 +755,40 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         ? "Approval required above — press 1/2/3/4"
         : undefined;
 
-  const statusHint =
-    state.phase === "loading"
-      ? "connecting to backend…"
-      : transcriptMode
-        ? "detailed transcript · ctrl+o or q return · ↑↓ scroll · pgup/pgdn page · home/end jump"
-        : overlay === "switcher"
-          ? "↑↓ navigate · enter switch · esc close"
-          : overlay === "settings"
-            ? "esc close · [ ] provider · ← → model · r runtime · i interaction"
-            : focusedId
-              ? "ctrl+↑↓ select · ctrl+space expand · ctrl+o transcript · pgup/pgdn scroll · esc follow"
-              : "/ commands · ? help · ctrl+o transcript · ctrl+p threads · ctrl+↑↓ select · pgup/pgdn scroll · ctrl+c exit";
+  let statusHint =
+    "/ commands · ? help · ctrl+o transcript · ctrl+p threads · ctrl+↑↓ select · pgup/pgdn scroll · ctrl+c exit";
+  if (state.phase === "loading") {
+    statusHint = "connecting to backend…";
+  } else if (transcriptMode) {
+    statusHint =
+      "detailed transcript · ctrl+o or q return · ↑↓ scroll · pgup/pgdn page · home/end jump";
+  } else if (overlay === "switcher") {
+    statusHint = "↑↓ navigate · enter switch · esc close";
+  } else if (overlay === "settings") {
+    statusHint = "esc close · [ ] provider · ← → model · r runtime · i interaction";
+  } else if (vimEnabled && vimMode === "NORMAL") {
+    statusHint = "vim normal · i/a/o insert · h/j/k/l move · w/b/e words · 0/$ line · x delete";
+  } else if (vimEnabled) {
+    statusHint = "vim insert · esc normal · enter send · /vim disable · ctrl+o transcript";
+  } else if (focusedId) {
+    statusHint =
+      "ctrl+↑↓ select · ctrl+space expand · ctrl+o transcript · pgup/pgdn scroll · esc follow";
+  }
 
   return (
     <Box flexDirection="column" width={dimensions.columns} height={dimensions.rows}>
       <Welcome cwd={state.cwd} />
+
+      {transcriptMode ? (
+        <Box paddingX={1} justifyContent="space-between">
+          <Text color={palette.accent} bold>
+            transcript
+          </Text>
+          <Text dimColor>
+            {selectedThread?.title ?? "—"} · {timelineEntries.length} entries
+          </Text>
+        </Box>
+      ) : null}
 
       <Box paddingX={1} justifyContent="space-between">
         <Text dimColor>{hiddenAbove > 0 ? `↑ ${hiddenAbove} earlier` : " "}</Text>
@@ -849,6 +881,8 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
 
       {showingSlashMenu ? <SlashMenu query={composerValue} selectedIndex={slashIndex} /> : null}
 
+      {errorMessage && !transcriptMode ? <ErrorBanner message={errorMessage} /> : null}
+
       {transcriptMode ? (
         <TranscriptFooter />
       ) : (
@@ -859,6 +893,9 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
           {...(composerPlaceholder ? { placeholder: composerPlaceholder } : {})}
           disabled={composerDisabled}
           focused={!composerDisabled}
+          editorMode={editorMode}
+          vimMode={vimMode}
+          onVimModeChange={setVimMode}
           onHistoryPrev={() => {
             if (history.length === 0) return;
             setHistoryCursor((current) => {
@@ -892,7 +929,9 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         sessionStatus={sessionStatus}
         activeSince={activeSince}
         notice={state.notice}
-        error={state.error}
+        error={transcriptMode ? state.error : null}
+        editorMode={editorMode}
+        vimMode={vimMode}
         hint={statusHint}
       />
     </Box>
@@ -911,15 +950,19 @@ function computeOverlayRows(inputs: {
   proposedPlanRow: number;
   recentThreadCount: number;
   slashMatchCount: number;
+  errorOpen: boolean;
+  transcriptHeader: boolean;
 }): number {
   let rows = 0;
   if (inputs.pendingApproval) rows += 5;
   if (inputs.pendingUserInput) rows += 6;
-  if (inputs.switcherOpen) rows += Math.min(10, inputs.recentThreadCount + 4);
+  if (inputs.switcherOpen) rows += Math.min(14, inputs.recentThreadCount * 2 + 4);
   if (inputs.settingsOpen) rows += 10;
   if (inputs.helpOpen) rows += 14;
   if (inputs.promptOpen) rows += 5;
-  if (inputs.slashMenuOpen) rows += Math.min(8, inputs.slashMatchCount);
+  if (inputs.slashMenuOpen) rows += Math.min(12, inputs.slashMatchCount + 5);
+  if (inputs.errorOpen) rows += 5;
+  if (inputs.transcriptHeader) rows += 1;
   rows += inputs.activePlanRows;
   rows += inputs.proposedPlanRow;
   return rows;
@@ -971,6 +1014,9 @@ function HelpPanel() {
       <Text dimColor>ctrl+p threads · ctrl+n new · ctrl+s settings · ctrl+r interrupt</Text>
       <Text dimColor>
         ctrl+o transcript · ctrl+↑↓ select entry · ctrl+space expand · pgup/pgdn scroll
+      </Text>
+      <Text dimColor>
+        /vim toggle · esc normal · i/a/o insert · h/j/k/l move · w/b/e words · 0/$ line
       </Text>
       <Text dimColor>ctrl+a archive · ctrl+c exit · shift+enter newline · enter send</Text>
       <Text> </Text>

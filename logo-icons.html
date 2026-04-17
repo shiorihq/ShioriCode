@@ -340,6 +340,50 @@
       const FONT_DISPLAY = '"Soehne", "Helvetica Neue", Arial, sans-serif';
       const FONT_MONO = '"IBM Plex Mono", monospace';
 
+      function drawCenteredMonogram(ctx, input) {
+        const {
+          anchorX,
+          anchorY,
+          sText = "S",
+          cText = "C",
+          sFont,
+          cFont,
+          sFill,
+          cFill,
+          overlap = 0,
+          sNudgeX = 0,
+          sNudgeY = 0,
+          cNudgeX = 0,
+          cNudgeY = 0,
+        } = input;
+
+        ctx.save();
+        ctx.textBaseline = "middle";
+
+        ctx.font = sFont;
+        const sMetrics = ctx.measureText(sText);
+        const sWidth = sMetrics.width;
+
+        ctx.font = cFont;
+        const cMetrics = ctx.measureText(cText);
+        const cWidth = cMetrics.width;
+
+        const totalWidth = sWidth + cWidth - overlap;
+        const leftEdge = anchorX - totalWidth / 2;
+        const sX = leftEdge + sWidth / 2 + sNudgeX;
+        const cX = leftEdge + sWidth - overlap + cWidth / 2 + cNudgeX;
+
+        ctx.font = sFont;
+        ctx.textAlign = "center";
+        ctx.fillStyle = sFill;
+        ctx.fillText(sText, sX, anchorY + sNudgeY);
+
+        ctx.font = cFont;
+        ctx.fillStyle = cFill;
+        ctx.fillText(cText, cX, anchorY + cNudgeY);
+        ctx.restore();
+      }
+
       function drawIcon(ctx, size, theme, opts = {}) {
         const { withShadow = false, withGlass = true, squircleRadius = 0.22 } = opts;
         const c = COLORS[theme];
@@ -457,24 +501,24 @@
         ctx.globalAlpha = 1;
 
         // ── Typography ──
-        const textCenterX = gx + gs * 0.48;
-        const textCenterY = gy + gs * 0.54;
+        const textCenterX = gx + gs * 0.5;
+        const textCenterY = gy + gs * 0.5;
+        const sSize = Math.round(gs * 0.62);
+        const cSize = Math.round(gs * 0.54);
 
-        // "S" in display font
-        const sSize = Math.round(gs * 0.58);
-        ctx.font = `700 ${sSize}px ${FONT_DISPLAY}`;
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = c.textPrimary;
-        ctx.fillText("S", textCenterX + gs * 0.02, textCenterY);
-
-        // "C" in mono
-        const cSize = Math.round(gs * 0.48);
-        ctx.font = `700 ${cSize}px ${FONT_MONO}`;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = c.textAccent;
-        ctx.fillText("C", textCenterX - gs * 0.01, textCenterY + gs * 0.01);
+        drawCenteredMonogram(ctx, {
+          anchorX: textCenterX,
+          anchorY: textCenterY,
+          sFont: `700 ${sSize}px ${FONT_DISPLAY}`,
+          cFont: `700 ${cSize}px ${FONT_MONO}`,
+          sFill: c.textPrimary,
+          cFill: c.textAccent,
+          overlap: gs * 0.11,
+          sNudgeX: -gs * 0.008,
+          sNudgeY: -gs * 0.004,
+          cNudgeX: gs * 0.012,
+          cNudgeY: gs * 0.012,
+        });
 
         // Dimension annotation — bottom
         if (gs >= 180) {
@@ -642,21 +686,21 @@
           }
         }
 
-        // "S" — larger, bold
-        const sSize = Math.round(size * 0.55);
-        ctx.font = `700 ${sSize}px ${FONT_DISPLAY}`;
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = c.textPrimary;
-        ctx.fillText("S", size * 0.52, size * 0.52);
-
-        // "C" — smaller mono
-        const cSize = Math.round(size * 0.42);
-        ctx.font = `600 ${cSize}px ${FONT_MONO}`;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = c.textAccent;
-        ctx.fillText("C", size * 0.48, size * 0.55);
+        const sSize = Math.round(size * 0.6);
+        const cSize = Math.round(size * 0.5);
+        drawCenteredMonogram(ctx, {
+          anchorX: size * 0.5,
+          anchorY: size * 0.5,
+          sFont: `700 ${sSize}px ${FONT_DISPLAY}`,
+          cFont: `700 ${cSize}px ${FONT_MONO}`,
+          sFill: c.textPrimary,
+          cFill: c.textAccent,
+          overlap: size * 0.11,
+          sNudgeX: -size * 0.01,
+          sNudgeY: -size * 0.01,
+          cNudgeX: size * 0.01,
+          cNudgeY: size * 0.03,
+        });
 
         ctx.restore();
       }

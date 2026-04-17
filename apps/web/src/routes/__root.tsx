@@ -28,6 +28,7 @@ import { resolveOnboardingState } from "shared/onboarding";
 import { APP_DISPLAY_NAME } from "../branding";
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { ShioriWordmark } from "../components/ShioriWordmark";
 import { HostedShioriAuthPanel } from "../components/auth/HostedShioriAuthPanel";
 import { HostedBillingPanel } from "../components/billing/HostedBillingPanel";
 import { OnboardingScreen } from "../components/onboarding/OnboardingScreen";
@@ -126,12 +127,11 @@ export function AuthGateScreenContent() {
 
   return (
     <div className="relative flex min-h-screen flex-col bg-background px-6 py-8 text-foreground sm:px-10">
-      <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground/50 uppercase">
-        {APP_DISPLAY_NAME}
-      </p>
-
       <div className="flex flex-1 items-center justify-center">
         <div className="auth-form-enter w-full max-w-[380px]">
+          <div className="mb-5 flex justify-center">
+            <ShioriWordmark />
+          </div>
           <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight sm:text-[2rem]">
             {heading}
           </h1>
