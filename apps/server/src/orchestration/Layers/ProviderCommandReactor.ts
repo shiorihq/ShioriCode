@@ -4,6 +4,7 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThreadResumeState,
   PROVIDER_DISPLAY_NAMES,
   ProviderKind,
   type OrchestrationSession,
@@ -12,7 +13,20 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "contracts";
-import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
+import {
+  Cache,
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Equal,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
+import * as Semaphore from "effect/Semaphore";
 import { makeDrainableWorker } from "shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -32,6 +46,7 @@ type ProviderIntentEvent = Extract<
   {
     type:
       | "thread.runtime-mode-set"
+      | "thread.session-ensure-requested"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
@@ -120,6 +135,22 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
+function providerFailureDetail(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "detail" in error &&
+    typeof error.detail === "string"
+  ) {
+    return error.detail;
+  }
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return Cause.pretty(cause);
+}
+
 function isTemporaryWorktreeBranch(branch: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
 }
@@ -167,6 +198,8 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const inFlightSessionEnsures = new Map<ThreadId, Deferred.Deferred<ThreadId, unknown>>();
+  const inFlightSessionEnsuresSemaphore = yield* Semaphore.make(1);
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -214,6 +247,19 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
+  const setThreadResumeState = (input: {
+    readonly threadId: ThreadId;
+    readonly resumeState: OrchestrationThreadResumeState;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.resume-state.set",
+      commandId: serverCommandId("provider-resume-state-set"),
+      threadId: input.threadId,
+      resumeState: input.resumeState,
+      createdAt: input.createdAt,
+    });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
@@ -224,6 +270,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly updateResumeState?: boolean;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -239,6 +286,7 @@ const make = Effect.gen(function* () {
       ? thread.session.providerName
       : undefined;
     const requestedModelSelection = options?.modelSelection;
+    const shouldUpdateResumeState = options?.updateResumeState !== false;
     const threadProvider: ProviderKind = currentProvider ?? thread.modelSelection.provider;
     if (
       requestedModelSelection !== undefined &&
@@ -294,11 +342,37 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" ? thread.id : null;
     if (existingSessionThreadId) {
+      const activeSession = yield* resolveActiveSession(existingSessionThreadId);
+      if (!activeSession) {
+        yield* Effect.logInfo("provider command reactor recreating missing provider session", {
+          threadId,
+          currentProvider,
+          desiredProvider: desiredModelSelection.provider,
+          desiredRuntimeMode: desiredRuntimeMode,
+        });
+        if (shouldUpdateResumeState) {
+          yield* setThreadResumeState({
+            threadId,
+            resumeState: "resuming",
+            createdAt,
+          });
+        }
+        const restartedSession = yield* startProviderSession(undefined);
+        yield* bindSessionToThread(restartedSession);
+        if (shouldUpdateResumeState) {
+          yield* setThreadResumeState({
+            threadId,
+            resumeState: "resumed",
+            createdAt,
+          });
+        }
+        return restartedSession.threadId;
+      }
+
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.provider !== currentProvider;
-      const activeSession = yield* resolveActiveSession(existingSessionThreadId);
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
@@ -340,6 +414,13 @@ const make = Effect.gen(function* () {
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
+      if (shouldUpdateResumeState) {
+        yield* setThreadResumeState({
+          threadId,
+          resumeState: "resuming",
+          createdAt,
+        });
+      }
       const restartedSession = yield* startProviderSession(
         resumeCursor !== undefined ? { resumeCursor } : undefined,
       );
@@ -351,12 +432,77 @@ const make = Effect.gen(function* () {
         runtimeMode: restartedSession.runtimeMode,
       });
       yield* bindSessionToThread(restartedSession);
+      if (shouldUpdateResumeState) {
+        yield* setThreadResumeState({
+          threadId,
+          resumeState: "resumed",
+          createdAt,
+        });
+      }
       return restartedSession.threadId;
     }
 
+    if (shouldUpdateResumeState) {
+      yield* setThreadResumeState({
+        threadId,
+        resumeState: "resuming",
+        createdAt,
+      });
+    }
     const startedSession = yield* startProviderSession(undefined);
     yield* bindSessionToThread(startedSession);
+    if (shouldUpdateResumeState) {
+      yield* setThreadResumeState({
+        threadId,
+        resumeState: "resumed",
+        createdAt,
+      });
+    }
     return startedSession.threadId;
+  });
+
+  const ensureSessionForThreadShared = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    createdAt: string,
+    options?: {
+      readonly modelSelection?: ModelSelection;
+      readonly updateResumeState?: boolean;
+    },
+  ) {
+    const acquired = yield* inFlightSessionEnsuresSemaphore.withPermit(
+      Effect.gen(function* () {
+        const existing = inFlightSessionEnsures.get(threadId);
+        if (existing) {
+          return { deferred: existing, owner: false } as const;
+        }
+
+        const deferred = yield* Deferred.make<ThreadId, unknown>();
+        inFlightSessionEnsures.set(threadId, deferred);
+        return { deferred, owner: true } as const;
+      }),
+    );
+
+    if (!acquired.owner) {
+      return yield* Deferred.await(acquired.deferred);
+    }
+
+    const clearInFlight = inFlightSessionEnsuresSemaphore.withPermit(
+      Effect.sync(() => {
+        inFlightSessionEnsures.delete(threadId);
+      }),
+    );
+
+    const exit = yield* Effect.exit(
+      ensureSessionForThread(threadId, createdAt, options).pipe(Effect.ensuring(clearInFlight)),
+    );
+
+    if (Exit.isSuccess(exit)) {
+      yield* Deferred.succeed(acquired.deferred, exit.value).pipe(Effect.orDie);
+      return exit.value;
+    }
+
+    yield* Deferred.failCause(acquired.deferred, exit.cause).pipe(Effect.orDie);
+    return yield* Effect.failCause(exit.cause);
   });
 
   const ensureProviderReadyForTurn = Effect.fnUntraced(function* (provider: ProviderKind) {
@@ -406,7 +552,7 @@ const make = Effect.gen(function* () {
     const requestedModelSelection =
       input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
     yield* ensureProviderReadyForTurn(requestedModelSelection.provider);
-    yield* ensureSessionForThread(
+    yield* ensureSessionForThreadShared(
       input.threadId,
       input.createdAt,
       input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
@@ -414,7 +560,6 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
@@ -434,6 +579,7 @@ const make = Effect.gen(function* () {
             }
           : requestedModelSelection
         : input.modelSelection;
+    const normalizedInput = toNonEmptyProviderInput(input.messageText);
 
     yield* providerService.sendTurn({
       threadId: input.threadId,
@@ -610,16 +756,63 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.catchCause((cause) =>
-        appendProviderFailureActivity({
-          threadId: event.payload.threadId,
-          kind: "provider.turn.start.failed",
-          summary: "Provider turn start failed",
-          detail: Cause.pretty(cause),
-          turnId: null,
-          createdAt: event.payload.createdAt,
+        Effect.gen(function* () {
+          yield* appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            detail: providerFailureDetail(cause),
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          });
+          yield* setThreadResumeState({
+            threadId: event.payload.threadId,
+            resumeState: "needs_resume",
+            createdAt: event.payload.createdAt,
+          }).pipe(Effect.ignore);
         }),
       ),
     );
+  });
+
+  const processSessionEnsureRequested = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.session-ensure-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const requestedModelSelection =
+      threadModelSelections.get(event.payload.threadId) ?? thread.modelSelection;
+
+    const providerReady = yield* ensureProviderReadyForTurn(requestedModelSelection.provider).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Effect.logDebug("provider command reactor skipped background session warmup", {
+          threadId: event.payload.threadId,
+          provider: requestedModelSelection.provider,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (!providerReady) {
+      return;
+    }
+
+    yield* ensureSessionForThreadShared(event.payload.threadId, event.occurredAt, {
+      modelSelection: requestedModelSelection,
+      updateResumeState: false,
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("provider command reactor failed to prewarm thread session", {
+          threadId: event.payload.threadId,
+          provider: requestedModelSelection.provider,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+    threadModelSelections.set(event.payload.threadId, requestedModelSelection);
   });
 
   const processTurnInterruptRequested = Effect.fnUntraced(function* (
@@ -680,7 +873,7 @@ const make = Effect.gen(function* () {
               summary: "Provider approval response failed",
               detail: isUnknownPendingApprovalRequestError(cause)
                 ? stalePendingRequestDetail("approval", event.payload.requestId)
-                : Cause.pretty(cause),
+                : providerFailureDetail(cause),
               turnId: null,
               createdAt: event.payload.createdAt,
               requestId: event.payload.requestId,
@@ -726,7 +919,7 @@ const make = Effect.gen(function* () {
             summary: "Provider user input response failed",
             detail: isUnknownPendingUserInputRequestError(cause)
               ? stalePendingRequestDetail("user-input", event.payload.requestId)
-              : Cause.pretty(cause),
+              : providerFailureDetail(cause),
             turnId: null,
             createdAt: event.payload.createdAt,
             requestId: event.payload.requestId,
@@ -764,6 +957,11 @@ const make = Effect.gen(function* () {
       },
       createdAt: now,
     });
+    yield* setThreadResumeState({
+      threadId: thread.id,
+      resumeState: "resumed",
+      createdAt: now,
+    });
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
@@ -776,13 +974,16 @@ const make = Effect.gen(function* () {
           return;
         }
         const cachedModelSelection = threadModelSelections.get(event.payload.threadId);
-        yield* ensureSessionForThread(
+        yield* ensureSessionForThreadShared(
           event.payload.threadId,
           event.occurredAt,
           cachedModelSelection !== undefined ? { modelSelection: cachedModelSelection } : {},
         );
         return;
       }
+      case "thread.session-ensure-requested":
+        yield* processSessionEnsureRequested(event);
+        return;
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
@@ -815,6 +1016,7 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const sessionEnsureWorker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -828,6 +1030,9 @@ const make = Effect.gen(function* () {
       ) {
         return yield* worker.enqueue(event);
       }
+      if (event.type === "thread.session-ensure-requested") {
+        return yield* sessionEnsureWorker.enqueue(event);
+      }
     });
 
     yield* Effect.forkScoped(
@@ -837,7 +1042,9 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    drain: Effect.all([worker.drain, sessionEnsureWorker.drain], { concurrency: "unbounded" }).pipe(
+      Effect.asVoid,
+    ),
   } satisfies ProviderCommandReactorShape;
 });
 

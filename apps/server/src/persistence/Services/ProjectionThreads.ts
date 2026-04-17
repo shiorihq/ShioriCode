@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ModelSelection,
+  OrchestrationThreadResumeState,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -32,6 +33,9 @@ export const ProjectionThread = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   tag: Schema.NullOr(Schema.String),
+  resumeState: Schema.optional(OrchestrationThreadResumeState).pipe(
+    Schema.withDecodingDefault(() => "resumed" as const),
+  ),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

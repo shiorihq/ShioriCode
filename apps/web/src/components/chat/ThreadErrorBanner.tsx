@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Alert, AlertAction, AlertDescription } from "../ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
@@ -14,6 +14,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
     <div className="pt-3 mx-auto max-w-3xl">
       <Alert variant="error">
         <CircleAlertIcon />
+        <AlertTitle>Something went wrong</AlertTitle>
         <AlertDescription className="line-clamp-3" title={error}>
           {error}
         </AlertDescription>

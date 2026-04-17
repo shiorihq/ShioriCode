@@ -27,7 +27,13 @@ function sanitizeChunkSegment(value: string) {
 
 export function createWebViteConfig(options: WebViteConfigOptions = {}): UserConfig {
   const plugins: PluginOption[] = [
-    ...(options.includeRouterPlugin === false ? [] : [tanstackRouter()]),
+    ...(options.includeRouterPlugin === false
+      ? []
+      : [
+          tanstackRouter({
+            autoCodeSplitting: true,
+          }),
+        ]),
     react(),
     babel({
       // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
@@ -48,6 +54,7 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
         "@pierre/diffs",
         "@pierre/diffs/react",
         "@pierre/diffs/worker/worker.js",
+        "rehype-raw",
       ],
     },
     define: {

@@ -98,8 +98,7 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
-const ReactorLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(OrchestrationReactorLive),
+const ReactorLayerLive = OrchestrationReactorLive.pipe(
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
@@ -126,8 +125,7 @@ const OrchestrationLayerLive = Layer.mergeAll(
   OrchestrationEngineLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
 );
 
-const CheckpointingLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(CheckpointDiffQueryLive),
+const CheckpointingLayerLive = CheckpointDiffQueryLive.pipe(
   Layer.provideMerge(CheckpointStoreLive),
 );
 
@@ -162,16 +160,11 @@ const ProviderLayerLive = Layer.unwrap(
   }),
 );
 
-const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
+const PersistenceLayerLive = SqlitePersistenceLayerLive;
 
-const GitLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(
-    GitManagerLive.pipe(
-      Layer.provideMerge(GitCoreLive),
-      Layer.provideMerge(GitHubCliLive),
-      Layer.provideMerge(RoutingTextGenerationLive),
-    ),
-  ),
+const GitLayerLive = GitManagerLive.pipe(
+  Layer.provideMerge(RoutingTextGenerationLive),
+  Layer.provideMerge(GitHubCliLive),
   Layer.provideMerge(GitCoreLive),
 );
 
@@ -186,14 +179,11 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
-const RuntimeServicesLive = Layer.empty.pipe(
-  Layer.provideMerge(ServerRuntimeStartupLive),
+const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(ReactorLayerLive),
-
-  // Core Services
+  Layer.provideMerge(SubagentDetailQueryLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
-  Layer.provideMerge(SubagentDetailQueryLive),
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
@@ -206,8 +196,6 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(HostedBillingLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
-
-  // Misc.
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ServerLifecycleEventsLive),

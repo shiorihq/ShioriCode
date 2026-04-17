@@ -1,6 +1,7 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { type ProjectId, type ThreadId } from "contracts";
 import { create } from "zustand";
+import { registerBeforeUnloadCallback } from "./lib/storage";
 
 const PERSISTED_STATE_KEY = "shioricode:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -19,6 +20,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  threadLastVisitedAtById?: Record<string, string>;
 }
 
 export interface UiProjectState {
@@ -27,6 +29,7 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  pendingThreadDispatchStartedAtById: Record<string, string>;
   threadLastVisitedAtById: Record<string, string>;
 }
 
@@ -48,6 +51,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   projectAddRequestNonce: 0,
+  pendingThreadDispatchStartedAtById: {},
   threadLastVisitedAtById: {},
 };
 
@@ -73,11 +77,32 @@ function readPersistedState(): UiState {
       }
       return initialState;
     }
-    hydratePersistedProjectState(JSON.parse(raw) as PersistedUiState);
-    return initialState;
+    const parsed = JSON.parse(raw) as PersistedUiState;
+    hydratePersistedProjectState(parsed);
+    return {
+      ...initialState,
+      threadLastVisitedAtById: normalizePersistedThreadLastVisitedAt(
+        parsed.threadLastVisitedAtById,
+      ),
+    };
   } catch {
     return initialState;
   }
+}
+
+function normalizePersistedThreadLastVisitedAt(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [threadId, visitedAt] of Object.entries(value)) {
+    if (typeof visitedAt !== "string" || visitedAt.length === 0) {
+      continue;
+    }
+    normalized[threadId] = visitedAt;
+  }
+  return normalized;
 }
 
 function hydratePersistedProjectState(parsed: PersistedUiState): void {
@@ -115,6 +140,7 @@ function persistState(state: UiState): void {
       JSON.stringify({
         expandedProjectCwds,
         projectOrderCwds,
+        threadLastVisitedAtById: state.threadLastVisitedAtById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -250,6 +276,11 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 
 export function syncThreads(state: UiState, threads: readonly SyncThreadInput[]): UiState {
   const retainedThreadIds = new Set(threads.map((thread) => thread.id));
+  const nextPendingThreadDispatchStartedAtById = Object.fromEntries(
+    Object.entries(state.pendingThreadDispatchStartedAtById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId as ThreadId),
+    ),
+  );
   const nextThreadLastVisitedAtById = Object.fromEntries(
     Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
       retainedThreadIds.has(threadId as ThreadId),
@@ -264,12 +295,36 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       nextThreadLastVisitedAtById[thread.id] = thread.seedVisitedAt;
     }
   }
-  if (recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById)) {
+  if (
+    recordsEqual(
+      state.pendingThreadDispatchStartedAtById,
+      nextPendingThreadDispatchStartedAtById,
+    ) &&
+    recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById)
+  ) {
     return state;
   }
   return {
     ...state,
+    pendingThreadDispatchStartedAtById: nextPendingThreadDispatchStartedAtById,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
+  };
+}
+
+export function beginThreadPendingDispatch(
+  state: UiState,
+  threadId: ThreadId,
+  startedAt?: string,
+): UiState {
+  if (state.pendingThreadDispatchStartedAtById[threadId] !== undefined) {
+    return state;
+  }
+  return {
+    ...state,
+    pendingThreadDispatchStartedAtById: {
+      ...state.pendingThreadDispatchStartedAtById,
+      [threadId]: startedAt ?? new Date().toISOString(),
+    },
   };
 }
 
@@ -320,14 +375,36 @@ export function markThreadUnread(
 }
 
 export function clearThreadUi(state: UiState, threadId: ThreadId): UiState {
-  if (!(threadId in state.threadLastVisitedAtById)) {
+  if (
+    !(threadId in state.threadLastVisitedAtById) &&
+    !(threadId in state.pendingThreadDispatchStartedAtById)
+  ) {
     return state;
   }
+  const nextPendingThreadDispatchStartedAtById = {
+    ...state.pendingThreadDispatchStartedAtById,
+  };
+  delete nextPendingThreadDispatchStartedAtById[threadId];
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   delete nextThreadLastVisitedAtById[threadId];
   return {
     ...state,
+    pendingThreadDispatchStartedAtById: nextPendingThreadDispatchStartedAtById,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
+  };
+}
+
+export function clearThreadPendingDispatch(state: UiState, threadId: ThreadId): UiState {
+  if (!(threadId in state.pendingThreadDispatchStartedAtById)) {
+    return state;
+  }
+  const nextPendingThreadDispatchStartedAtById = {
+    ...state.pendingThreadDispatchStartedAtById,
+  };
+  delete nextPendingThreadDispatchStartedAtById[threadId];
+  return {
+    ...state,
+    pendingThreadDispatchStartedAtById: nextPendingThreadDispatchStartedAtById,
   };
 }
 
@@ -363,21 +440,25 @@ export function reorderProjects(
   state: UiState,
   draggedProjectId: ProjectId,
   targetProjectId: ProjectId,
+  baseProjectOrder: readonly ProjectId[] = state.projectOrder,
 ): UiState {
   if (draggedProjectId === targetProjectId) {
     return state;
   }
-  const draggedIndex = state.projectOrder.findIndex((projectId) => projectId === draggedProjectId);
-  const targetIndex = state.projectOrder.findIndex((projectId) => projectId === targetProjectId);
+  const draggedIndex = baseProjectOrder.findIndex((projectId) => projectId === draggedProjectId);
+  const targetIndex = baseProjectOrder.findIndex((projectId) => projectId === targetProjectId);
   if (draggedIndex < 0 || targetIndex < 0) {
     return state;
   }
-  const projectOrder = [...state.projectOrder];
+  const projectOrder = [...baseProjectOrder];
   const [draggedProject] = projectOrder.splice(draggedIndex, 1);
   if (!draggedProject) {
     return state;
   }
   projectOrder.splice(targetIndex, 0, draggedProject);
+  if (projectOrdersEqual(state.projectOrder, projectOrder)) {
+    return state;
+  }
   return {
     ...state,
     projectOrder,
@@ -392,7 +473,11 @@ interface UiStateStore extends UiState {
   clearThreadUi: (threadId: ThreadId) => void;
   toggleProject: (projectId: ProjectId) => void;
   setProjectExpanded: (projectId: ProjectId, expanded: boolean) => void;
-  reorderProjects: (draggedProjectId: ProjectId, targetProjectId: ProjectId) => void;
+  reorderProjects: (
+    draggedProjectId: ProjectId,
+    targetProjectId: ProjectId,
+    baseProjectOrder?: readonly ProjectId[],
+  ) => void;
   requestProjectAdd: () => void;
 }
 
@@ -408,8 +493,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
-  reorderProjects: (draggedProjectId, targetProjectId) =>
-    set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  reorderProjects: (draggedProjectId, targetProjectId, baseProjectOrder) =>
+    set((state) => reorderProjects(state, draggedProjectId, targetProjectId, baseProjectOrder)),
   requestProjectAdd: () =>
     set((state) => ({
       ...state,
@@ -419,8 +504,6 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
-    debouncedPersistState.flush();
-  });
-}
+registerBeforeUnloadCallback("ui-state", () => {
+  debouncedPersistState.flush();
+});

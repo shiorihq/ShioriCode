@@ -31,7 +31,7 @@ import {
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
-import { HostedShioriAuthTokenStoreLive } from "../../hostedShioriAuthTokenStore.ts";
+import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
 
@@ -121,6 +121,12 @@ function makeMutableServerSettingsService(
   });
 }
 
+const hostedShioriAuthTokenStoreTestLayer = Layer.succeed(HostedShioriAuthTokenStore, {
+  getToken: Effect.succeed(null),
+  setToken: () => Effect.void,
+  streamChanges: Stream.empty,
+});
+
 /**
  * Create a temporary CODEX_HOME scoped to the current Effect test.
  * Cleanup is registered in the test scope rather than via Vitest hooks.
@@ -159,7 +165,7 @@ it.layer(
   Layer.mergeAll(
     NodeServices.layer,
     ServerSettingsService.layerTest(),
-    HostedShioriAuthTokenStoreLive,
+    hostedShioriAuthTokenStoreTestLayer,
   ),
 )("ProviderRegistry", (it) => {
   // ── checkCodexProviderStatus tests ────────────────────────────────
@@ -459,12 +465,12 @@ it.layer(
       ),
     );
 
-    it.effect("returns warning when login status command is unsupported", () =>
+    it.effect("returns ready with unknown auth when login status command is unsupported", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
         const status = yield* checkCodexProviderStatus();
         assert.strictEqual(status.provider, "codex");
-        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.installed, true);
         assert.strictEqual(status.auth.status, "unknown");
         assert.strictEqual(
@@ -478,6 +484,32 @@ it.layer(
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
             if (joined === "login status") {
               return { stdout: "", stderr: "error: unknown command 'login'", code: 2 };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("returns ready with unknown auth when login status probe fails", () =>
+      Effect.gen(function* () {
+        yield* withTempCodexHome();
+        const status = yield* checkCodexProviderStatus();
+        assert.strictEqual(status.provider, "codex");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.auth.status, "unknown");
+        assert.strictEqual(
+          status.message,
+          "Could not verify Codex authentication status: auth probe failed.",
+        );
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+            if (joined === "login status") {
+              throw new Error("auth probe failed");
             }
             throw new Error(`Unexpected args: ${joined}`);
           }),
@@ -521,7 +553,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const providerRegistryLayer = ProviderRegistryLive.pipe(
           Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
-          Layer.provideMerge(HostedShioriAuthTokenStoreLive),
+          Layer.provideMerge(hostedShioriAuthTokenStoreTestLayer),
           Layer.provideMerge(
             mockCommandSpawnerLayer((command, args) => {
               const joined = args.join(" ");
@@ -551,7 +583,7 @@ it.layer(
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry;
 
-          const initial = yield* registry.getProviders;
+          const initial = yield* registry.refresh("codex");
           assert.strictEqual(
             initial.find((status) => status.provider === "codex")?.status,
             "ready",

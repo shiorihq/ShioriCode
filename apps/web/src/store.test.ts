@@ -10,6 +10,7 @@ import {
   type OrchestrationReadModel,
 } from "contracts";
 import { describe, expect, it } from "vitest";
+import { buildSidebarThreadSummary } from "shared/orchestrationClientProjection";
 
 import {
   applyOrchestrationEvent,
@@ -32,6 +33,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
+    resumeState: "resumed",
     messages: [],
     turnDiffSummaries: [],
     activities: [],
@@ -67,10 +69,16 @@ function makeState(thread: Thread): AppState {
       },
     ],
     threads: [thread],
+    threadIndexById: { [thread.id]: 0 },
     sidebarThreadsById: {},
     threadIdsByProjectId,
+    pendingThreadDispatchById: {},
     bootstrapComplete: true,
   };
+}
+
+function makeThreadIndexById(threads: ReadonlyArray<Thread>): AppState["threadIndexById"] {
+  return Object.fromEntries(threads.map((thread, index) => [thread.id, index]));
 }
 
 function makeEvent<T extends OrchestrationEvent["type"]>(
@@ -115,6 +123,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     branchSourceTurnId: null,
     branch: null,
     worktreePath: null,
+    resumeState: "resumed",
     latestTurn: null,
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
@@ -150,6 +159,28 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
       },
     ],
     threads: [thread],
+  };
+}
+
+function makeThreadActivity(input: {
+  id: string;
+  kind: Thread["activities"][number]["kind"];
+  summary: string;
+  createdAt: string;
+  turnId?: TurnId | null;
+  tone?: Thread["activities"][number]["tone"];
+  payload?: Thread["activities"][number]["payload"];
+  sequence?: number;
+}): Thread["activities"][number] {
+  return {
+    id: EventId.makeUnsafe(input.id),
+    kind: input.kind,
+    summary: input.summary,
+    createdAt: input.createdAt,
+    turnId: input.turnId ?? null,
+    tone: input.tone ?? "info",
+    payload: input.payload ?? {},
+    ...(input.sequence !== undefined ? { sequence: input.sequence } : {}),
   };
 }
 
@@ -282,8 +313,10 @@ describe("store read model sync", () => {
         },
       ],
       threads: [],
+      threadIndexById: {},
       sidebarThreadsById: {},
       threadIdsByProjectId: {},
+      pendingThreadDispatchById: {},
       bootstrapComplete: true,
     };
     const readModel: OrchestrationReadModel = {
@@ -374,8 +407,10 @@ describe("incremental orchestration updates", () => {
         },
       ],
       threads: [],
+      threadIndexById: {},
       sidebarThreadsById: {},
       threadIdsByProjectId: {},
+      pendingThreadDispatchById: {},
       bootstrapComplete: true,
     };
 
@@ -398,7 +433,64 @@ describe("incremental orchestration updates", () => {
     expect(next.projects).toHaveLength(1);
     expect(next.projects[0]?.id).toBe(recreatedProjectId);
     expect(next.projects[0]?.cwd).toBe("/tmp/project");
-    expect(next.projects[0]?.name).toBe("project recreated");
+    expect(next.projects[0]?.name).toBe("Project Recreated");
+  });
+
+  it("rebinds existing threads when project.created replaces a project row for the same cwd", () => {
+    const originalProjectId = ProjectId.makeUnsafe("project-1");
+    const recreatedProjectId = ProjectId.makeUnsafe("project-2");
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const thread = makeThread({
+      id: threadId,
+      projectId: originalProjectId,
+    });
+    const state: AppState = {
+      projects: [
+        {
+          id: originalProjectId,
+          name: "Project",
+          cwd: "/tmp/project",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          scripts: [],
+        },
+      ],
+      threads: [thread],
+      threadIndexById: makeThreadIndexById([thread]),
+      sidebarThreadsById: {
+        [threadId]: buildSidebarThreadSummary(thread),
+      },
+      threadIdsByProjectId: {
+        [originalProjectId]: [threadId],
+      },
+      pendingThreadDispatchById: {},
+      bootstrapComplete: true,
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("project.created", {
+        projectId: recreatedProjectId,
+        title: "Project Recreated",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        scripts: [],
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+    );
+
+    expect(next.projects).toHaveLength(1);
+    expect(next.projects[0]?.id).toBe(recreatedProjectId);
+    expect(next.threads[0]?.projectId).toBe(recreatedProjectId);
+    expect(next.sidebarThreadsById[threadId]?.projectId).toBe(recreatedProjectId);
+    expect(next.threadIdsByProjectId[originalProjectId]).toBeUndefined();
+    expect(next.threadIdsByProjectId[recreatedProjectId]).toEqual([threadId]);
   });
 
   it("puts new projects at the front of the in-memory project list", () => {
@@ -416,8 +508,10 @@ describe("incremental orchestration updates", () => {
         },
       ],
       threads: [],
+      threadIndexById: {},
       sidebarThreadsById: {},
       threadIdsByProjectId: {},
+      pendingThreadDispatchById: {},
       bootstrapComplete: true,
     };
 
@@ -475,10 +569,12 @@ describe("incremental orchestration updates", () => {
         },
       ],
       threads: [thread],
+      threadIndexById: makeThreadIndexById([thread]),
       sidebarThreadsById: {},
       threadIdsByProjectId: {
         [originalProjectId]: [threadId],
       },
+      pendingThreadDispatchById: {},
       bootstrapComplete: true,
     };
 
@@ -509,6 +605,117 @@ describe("incremental orchestration updates", () => {
     expect(next.threadIdsByProjectId[recreatedProjectId]).toEqual([threadId]);
   });
 
+  it("preserves thread history when thread.created is replayed for an existing thread", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const thread = makeThread({
+      id: threadId,
+      title: "Existing thread",
+      session: {
+        provider: "codex",
+        status: "running",
+        orchestrationStatus: "running",
+        activeTurnId: turnId,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:04.000Z",
+      },
+      messages: [
+        {
+          id: MessageId.makeUnsafe("message-user"),
+          role: "user",
+          text: "hello",
+          turnId,
+          createdAt: "2026-02-27T00:00:01.000Z",
+          completedAt: "2026-02-27T00:00:01.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("message-assistant"),
+          role: "assistant",
+          text: "world",
+          turnId,
+          createdAt: "2026-02-27T00:00:02.000Z",
+          completedAt: "2026-02-27T00:00:03.000Z",
+          streaming: false,
+        },
+      ],
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-02-27T00:00:00.000Z",
+        startedAt: "2026-02-27T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+      },
+      proposedPlans: [
+        {
+          id: "plan-1" as Thread["proposedPlans"][number]["id"],
+          turnId,
+          planMarkdown: "1. Do the thing",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-02-27T00:00:02.000Z",
+          updatedAt: "2026-02-27T00:00:02.000Z",
+        },
+      ],
+      turnDiffSummaries: [
+        {
+          turnId,
+          completedAt: "2026-02-27T00:00:03.000Z",
+          status: "ready",
+          assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.makeUnsafe("checkpoint-1"),
+          files: [],
+        },
+      ],
+      activities: [
+        {
+          id: EventId.makeUnsafe("activity-1"),
+          kind: "tool.completed",
+          summary: "Edited file",
+          tone: "tool",
+          payload: { title: "Edited file" },
+          turnId,
+          createdAt: "2026-02-27T00:00:02.500Z",
+        },
+      ],
+      updatedAt: "2026-02-27T00:00:04.000Z",
+    });
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.created", {
+        threadId,
+        projectId: thread.projectId,
+        title: "Recovered thread",
+        modelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        parentThreadId: null,
+        branchSourceTurnId: null,
+        branch: "feature/recovered",
+        worktreePath: null,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      }),
+    );
+
+    expect(next.threads[0]?.title).toBe("Recovered thread");
+    expect(next.threads[0]?.branch).toBe("feature/recovered");
+    expect(next.threads[0]?.messages).toEqual(thread.messages);
+    expect(next.threads[0]?.activities).toEqual(thread.activities);
+    expect(next.threads[0]?.proposedPlans).toEqual(thread.proposedPlans);
+    expect(next.threads[0]?.turnDiffSummaries).toEqual(thread.turnDiffSummaries);
+    expect(next.threads[0]?.latestTurn).toEqual(thread.latestTurn);
+    expect(next.threads[0]?.session).toEqual(thread.session);
+    expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:00:04.000Z");
+  });
+
   it("updates only the affected thread for message events", () => {
     const thread1 = makeThread({
       id: ThreadId.makeUnsafe("thread-1"),
@@ -528,6 +735,7 @@ describe("incremental orchestration updates", () => {
     const state: AppState = {
       ...makeState(thread1),
       threads: [thread1, thread2],
+      threadIndexById: makeThreadIndexById([thread1, thread2]),
     };
 
     const next = applyOrchestrationEvent(
@@ -547,6 +755,189 @@ describe("incremental orchestration updates", () => {
     expect(next.threads[0]?.messages[0]?.text).toBe("hello world");
     expect(next.threads[0]?.latestTurn?.state).toBe("running");
     expect(next.threads[1]).toBe(thread2);
+  });
+
+  it("preserves sidebar approval badges for assistant streaming chunks", () => {
+    const thread = makeThread({
+      id: ThreadId.makeUnsafe("thread-1"),
+      session: {
+        provider: "codex",
+        status: "running",
+        orchestrationStatus: "running",
+        activeTurnId: TurnId.makeUnsafe("turn-1"),
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      },
+      messages: [
+        {
+          id: MessageId.makeUnsafe("user-1"),
+          role: "user",
+          text: "hello",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-27T00:00:00.000Z",
+          completedAt: "2026-02-27T00:00:00.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-1"),
+          role: "assistant",
+          text: "partial",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-27T00:00:01.000Z",
+          streaming: true,
+        },
+      ],
+      latestTurn: {
+        turnId: TurnId.makeUnsafe("turn-1"),
+        state: "running",
+        requestedAt: "2026-02-27T00:00:00.000Z",
+        startedAt: "2026-02-27T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: MessageId.makeUnsafe("assistant-1"),
+      },
+      activities: [
+        {
+          id: EventId.makeUnsafe("activity-approval"),
+          tone: "info",
+          kind: "approval.requested",
+          summary: "Approval requested",
+          payload: {
+            requestId: "approval-1",
+            requestKind: "command",
+          },
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-27T00:00:01.500Z",
+        },
+        {
+          id: EventId.makeUnsafe("activity-input"),
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: {
+            requestId: "input-1",
+            questions: [
+              {
+                id: "question-1",
+                header: "Question",
+                question: "Proceed?",
+                options: [{ label: "Yes", description: "Continue" }],
+              },
+            ],
+          },
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-27T00:00:01.750Z",
+        },
+      ],
+    });
+    const state: AppState = {
+      ...makeState(thread),
+      sidebarThreadsById: {
+        [thread.id]: {
+          id: thread.id,
+          projectId: thread.projectId,
+          title: thread.title,
+          interactionMode: thread.interactionMode,
+          session: thread.session,
+          resumeState: thread.resumeState,
+          createdAt: thread.createdAt,
+          archivedAt: thread.archivedAt,
+          updatedAt: thread.updatedAt,
+          latestTurn: thread.latestTurn,
+          parentThreadId: thread.parentThreadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          tag: thread.tag,
+          latestUserMessageAt: "2026-02-27T00:00:00.000Z",
+          hasPendingApprovals: true,
+          hasPendingUserInput: true,
+          hasActionableProposedPlan: false,
+        },
+      },
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.makeUnsafe("assistant-1"),
+        role: "assistant",
+        text: " response",
+        turnId: TurnId.makeUnsafe("turn-1"),
+        streaming: true,
+        createdAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+    );
+
+    expect(next.sidebarThreadsById[thread.id]?.latestUserMessageAt).toBe(
+      "2026-02-27T00:00:00.000Z",
+    );
+    expect(next.sidebarThreadsById[thread.id]?.hasPendingApprovals).toBe(true);
+    expect(next.sidebarThreadsById[thread.id]?.hasPendingUserInput).toBe(true);
+    expect(next.sidebarThreadsById[thread.id]?.latestTurn?.state).toBe("running");
+    expect(next.sidebarThreadsById[thread.id]?.updatedAt).toBe("2026-02-27T00:00:00.000Z");
+  });
+
+  it("advances sidebar latestUserMessageAt when a user message arrives", () => {
+    const thread = makeThread({
+      id: ThreadId.makeUnsafe("thread-1"),
+      messages: [
+        {
+          id: MessageId.makeUnsafe("user-1"),
+          role: "user",
+          text: "hello",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-27T00:00:00.000Z",
+          completedAt: "2026-02-27T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state: AppState = {
+      ...makeState(thread),
+      sidebarThreadsById: {
+        [thread.id]: {
+          id: thread.id,
+          projectId: thread.projectId,
+          title: thread.title,
+          interactionMode: thread.interactionMode,
+          session: thread.session,
+          resumeState: thread.resumeState,
+          createdAt: thread.createdAt,
+          archivedAt: thread.archivedAt,
+          updatedAt: thread.updatedAt,
+          latestTurn: thread.latestTurn,
+          parentThreadId: thread.parentThreadId,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          tag: thread.tag,
+          latestUserMessageAt: "2026-02-27T00:00:00.000Z",
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      },
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.makeUnsafe("user-2"),
+        role: "user",
+        text: "follow up",
+        turnId: TurnId.makeUnsafe("turn-2"),
+        streaming: false,
+        createdAt: "2026-02-27T00:00:05.000Z",
+        updatedAt: "2026-02-27T00:00:05.000Z",
+      }),
+    );
+
+    expect(next.sidebarThreadsById[thread.id]?.latestUserMessageAt).toBe(
+      "2026-02-27T00:00:05.000Z",
+    );
+    expect(next.sidebarThreadsById[thread.id]?.hasPendingApprovals).toBe(false);
+    expect(next.sidebarThreadsById[thread.id]?.hasPendingUserInput).toBe(false);
   });
 
   it("applies replay batches in sequence and updates session state", () => {
@@ -714,6 +1105,186 @@ describe("incremental orchestration updates", () => {
     expect(next.threads[0]?.latestTurn?.assistantMessageId).toBe(
       MessageId.makeUnsafe("assistant-real"),
     );
+  });
+
+  it("compacts snapshot reasoning deltas so they do not crowd out tool history", () => {
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const activities: Thread["activities"] = [
+      makeThreadActivity({
+        id: "tool-earlier",
+        kind: "tool.completed",
+        summary: "Read file",
+        tone: "tool",
+        createdAt: "2026-02-27T00:00:01.000Z",
+        turnId,
+        payload: {
+          itemType: "command_execution",
+          title: "Read file",
+          detail: "src/a.ts",
+        },
+      }),
+      makeThreadActivity({
+        id: "reasoning-start",
+        kind: "reasoning.started",
+        summary: "Thinking",
+        createdAt: "2026-02-27T00:00:02.000Z",
+        turnId,
+        payload: { itemId: "reasoning-item-1" },
+      }),
+      ...Array.from({ length: 700 }, (_, index) =>
+        makeThreadActivity({
+          id: `reasoning-delta-${index}`,
+          kind: "reasoning.delta",
+          summary: "Thinking",
+          createdAt: `2026-02-27T00:00:${String(3 + (index % 50)).padStart(2, "0")}.000Z`,
+          turnId,
+          payload: {
+            itemId: "reasoning-item-1",
+            delta: `chunk-${index} `,
+          },
+        }),
+      ),
+      makeThreadActivity({
+        id: "reasoning-complete",
+        kind: "reasoning.completed",
+        summary: "Thought",
+        createdAt: "2026-02-27T00:01:00.000Z",
+        turnId,
+        payload: { itemId: "reasoning-item-1" },
+      }),
+    ];
+
+    const next = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(
+        makeReadModelThread({
+          activities,
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.activities.some((activity) => activity.id === "tool-earlier")).toBe(
+      true,
+    );
+    expect(
+      next.threads[0]?.activities.filter((activity) => activity.kind === "reasoning.delta"),
+    ).toHaveLength(1);
+  });
+
+  it("preserves reasoning delta whitespace when compacting adjacent chunks", () => {
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const next = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(
+        makeReadModelThread({
+          activities: [
+            makeThreadActivity({
+              id: "reasoning-start",
+              kind: "reasoning.started",
+              summary: "Thinking",
+              createdAt: "2026-02-27T00:00:01.000Z",
+              turnId,
+              payload: { itemId: "reasoning-item-1" },
+            }),
+            makeThreadActivity({
+              id: "reasoning-delta-1",
+              kind: "reasoning.delta",
+              summary: "Thinking",
+              createdAt: "2026-02-27T00:00:02.000Z",
+              turnId,
+              payload: { itemId: "reasoning-item-1", delta: "The new" },
+            }),
+            makeThreadActivity({
+              id: "reasoning-delta-2",
+              kind: "reasoning.delta",
+              summary: "Thinking",
+              createdAt: "2026-02-27T00:00:03.000Z",
+              turnId,
+              payload: { itemId: "reasoning-item-1", delta: " " },
+            }),
+            makeThreadActivity({
+              id: "reasoning-delta-3",
+              kind: "reasoning.delta",
+              summary: "Thinking",
+              createdAt: "2026-02-27T00:00:04.000Z",
+              turnId,
+              payload: { itemId: "reasoning-item-1", delta: "internal modules are in place." },
+            }),
+          ],
+        }),
+      ),
+    );
+
+    const reasoningDelta = next.threads[0]?.activities.find(
+      (activity) => activity.kind === "reasoning.delta",
+    );
+    const payload =
+      reasoningDelta?.payload && typeof reasoningDelta.payload === "object"
+        ? (reasoningDelta.payload as Record<string, unknown>)
+        : null;
+
+    expect(reasoningDelta).toBeDefined();
+    expect(payload?.delta).toBe("The new internal modules are in place.");
+  });
+
+  it("compacts appended reasoning deltas before enforcing the activity cap", () => {
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const initialThread = makeThread({
+      activities: [
+        makeThreadActivity({
+          id: "tool-earlier",
+          kind: "tool.completed",
+          summary: "Read file",
+          tone: "tool",
+          createdAt: "2026-02-27T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "command_execution",
+            title: "Read file",
+            detail: "src/a.ts",
+          },
+        }),
+        makeThreadActivity({
+          id: "reasoning-start",
+          kind: "reasoning.started",
+          summary: "Thinking",
+          createdAt: "2026-02-27T00:00:02.000Z",
+          turnId,
+          payload: { itemId: "reasoning-item-1" },
+        }),
+      ],
+    });
+
+    const next = applyOrchestrationEvents(
+      makeState(initialThread),
+      Array.from({ length: 700 }, (_, index) =>
+        makeEvent(
+          "thread.activity-appended",
+          {
+            threadId: initialThread.id,
+            activity: makeThreadActivity({
+              id: `reasoning-delta-${index}`,
+              kind: "reasoning.delta",
+              summary: "Thinking",
+              createdAt: `2026-02-27T00:00:${String(3 + (index % 50)).padStart(2, "0")}.000Z`,
+              turnId,
+              payload: {
+                itemId: "reasoning-item-1",
+                delta: `chunk-${index} `,
+              },
+            }),
+          },
+          { sequence: index + 1 },
+        ),
+      ),
+    );
+
+    expect(next.threads[0]?.activities.some((activity) => activity.id === "tool-earlier")).toBe(
+      true,
+    );
+    expect(
+      next.threads[0]?.activities.filter((activity) => activity.kind === "reasoning.delta"),
+    ).toHaveLength(1);
   });
 
   it("reverts messages, plans, activities, and checkpoints by retained turns", () => {

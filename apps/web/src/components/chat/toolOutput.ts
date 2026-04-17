@@ -9,6 +9,35 @@ function countTextLines(text: string): number {
   return Math.max(1, text.split(/\r?\n/g).length);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function firstNestedContentString(record: Record<string, unknown>): string | null {
+  const direct = record.content;
+  if (typeof direct === "string" && direct.length > 0) {
+    return direct;
+  }
+  const fromResult = asRecord(record.result)?.content;
+  if (typeof fromResult === "string" && fromResult.length > 0) {
+    return fromResult;
+  }
+  const item = asRecord(record.item);
+  if (item) {
+    const fromItem = item.content;
+    if (typeof fromItem === "string" && fromItem.length > 0) {
+      return fromItem;
+    }
+    const fromItemResult = asRecord(item.result)?.content;
+    if (typeof fromItemResult === "string" && fromItemResult.length > 0) {
+      return fromItemResult;
+    }
+  }
+  return null;
+}
+
 function buildObjectSummary(output: object): ToolOutputSummary {
   const cached = objectSummaryCache.get(output);
   if (cached) {
@@ -16,11 +45,11 @@ function buildObjectSummary(output: object): ToolOutputSummary {
   }
 
   const record = output as Record<string, unknown>;
-  if (typeof record.content === "string") {
-    const text = record.content || null;
+  const nestedContent = firstNestedContentString(record);
+  if (nestedContent !== null) {
     const summary = {
-      text,
-      lineCount: typeof text === "string" ? countTextLines(text) : 0,
+      text: nestedContent,
+      lineCount: countTextLines(nestedContent),
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;

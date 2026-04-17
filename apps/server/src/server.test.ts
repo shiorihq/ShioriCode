@@ -616,6 +616,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("does not leak hosted shiori auth tokens through server.getConfig", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const config = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverSetShioriAuthToken]({
+              token: "header.payload.signature",
+            });
+            return yield* client[WS_METHODS.serverGetConfig]({});
+          }),
+        ),
+      );
+
+      const serializedConfig = JSON.stringify(config);
+      assert.isFalse(serializedConfig.includes("header.payload.signature"));
+      assert.isFalse(serializedConfig.includes("X-Convex-Auth-Token"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const providers = [] as const;

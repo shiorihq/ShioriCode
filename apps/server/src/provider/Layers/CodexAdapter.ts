@@ -46,7 +46,10 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { probeCodexUsage } from "../codexAppServer.ts";
 import { fetchCodexOAuthUsageSnapshot } from "../codexUsage.ts";
-import { prepareCodexHomeWithManagedMcpServers } from "../mcpServers.ts";
+import {
+  loadCodexManagedMcpServers,
+  prepareCodexHomeWithManagedMcpServers,
+} from "../mcpServers.ts";
 import {
   resolvePreferredCodexBinaryPath,
   supportsCodexReasoningSummary,
@@ -74,6 +77,7 @@ export interface CodexAdapterLiveOptions {
         }
       | undefined,
   ) => Promise<CodexUsageSnapshot | null>;
+  readonly loadManagedMcpServers?: typeof loadCodexManagedMcpServers;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -279,7 +283,7 @@ function normalizedCodexToolData(input: {
   const directToolData =
     extractStructuredProviderToolData(input.item) ??
     extractStructuredProviderToolData(input.payload);
-  if (directToolData) {
+  if (directToolData && input.itemType !== "collab_agent_tool_call") {
     return {
       toolName: directToolData.toolName,
       input: directToolData.input,
@@ -289,20 +293,39 @@ function normalizedCodexToolData(input: {
   }
 
   if (input.itemType === "command_execution") {
+    const explicitResult =
+      asObject(input.item.result) ??
+      asObject(input.payload.result) ??
+      asObject(asObject(input.payload.item)?.result);
+    const stdout = asString(input.item.stdout) ?? asString(input.payload.stdout);
+    const stderr = asString(input.item.stderr) ?? asString(input.payload.stderr);
+    const output = asString(input.item.output) ?? asString(input.payload.output);
+    const result =
+      explicitResult ??
+      (stdout || stderr || output
+        ? {
+            ...(stdout ? { stdout } : {}),
+            ...(stderr ? { stderr } : {}),
+            ...(output ? { output } : {}),
+          }
+        : undefined);
     const command =
-      asString(input.item.command) ??
-      asString(asObject(input.item.result)?.command) ??
-      asString(input.payload.command);
+      asString(input.item.command) ?? asString(result?.command) ?? asString(input.payload.command);
     if (command) {
       return {
         toolName: "exec_command",
         input: { command },
+        ...(result ? { result } : {}),
         item: input.item,
       };
     }
   }
 
   if (input.itemType === "collab_agent_tool_call") {
+    const tool =
+      asString(input.item.tool) ??
+      asString(input.payload.tool) ??
+      asString(asObject(input.payload.item)?.tool);
     const prompt = asString(input.item.prompt) ?? asString(input.payload.prompt);
     const description =
       asString(input.item.summary) ?? asString(input.item.title) ?? asString(input.item.text);
@@ -310,13 +333,23 @@ function normalizedCodexToolData(input: {
       asArray(input.item.receiverThreadIds)?.filter(
         (value): value is string => typeof value === "string" && value.length > 0,
       ) ?? [];
+    const agentsStates = asObject(input.item.agentsStates) ?? asObject(input.payload.agentsStates);
+    const targets =
+      receiverThreadIds.length > 0
+        ? receiverThreadIds
+        : agentsStates
+          ? Object.keys(agentsStates).filter((value) => value.trim().length > 0)
+          : [];
     return {
-      toolName: "spawn_agent",
+      toolName: tool ?? "spawnAgent",
       input: {
         ...(description ? { description } : {}),
         ...(prompt ? { prompt } : {}),
-        ...(receiverThreadIds.length > 0 ? { targets: receiverThreadIds } : {}),
+        ...(targets.length > 0 ? { targets } : {}),
+        ...(receiverThreadIds.length > 0 ? { receiverThreadIds } : {}),
+        ...(agentsStates ? { agentsStates } : {}),
       },
+      ...(directToolData?.result !== undefined ? { result: directToolData.result } : {}),
       item: input.item,
     };
   }
@@ -1602,11 +1635,20 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
       const supportsReasoningSummary = supportsCodexReasoningSummary(binaryPath);
       const preparedHome = yield* Effect.tryPromise(() =>
-        prepareCodexHomeWithManagedMcpServers({
-          threadId: String(input.threadId),
-          runtimeRootDir: serverConfig.stateDir,
-          homePath: codexSettings.homePath,
-          servers: settings.mcpServers.servers,
+        (options?.loadManagedMcpServers ?? loadCodexManagedMcpServers)({
+          settings,
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+        }).then(async (effectiveServers) => {
+          const prepared = await prepareCodexHomeWithManagedMcpServers({
+            threadId: String(input.threadId),
+            runtimeRootDir: serverConfig.stateDir,
+            homePath: codexSettings.homePath,
+            servers: effectiveServers.servers,
+          });
+          return {
+            prepared,
+            warnings: effectiveServers.warnings,
+          };
         }),
       ).pipe(
         Effect.catch((cause) =>
@@ -1617,11 +1659,17 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             yield* Effect.logWarning(
               toMessage(cause, "Failed to prepare the Codex MCP configuration."),
             );
-            return null;
+            return { prepared: null, warnings: [] };
           }),
         ),
       );
-      const homePath = preparedHome?.homePath ?? codexSettings.homePath;
+      for (const warning of preparedHome.warnings) {
+        yield* Effect.logWarning("codex mcp arbitration warning", {
+          threadId: input.threadId,
+          warning,
+        });
+      }
+      const homePath = preparedHome.prepared?.homePath ?? codexSettings.homePath;
       const managerInput: CodexAppServerStartSessionInput = {
         threadId: input.threadId,
         provider: "codex",
@@ -1650,13 +1698,13 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           }),
       }).pipe(
         Effect.tap(() =>
-          preparedHome
-            ? rememberTemporaryCodexHome(input.threadId, preparedHome.cleanup)
+          preparedHome.prepared
+            ? rememberTemporaryCodexHome(input.threadId, preparedHome.prepared.cleanup)
             : Effect.void,
         ),
         Effect.tapError(() =>
-          preparedHome
-            ? Effect.promise(preparedHome.cleanup).pipe(Effect.ignore({ log: false }))
+          preparedHome.prepared
+            ? Effect.promise(preparedHome.prepared.cleanup).pipe(Effect.ignore({ log: false }))
             : Effect.void,
         ),
       );
@@ -1908,6 +1956,14 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      recovery: {
+        supportsResumeCursor: true,
+        supportsAdoptActiveSession: true,
+      },
+      observability: {
+        emitsStructuredSessionExit: true,
+        emitsRuntimeDiagnostics: true,
+      },
     },
     startSession,
     sendTurn,

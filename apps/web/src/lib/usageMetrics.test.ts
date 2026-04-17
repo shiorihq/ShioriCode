@@ -39,6 +39,7 @@ function makeThread(input: {
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
+    resumeState: "resumed",
     messages: [],
     proposedPlans: [],
     error: null,

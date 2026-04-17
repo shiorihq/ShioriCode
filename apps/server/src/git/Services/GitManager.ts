@@ -8,14 +8,22 @@
  */
 import {
   GitActionProgressEvent,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
+  GitPullRequestConversationInput,
+  GitPullRequestConversationResult,
+  GitPullRequestDiffInput,
+  GitPullRequestDiffResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
+  GitSummarizePullRequestInput,
+  GitSummarizePullRequestResult,
 } from "contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -54,6 +62,35 @@ export interface GitManagerShape {
   readonly preparePullRequestThread: (
     input: GitPreparePullRequestThreadInput,
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+
+  /**
+   * List every open pull request for the repository at `cwd`.
+   */
+  readonly listOpenPullRequests: (
+    input: GitListOpenPullRequestsInput,
+  ) => Effect.Effect<GitListOpenPullRequestsResult, GitManagerServiceError>;
+
+  /**
+   * Fetch the unified diff for a pull request by its number.
+   */
+  readonly getPullRequestDiff: (
+    input: GitPullRequestDiffInput,
+  ) => Effect.Effect<GitPullRequestDiffResult, GitManagerServiceError>;
+
+  /**
+   * Summarize a pull request's changes using the default text generation model.
+   */
+  readonly summarizePullRequest: (
+    input: GitSummarizePullRequestInput,
+  ) => Effect.Effect<GitSummarizePullRequestResult, GitManagerServiceError>;
+
+  /**
+   * Fetch the conversation timeline (description, comments, review submissions)
+   * for a pull request.
+   */
+  readonly getPullRequestConversation: (
+    input: GitPullRequestConversationInput,
+  ) => Effect.Effect<GitPullRequestConversationResult, GitManagerServiceError>;
 
   /**
    * Run a Git action (`commit`, `push`, `create_pr`, `commit_push`, `commit_push_pr`).

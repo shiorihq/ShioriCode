@@ -15,6 +15,7 @@ import React, {
 } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
@@ -52,6 +53,7 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   className?: string;
+  allowHtml?: boolean;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -243,7 +245,13 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false, className }: ChatMarkdownProps) {
+function ChatMarkdown({
+  text,
+  cwd,
+  isStreaming = false,
+  className,
+  allowHtml = false,
+}: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -299,12 +307,16 @@ function ChatMarkdown({ text, cwd, isStreaming = false, className }: ChatMarkdow
   return (
     <div
       className={cn(
-        "chat-markdown w-full min-w-0 text-foreground/80",
+        "assistant-text-selectable chat-markdown w-full min-w-0 text-foreground",
         CHAT_THREAD_BODY_CLASS,
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={allowHtml ? [rehypeRaw] : undefined}
+        components={markdownComponents}
+      >
         {text}
       </ReactMarkdown>
     </div>

@@ -28,6 +28,13 @@ import type {
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "contracts";
+import * as Schema from "effect/Schema";
+import {
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  type ClientSettings,
+} from "contracts/settings";
+import { normalizeUserFacingFontFamily } from "shared/fontFamily";
 import { NetService } from "shared/Net";
 import { RotatingFileSink } from "shared/logging";
 import { quoteShellArg, resolveLoginShell, runCommandInLoginShell } from "shared/shell";
@@ -69,6 +76,8 @@ const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
+const VIBRANT_WINDOW_BACKGROUND_COLOR = "#01000000";
+const OPAQUE_WINDOW_BACKGROUND_COLOR = "#FFFFFFFF";
 const BASE_DIR = process.env.SHIORICODE_HOME?.trim() || Path.join(OS.homedir(), ".shiori");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
@@ -134,6 +143,19 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+
+function readDesktopClientSettings(): ClientSettings {
+  try {
+    if (!FS.existsSync(SETTINGS_PATH)) {
+      return DEFAULT_CLIENT_SETTINGS;
+    }
+
+    const raw = FS.readFileSync(SETTINGS_PATH, "utf8");
+    return Schema.decodeUnknownSync(ClientSettingsSchema)(JSON.parse(raw));
+  } catch {
+    return DEFAULT_CLIENT_SETTINGS;
+  }
+}
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -203,7 +225,7 @@ function parseCompanionCliVersion(output: string): string | null {
 function dedupeFontFamilies(fontFamilies: readonly string[]): string[] {
   const seen = new Map<string, string>();
   for (const fontFamily of fontFamilies) {
-    const normalized = fontFamily.trim().replace(/^['"]+|['"]+$/g, "");
+    const normalized = normalizeUserFacingFontFamily(fontFamily);
     if (!normalized) continue;
     const key = normalized.toLocaleLowerCase();
     if (!seen.has(key)) {
@@ -1575,7 +1597,12 @@ function registerIpcHandlers(): void {
     if (process.platform === "darwin") {
       mainWindow.setVibrancy(enabled ? "sidebar" : null);
     }
-    mainWindow.setBackgroundColor(enabled ? "#00000000" : "#FFFFFFFF");
+    // Avoid a fully transparent backing store while vibrancy is active.
+    // Chromium repaints text more reliably when the window retains at least a
+    // 1-alpha surface, and the visual effect remains effectively transparent.
+    mainWindow.setBackgroundColor(
+      enabled ? VIBRANT_WINDOW_BACKGROUND_COLOR : OPAQUE_WINDOW_BACKGROUND_COLOR,
+    );
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
@@ -1767,6 +1794,9 @@ function promptForQuitConfirmation(): void {
 }
 
 function createWindow(): BrowserWindow {
+  const clientSettings = readDesktopClientSettings();
+  const enableSidebarVibrancy =
+    process.platform === "darwin" && clientSettings.sidebarTranslucent === true;
   const window = new BrowserWindow({
     width: 1100,
     height: 780,
@@ -1778,6 +1808,15 @@ function createWindow(): BrowserWindow {
     title: APP_DISPLAY_NAME,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: MACOS_TRAFFIC_LIGHT_POSITION,
+    ...(enableSidebarVibrancy
+      ? {
+          vibrancy: "sidebar" as const,
+          visualEffectState: "active" as const,
+        }
+      : {}),
+    backgroundColor: enableSidebarVibrancy
+      ? VIBRANT_WINDOW_BACKGROUND_COLOR
+      : OPAQUE_WINDOW_BACKGROUND_COLOR,
     webPreferences: {
       preload: Path.join(__dirname, "preload.js"),
       contextIsolation: true,

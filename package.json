@@ -36,6 +36,8 @@
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=marketing",
     "build:cli": "turbo run build --filter=shiori-cli",
+    "build:agent": "turbo run build --filter=shiori-agent",
+    "start:agent": "cd apps/agent && bun run start",
     "build:desktop": "turbo run build --filter=desktop --filter=shioricode",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",

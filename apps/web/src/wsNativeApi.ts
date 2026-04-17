@@ -1,10 +1,49 @@
-import { type ContextMenuItem, type NativeApi } from "contracts";
+import {
+  type ClientOrchestrationCommand,
+  type ContextMenuItem,
+  ThreadId,
+  type NativeApi,
+} from "contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { assertThreadLease } from "./lib/threadLease";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
+
+const THREAD_LEASED_COMMAND_TYPES = new Set<ClientOrchestrationCommand["type"]>([
+  "thread.archive",
+  "thread.unarchive",
+  "thread.delete",
+  "thread.meta.update",
+  "thread.runtime-mode.set",
+  "thread.interaction-mode.set",
+  "thread.turn.start",
+  "thread.turn.interrupt",
+  "thread.approval.respond",
+  "thread.user-input.respond",
+  "thread.checkpoint.revert",
+  "thread.turn.retry",
+  "thread.session.ensure",
+  "thread.session.stop",
+]);
+
+async function dispatchOrchestrationCommand(
+  dispatchCommand: NativeApi["orchestration"]["dispatchCommand"],
+  command: ClientOrchestrationCommand,
+) {
+  const threadId =
+    "threadId" in command && typeof command.threadId === "string"
+      ? ThreadId.makeUnsafe(command.threadId)
+      : null;
+
+  if (threadId && THREAD_LEASED_COMMAND_TYPES.has(command.type)) {
+    await assertThreadLease(threadId);
+  }
+
+  return dispatchCommand(command);
+}
 
 export function __resetWsNativeApiForTests() {
   instance = null;
@@ -69,6 +108,10 @@ export function createWsNativeApi(): NativeApi {
       init: rpcClient.git.init,
       resolvePullRequest: rpcClient.git.resolvePullRequest,
       preparePullRequestThread: rpcClient.git.preparePullRequestThread,
+      listOpenPullRequests: rpcClient.git.listOpenPullRequests,
+      getPullRequestDiff: rpcClient.git.getPullRequestDiff,
+      summarizePullRequest: rpcClient.git.summarizePullRequest,
+      getPullRequestConversation: rpcClient.git.getPullRequestConversation,
     },
     contextMenu: {
       show: async <T extends string>(
@@ -87,6 +130,12 @@ export function createWsNativeApi(): NativeApi {
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
+      listMcpServers: rpcClient.server.listMcpServers,
+      authenticateMcpServer: (input) =>
+        rpcClient.server.authenticateMcpServer(input).then(() => undefined),
+      removeMcpServer: (input) => rpcClient.server.removeMcpServer(input).then(() => undefined),
+      listSkills: rpcClient.server.listSkills,
+      removeSkill: (input) => rpcClient.server.removeSkill(input).then(() => undefined),
       setShioriAuthToken: (token) => rpcClient.server.setShioriAuthToken(token),
       getProviderUsage: (provider) => rpcClient.server.getProviderUsage({ provider }),
       getHostedBillingSnapshot: () => rpcClient.server.getHostedBillingSnapshot(),
@@ -95,7 +144,11 @@ export function createWsNativeApi(): NativeApi {
     },
     orchestration: {
       getSnapshot: rpcClient.orchestration.getSnapshot,
-      dispatchCommand: rpcClient.orchestration.dispatchCommand,
+      dispatchCommand: (command) =>
+        dispatchOrchestrationCommand(
+          rpcClient.orchestration.dispatchCommand,
+          command as ClientOrchestrationCommand,
+        ),
       getTurnDiff: rpcClient.orchestration.getTurnDiff,
       getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
       getSubagentDetail: rpcClient.orchestration.getSubagentDetail,

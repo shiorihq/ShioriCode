@@ -25,6 +25,7 @@ import {
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadResumeStateSetPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -265,6 +266,7 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             tag: payload.tag ?? null,
+            resumeState: "resumed",
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -473,6 +475,17 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.resume-state-set":
+      return decodeForEvent(ThreadResumeStateSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            resumeState: payload.resumeState,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {

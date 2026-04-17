@@ -94,7 +94,13 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    reconcileSessions: () => Effect.succeed([]),
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+        recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+        observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+      }),
     readUsage: () => unsupported(),
     rollbackConversation,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),

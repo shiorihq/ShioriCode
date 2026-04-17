@@ -35,6 +35,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedProjectAdd.command, "project.add");
 
+    const parsedPullRequestsOpen = yield* decode(KeybindingRule, {
+      key: "meta+p",
+      command: "pullRequests.open",
+    });
+    assert.strictEqual(parsedPullRequestsOpen.command, "pullRequests.open");
+
     const parsed = yield* decode(KeybindingRule, {
       key: "mod+j",
       command: "terminal.toggle",

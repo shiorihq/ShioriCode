@@ -17,11 +17,11 @@ describe("truncate", () => {
 });
 
 describe("normalizeProjectTitle", () => {
-  it("trims and lowercases project titles", () => {
-    expect(normalizeProjectTitle("  My-Project  ")).toBe("my-project");
+  it("trims project titles without changing casing", () => {
+    expect(normalizeProjectTitle("  My-Project  ")).toBe("My-Project");
   });
 
-  it("keeps already lowercase names unchanged", () => {
+  it("keeps already normalized names unchanged", () => {
     expect(normalizeProjectTitle("demo")).toBe("demo");
   });
 

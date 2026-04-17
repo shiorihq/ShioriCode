@@ -18,6 +18,7 @@ export interface GitHubPullRequestSummary {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -27,6 +28,38 @@ export interface GitHubRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
   readonly sshUrl: string;
+}
+
+export interface GitHubPullRequestComment {
+  readonly id: string;
+  readonly author: string | null;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly url?: string;
+}
+
+export type GitHubPullRequestReviewState =
+  | "approved"
+  | "changes_requested"
+  | "commented"
+  | "dismissed"
+  | "pending";
+
+export interface GitHubPullRequestReview {
+  readonly id: string;
+  readonly author: string | null;
+  readonly body: string;
+  readonly state: GitHubPullRequestReviewState;
+  readonly submittedAt: string;
+  readonly url?: string;
+}
+
+export interface GitHubPullRequestConversation {
+  readonly description: string;
+  readonly descriptionAuthor: string | null;
+  readonly descriptionCreatedAt: string | null;
+  readonly comments: ReadonlyArray<GitHubPullRequestComment>;
+  readonly reviews: ReadonlyArray<GitHubPullRequestReview>;
 }
 
 /**
@@ -50,6 +83,32 @@ export interface GitHubCliShape {
     readonly headSelector: string;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+  /**
+   * List repository pull requests that match the requested filter.
+   */
+  readonly listPullRequests: (input: {
+    readonly cwd: string;
+    readonly limit?: number;
+    readonly filter?: "open" | "closed" | "draft";
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
+  /**
+   * Fetch the unified diff for a pull request via `gh pr diff`.
+   */
+  readonly getPullRequestDiff: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<string, GitHubCliError>;
+
+  /**
+   * Fetch the full conversation (description + comments + review submissions)
+   * for a pull request via `gh pr view`.
+   */
+  readonly getPullRequestConversation: (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) => Effect.Effect<GitHubPullRequestConversation, GitHubCliError>;
 
   /**
    * Resolve a pull request by URL, number, or branch-ish identifier.

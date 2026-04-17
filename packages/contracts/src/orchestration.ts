@@ -228,6 +228,14 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+export const OrchestrationThreadResumeState = Schema.Literals([
+  "resumed",
+  "resuming",
+  "needs_resume",
+  "unrecoverable",
+]);
+export type OrchestrationThreadResumeState = typeof OrchestrationThreadResumeState.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -320,6 +328,9 @@ export const OrchestrationThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   tag: Schema.optional(Schema.NullOr(ThreadTag)).pipe(Schema.withDecodingDefault(() => null)),
+  resumeState: Schema.optional(OrchestrationThreadResumeState).pipe(
+    Schema.withDecodingDefault(() => "resumed" as const),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -519,6 +530,13 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadSessionEnsureCommand = Schema.Struct({
+  type: Schema.Literal("thread.session.ensure"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -537,6 +555,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadTurnRetryCommand,
   ThreadSessionStopCommand,
+  ThreadSessionEnsureCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -559,6 +578,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadTurnRetryCommand,
   ThreadSessionStopCommand,
+  ThreadSessionEnsureCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -567,6 +587,14 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  createdAt: IsoDateTime,
+});
+
+const ThreadResumeStateSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.resume-state.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  resumeState: OrchestrationThreadResumeState,
   createdAt: IsoDateTime,
 });
 
@@ -629,6 +657,7 @@ const ThreadRevertCompleteCommand = Schema.Struct({
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
+  ThreadResumeStateSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadProposedPlanUpsertCommand,
@@ -663,8 +692,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.checkpoint-revert-requested",
   "thread.turn-retry-requested",
   "thread.reverted",
+  "thread.session-ensure-requested",
   "thread.session-stop-requested",
   "thread.session-set",
+  "thread.resume-state-set",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
@@ -824,9 +855,19 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadSessionEnsureRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+});
+
+export const ThreadResumeStateSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  resumeState: OrchestrationThreadResumeState,
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
@@ -964,6 +1005,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.session-ensure-requested"),
+    payload: ThreadSessionEnsureRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.session-stop-requested"),
     payload: ThreadSessionStopRequestedPayload,
   }),
@@ -971,6 +1017,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.session-set"),
     payload: ThreadSessionSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.resume-state-set"),
+    payload: ThreadResumeStateSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1111,6 +1162,7 @@ export const OrchestrationSubagentDetail = Schema.Struct({
   provider: ProviderKind,
   rootItemId: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  hasContents: Schema.Boolean,
   description: Schema.NullOr(Schema.String),
   prompt: Schema.NullOr(Schema.String),
   agentType: Schema.NullOr(TrimmedNonEmptyString),

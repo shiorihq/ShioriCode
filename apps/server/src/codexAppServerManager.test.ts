@@ -7,15 +7,16 @@ import { ApprovalRequestId, ThreadId } from "contracts";
 
 import {
   buildCodexInitializeParams,
-  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
-  classifyCodexStderrLine,
-  isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
+import { classifyCodexStderrLine, isRecoverableThreadResumeError } from "./provider/codexStderr";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "./provider/policy/codexPromptPolicy";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
@@ -313,6 +314,16 @@ describe("isRecoverableThreadResumeError", () => {
     ).toBe(true);
   });
 
+  it("matches rollout-missing resume errors", () => {
+    expect(
+      isRecoverableThreadResumeError(
+        new Error(
+          "thread/resume failed: no rollout found for thread id 019d952b-fd4e-7e70-9a18-99ccd027b3db",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores non-resume errors", () => {
     expect(
       isRecoverableThreadResumeError(new Error("thread/start failed: permission denied")),
@@ -516,6 +527,107 @@ describe("startSession", () => {
       versionCheck.mockRestore();
       manager.stopAll();
     }
+  });
+});
+
+describe("hydrateSessionMetadataInBackground", () => {
+  it("updates the session account and model after startup without blocking thread open", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex-spark",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      supportsReasoningSummary: false,
+      collabReceiverTurns: new Map(),
+    };
+
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+        "sendRequest",
+      )
+      .mockImplementation(async (_sessionContext, method) => {
+        if (method === "model/list") {
+          return { models: [] };
+        }
+        if (method === "account/read") {
+          return {
+            type: "chatgpt",
+            planType: "plus",
+          };
+        }
+        throw new Error(`Unexpected method: ${String(method)}`);
+      });
+
+    await (
+      manager as unknown as {
+        hydrateSessionMetadataInBackground: (
+          sessionContext: typeof context,
+          input: { requestedModel?: string },
+        ) => Promise<void>;
+      }
+    ).hydrateSessionMetadataInBackground(context, {
+      requestedModel: "gpt-5.3-codex-spark",
+    });
+
+    expect(sendRequest).toHaveBeenCalledTimes(2);
+    expect(context.account).toEqual({
+      type: "chatgpt",
+      planType: "plus",
+      sparkEnabled: false,
+    });
+    expect(context.session.model).toBe("gpt-5.3-codex");
+  });
+
+  it("swallows background metadata probe failures", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      supportsReasoningSummary: false,
+      collabReceiverTurns: new Map(),
+    };
+
+    vi.spyOn(
+      manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+      "sendRequest",
+    ).mockRejectedValue(new Error("probe failed"));
+
+    await expect(
+      (
+        manager as unknown as {
+          hydrateSessionMetadataInBackground: (
+            sessionContext: typeof context,
+            input: { requestedModel?: string },
+          ) => Promise<void>;
+        }
+      ).hydrateSessionMetadataInBackground(context, {
+        requestedModel: "gpt-5.3-codex",
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

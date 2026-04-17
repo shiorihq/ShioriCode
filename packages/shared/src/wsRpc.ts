@@ -176,6 +176,12 @@ export interface WsRpcClient {
     readonly preparePullRequestThread: RpcUnaryMethod<
       typeof WS_METHODS.gitPreparePullRequestThread
     >;
+    readonly listOpenPullRequests: RpcUnaryMethod<typeof WS_METHODS.gitListOpenPullRequests>;
+    readonly getPullRequestDiff: RpcUnaryMethod<typeof WS_METHODS.gitGetPullRequestDiff>;
+    readonly summarizePullRequest: RpcUnaryMethod<typeof WS_METHODS.gitSummarizePullRequest>;
+    readonly getPullRequestConversation: RpcUnaryMethod<
+      typeof WS_METHODS.gitGetPullRequestConversation
+    >;
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
@@ -185,6 +191,11 @@ export interface WsRpcClient {
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateSettings>>;
+    readonly listMcpServers: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListMcpServers>;
+    readonly authenticateMcpServer: RpcUnaryMethod<typeof WS_METHODS.serverAuthenticateMcpServer>;
+    readonly removeMcpServer: RpcUnaryMethod<typeof WS_METHODS.serverRemoveMcpServer>;
+    readonly listSkills: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListSkills>;
+    readonly removeSkill: RpcUnaryMethod<typeof WS_METHODS.serverRemoveSkill>;
     readonly setShioriAuthToken: (token: string | null) => Promise<void>;
     readonly getProviderUsage: RpcUnaryMethod<typeof WS_METHODS.serverGetProviderUsage>;
     readonly getHostedBillingSnapshot: RpcUnaryNoArgMethod<
@@ -265,6 +276,14 @@ export function createWsRpcClient(options: {
         transport.request((client) => client[WS_METHODS.gitResolvePullRequest](input)),
       preparePullRequestThread: (input) =>
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
+      listOpenPullRequests: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListOpenPullRequests](input)),
+      getPullRequestDiff: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetPullRequestDiff](input)),
+      summarizePullRequest: (input) =>
+        transport.request((client) => client[WS_METHODS.gitSummarizePullRequest](input)),
+      getPullRequestConversation: (input) =>
+        transport.request((client) => client[WS_METHODS.gitGetPullRequestConversation](input)),
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),
@@ -275,6 +294,15 @@ export function createWsRpcClient(options: {
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
+      listMcpServers: () =>
+        transport.request((client) => client[WS_METHODS.serverListMcpServers]({})),
+      authenticateMcpServer: (input) =>
+        transport.request((client) => client[WS_METHODS.serverAuthenticateMcpServer](input)),
+      removeMcpServer: (input) =>
+        transport.request((client) => client[WS_METHODS.serverRemoveMcpServer](input)),
+      listSkills: () => transport.request((client) => client[WS_METHODS.serverListSkills]({})),
+      removeSkill: (input) =>
+        transport.request((client) => client[WS_METHODS.serverRemoveSkill](input)),
       setShioriAuthToken: (token) =>
         transport
           .request((client) => client[WS_METHODS.serverSetShioriAuthToken]({ token }))

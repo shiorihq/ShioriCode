@@ -173,6 +173,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
       assert.equal(defaultsByCommand.get("project.add"), "mod+o");
+      assert.equal(defaultsByCommand.get("pullRequests.open"), "meta+p");
       assert.equal(defaultsByCommand.get("editor.openFavorite"), "mod+shift+o");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");

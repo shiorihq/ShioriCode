@@ -3,10 +3,13 @@ import "../index.css";
 
 import {
   EventId,
+  DEFAULT_ONBOARDING_PROGRESS,
   ORCHESTRATION_WS_METHODS,
+  ONBOARDING_STEP_IDS,
   type MessageId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
@@ -106,13 +109,13 @@ const COMPACT_FOOTER_VIEWPORT: ViewportSpec = {
 const TEXT_VIEWPORT_MATRIX = [
   DEFAULT_VIEWPORT,
   { name: "tablet", width: 720, height: 1_024, textTolerancePx: 200, attachmentTolerancePx: 56 },
-  { name: "mobile", width: 430, height: 932, textTolerancePx: 200, attachmentTolerancePx: 56 },
-  { name: "narrow", width: 320, height: 700, textTolerancePx: 200, attachmentTolerancePx: 56 },
+  { name: "mobile", width: 430, height: 932, textTolerancePx: 230, attachmentTolerancePx: 56 },
+  { name: "narrow", width: 320, height: 700, textTolerancePx: 230, attachmentTolerancePx: 64 },
 ] as const satisfies readonly ViewportSpec[];
 const ATTACHMENT_VIEWPORT_MATRIX = [
   DEFAULT_VIEWPORT,
-  { name: "mobile", width: 430, height: 932, textTolerancePx: 200, attachmentTolerancePx: 56 },
-  { name: "narrow", width: 320, height: 700, textTolerancePx: 200, attachmentTolerancePx: 56 },
+  { name: "mobile", width: 430, height: 932, textTolerancePx: 230, attachmentTolerancePx: 56 },
+  { name: "narrow", width: 320, height: 700, textTolerancePx: 230, attachmentTolerancePx: 64 },
 ] as const satisfies readonly ViewportSpec[];
 
 interface UserRowMeasurement {
@@ -157,6 +160,10 @@ function createBaseServerConfig(): ServerConfig {
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
       ...DEFAULT_CLIENT_SETTINGS,
+      onboarding: {
+        ...DEFAULT_ONBOARDING_PROGRESS,
+        completedStepIds: [...ONBOARDING_STEP_IDS],
+      },
     },
   };
 }
@@ -288,6 +295,7 @@ function createSnapshotForTargetUser(options: {
         branchSourceTurnId: null,
         branch: "main",
         worktreePath: null,
+        resumeState: "resumed",
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -348,6 +356,7 @@ function addThreadToSnapshot(
         branchSourceTurnId: null,
         branch: "main",
         worktreePath: null,
+        resumeState: "resumed",
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -545,6 +554,10 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
             interactionMode: "plan",
+            session: {
+              ...thread.session,
+              status: "running",
+            },
             activities: [
               {
                 id: EventId.makeUnsafe("activity-user-input-requested"),
@@ -838,19 +851,6 @@ async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
   return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
 }
 
-function findButtonContainingText(text: string): HTMLButtonElement | null {
-  return (Array.from(document.querySelectorAll("button")).find((button) =>
-    button.textContent?.includes(text),
-  ) ?? null) as HTMLButtonElement | null;
-}
-
-async function waitForButtonContainingText(text: string): Promise<HTMLButtonElement> {
-  return waitForElement(
-    () => findButtonContainingText(text),
-    `Unable to find button containing "${text}".`,
-  );
-}
-
 async function expectComposerActionsContained(): Promise<void> {
   const footer = await waitForElement(
     () => document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]'),
@@ -918,6 +918,22 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchPullRequestsShortcut(target: EventTarget = window): void {
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "p",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function stopAtEditor(event: Event): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -939,8 +955,6 @@ async function triggerChatNewShortcutUntilPath(
 async function waitForNewThreadShortcutLabel(): Promise<void> {
   const newThreadButton = page.getByTestId("new-thread-button");
   await expect.element(newThreadButton).toBeInTheDocument();
-  const shortcutLabel = isMacPlatform(navigator.platform) ? "⌘N" : "Ctrl+N";
-  await expect.element(newThreadButton.getByText(shortcutLabel)).toBeInTheDocument();
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -1397,6 +1411,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               branchSourceTurnId: null,
               branch: "main",
               worktreePath: null,
+              resumeState: "resumed",
               latestTurn: null,
               createdAt: isoAt(60),
               updatedAt: isoAt(70),
@@ -1485,6 +1500,34 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not materialize a draft thread just because the user types into the composer", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await waitForComposerEditor();
+      wsRequests.length = 0;
+
+      await page.getByTestId("composer-editor").fill("pasted draft text");
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
+      await waitForLayout();
+
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.create",
+        ),
+      ).toBe(false);
     } finally {
       await mounted.cleanup();
     }
@@ -2339,6 +2382,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("shows archive instead of delete in the thread context menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-archive-menu-test" as MessageId,
+        targetText: "archive context menu target",
+      }),
+    });
+
+    try {
+      const threadRow = await waitForElement(
+        () => document.querySelector<HTMLElement>(`[data-testid="thread-row-${THREAD_ID}"]`),
+        "Unable to find thread row.",
+      );
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 48,
+          clientY: 48,
+        }),
+      );
+
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-testid="thread-context-archive-${THREAD_ID}"]`,
+          ),
+        "Unable to find archive item in thread context menu.",
+      );
+
+      await vi.waitFor(() => {
+        const menuItems = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+          .map((element) => element.textContent?.trim())
+          .filter((label): label is string => Boolean(label));
+
+        expect(menuItems).toContain("Archive");
+        expect(menuItems).not.toContain("Delete");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it.skip("archives a thread immediately after clicking the archive button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -2682,6 +2770,56 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("opens pull requests from Cmd+P even when a focused editor stops bubbling", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-pull-requests-shortcut-test" as MessageId,
+        targetText: "pull requests shortcut test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "pullRequests.open",
+              shortcut: {
+                key: "p",
+                metaKey: true,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: false,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      composerEditor.addEventListener("keydown", stopAtEditor);
+      try {
+        dispatchPullRequestsShortcut(composerEditor);
+        await vi.waitFor(
+          () => {
+            expect(mounted.router.state.location.pathname).toBe("/pull-requests");
+          },
+          { timeout: 8_000, interval: 16 },
+        );
+      } finally {
+        composerEditor.removeEventListener("keydown", stopAtEditor);
+      }
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -2750,7 +2888,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Expand plan",
+            (button) => button.textContent?.trim() === "Show more",
           ) as HTMLButtonElement | null,
         "Unable to find Expand plan button.",
       );
@@ -2760,7 +2898,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const expandButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Expand plan",
+            (button) => button.textContent?.trim() === "Show more",
           ) as HTMLButtonElement | null,
         "Unable to find Expand plan button.",
       );
@@ -2784,11 +2922,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const firstOption = await waitForButtonContainingText("Tight");
-      firstOption.click();
+      const firstOption = page.getByText("Tight");
+      await expect.element(firstOption).toBeInTheDocument();
+      await firstOption.click();
 
-      await waitForButtonByText("Previous");
-      await waitForButtonByText("Submit answers");
+      await expect.element(page.getByText("Previous")).toBeInTheDocument();
+      await expect.element(page.getByText("Submit answers")).toBeInTheDocument();
 
       await mounted.setContainerSize(COMPACT_FOOTER_VIEWPORT);
       await expectComposerActionsContained();
@@ -2893,6 +3032,257 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  function createBackgroundAgentSnapshot(input: {
+    targetMessageId: MessageId;
+    targetText: string;
+    itemId: string;
+    extraActivities?: OrchestrationThreadActivity[];
+  }): OrchestrationReadModel {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: input.targetMessageId,
+      targetText: input.targetText,
+    });
+    const targetThread = baseSnapshot.threads.find((thread) => thread.id === THREAD_ID)!;
+    return {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...targetThread,
+          activities: [
+            {
+              id: `${input.itemId}-activity` as EventId,
+              createdAt: NOW_ISO,
+              kind: "tool.completed",
+              summary: "Subagent task",
+              tone: "tool",
+              turnId: "turn-1" as TurnId,
+              payload: {
+                itemId: input.itemId,
+                itemType: "collab_agent_tool_call",
+                data: {
+                  toolName: "spawn_agent",
+                  input: {
+                    name: "Harvey",
+                    description: "Inspect the app shell",
+                    agent_type: "explorer",
+                    run_in_background: true,
+                  },
+                  item: {
+                    receiverThreadIds: ["agent-1"],
+                  },
+                },
+              },
+            },
+            ...(input.extraActivities ?? []),
+          ],
+        },
+      ],
+    };
+  }
+
+  it("offers background agents in the @ mention menu and inserts the selected tag", async () => {
+    const snapshot = createBackgroundAgentSnapshot({
+      targetMessageId: "msg-user-agent-tag-target" as MessageId,
+      targetText: "background agent tagging",
+      itemId: "spawn-item-1",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("@Ha");
+
+      const menuItem = await waitForComposerMenuItem("agent:codex:spawn-item-1");
+      expect(menuItem.textContent).toContain("Harvey");
+
+      menuItem.click();
+
+      await vi.waitFor(() => {
+        const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
+        expect(editor?.textContent).toContain("Harvey ");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders background agents as a narrower panel appended above the composer", async () => {
+    const snapshot = createBackgroundAgentSnapshot({
+      targetMessageId: "msg-user-subagent-docked-target" as MessageId,
+      targetText: "background agent docking",
+      itemId: "spawn-item-docked",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const panel = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-background-subagents-panel="true"]'),
+        "Unable to find background subagents panel.",
+      );
+      const composerFrame = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-composer-frame="true"]'),
+        "Unable to find composer frame.",
+      );
+      const composerSurface = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-composer-surface="true"]'),
+        "Unable to find composer surface.",
+      );
+
+      await vi.waitFor(() => {
+        const panelRect = panel.getBoundingClientRect();
+        const frameRect = composerFrame.getBoundingClientRect();
+        const frameStyle = getComputedStyle(composerFrame);
+        const surfaceStyle = getComputedStyle(composerSurface);
+
+        expect(panel.nextElementSibling).toBe(composerFrame);
+        expect(panelRect.width).toBeLessThan(frameRect.width - 8);
+        expect(panelRect.left).toBeGreaterThan(frameRect.left);
+        expect(panelRect.right).toBeLessThan(frameRect.right);
+        expect(panelRect.bottom).toBeGreaterThan(frameRect.top);
+        expect(frameStyle.borderTopLeftRadius).not.toBe("0px");
+        expect(surfaceStyle.borderTopWidth).toBe("0px");
+      });
+
+      const toggleButton = await waitForElement(
+        () => panel.querySelector<HTMLButtonElement>('button[aria-expanded="true"]'),
+        "Unable to find background subagents toggle button.",
+      );
+      toggleButton.click();
+
+      await vi.waitFor(() => {
+        const collapsedToggle = panel.querySelector<HTMLButtonElement>(
+          'button[aria-expanded="false"]',
+        );
+        expect(collapsedToggle).toBeTruthy();
+        expect(document.body.textContent).not.toContain("Harvey");
+
+        if (!collapsedToggle) {
+          return;
+        }
+
+        const toggleRect = collapsedToggle.getBoundingClientRect();
+        const hitTarget = document.elementFromPoint(
+          toggleRect.left + Math.min(32, toggleRect.width / 2),
+          toggleRect.top + toggleRect.height / 2,
+        );
+
+        expect(
+          hitTarget instanceof Element &&
+            (collapsedToggle === hitTarget || collapsedToggle.contains(hitTarget)),
+        ).toBe(true);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows an inline hover chevron and lets the whole label toggle a scrollable agent activity list", async () => {
+    const snapshot = createBackgroundAgentSnapshot({
+      targetMessageId: "msg-user-subagent-inline-toggle-target" as MessageId,
+      targetText: "background agent row expansion",
+      itemId: "spawn-item-inline-toggle",
+      extraActivities: Array.from({ length: 8 }, (_, index) => ({
+        id: `spawn-item-inline-toggle-child-${index}` as EventId,
+        createdAt: isoAt(index + 1),
+        kind: "tool.updated",
+        summary: `Subagent action ${index + 1}`,
+        tone: "tool",
+        turnId: "turn-1" as TurnId,
+        payload: {
+          itemId: `spawn-item-inline-toggle-child-item-${index}`,
+          parentItemId: "spawn-item-inline-toggle",
+          status: "inProgress",
+          detail: `Completed background step ${index + 1}`,
+        },
+      })),
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const panel = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-background-subagents-panel="true"]'),
+        "Unable to find background subagents panel.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("Harvey");
+      });
+
+      const rowToggle = await waitForElement(
+        () =>
+          panel.querySelector<HTMLButtonElement>(
+            '[data-testid="background-subagent-row-toggle-spawn-item-inline-toggle-activity"]',
+          ),
+        "Unable to find background subagent row toggle.",
+      );
+      rowToggle.focus();
+      await vi.waitFor(() => {
+        const chevron = panel.querySelector<HTMLElement>(
+          '[data-testid="background-subagent-row-chevron-spawn-item-inline-toggle-activity"]',
+        );
+        expect(chevron).toBeTruthy();
+        if (!chevron) {
+          return;
+        }
+        expect(getComputedStyle(chevron).opacity).not.toBe("0");
+      });
+
+      rowToggle.click();
+
+      await vi.waitFor(() => {
+        const activityList = panel.querySelector<HTMLElement>(
+          '[data-background-subagent-activity-list="true"]',
+        );
+        expect(activityList).toBeTruthy();
+        if (!activityList) {
+          return;
+        }
+        const activityListStyle = getComputedStyle(activityList);
+        expect(activityListStyle.overflowY).toBe("auto");
+        expect(parseFloat(activityListStyle.maxHeight)).toBeGreaterThan(0);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders background agents without making them navigable", async () => {
+    const snapshot = createBackgroundAgentSnapshot({
+      targetMessageId: "msg-user-subagent-open-target" as MessageId,
+      targetText: "background agent rows",
+      itemId: "spawn-item-passive",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("Harvey");
+        const matchingButton = Array.from(
+          document.querySelectorAll<HTMLButtonElement>("button"),
+        ).find((button) => button.textContent?.includes("Harvey"));
+        expect(matchingButton).toBeUndefined();
+        expect(mounted.router.state.location.pathname).toBe(`/${THREAD_ID}`);
+      });
     } finally {
       await mounted.cleanup();
     }

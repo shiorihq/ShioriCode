@@ -27,14 +27,9 @@ const APACHE_2_LICENSE_BODY = `Licensed under the Apache License, Version 2.0 (t
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.`;
 
-const ISC_LICENSE_BODY = `Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.`;
-
 const LICENSE_TEXTS: Record<string, string> = {
   MIT: MIT_LICENSE_BODY,
   "Apache-2.0": APACHE_2_LICENSE_BODY,
-  ISC: ISC_LICENSE_BODY,
 };
 
 const CREDITS: ReadonlyArray<{
@@ -45,7 +40,7 @@ const CREDITS: ReadonlyArray<{
   fullText?: string;
 }> = [
   {
-    name: "T3Code",
+    name: "t3code",
     copyright: "2026 T3 Tools Inc.",
     license: "MIT",
     url: "https://github.com/pingdotgg/t3code",
@@ -61,78 +56,17 @@ ${MIT_LICENSE_BODY}`,
     license: "Apache-2.0",
     url: "https://github.com/openai/codex",
   },
-  // Core framework
-  { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
-  { name: "React DOM", license: "MIT", url: "https://github.com/facebook/react" },
-  { name: "Vite", license: "MIT", url: "https://github.com/vitejs/vite" },
-  { name: "Electron", license: "MIT", url: "https://github.com/electron/electron" },
-  {
-    name: "electron-updater",
-    license: "MIT",
-    url: "https://github.com/electron-userland/electron-builder",
-  },
-
-  // Effect ecosystem
-  { name: "Effect", license: "MIT", url: "https://github.com/Effect-TS/effect" },
-  { name: "@effect/platform-bun", license: "MIT", url: "https://github.com/Effect-TS/effect" },
-  { name: "@effect/platform-node", license: "MIT", url: "https://github.com/Effect-TS/effect" },
-  { name: "@effect/sql-sqlite-bun", license: "MIT", url: "https://github.com/Effect-TS/effect" },
-  { name: "@effect/atom-react", license: "MIT", url: "https://github.com/Effect-TS/effect" },
-
-  // Routing & data
-  { name: "TanStack Router", license: "MIT", url: "https://github.com/TanStack/router" },
-  { name: "TanStack Query", license: "MIT", url: "https://github.com/TanStack/query" },
-  { name: "TanStack Virtual", license: "MIT", url: "https://github.com/TanStack/virtual" },
-  { name: "TanStack Pacer", license: "MIT", url: "https://github.com/TanStack/pacer" },
-  { name: "Zustand", license: "MIT", url: "https://github.com/pmndrs/zustand" },
-  { name: "Convex", license: "Apache-2.0", url: "https://github.com/get-convex/convex-js" },
-  {
-    name: "@convex-dev/auth",
-    license: "Apache-2.0",
-    url: "https://github.com/get-convex/convex-auth",
-  },
-  { name: "@auth/core", license: "ISC", url: "https://github.com/nextauthjs/next-auth" },
-
-  // UI
-  { name: "Base UI", license: "MIT", url: "https://github.com/mui/base-ui" },
-  { name: "Lucide", license: "ISC", url: "https://github.com/lucide-icons/lucide" },
-  { name: "Tailwind CSS", license: "MIT", url: "https://github.com/tailwindlabs/tailwindcss" },
-  { name: "tailwind-merge", license: "MIT", url: "https://github.com/dcastil/tailwind-merge" },
-  {
-    name: "class-variance-authority",
-    license: "Apache-2.0",
-    url: "https://github.com/joe-bell/cva",
-  },
-  { name: "tw-shimmer", license: "MIT", url: "https://github.com/assistant-ui/tw-shimmer" },
-  { name: "AutoAnimate", license: "MIT", url: "https://github.com/formkit/auto-animate" },
-
-  // Editor & terminal
-  { name: "Lexical", license: "MIT", url: "https://github.com/facebook/lexical" },
-  { name: "@lexical/react", license: "MIT", url: "https://github.com/facebook/lexical" },
-  { name: "xterm.js", license: "MIT", url: "https://github.com/xtermjs/xterm.js" },
-  { name: "@xterm/addon-fit", license: "MIT", url: "https://github.com/xtermjs/xterm.js" },
-
-  // Drag & drop
-  { name: "dnd kit", license: "MIT", url: "https://github.com/clauderic/dnd-kit" },
-
-  // Markdown
-  { name: "react-markdown", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
-  { name: "remark-gfm", license: "MIT", url: "https://github.com/remarkjs/remark-gfm" },
-
-  // Diffs
-  { name: "@pierre/diffs", license: "MIT", url: "https://github.com/pierre-co/diffs" },
-
-  // AI SDKs
-  { name: "Vercel AI SDK", license: "Apache-2.0", url: "https://github.com/vercel/ai" },
   {
     name: "Claude Agent SDK",
+    copyright: "2025 Anthropic, PBC",
     license: "MIT",
     url: "https://github.com/anthropics/anthropic-sdk-python",
-  },
+    fullText: `MIT License
 
-  // Server utilities
-  { name: "node-pty", license: "MIT", url: "https://github.com/microsoft/node-pty" },
-  { name: "open", license: "MIT", url: "https://github.com/sindresorhus/open" },
+Copyright (c) 2025 Anthropic, PBC
+
+${MIT_LICENSE_BODY}`,
+  },
 ];
 
 const linkClasses =

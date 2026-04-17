@@ -1,11 +1,12 @@
 import type { ToolLifecycleItemType } from "contracts";
 
-type ProviderToolRequestKind = "command" | "file-read" | "file-change";
+export type ProviderToolRequestKind = "command" | "file-read" | "file-change";
 
 const COMMAND_TOOL_NAMES = new Set([
   "bash",
   "command",
   "exec command",
+  "exec_command",
   "execute command",
   "shell",
   "terminal",
@@ -13,13 +14,22 @@ const COMMAND_TOOL_NAMES = new Set([
 
 const FILE_CHANGE_TOOL_NAMES = new Set([
   "apply patch",
+  "apply_patch",
   "create file",
+  "create_file",
   "delete file",
+  "delete_file",
   "edit",
+  "file write",
+  "multi edit",
+  "multiedit",
+  "notebook edit",
+  "notebookedit",
   "replace",
   "update file",
   "write",
   "write file",
+  "write_file",
 ]);
 
 const FILE_READ_TOOL_NAMES = new Set([
@@ -106,6 +116,78 @@ function joinedTargets(input: Record<string, unknown> | null): string | null {
   return normalized.length > 0 ? normalized.join(", ") : null;
 }
 
+function inferTopLevelToolName(record: Record<string, unknown>): string | null {
+  const type = asTrimmedString(record.type);
+  if (!type) {
+    return null;
+  }
+
+  const normalizedType = normalizeProviderToolName(type);
+  if (normalizedType === "web search") {
+    return type;
+  }
+
+  return null;
+}
+
+function buildTopLevelToolInput(
+  record: Record<string, unknown>,
+  toolName: string,
+): Record<string, unknown> | null {
+  const normalizedToolName = normalizeProviderToolName(toolName);
+
+  if (normalizedToolName === "web search") {
+    const query = asTrimmedString(record.query);
+    const action = asObject(record.action);
+    const actionType = asTrimmedString(action?.type);
+    const actionValue = asTrimmedString(action?.value);
+
+    if (!query && !action && !actionType && !actionValue) {
+      return null;
+    }
+
+    return {
+      ...(query ? { query } : {}),
+      ...(action ? { action } : {}),
+      ...(actionType ? { action_type: actionType } : {}),
+      ...(actionValue ? { action_value: actionValue } : {}),
+    };
+  }
+
+  return null;
+}
+
+function snapshotUnknown(value: unknown, depth = 0): unknown {
+  if (depth >= 6) {
+    return "[truncated]";
+  }
+
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((entry) => snapshotUnknown(entry, depth + 1));
+  }
+
+  const record = asObject(value);
+  if (!record) {
+    return String(value);
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(record).slice(0, 100)) {
+    next[key] = snapshotUnknown(entryValue, depth + 1);
+  }
+  return next;
+}
+
 export interface StructuredProviderToolData {
   readonly toolName: string;
   readonly input: Record<string, unknown> | null;
@@ -118,7 +200,12 @@ export function normalizeProviderToolName(value: string | null | undefined): str
     return null;
   }
 
-  const normalized = value.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  const normalized = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[._-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
   return normalized.length > 0 ? normalized : null;
 }
 
@@ -146,16 +233,44 @@ export function getProviderToolInputPath(input: Record<string, unknown> | null):
     asTrimmedString(input?.path) ??
     asTrimmedString(input?.filePath) ??
     asTrimmedString(input?.relativePath) ??
-    asTrimmedString(input?.filename)
+    asTrimmedString(input?.filename) ??
+    asTrimmedString(input?.notebook_path) ??
+    asTrimmedString(input?.notebookPath)
   );
 }
 
 export function getProviderToolInputQuery(input: Record<string, unknown> | null): string | null {
-  return (
+  const explicitQuery =
     asTrimmedString(input?.query) ??
     asTrimmedString(input?.pattern) ??
     asTrimmedString(input?.q) ??
-    asTrimmedString(input?.search)
+    asTrimmedString(input?.search);
+  if (explicitQuery) {
+    return explicitQuery;
+  }
+
+  return getProviderToolInputActionType(input) === "search"
+    ? getProviderToolInputActionValue(input)
+    : null;
+}
+
+export function getProviderToolInputActionType(
+  input: Record<string, unknown> | null,
+): string | null {
+  return (
+    asTrimmedString(input?.action_type) ??
+    asTrimmedString(input?.actionType) ??
+    asTrimmedString(asObject(input?.action)?.type)
+  );
+}
+
+export function getProviderToolInputActionValue(
+  input: Record<string, unknown> | null,
+): string | null {
+  return (
+    asTrimmedString(input?.action_value) ??
+    asTrimmedString(input?.actionValue) ??
+    asTrimmedString(asObject(input?.action)?.value)
   );
 }
 
@@ -172,7 +287,8 @@ export function extractStructuredProviderToolData(
     asTrimmedString(record.toolName) ??
     asTrimmedString(item?.toolName) ??
     asTrimmedString(item?.name) ??
-    asTrimmedString(record.name);
+    asTrimmedString(record.name) ??
+    inferTopLevelToolName(record);
   if (!toolName) {
     return null;
   }
@@ -180,14 +296,15 @@ export function extractStructuredProviderToolData(
   const input =
     asObject(record.input) ??
     asObject(item?.input) ??
-    parseJsonObject(asTrimmedString(record.arguments) ?? asTrimmedString(item?.arguments));
+    parseJsonObject(asTrimmedString(record.arguments) ?? asTrimmedString(item?.arguments)) ??
+    buildTopLevelToolInput(record, toolName);
   const result = record.result ?? item?.result;
 
   return {
     toolName,
     input,
     ...(result !== undefined ? { result } : {}),
-    ...(item ? { item } : {}),
+    ...(item ? { item } : { item: record }),
   };
 }
 
@@ -202,7 +319,7 @@ export function classifyProviderToolLifecycleItemType(
   if (normalized.startsWith("mcp ")) {
     return "mcp_tool_call";
   }
-  if (normalized === "web search" || normalized === "websearch") {
+  if (normalized === "web search") {
     return "web_search";
   }
   if (normalized.includes("image")) {
@@ -266,6 +383,10 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Run command";
     case "list directory":
       return "List directory";
+    case "multi edit":
+      return "Edit file";
+    case "notebook edit":
+      return "Edit notebook";
     case "read file":
       return "Read file";
     case "send input":
@@ -275,6 +396,9 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Update plan";
     case "wait agent":
       return "Wait for subagent";
+    case "web search":
+      return "Web Search";
+    case "file write":
     case "write":
     case "write file":
       return "Write file";
@@ -301,6 +425,21 @@ export function summarizeProviderToolInvocation(
   const command = asTrimmedString(input?.command) ?? asTrimmedString(input?.cmd);
   if (command) {
     return `${providerToolTitle(normalized)}: ${truncate(command)}`;
+  }
+
+  if (normalized === "web search") {
+    const actionType = getProviderToolInputActionType(input);
+    const actionValue = getProviderToolInputActionValue(input);
+    const query = getProviderToolInputQuery(input);
+    if (actionType === "open_page" && actionValue) {
+      return `${providerToolTitle(normalized)}: ${truncate(actionValue)}`;
+    }
+    if (query) {
+      return `${providerToolTitle(normalized)}: ${truncate(query)}`;
+    }
+    if (actionValue) {
+      return `${providerToolTitle(normalized)}: ${truncate(actionValue)}`;
+    }
   }
 
   if (isSubagentToolName(normalized)) {
@@ -342,21 +481,22 @@ export function summarizeProviderToolInvocation(
     }
   }
 
-  const query = getProviderToolInputQuery(input);
   const path = getProviderToolInputPath(input);
-
-  if (query && path) {
-    return `${providerToolTitle(normalized)}: ${truncate(`${query} in ${path}`)}`;
-  }
-  if (query) {
-    return `${providerToolTitle(normalized)}: ${truncate(query)}`;
-  }
   if (path) {
     return `${providerToolTitle(normalized)}: ${truncate(path)}`;
+  }
+
+  const query = getProviderToolInputQuery(input);
+  if (query) {
+    return `${providerToolTitle(normalized)}: ${truncate(query)}`;
   }
 
   const serialized = input ? truncate(JSON.stringify(input)) : undefined;
   return serialized
     ? `${providerToolTitle(normalized)}: ${serialized}`
     : providerToolTitle(normalized);
+}
+
+export function snapshotProviderToolData(data: unknown): unknown {
+  return snapshotUnknown(extractStructuredProviderToolData(data) ?? data);
 }

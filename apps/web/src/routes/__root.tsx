@@ -9,6 +9,7 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
+  useLocation,
 } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -21,6 +22,7 @@ import {
 } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
+import { LoaderCircle } from "lucide-react";
 import { resolveOnboardingState } from "shared/onboarding";
 
 import { APP_DISPLAY_NAME } from "../branding";
@@ -56,6 +58,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { providerQueryKeys } from "../lib/providerReactQuery";
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { rememberSettingsReturnPath } from "../lib/settingsNavigation";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { logTelemetryErrorOnce, recordTelemetry } from "../telemetry";
@@ -89,6 +92,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <ServerStateBootstrap />
         <TelemetryBridge />
+        <SettingsReturnPathTracker />
         <EventRouter />
         <AuthGate>
           <OnboardingGate>
@@ -102,6 +106,16 @@ function RootRouteView() {
   );
 }
 
+function SettingsReturnPathTracker() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+
+  useEffect(() => {
+    rememberSettingsReturnPath(pathname);
+  }, [pathname]);
+
+  return null;
+}
+
 export function AuthGateScreenContent() {
   const { isAuthenticated, isSubscriptionLoading, isPaidSubscriber } = useHostedShioriState();
   const requiresPaidPlan = isAuthenticated && !isSubscriptionLoading && isPaidSubscriber === false;
@@ -111,66 +125,27 @@ export function AuthGateScreenContent() {
     : "Sign in with your Shiori account to unlock the app and load your model catalog.";
 
   return (
-    <div className="grid min-h-screen bg-background text-foreground lg:grid-cols-2">
-      {/* ── Form column ── */}
-      <div className="relative flex flex-col px-6 py-8 sm:px-10 lg:px-20">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground/50 uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
+    <div className="relative flex min-h-screen flex-col bg-background px-6 py-8 text-foreground sm:px-10">
+      <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground/50 uppercase">
+        {APP_DISPLAY_NAME}
+      </p>
 
-        <div className="flex flex-1 items-center justify-center">
-          <div className="auth-form-enter w-full max-w-[380px]">
-            <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight sm:text-[2rem]">
-              {heading}
-            </h1>
-            <p className="mt-3 mb-10 text-[15px] leading-relaxed text-muted-foreground">
-              {description}
-            </p>
-
-            <HostedShioriAuthPanel heading="" description="" />
-            {requiresPaidPlan ? (
-              <div className="mt-6">
-                <HostedBillingPanel mode="gate" />
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Branded panel ── */}
-      <div className="auth-branded-panel relative hidden overflow-hidden lg:flex lg:flex-col lg:items-center lg:justify-center">
-        {/* Animated gradient orbs */}
-        <div className="auth-orb auth-orb-1" />
-        <div className="auth-orb auth-orb-2" />
-        <div className="auth-orb auth-orb-3" />
-
-        {/* Fine grid overlay */}
-        <div
-          className="absolute inset-0 opacity-[0.03]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)",
-            backgroundSize: "48px 48px",
-          }}
-        />
-
-        {/* Edge vignette */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,oklch(0.08_0.03_241.4)_100%)]" />
-
-        {/* Brand content */}
-        <div className="relative z-10 px-10 text-center select-none">
-          <p className="text-[3.25rem] leading-none font-extralight tracking-[-0.02em] text-white/50">
-            Shiori<span className="font-semibold text-white/90">Code</span>
+      <div className="flex flex-1 items-center justify-center">
+        <div className="auth-form-enter w-full max-w-[380px]">
+          <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight sm:text-[2rem]">
+            {heading}
+          </h1>
+          <p className="mt-3 mb-10 text-[15px] leading-relaxed text-muted-foreground">
+            {description}
           </p>
-          <div className="mx-auto mt-6 h-px w-12 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-          <p className="mt-6 text-[13px] font-light tracking-[0.04em] text-white/25">
-            Your coding agent, in the browser.
-          </p>
-        </div>
 
-        {/* Corner accents */}
-        <div className="absolute top-8 left-8 size-5 border-l border-t border-white/[0.06]" />
-        <div className="absolute right-8 bottom-8 size-5 border-r border-b border-white/[0.06]" />
+          <HostedShioriAuthPanel heading="" description="" />
+          {requiresPaidPlan ? (
+            <div className="mt-6">
+              <HostedBillingPanel mode="gate" />
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -216,6 +191,8 @@ function OnboardingGate({ children }: { children: ReactNode }) {
   const serverConfig = useServerConfig();
   const { defaultProjectId, handleNewThread } = useHandleNewThread();
   const canRunOnboarding = isAuthenticated && !isSubscriptionLoading && isPaidSubscriber;
+  const [bootstrappedOnboardingState, setBootstrappedOnboardingState] =
+    useState<OnboardingState | null>(null);
   const [onboardingOverrideState, setOnboardingOverrideState] = useState<OnboardingState | null>(
     null,
   );
@@ -230,7 +207,8 @@ function OnboardingGate({ children }: { children: ReactNode }) {
     return resolveOnboardingState(serverConfig.settings.onboarding);
   }, [canRunOnboarding, serverConfig]);
 
-  const onboardingState = onboardingOverrideState ?? serverOnboardingState;
+  const onboardingState =
+    onboardingOverrideState ?? serverOnboardingState ?? bootstrappedOnboardingState;
 
   const completeOnboardingStep = useCallback(async (stepId: OnboardingStepId) => {
     setPendingStepId(stepId);
@@ -259,11 +237,44 @@ function OnboardingGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!canRunOnboarding) {
+      setBootstrappedOnboardingState(null);
       setOnboardingOverrideState(null);
       setOnboardingError(null);
       setPendingStepId(null);
     }
   }, [canRunOnboarding]);
+
+  useEffect(() => {
+    if (
+      !canRunOnboarding ||
+      serverOnboardingState !== null ||
+      onboardingOverrideState !== null ||
+      bootstrappedOnboardingState !== null
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void ensureNativeApi()
+      .onboarding.getState()
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setBootstrappedOnboardingState(state);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bootstrappedOnboardingState,
+    canRunOnboarding,
+    onboardingOverrideState,
+    serverOnboardingState,
+  ]);
 
   useEffect(() => {
     if (!onboardingOverrideState || !serverOnboardingState) {
@@ -274,6 +285,16 @@ function OnboardingGate({ children }: { children: ReactNode }) {
       setOnboardingOverrideState(null);
     }
   }, [onboardingOverrideState, serverOnboardingState]);
+
+  useEffect(() => {
+    if (!bootstrappedOnboardingState || !serverOnboardingState) {
+      return;
+    }
+
+    if (onboardingStatesEqual(bootstrappedOnboardingState, serverOnboardingState)) {
+      setBootstrappedOnboardingState(null);
+    }
+  }, [bootstrappedOnboardingState, serverOnboardingState]);
 
   useEffect(() => {
     if (!canRunOnboarding || !onboardingState) {
@@ -310,8 +331,9 @@ function OnboardingGate({ children }: { children: ReactNode }) {
   if (onboardingState === null) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <p className="shimmer shimmer-spread-200 text-sm text-muted-foreground">
-          Loading onboarding...
+        <p className="shimmer shimmer-spread-200 flex items-center gap-1.5 text-sm text-muted-foreground">
+          <LoaderCircle className="size-3.5 animate-spin" />
+          Warming up the Agents
         </p>
       </div>
     );
@@ -476,7 +498,9 @@ function coalesceOrchestrationUiEvents(
 }
 
 function ServerStateBootstrap() {
-  useEffect(() => startServerStateSync(getWsRpcClient().server), []);
+  useEffect(() => {
+    return startServerStateSync(getWsRpcClient().server);
+  }, []);
 
   return null;
 }
@@ -737,8 +761,17 @@ function EventRouter() {
       try {
         const snapshot = await api.orchestration.getSnapshot();
         if (!disposed) {
-          syncServerReadModel(snapshot);
-          reconcileSnapshotDerivedState();
+          const shouldApplySnapshot = recovery.shouldApplySnapshot(snapshot.snapshotSequence);
+          if (shouldApplySnapshot) {
+            syncServerReadModel(snapshot);
+            reconcileSnapshotDerivedState();
+          } else if (import.meta.env.MODE !== "test") {
+            console.info("[orchestration-recovery]", "Skipped stale snapshot recovery payload.", {
+              snapshotSequence: snapshot.snapshotSequence,
+              latestSequence: recovery.getState().latestSequence,
+              reason,
+            });
+          }
           if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
             void recoverFromSequenceGap();
           }

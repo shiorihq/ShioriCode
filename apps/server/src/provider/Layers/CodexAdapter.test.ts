@@ -166,8 +166,15 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
 });
 
 const validationManager = new FakeCodexManager();
+const emptyManagedMcpServers = async () => ({
+  servers: [],
+  warnings: [],
+});
 const validationLayer = it.layer(
-  makeCodexAdapterLive({ manager: validationManager }).pipe(
+  makeCodexAdapterLive({
+    manager: validationManager,
+    loadManagedMcpServers: emptyManagedMcpServers,
+  }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
@@ -522,6 +529,235 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           input: {
             file_path: "/tmp/app.ts",
           },
+        },
+      });
+    }),
+  );
+
+  it.effect("maps Codex webSearch items into structured runtime tool metadata", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-web-search-started"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("ws_1"),
+        payload: {
+          item: {
+            type: "webSearch",
+            id: "ws_1",
+            query: "Codex app server web search",
+            action: {
+              type: "search",
+              value: "Codex app server web search",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.type, "item.started");
+      if (firstEvent.value.type !== "item.started") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.itemType, "web_search");
+      assert.equal(firstEvent.value.payload.title, "Web Search");
+      assert.equal(firstEvent.value.payload.detail, "Web Search: Codex app server web search");
+      assert.deepEqual(firstEvent.value.payload.data, {
+        toolName: "webSearch",
+        input: {
+          query: "Codex app server web search",
+          action: {
+            type: "search",
+            value: "Codex app server web search",
+          },
+          action_type: "search",
+          action_value: "Codex app server web search",
+        },
+        item: {
+          type: "webSearch",
+          id: "ws_1",
+          query: "Codex app server web search",
+          action: {
+            type: "search",
+            value: "Codex app server web search",
+          },
+        },
+      });
+    }),
+  );
+
+  it.effect("preserves Codex command execution results in normalized tool data", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-command-result"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("cmd_1"),
+        payload: {
+          item: {
+            type: "commandExecution",
+            id: "cmd_1",
+            command: "/bin/zsh -lc 'bun typecheck'",
+            cwd: "/Users/choki/Developer/shiori-code",
+            status: "completed",
+            result: {
+              stdout: "Typecheck passed\n",
+              stderr: "Warning: generated files skipped\n",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "item.completed");
+      if (firstEvent.value.type !== "item.completed") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.itemType, "command_execution");
+      assert.deepEqual(firstEvent.value.payload.data, {
+        toolName: "exec_command",
+        input: { command: "/bin/zsh -lc 'bun typecheck'" },
+        result: {
+          stdout: "Typecheck passed\n",
+          stderr: "Warning: generated files skipped\n",
+        },
+        item: {
+          type: "commandExecution",
+          id: "cmd_1",
+          command: "/bin/zsh -lc 'bun typecheck'",
+          cwd: "/Users/choki/Developer/shiori-code",
+          status: "completed",
+          result: {
+            stdout: "Typecheck passed\n",
+            stderr: "Warning: generated files skipped\n",
+          },
+        },
+      });
+    }),
+  );
+
+  it.effect("classifies Codex write tool items as file changes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-tool-write-started"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("tool_write_1"),
+        payload: {
+          item: {
+            type: "dynamicToolCall",
+            id: "tool_write_1",
+            name: "Write",
+            input: {
+              file_path: "/tmp/app.ts",
+              content: "console.log('hello');",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.type, "item.started");
+      if (firstEvent.value.type !== "item.started") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.itemType, "file_change");
+      assert.equal(firstEvent.value.payload.title, "Write file");
+      assert.equal(firstEvent.value.payload.detail, "Write file: /tmp/app.ts");
+    }),
+  );
+
+  it.effect("preserves Codex collab tool variants like wait and closeAgent", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-collab-wait"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("call_wait_1"),
+        payload: {
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_wait_1",
+            tool: "wait",
+            receiverThreadIds: ["agent-1"],
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.type, "item.completed");
+      if (firstEvent.value.type !== "item.completed") {
+        return;
+      }
+
+      assert.equal(firstEvent.value.payload.itemType, "collab_agent_tool_call");
+      assert.equal(firstEvent.value.payload.title, "Wait for subagent");
+      assert.equal(firstEvent.value.payload.detail, "Wait for subagent: agent-1");
+      assert.deepEqual(firstEvent.value.payload.data, {
+        toolName: "wait",
+        input: {
+          targets: ["agent-1"],
+          receiverThreadIds: ["agent-1"],
+        },
+        item: {
+          type: "collabAgentToolCall",
+          id: "call_wait_1",
+          tool: "wait",
+          receiverThreadIds: ["agent-1"],
         },
       });
     }),

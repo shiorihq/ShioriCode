@@ -601,6 +601,26 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
+  it("keeps tool rows from all turns when no turn filter is provided", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-tool",
+        turnId: "turn-1",
+        summary: "First turn tool",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        turnId: "turn-2",
+        summary: "Second turn tool",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-1-tool", "turn-2-tool"]);
+  });
+
   it("collapses a started tool row into the completed row for the same tool lifecycle", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -634,7 +654,8 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("tool-complete");
+    expect(entries[0]?.id).toBe("tool-start");
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:01.000Z");
     expect(entries[0]?.running).toBe(false);
   });
 
@@ -671,7 +692,8 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("tool-complete");
+    expect(entries[0]?.id).toBe("tool-start");
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:01.000Z");
     expect(entries[0]?.running).toBe(false);
   });
 
@@ -718,9 +740,10 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual([
-      "tool-complete-interleaved",
+      "tool-start-interleaved",
       "commentary-interleaved",
     ]);
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:01.000Z");
     expect(entries[0]?.running).toBe(false);
   });
 
@@ -954,6 +977,43 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("shows runtime warning messages as work log details", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "runtime-warning",
+        kind: "runtime.warning",
+        summary: "Runtime warning",
+        tone: "info",
+        payload: {
+          message: "Provider got slow",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      label: "Runtime warning",
+      detail: "Provider got slow",
+    });
+  });
+
+  it("hides MCP refresh-token runtime warnings from the work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "runtime-warning",
+        kind: "runtime.warning",
+        summary: "Runtime warning",
+        tone: "info",
+        payload: {
+          message:
+            '2026-04-10T10:02:09.111601Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed("Server returned error response: invalid_grant: Invalid refresh token"))',
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities, undefined)).toEqual([]);
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -979,6 +1039,30 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/components/ChatView.tsx",
       "apps/web/src/session-logic.ts",
     ]);
+  });
+
+  it("extracts notebook paths for notebook edit tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "notebook-tool",
+        kind: "tool.completed",
+        summary: "Notebook edit",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolName: "NotebookEdit",
+            input: {
+              notebook_path: "/tmp/demo.ipynb",
+              cell_id: "cell-1",
+              new_source: "print('hello')",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["/tmp/demo.ipynb"]);
   });
 
   it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
@@ -1027,8 +1111,8 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      id: "tool-update-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
@@ -1091,6 +1175,71 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("merges started web search input with completed hosted search output for collapsed entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "web-search-start",
+        createdAt: "2026-04-14T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Web search started",
+        payload: {
+          itemId: "tool:web-search-1",
+          itemType: "web_search",
+          title: "Web Search",
+          status: "inProgress",
+          detail: "chicken pox treatment",
+          data: {
+            toolName: "web_search",
+            input: {
+              query: "chicken pox treatment",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "web-search-complete",
+        createdAt: "2026-04-14T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Web search completed",
+        payload: {
+          itemId: "tool:web-search-1",
+          itemType: "web_search",
+          title: "Web Search",
+          status: "completed",
+          detail: "chicken pox treatment",
+          data: {
+            provider: "duckduckgo",
+            query: "chicken pox treatment",
+            results: [
+              {
+                title: "How to Treat Chickenpox | CDC",
+                url: "https://www.cdc.gov/chickenpox/treatment/index.html",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toBeDefined();
+    expect(entry?.detail).toBe("chicken pox treatment");
+    expect(entry?.output).toEqual({
+      toolName: "web_search",
+      input: {
+        query: "chicken pox treatment",
+      },
+      provider: "duckduckgo",
+      query: "chicken pox treatment",
+      results: [
+        {
+          title: "How to Treat Chickenpox | CDC",
+          url: "https://www.cdc.gov/chickenpox/treatment/index.html",
+        },
+      ],
+    });
+  });
+
   it("collapses tool lifecycle rows using normalized command metadata when completion detail differs", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1129,7 +1278,8 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "tool-complete",
+      id: "tool-start",
+      createdAt: "2026-02-23T00:00:01.000Z",
       command: 'sed -n "1,40p" package.json',
       detail: '/bin/zsh -lc "sed -n \\"1,40p\\" package.json"',
       running: false,
@@ -1186,7 +1336,7 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
 
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-update", "tool-2-update"]);
   });
 
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
@@ -1229,7 +1379,8 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities, undefined);
 
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+    expect(entries[0]?.id).toBe("z-update-earlier");
+    expect(entries[0]?.createdAt).toBe("2026-02-23T00:00:01.000Z");
   });
 });
 
@@ -1276,6 +1427,45 @@ describe("deriveTimelineEntries", () => {
         implementationThreadId: null,
       },
     });
+  });
+
+  it("orders same-timestamp work entries before assistant messages", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("user-1"),
+          role: "user",
+          text: "Search the web for treatment advice.",
+          createdAt: "2026-04-13T09:50:14.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-1"),
+          role: "assistant",
+          text: "Chickenpox typically runs its course on its own.",
+          createdAt: "2026-04-13T09:50:15.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+      [
+        {
+          id: "work-web-search-1",
+          createdAt: "2026-04-13T09:50:15.000Z",
+          label: "Web search",
+          tone: "tool",
+          itemType: "web_search",
+          detail: "best way to get rid of chicken pox treatment",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "user-1",
+      "work-web-search-1",
+      "assistant-1",
+    ]);
   });
 
   it("anchors the completion divider to latestTurn.assistantMessageId before timestamp fallback", () => {
@@ -1432,6 +1622,66 @@ describe("deriveReasoningEntries", () => {
     ]);
   });
 
+  it("separates indexed reasoning summary blocks inside one reasoning entry", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "reasoning-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "reasoning.started",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-summary",
+        payload: { itemId: "reasoning-item-summary" },
+      }),
+      makeActivity({
+        id: "reasoning-summary-0",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "reasoning.delta",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-summary",
+        payload: {
+          itemId: "reasoning-item-summary",
+          delta: "Inspecting padding changes\n\nFirst block.",
+          summaryIndex: 0,
+        },
+      }),
+      makeActivity({
+        id: "reasoning-summary-1",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "reasoning.delta",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-summary",
+        payload: {
+          itemId: "reasoning-item-summary",
+          delta: "Adjusting left-padding for workgroups\n\nSecond block.",
+          summaryIndex: 1,
+        },
+      }),
+      makeActivity({
+        id: "reasoning-completed",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "reasoning.completed",
+        summary: "Thought",
+        tone: "info",
+        turnId: "turn-summary",
+        payload: { itemId: "reasoning-item-summary" },
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      {
+        id: "reasoning:reasoning-item-summary",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        completedAt: "2026-02-23T00:00:04.000Z",
+        text: "Inspecting padding changes\n\nFirst block.\n\nAdjusting left-padding for workgroups\n\nSecond block.",
+        streaming: false,
+        turnId: TurnId.makeUnsafe("turn-summary"),
+      },
+    ]);
+  });
+
   it("synthesizes reasoning entries from reasoning progress summaries", () => {
     const entries = deriveReasoningEntries([
       makeActivity({
@@ -1558,7 +1808,7 @@ describe("deriveReasoningEntries", () => {
     ]);
   });
 
-  it("does not fold assistant commentary into reasoning blocks", () => {
+  it("does not leave an empty reasoning block behind when only commentary survives", () => {
     const entries = deriveReasoningEntries([
       makeActivity({
         id: "reasoning-started",
@@ -1589,19 +1839,10 @@ describe("deriveReasoningEntries", () => {
       }),
     ]);
 
-    expect(entries).toEqual([
-      {
-        id: "reasoning:reasoning-item-4",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        completedAt: "2026-02-23T00:00:03.000Z",
-        text: "",
-        streaming: false,
-        turnId: TurnId.makeUnsafe("turn-4"),
-      },
-    ]);
+    expect(entries).toEqual([]);
   });
 
-  it("keeps completed reasoning entries even when no reasoning text survived", () => {
+  it("suppresses completed reasoning entries when no visible reasoning text survived", () => {
     const entries = deriveReasoningEntries([
       makeActivity({
         id: "reasoning-started-empty",
@@ -1623,16 +1864,23 @@ describe("deriveReasoningEntries", () => {
       }),
     ]);
 
-    expect(entries).toEqual([
-      {
-        id: "reasoning:reasoning-item-empty",
+    expect(entries).toEqual([]);
+  });
+
+  it("suppresses in-progress reasoning entries until visible reasoning text arrives", () => {
+    const entries = deriveReasoningEntries([
+      makeActivity({
+        id: "reasoning-started-streaming-empty",
         createdAt: "2026-02-23T00:00:01.000Z",
-        completedAt: "2026-02-23T00:00:02.000Z",
-        text: "",
-        streaming: false,
-        turnId: TurnId.makeUnsafe("turn-2"),
-      },
+        kind: "reasoning.started",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-streaming-empty",
+        payload: { itemId: "reasoning-item-streaming-empty" },
+      }),
     ]);
+
+    expect(entries).toEqual([]);
   });
 
   it("suppresses empty Shiori reasoning lifecycle entries when no visible reasoning text arrived", () => {

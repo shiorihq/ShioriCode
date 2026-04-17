@@ -12,6 +12,7 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  type OrchestrationThreadResumeState,
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -24,11 +25,12 @@ import {
 } from "contracts";
 import { Effect, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
 
-import { ProviderValidationError } from "../Errors.ts";
+import { ProviderValidationError, type ProviderServiceError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
+import type { ProviderSessionReconciliation } from "../Services/ProviderService.ts";
 import {
   ProviderSessionDirectory,
   type ProviderRuntimeBinding,
@@ -40,6 +42,7 @@ import {
   isSimpleApprovalDecision,
   normalizeProviderApprovalDecision,
 } from "../providerApprovalDecision.ts";
+import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
@@ -137,6 +140,47 @@ function readPersistedCwd(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function readPersistedLastError(
+  runtimePayload: ProviderRuntimeBinding["runtimePayload"],
+): string | null {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return null;
+  }
+  const rawLastError = "lastError" in runtimePayload ? runtimePayload.lastError : undefined;
+  if (typeof rawLastError !== "string") {
+    return null;
+  }
+  const trimmed = rawLastError.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isClaudeMissingConversationError(input: {
+  readonly provider: ProviderSession["provider"];
+  readonly message: string;
+}): boolean {
+  return input.provider === "claudeAgent" && isClaudeMissingConversationErrorMessage(input.message);
+}
+
+function defaultResumeStateForBinding(
+  binding: ProviderRuntimeBinding | undefined,
+): OrchestrationThreadResumeState {
+  if (!binding) {
+    return "resumed";
+  }
+  return binding.status === "stopped" ? "resumed" : "needs_resume";
+}
+
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
@@ -184,8 +228,72 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const providers = yield* registry.listProviders();
   const adapters = yield* Effect.forEach(providers, (provider) => registry.getByProvider(provider));
+  const syncBindingFromActiveSession = Effect.fn("syncBindingFromActiveSession")(function* (
+    event: ProviderRuntimeEvent,
+  ) {
+    const adapter = yield* registry.getByProvider(event.provider);
+    const hasActiveSession = yield* adapter.hasSession(event.threadId);
+    if (!hasActiveSession) {
+      return;
+    }
+
+    const activeSession = (yield* adapter.listSessions()).find(
+      (session) => session.threadId === event.threadId,
+    );
+    if (!activeSession) {
+      return;
+    }
+
+    yield* upsertSessionBinding(activeSession, event.threadId, {
+      lastRuntimeEvent: event.type,
+      lastRuntimeEventAt: event.createdAt,
+    });
+  });
+
+  const clearInvalidClaudeResumeCursor = Effect.fn("clearInvalidClaudeResumeCursor")(function* (
+    event: Extract<ProviderRuntimeEvent, { type: "runtime.error" }>,
+  ) {
+    if (
+      !isClaudeMissingConversationError({
+        provider: event.provider,
+        message: event.payload.message,
+      })
+    ) {
+      return;
+    }
+
+    const binding = Option.getOrUndefined(yield* directory.getBinding(event.threadId));
+    if (!binding || binding.provider !== event.provider) {
+      return;
+    }
+
+    yield* directory.upsert({
+      threadId: event.threadId,
+      provider: event.provider,
+      status: "error",
+      runtimeMode: binding.runtimeMode ?? "full-access",
+      resumeCursor: null,
+      runtimePayload: {
+        ...(isRecord(binding.runtimePayload) ? binding.runtimePayload : {}),
+        lastError: event.payload.message,
+        lastRuntimeEvent: "provider.runtime.error.invalid_resume_cursor",
+        lastRuntimeEventAt: event.createdAt,
+      },
+    });
+  });
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    publishRuntimeEvent(event);
+    Effect.gen(function* () {
+      if (event.type === "thread.started") {
+        yield* syncBindingFromActiveSession(event).pipe(Effect.orElseSucceed(() => undefined));
+      }
+
+      if (event.type === "runtime.error") {
+        yield* clearInvalidClaudeResumeCursor(event).pipe(Effect.orElseSucceed(() => undefined));
+      }
+
+      yield* publishRuntimeEvent(event);
+    });
 
   const worker = Effect.forever(
     Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)),
@@ -203,10 +311,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly operation: string;
   }) {
     const adapter = yield* registry.getByProvider(input.binding.provider);
+    const capabilities = adapter.capabilities;
     const hasResumeCursor =
       input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined;
     const hasActiveSession = yield* adapter.hasSession(input.binding.threadId);
-    if (hasActiveSession) {
+    if (hasActiveSession && capabilities.recovery.supportsAdoptActiveSession) {
       const activeSessions = yield* adapter.listSessions();
       const existing = activeSessions.find(
         (session) => session.threadId === input.binding.threadId,
@@ -220,6 +329,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         return { adapter, session: existing } as const;
       }
+    }
+
+    if (!capabilities.recovery.supportsResumeCursor) {
+      return yield* toValidationError(
+        input.operation,
+        `Provider '${input.binding.provider}' does not support resumable sessions for thread '${input.binding.threadId}'.`,
+      );
     }
 
     if (!hasResumeCursor) {
@@ -525,6 +641,135 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const reconcileSessions: ProviderServiceShape["reconcileSessions"] = Effect.fn(
+    "reconcileSessions",
+  )(function* () {
+    const activeSessions = yield* listSessions();
+    const activeSessionsByThreadId = new Map(
+      activeSessions.map((session) => [session.threadId, session] as const),
+    );
+
+    const bindingOptions = yield* directory.listThreadIds().pipe(
+      Effect.flatMap((threadIds) =>
+        Effect.forEach(
+          threadIds,
+          (threadId) =>
+            directory
+              .getBinding(threadId)
+              .pipe(Effect.orElseSucceed(() => Option.none<ProviderRuntimeBinding>())),
+          { concurrency: "unbounded" },
+        ),
+      ),
+      Effect.orElseSucceed(() => [] as Array<Option.Option<ProviderRuntimeBinding>>),
+    );
+    const bindingsByThreadId = new Map<ThreadId, ProviderRuntimeBinding>();
+    for (const bindingOption of bindingOptions) {
+      const binding = Option.getOrUndefined(bindingOption);
+      if (binding) {
+        bindingsByThreadId.set(binding.threadId, binding);
+      }
+    }
+
+    const threadIds = Array.from(
+      new Set<ThreadId>([...activeSessionsByThreadId.keys(), ...bindingsByThreadId.keys()]),
+    ).toSorted((left, right) => left.localeCompare(right));
+
+    return yield* Effect.forEach(
+      threadIds,
+      (threadId): Effect.Effect<ProviderSessionReconciliation, ProviderServiceError> =>
+        Effect.gen(function* () {
+          const activeSession = activeSessionsByThreadId.get(threadId);
+          if (activeSession) {
+            yield* upsertSessionBinding(activeSession, threadId);
+            return {
+              threadId,
+              provider: activeSession.provider,
+              session: activeSession,
+              resumeState: "resumed",
+              runtimeMode: activeSession.runtimeMode,
+              lastError: activeSession.lastError ?? null,
+            };
+          }
+
+          const binding = bindingsByThreadId.get(threadId);
+          if (!binding) {
+            return yield* Effect.fail(
+              toValidationError(
+                "ProviderService.reconcileSessions",
+                `Missing provider binding while reconciling thread '${threadId}'.`,
+              ),
+            );
+          }
+
+          const lastError = readPersistedLastError(binding.runtimePayload);
+          if (binding.status === "stopped") {
+            return {
+              threadId,
+              provider: binding.provider,
+              session: null,
+              resumeState: "resumed",
+              runtimeMode: binding.runtimeMode ?? "full-access",
+              lastError,
+            };
+          }
+
+          try {
+            const recovered = yield* recoverSessionForThread({
+              binding,
+              operation: "ProviderService.reconcileSessions",
+            });
+            return {
+              threadId,
+              provider: recovered.session.provider,
+              session: recovered.session,
+              resumeState: "resumed",
+              runtimeMode: recovered.session.runtimeMode,
+              lastError: recovered.session.lastError ?? null,
+            };
+          } catch (cause) {
+            const adapter = yield* registry.getByProvider(binding.provider);
+            const capabilities = adapter.capabilities;
+            const nextResumeState: OrchestrationThreadResumeState =
+              capabilities.recovery.supportsResumeCursor &&
+              binding.resumeCursor !== null &&
+              binding.resumeCursor !== undefined
+                ? defaultResumeStateForBinding(binding)
+                : "unrecoverable";
+            const nextLastError = formatErrorMessage(cause);
+
+            yield* directory.upsert({
+              threadId,
+              provider: binding.provider,
+              status: nextResumeState === "unrecoverable" ? "error" : (binding.status ?? "stopped"),
+              runtimeMode: binding.runtimeMode ?? "full-access",
+              ...(binding.resumeCursor !== undefined ? { resumeCursor: binding.resumeCursor } : {}),
+              runtimePayload: {
+                ...(isRecord(binding.runtimePayload) ? binding.runtimePayload : {}),
+                lastError: nextLastError,
+                lastRuntimeEvent: "provider.session.reconcile.failed",
+                lastRuntimeEventAt: new Date().toISOString(),
+              },
+            });
+            yield* analytics.record("provider.session.reconcile.failed", {
+              provider: binding.provider,
+              resumeState: nextResumeState,
+              hasResumeCursor: binding.resumeCursor !== null && binding.resumeCursor !== undefined,
+            });
+
+            return {
+              threadId,
+              provider: binding.provider,
+              session: null,
+              resumeState: nextResumeState,
+              runtimeMode: binding.runtimeMode ?? "full-access",
+              lastError: nextLastError,
+            };
+          }
+        }),
+      { concurrency: 1 },
+    );
+  });
+
   const getCapabilities: ProviderServiceShape["getCapabilities"] = (provider) =>
     registry.getByProvider(provider).pipe(Effect.map((adapter) => adapter.capabilities));
 
@@ -610,6 +855,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    reconcileSessions,
     getCapabilities,
     readUsage,
     rollbackConversation,

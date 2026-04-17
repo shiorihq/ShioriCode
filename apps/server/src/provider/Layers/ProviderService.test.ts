@@ -179,6 +179,8 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      recovery: { supportsResumeCursor: true, supportsAdoptActiveSession: true },
+      observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
     },
     startSession,
     sendTurn,
@@ -270,6 +272,76 @@ function makeProviderServiceLayer() {
     layer,
   };
 }
+
+const claudeResumeRepair = makeProviderServiceLayer();
+claudeResumeRepair.layer("ProviderServiceLive Claude resume repair", (it) => {
+  it("syncs active Claude resume state when the provider confirms a thread start", () => {
+    const threadId = asThreadId("thread-claude-confirmed-resume");
+
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      claudeResumeRepair.claude.updateSession(threadId, (session) => ({
+        ...session,
+        resumeCursor: { opaque: "confirmed-claude-resume" },
+      }));
+      claudeResumeRepair.claude.emit({
+        type: "thread.started",
+        eventId: asEventId("evt-thread-started-confirmed-resume"),
+        provider: "claudeAgent",
+        createdAt: "2026-04-15T18:00:00.000Z",
+        threadId,
+        payload: {
+          providerThreadId: "sdk-thread-confirmed-resume",
+        },
+      });
+
+      yield* sleep(50);
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.deepEqual(binding?.resumeCursor, { opaque: "confirmed-claude-resume" });
+    });
+  });
+
+  it("clears stale Claude resume state after missing-conversation runtime errors", () => {
+    const threadId = asThreadId("thread-claude-stale-resume");
+
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      claudeResumeRepair.claude.emit({
+        type: "runtime.error",
+        eventId: asEventId("evt-runtime-error-stale-resume"),
+        provider: "claudeAgent",
+        createdAt: "2026-04-15T18:05:00.000Z",
+        threadId,
+        payload: {
+          message: "No conversation found with session ID: 397de7bb-8d29-43b5-a3af-c925ed81e7b3",
+        },
+      });
+
+      yield* sleep(50);
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.resumeCursor, null);
+      assert.equal(binding?.status, "error");
+    });
+  });
+});
 
 it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
   Effect.gen(function* () {

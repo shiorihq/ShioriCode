@@ -5,9 +5,13 @@ import { runProcess } from "../../processRunner";
 import { GitHubCliError } from "contracts";
 import {
   GitHubCli,
+  type GitHubPullRequestComment,
+  type GitHubPullRequestConversation,
+  type GitHubPullRequestReview,
+  type GitHubPullRequestReviewState,
+  type GitHubPullRequestSummary,
   type GitHubRepositoryCloneUrls,
   type GitHubCliShape,
-  type GitHubPullRequestSummary,
 } from "../Services/GitHubCli.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -86,6 +90,7 @@ const RawGitHubPullRequestSchema = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  isDraft: Schema.optional(Schema.Boolean),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -125,6 +130,7 @@ function normalizePullRequestSummary(
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
     state: normalizePullRequestState(raw),
+    ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
@@ -143,10 +149,94 @@ function normalizeRepositoryCloneUrls(
   };
 }
 
+const RawGitHubAuthor = Schema.optional(
+  Schema.NullOr(
+    Schema.Struct({
+      login: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+);
+
+const RawGitHubPullRequestCommentSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  author: RawGitHubAuthor,
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawGitHubPullRequestReviewSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  author: RawGitHubAuthor,
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  submittedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawGitHubPullRequestConversationSchema = Schema.Struct({
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  author: RawGitHubAuthor,
+  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
+  comments: Schema.optional(Schema.NullOr(Schema.Array(RawGitHubPullRequestCommentSchema))),
+  reviews: Schema.optional(Schema.NullOr(Schema.Array(RawGitHubPullRequestReviewSchema))),
+});
+
+function normalizeReviewState(raw: string | null | undefined): GitHubPullRequestReviewState {
+  const value = (raw ?? "").trim().toUpperCase();
+  if (value === "APPROVED") return "approved";
+  if (value === "CHANGES_REQUESTED") return "changes_requested";
+  if (value === "DISMISSED") return "dismissed";
+  if (value === "PENDING") return "pending";
+  return "commented";
+}
+
+function normalizeConversation(
+  raw: Schema.Schema.Type<typeof RawGitHubPullRequestConversationSchema>,
+  fallbackKeyPrefix: string,
+): GitHubPullRequestConversation {
+  const comments: GitHubPullRequestComment[] = (raw.comments ?? [])
+    .map((entry, index) => {
+      const body = (entry.body ?? "").trim();
+      if (body.length === 0) return null;
+      const comment: GitHubPullRequestComment = {
+        id: entry.id ?? `${fallbackKeyPrefix}:comment:${index}`,
+        author: entry.author?.login ?? null,
+        body,
+        createdAt: entry.createdAt ?? "",
+      };
+      return entry.url ? Object.assign(comment, { url: entry.url }) : comment;
+    })
+    .filter((entry): entry is GitHubPullRequestComment => entry !== null);
+
+  const reviews: GitHubPullRequestReview[] = (raw.reviews ?? []).map((entry, index) => {
+    const review: GitHubPullRequestReview = {
+      id: entry.id ?? `${fallbackKeyPrefix}:review:${index}`,
+      author: entry.author?.login ?? null,
+      body: (entry.body ?? "").trim(),
+      state: normalizeReviewState(entry.state),
+      submittedAt: entry.submittedAt ?? "",
+    };
+    return entry.url ? Object.assign(review, { url: entry.url }) : review;
+  });
+
+  return {
+    description: (raw.body ?? "").trim(),
+    descriptionAuthor: raw.author?.login ?? null,
+    descriptionCreatedAt: raw.createdAt ?? null,
+    comments,
+    reviews,
+  };
+}
+
 function decodeGitHubJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "listOpenPullRequests" | "getPullRequest" | "getRepositoryCloneUrls",
+  operation:
+    | "listOpenPullRequests"
+    | "getPullRequest"
+    | "getRepositoryCloneUrls"
+    | "getPullRequestConversation",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitHubCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -187,7 +277,7 @@ const makeGitHubCli = Effect.sync(() => {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -203,6 +293,75 @@ const makeGitHubCli = Effect.sync(() => {
         ),
         Effect.map((pullRequests) => pullRequests.map(normalizePullRequestSummary)),
       ),
+    listPullRequests: (input) => {
+      const filter = input.filter ?? "open";
+      const args = [
+        "pr",
+        "list",
+        "--state",
+        filter === "closed" ? "all" : "open",
+        "--limit",
+        String(input.limit ?? 100),
+        "--json",
+        "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+      ];
+      if (filter === "draft") {
+        args.push("--search", "draft:true");
+      }
+      return execute({
+        cwd: input.cwd,
+        args,
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : decodeGitHubJson(
+                raw,
+                Schema.Array(RawGitHubPullRequestSchema),
+                "listOpenPullRequests",
+                "GitHub CLI returned invalid PR list JSON.",
+              ),
+        ),
+        Effect.map((pullRequests) => pullRequests.map(normalizePullRequestSummary)),
+      );
+    },
+    getPullRequestDiff: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "diff", String(input.number)],
+        timeoutMs: 60_000,
+      }).pipe(Effect.map((result) => result.stdout)),
+    getPullRequestConversation: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          String(input.number),
+          "--json",
+          "body,author,createdAt,comments,reviews",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed({
+                body: null,
+                author: null,
+                createdAt: null,
+                comments: null,
+                reviews: null,
+              } as Schema.Schema.Type<typeof RawGitHubPullRequestConversationSchema>)
+            : decodeGitHubJson(
+                raw,
+                RawGitHubPullRequestConversationSchema,
+                "getPullRequestConversation",
+                "GitHub CLI returned invalid pull request conversation JSON.",
+              ),
+        ),
+        Effect.map((raw) => normalizeConversation(raw, `pr-${input.number}`)),
+      ),
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
@@ -211,7 +370,7 @@ const makeGitHubCli = Effect.sync(() => {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

@@ -527,7 +527,10 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
   }, [diff.lines]);
 
   return (
-    <div className={cn("overflow-hidden rounded-md border border-border/50", className)}>
+    <div
+      data-inline-diff="true"
+      className={cn("overflow-hidden rounded-md border border-border/50", className)}
+    >
       {/* Header */}
       <div
         className={cn(
@@ -562,7 +565,10 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
       </div>
 
       {/* Diff body */}
-      <div className="overflow-x-auto">
+      <div
+        data-inline-diff-body="true"
+        className="max-h-[min(24rem,55vh)] overflow-auto overscroll-contain"
+      >
         <pre className={cn(CHAT_THREAD_BODY_CLASS, "font-mono leading-5")}>
           {diff.lines.map((line, lineIndex) => (
             <div

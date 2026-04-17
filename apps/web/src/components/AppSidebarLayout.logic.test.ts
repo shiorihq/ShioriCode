@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ResolvedKeybindingsConfig } from "contracts";
 
-import { shouldHandleSidebarToggleShortcut } from "./AppSidebarLayout.logic";
+import { resolveAppSidebarShortcutCommand } from "./AppSidebarLayout.logic";
 
-const SIDEBAR_TOGGLE_BINDINGS = [
+const APP_SIDEBAR_BINDINGS = [
   {
     command: "sidebar.toggle",
     shortcut: {
@@ -17,6 +17,32 @@ const SIDEBAR_TOGGLE_BINDINGS = [
     whenAst: {
       type: "not",
       node: { type: "identifier", name: "terminalFocus" },
+    },
+  },
+  {
+    command: "project.add",
+    shortcut: {
+      key: "o",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    },
+    whenAst: {
+      type: "not",
+      node: { type: "identifier", name: "terminalFocus" },
+    },
+  },
+  {
+    command: "pullRequests.open",
+    shortcut: {
+      key: "p",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
     },
   },
 ] satisfies ResolvedKeybindingsConfig;
@@ -34,55 +60,83 @@ function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   } as KeyboardEvent;
 }
 
-describe("shouldHandleSidebarToggleShortcut", () => {
-  it("handles the sidebar shortcut even after an editor already prevented the event", () => {
+describe("resolveAppSidebarShortcutCommand", () => {
+  it("resolves the sidebar shortcut even after an editor already prevented the event", () => {
     expect(
-      shouldHandleSidebarToggleShortcut(
+      resolveAppSidebarShortcutCommand(
         createEvent({
           defaultPrevented: true,
           metaKey: true,
+          key: "b",
         }),
-        SIDEBAR_TOGGLE_BINDINGS,
+        APP_SIDEBAR_BINDINGS,
         {
           terminalFocus: false,
           terminalOpen: false,
           platform: "MacIntel",
         },
       ),
-    ).toBe(true);
+    ).toBe("sidebar.toggle");
+  });
+
+  it("resolves project.add and pullRequests.open shortcuts", () => {
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ metaKey: true, key: "o" }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBe("project.add");
+
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ metaKey: true, key: "p" }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBe("pullRequests.open");
   });
 
   it("does not override unrelated prevented shortcuts", () => {
     expect(
-      shouldHandleSidebarToggleShortcut(
+      resolveAppSidebarShortcutCommand(
         createEvent({
           defaultPrevented: true,
           key: "k",
           metaKey: true,
         }),
-        SIDEBAR_TOGGLE_BINDINGS,
+        APP_SIDEBAR_BINDINGS,
         {
           terminalFocus: false,
           terminalOpen: false,
           platform: "MacIntel",
         },
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 
-  it("respects the terminal-focus guard", () => {
+  it("respects the terminal-focus guard for guarded shortcuts", () => {
     expect(
-      shouldHandleSidebarToggleShortcut(
+      resolveAppSidebarShortcutCommand(
         createEvent({
+          key: "b",
           metaKey: true,
         }),
-        SIDEBAR_TOGGLE_BINDINGS,
+        APP_SIDEBAR_BINDINGS,
         {
           terminalFocus: true,
           terminalOpen: true,
           platform: "MacIntel",
         },
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 });

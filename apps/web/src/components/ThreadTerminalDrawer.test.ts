@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  runtimeEnvSignature,
   resolveTerminalSelectionActionPosition,
   selectPendingTerminalEventEntries,
   selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
+  terminalSubmitInputForEvent,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
 
@@ -75,6 +77,41 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
   });
 
+  it("maps Enter and numpad Enter to terminal submit input", () => {
+    expect(
+      terminalSubmitInputForEvent({
+        type: "keydown",
+        key: "Enter",
+        code: "Enter",
+        isComposing: false,
+      }),
+    ).toBe("\r");
+    expect(
+      terminalSubmitInputForEvent({
+        type: "keydown",
+        key: "Enter",
+        code: "NumpadEnter",
+        isComposing: false,
+      }),
+    ).toBe("\r");
+    expect(
+      terminalSubmitInputForEvent({
+        type: "keyup",
+        key: "Enter",
+        code: "Enter",
+        isComposing: false,
+      }),
+    ).toBeNull();
+    expect(
+      terminalSubmitInputForEvent({
+        type: "keydown",
+        key: "Enter",
+        code: "Enter",
+        isComposing: true,
+      }),
+    ).toBeNull();
+  });
+
   it("replays only terminal events newer than the open snapshot", () => {
     expect(
       selectTerminalEventEntriesAfterSnapshot(
@@ -105,6 +142,58 @@ describe("resolveTerminalSelectionActionPosition", () => {
     ).toEqual([2]);
   });
 
+  it("replays equal-timestamp events that arrived while open was in flight", () => {
+    expect(
+      selectTerminalEventEntriesAfterSnapshot(
+        [
+          {
+            id: 1,
+            event: {
+              threadId: "thread-1",
+              terminalId: "default",
+              createdAt: "2026-04-02T20:00:00.000Z",
+              type: "output",
+              data: "before-open",
+            },
+          },
+          {
+            id: 2,
+            event: {
+              threadId: "thread-1",
+              terminalId: "default",
+              createdAt: "2026-04-02T20:00:00.000Z",
+              type: "output",
+              data: "during-open",
+            },
+          },
+        ],
+        "2026-04-02T20:00:00.000Z",
+        1,
+      ).map((entry) => entry.id),
+    ).toEqual([2]);
+  });
+
+  it("replays all events with ids newer than the pre-open buffer cursor", () => {
+    expect(
+      selectTerminalEventEntriesAfterSnapshot(
+        [
+          {
+            id: 5,
+            event: {
+              threadId: "thread-1",
+              terminalId: "default",
+              createdAt: "2026-04-02T20:00:00.000Z",
+              type: "output",
+              data: "newer-but-older-timestamp",
+            },
+          },
+        ],
+        "2026-04-02T20:00:05.000Z",
+        4,
+      ).map((entry) => entry.id),
+    ).toEqual([5]);
+  });
+
   it("applies only terminal events that have not already been consumed", () => {
     expect(
       selectPendingTerminalEventEntries(
@@ -133,5 +222,18 @@ describe("resolveTerminalSelectionActionPosition", () => {
         1,
       ).map((entry) => entry.id),
     ).toEqual([2]);
+  });
+
+  it("produces the same runtime-env signature for equivalent key/value pairs", () => {
+    const left = runtimeEnvSignature({
+      SHIORICODE_WORKTREE_PATH: "/tmp/worktree",
+      SHIORICODE_PROJECT_ROOT: "/workspace/repo",
+    });
+    const right = runtimeEnvSignature({
+      SHIORICODE_PROJECT_ROOT: "/workspace/repo",
+      SHIORICODE_WORKTREE_PATH: "/tmp/worktree",
+    });
+
+    expect(left).toBe(right);
   });
 });

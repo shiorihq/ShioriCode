@@ -28,7 +28,11 @@ import {
 } from "./lib/terminalContext";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
+import {
+  createDebouncedStorage,
+  createMemoryStorage,
+  registerBeforeUnloadCallback,
+} from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "contracts/settings";
 
@@ -45,11 +49,9 @@ const composerDebouncedStorage = createDebouncedStorage(
 );
 
 // Flush pending composer draft writes before page unload to prevent data loss.
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
-    composerDebouncedStorage.flush();
-  });
-}
+registerBeforeUnloadCallback("composer-drafts", () => {
+  composerDebouncedStorage.flush();
+});
 
 export const PersistedComposerImageAttachment = Schema.Struct({
   id: Schema.String,
@@ -1236,7 +1238,7 @@ function hydreatePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {

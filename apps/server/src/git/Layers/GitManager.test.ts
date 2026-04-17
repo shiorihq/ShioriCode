@@ -35,6 +35,7 @@ interface FakeGhScenario {
     baseRefName: string;
     headRefName: string;
     state?: "open" | "closed" | "merged";
+    isDraft?: boolean;
     isCrossRepository?: boolean;
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
@@ -116,6 +117,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
           ? "closed"
           : "merged"
       : undefined;
+  const isDraft = typeof record.isDraft === "boolean" ? record.isDraft : undefined;
   const isCrossRepository =
     typeof record.isCrossRepository === "boolean" ? record.isCrossRepository : undefined;
   const headRepositoryNameWithOwner =
@@ -138,6 +140,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
     baseRefName,
     headRefName,
     ...(state ? { state } : {}),
+    ...(isDraft !== undefined ? { isDraft } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
@@ -406,6 +409,16 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       });
     }
 
+    if (args[0] === "pr" && args[1] === "diff") {
+      return Effect.succeed({
+        stdout: "diff --git a/file.txt b/file.txt\n+summary\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+    }
+
     if (args[0] === "pr" && args[1] === "checkout") {
       return Effect.try({
         try: () => {
@@ -504,7 +517,29 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--limit",
             String(input.limit ?? 1),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+          Effect.map((raw) =>
+            raw
+              .map((entry) => normalizeFakePullRequestSummary(entry))
+              .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+          ),
+        ),
+      listPullRequests: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            input.filter === "closed" ? "all" : "open",
+            "--limit",
+            String(input.limit ?? 100),
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
+            ...(input.filter === "draft" ? ["--search", "draft:true"] : []),
           ],
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
@@ -548,7 +583,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "view",
             input.reference,
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
       getRepositoryCloneUrls: (input) =>
@@ -561,6 +596,19 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
+      getPullRequestDiff: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "diff", String(input.number)],
+        }).pipe(Effect.map((result) => result.stdout)),
+      getPullRequestConversation: (_input) =>
+        Effect.succeed({
+          description: "",
+          descriptionAuthor: null,
+          descriptionCreatedAt: null,
+          comments: [],
+          reviews: [],
+        }),
     },
     ghCalls,
   };
@@ -598,9 +646,17 @@ function preparePullRequestThread(
   return manager.preparePullRequestThread(input);
 }
 
+function summarizePullRequest(
+  manager: GitManagerShape,
+  input: Parameters<GitManagerShape["summarizePullRequest"]>[0],
+) {
+  return manager.summarizePullRequest(input);
+}
+
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  textGenerationModelSelection?: ModelSelection;
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -608,7 +664,11 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettingsService.layerTest(
+    input?.textGenerationModelSelection
+      ? { textGenerationModelSelection: input.textGenerationModelSelection }
+      : {},
+  );
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -2092,6 +2152,88 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         state: "open",
       });
       expect(ghCalls.some((call) => call.startsWith("pr view 42 "))).toBe(true);
+    }),
+  );
+
+  it.effect("summarizes pull requests with the configured text-generation model selection", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("shioricode-git-manager-");
+      yield* initRepo(repoDir);
+
+      let receivedModelSelection: ModelSelection | null = null;
+      const { manager } = yield* makeManager({
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4-mini",
+          options: {
+            reasoningEffort: "medium",
+            fastMode: true,
+          },
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            receivedModelSelection = input.modelSelection;
+            return Effect.succeed({
+              title: "Summarize pull request",
+              body: "## Summary\n- Uses configured settings\n\n## Testing\n- Not run",
+            });
+          },
+        },
+      });
+
+      const result = yield* summarizePullRequest(manager, {
+        cwd: repoDir,
+        number: 77,
+      });
+
+      expect(result.summary).toContain("Uses configured settings");
+      expect(receivedModelSelection).toEqual({
+        provider: "codex",
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "medium",
+          fastMode: true,
+        },
+      });
+    }),
+  );
+
+  it.effect("reuses provided pull request metadata when summarizing", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("shioricode-git-manager-");
+      yield* initRepo(repoDir);
+
+      let receivedBaseBranch: string | null = null;
+      let receivedHeadBranch: string | null = null;
+      let receivedDiffSummary: string | null = null;
+      const { manager, ghCalls } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: (input) => {
+            receivedBaseBranch = input.baseBranch;
+            receivedHeadBranch = input.headBranch;
+            receivedDiffSummary = input.diffSummary;
+            return Effect.succeed({
+              title: "Summarize pull request",
+              body: "## Summary\n- Reused PR metadata\n\n## Testing\n- Not run",
+            });
+          },
+        },
+      });
+
+      const result = yield* summarizePullRequest(manager, {
+        cwd: repoDir,
+        number: 88,
+        title: "Reuse sidebar metadata",
+        baseBranch: "main",
+        headBranch: "feature/reuse-sidebar-metadata",
+      });
+
+      expect(result.summary).toContain("Reused PR metadata");
+      expect(receivedBaseBranch).toBe("main");
+      expect(receivedHeadBranch).toBe("feature/reuse-sidebar-metadata");
+      expect(receivedDiffSummary).toBe("PR #88: Reuse sidebar metadata");
+      expect(ghCalls.some((call) => call.startsWith("pr view 88 "))).toBe(false);
+      expect(ghCalls).toContain("pr diff 88");
     }),
   );
 

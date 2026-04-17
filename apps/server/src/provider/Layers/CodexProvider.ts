@@ -22,6 +22,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildPendingServerProvider,
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
@@ -31,6 +32,7 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type CommandResult,
+  type ProviderProbeResult,
 } from "../providerSnapshot";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import {
@@ -168,6 +170,30 @@ export function getCodexModelCapabilities(model: string | null | undefined): Mod
       promptInjectedEffortLevels: [],
     }
   );
+}
+
+function buildPendingCodexProviderStatus(codexSettings: CodexSettings): ServerProvider {
+  const checkedAt = new Date().toISOString();
+  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, codexSettings.customModels);
+
+  if (!codexSettings.enabled) {
+    return buildPendingServerProvider({
+      provider: PROVIDER,
+      enabled: false,
+      installed: false,
+      checkedAt,
+      models,
+      message: "Codex is disabled in ShioriCode settings.",
+    });
+  }
+
+  return buildPendingServerProvider({
+    provider: PROVIDER,
+    enabled: true,
+    checkedAt,
+    models,
+    message: "Checking Codex CLI availability...",
+  });
 }
 
 export function parseAuthStatusFromOutput(result: CommandResult): {
@@ -323,6 +349,18 @@ const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyAr
   return yield* spawnAndCollect(binaryPath, command);
 });
 
+function codexReadyWithUnknownAuth(input: {
+  readonly version: string | null;
+  readonly message?: string;
+}): Pick<ProviderProbeResult, "status" | "auth" | "message" | "version"> {
+  return {
+    status: "ready",
+    auth: { status: "unknown" },
+    version: input.version,
+    ...(input.message ? { message: input.message } : {}),
+  };
+}
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   resolveAccount?: (input: {
     readonly binaryPath: string;
@@ -476,13 +514,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       models: resolvedModels,
       probe: {
         installed: true,
-        version: parsedVersion,
-        status: "warning",
-        auth: { status: "unknown" },
-        message:
-          error instanceof Error
-            ? `Could not verify Codex authentication status: ${error.message}.`
-            : "Could not verify Codex authentication status.",
+        ...codexReadyWithUnknownAuth({
+          version: parsedVersion,
+          message:
+            error instanceof Error
+              ? `Could not verify Codex authentication status: ${error.message}.`
+              : "Could not verify Codex authentication status.",
+        }),
       },
     });
   }
@@ -495,10 +533,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       models: resolvedModels,
       probe: {
         installed: true,
-        version: parsedVersion,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Could not verify Codex authentication status. Timed out while running command.",
+        ...codexReadyWithUnknownAuth({
+          version: parsedVersion,
+          message: "Could not verify Codex authentication status. Timed out while running command.",
+        }),
       },
     });
   }
@@ -514,7 +552,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: parsedVersion,
-      status: parsed.status,
+      status:
+        parsed.status === "warning" && parsed.auth.status === "unknown" ? "ready" : parsed.status,
       auth: {
         ...parsed.auth,
         ...(authType ? { type: authType } : {}),
@@ -563,6 +602,7 @@ export const CodexProviderLive = Layer.effect(
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       checkProvider,
+      buildInitialSnapshot: buildPendingCodexProviderStatus,
     });
   }),
 );

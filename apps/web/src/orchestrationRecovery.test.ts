@@ -49,6 +49,19 @@ describe("createOrchestrationRecoveryCoordinator", () => {
     });
   });
 
+  it("rejects stale snapshots once newer live events were already applied", () => {
+    const coordinator = createOrchestrationRecoveryCoordinator();
+
+    coordinator.beginSnapshotRecovery("bootstrap");
+    coordinator.completeSnapshotRecovery(3);
+    expect(coordinator.classifyDomainEvent(4)).toBe("apply");
+    coordinator.markEventBatchApplied([{ sequence: 4 }]);
+
+    expect(coordinator.shouldApplySnapshot(3)).toBe(false);
+    expect(coordinator.shouldApplySnapshot(4)).toBe(true);
+    expect(coordinator.shouldApplySnapshot(5)).toBe(true);
+  });
+
   it("requests another replay when deferred events arrive during replay recovery", () => {
     const coordinator = createOrchestrationRecoveryCoordinator();
 

@@ -3,7 +3,6 @@ import {
   ArchiveX,
   ChevronDownIcon,
   InfoIcon,
-  PlusIcon,
   RefreshCwIcon,
   Trash2,
   Undo2Icon,
@@ -27,7 +26,6 @@ import {
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_UNIFIED_SETTINGS,
 } from "contracts/settings";
-import { normalizeModelSlug } from "shared/model";
 import { resolveOnboardingState } from "shared/onboarding";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -52,7 +50,6 @@ import {
 } from "../../lib/desktopUpdateReactQuery";
 import {
   buildProviderModelSelection,
-  MAX_CUSTOM_MODEL_LENGTH,
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
   resolveConfigurableModelSelectionState,
@@ -788,16 +785,6 @@ export function GeneralSettingsPanel() {
       settings.providers.claudeAgent.customModels.length > 0,
     ),
   });
-  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
-  >({
-    shiori: "",
-    codex: "",
-    claudeAgent: "",
-  });
-  const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
-  >({});
   const [fontCatalog, setFontCatalog] = useState<{ all: string[]; monospace: string[] }>({
     all: [],
     monospace: [],
@@ -965,76 +952,6 @@ export function GeneralSettingsPanel() {
       });
   }, [availableEditors, keybindingsConfigPath]);
 
-  const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
-      const customModelInput = customModelInputByProvider[provider];
-      const customModels = settings.providers[provider].customModels;
-      const normalized = normalizeModelSlug(customModelInput, provider);
-      if (!normalized) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "Enter a model slug.",
-        }));
-        return;
-      }
-      if (
-        serverProviders
-          .find((candidate) => candidate.provider === provider)
-          ?.models.some((option) => !option.isCustom && option.slug === normalized)
-      ) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That model is already built in.",
-        }));
-        return;
-      }
-      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-        }));
-        return;
-      }
-      if (customModels.includes(normalized)) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That custom model is already saved.",
-        }));
-        return;
-      }
-
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: [...customModels, normalized],
-          },
-        },
-      });
-      setCustomModelInputByProvider((existing) => ({
-        ...existing,
-        [provider]: "",
-      }));
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
-
-      const el = modelListRefs.current[provider];
-      if (!el) return;
-      const scrollToEnd = () => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      requestAnimationFrame(scrollToEnd);
-      const observer = new MutationObserver(() => {
-        scrollToEnd();
-        observer.disconnect();
-      });
-      observer.observe(el, { childList: true, subtree: true });
-      setTimeout(() => observer.disconnect(), 2_000);
-    },
-    [customModelInputByProvider, serverProviders, settings, updateSettings],
-  );
-
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
       updateSettings({
@@ -1048,10 +965,6 @@ export function GeneralSettingsPanel() {
           },
         },
       });
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
     },
     [settings, updateSettings],
   );
@@ -1748,8 +1661,6 @@ export function GeneralSettingsPanel() {
         }
       >
         {providerCards.map((providerCard) => {
-          const customModelInput = customModelInputByProvider[providerCard.provider];
-          const customModelError = customModelErrorByProvider[providerCard.provider] ?? null;
           const providerDisplayName =
             PROVIDER_DISPLAY_NAMES[providerCard.provider] ?? providerCard.title;
 
@@ -1780,10 +1691,6 @@ export function GeneralSettingsPanel() {
                                     DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
                                 },
                               });
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
                             }}
                           />
                         ) : null}
@@ -2022,49 +1929,6 @@ export function GeneralSettingsPanel() {
                           );
                         })}
                       </div>
-
-                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                        <Input
-                          id={`custom-model-${providerCard.provider}`}
-                          value={customModelInput}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setCustomModelInputByProvider((existing) => ({
-                              ...existing,
-                              [providerCard.provider]: value,
-                            }));
-                            if (customModelError) {
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            addCustomModel(providerCard.provider);
-                          }}
-                          placeholder={
-                            providerCard.provider === "codex"
-                              ? "gpt-6.7-codex-ultra-preview"
-                              : "claude-sonnet-5-0"
-                          }
-                          spellCheck={false}
-                        />
-                        <Button
-                          className="shrink-0"
-                          variant="outline"
-                          onClick={() => addCustomModel(providerCard.provider)}
-                        >
-                          <PlusIcon className="size-3.5" />
-                          Add
-                        </Button>
-                      </div>
-
-                      {customModelError ? (
-                        <p className="mt-2 text-xs text-destructive">{customModelError}</p>
-                      ) : null}
                     </div>
                   </div>
                 </CollapsibleContent>

@@ -25,11 +25,45 @@ import type { Stream } from "effect";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
 
+export interface ProviderAdapterRecoveryCapabilities {
+  /**
+   * Whether the adapter can resume a session using an opaque persisted cursor.
+   */
+  readonly supportsResumeCursor: boolean;
+
+  /**
+   * Whether the adapter can adopt an already-running in-memory session.
+   */
+  readonly supportsAdoptActiveSession: boolean;
+}
+
+export interface ProviderAdapterObservabilityCapabilities {
+  /**
+   * Whether the adapter emits structured session exit lifecycle events.
+   */
+  readonly emitsStructuredSessionExit: boolean;
+
+  /**
+   * Whether the adapter emits structured runtime warnings/errors.
+   */
+  readonly emitsRuntimeDiagnostics: boolean;
+}
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+
+  /**
+   * Recovery features exposed by this adapter.
+   */
+  readonly recovery: ProviderAdapterRecoveryCapabilities;
+
+  /**
+   * Runtime observability features exposed by this adapter.
+   */
+  readonly observability: ProviderAdapterObservabilityCapabilities;
 }
 
 export interface ProviderThreadTurnSnapshot {

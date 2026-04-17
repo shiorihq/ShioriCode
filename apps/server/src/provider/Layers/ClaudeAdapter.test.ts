@@ -239,6 +239,20 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
+function emitClaudeSystemInit(query: FakeClaudeQuery, sessionId: string) {
+  query.emit({
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    apiKeySource: "oauth",
+    cwd: "/tmp/claude-adapter-test",
+    tools: [],
+    mcp_servers: [],
+    model: "claude-sonnet-4-5",
+    permissionMode: "default",
+  } as unknown as SDKMessage);
+}
+
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
 
@@ -556,6 +570,31 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("ignores claude fast mode for opus 4.7", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+          options: {
+            fastMode: true,
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("appends the assistant personality to Claude's system prompt preset", () => {
     const harness = makeHarness({
       serverSettings: {
@@ -719,6 +758,8 @@ describe("ClaudeAdapterLive", () => {
         input: "hello",
         attachments: [],
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-1");
 
       harness.query.emit({
         type: "stream_event",
@@ -892,6 +933,8 @@ describe("ClaudeAdapterLive", () => {
         input: "hello",
         attachments: [],
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-tool-streams");
 
       harness.query.emit({
         type: "stream_event",
@@ -1073,6 +1116,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
+      emitClaudeSystemInit(harness.query, "sdk-session-thinking-block");
+
       harness.query.emit({
         type: "stream_event",
         session_id: "sdk-session-thinking-block",
@@ -1183,6 +1228,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
+      emitClaudeSystemInit(harness.query, "sdk-session-task");
+
       harness.query.emit({
         type: "stream_event",
         session_id: "sdk-session-task",
@@ -1259,6 +1306,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
+      emitClaudeSystemInit(harness.query, "sdk-session-abort");
+
       harness.query.emit({
         type: "result",
         subtype: "error_during_execution",
@@ -1319,6 +1368,8 @@ describe("ClaudeAdapterLive", () => {
           input: "hello",
           attachments: [],
         });
+
+        emitClaudeSystemInit(harness.query, "sdk-session-stop-diagnostic");
 
         harness.query.emit({
           type: "result",
@@ -1418,6 +1469,10 @@ describe("ClaudeAdapterLive", () => {
 
       const sessionExited = runtimeEvents[5];
       assert.equal(sessionExited?.type, "session.exited");
+      if (sessionExited?.type === "session.exited") {
+        assert.equal(sessionExited.payload.exitKind, "graceful");
+        assert.equal(sessionExited.payload.reason, "Claude runtime interrupted.");
+      }
 
       assert.equal(yield* adapter.hasSession(THREAD_ID), false);
       const sessions = yield* adapter.listSessions();
@@ -1516,6 +1571,8 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
+      emitClaudeSystemInit(harness.query, "sdk-session-task-summary");
+
       harness.query.emit({
         type: "system",
         subtype: "task_progress",
@@ -1562,6 +1619,8 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         runtimeMode: "full-access",
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-task-usage");
 
       harness.query.emit({
         type: "system",
@@ -1622,6 +1681,8 @@ describe("ClaudeAdapterLive", () => {
         input: "hello",
         attachments: [],
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-result-usage");
 
       harness.query.emit({
         type: "result",
@@ -1691,6 +1752,8 @@ describe("ClaudeAdapterLive", () => {
           input: "hello",
           attachments: [],
         });
+
+        emitClaudeSystemInit(harness.query, "sdk-session-early-assistant");
 
         harness.query.emit({
           type: "assistant",
@@ -1782,6 +1845,8 @@ describe("ClaudeAdapterLive", () => {
         input: "hello",
         attachments: [],
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-reused-text-index");
 
       harness.query.emit({
         type: "stream_event",
@@ -1949,6 +2014,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
+      emitClaudeSystemInit(harness.query, "sdk-session-fallback-text");
+
       harness.query.emit({
         type: "assistant",
         session_id: "sdk-session-fallback-text",
@@ -2017,6 +2084,8 @@ describe("ClaudeAdapterLive", () => {
         input: "hello",
         attachments: [],
       });
+
+      emitClaudeSystemInit(harness.query, "sdk-session-interleaved");
 
       harness.query.emit({
         type: "stream_event",
@@ -2218,7 +2287,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("does not fabricate provider thread ids before first SDK session_id", () => {
+  it.effect("stores the Claude provider thread id from the SDK system init message", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2244,16 +2313,18 @@ describe("ClaudeAdapterLive", () => {
 
       harness.query.emit({
         type: "stream_event",
-        session_id: "sdk-thread-real",
-        uuid: "stream-thread-real",
+        session_id: "sdk-thread-ignored",
+        uuid: "stream-thread-ignored",
         parent_tool_use_id: null,
         event: {
           type: "message_start",
           message: {
-            id: "msg-thread-real",
+            id: "msg-thread-ignored",
           },
         },
       } as unknown as SDKMessage);
+
+      emitClaudeSystemInit(harness.query, "sdk-thread-real");
 
       harness.query.emit({
         type: "result",
@@ -2290,6 +2361,21 @@ describe("ClaudeAdapterLive", () => {
           providerThreadId: "sdk-thread-real",
         });
       }
+
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions.length, 1);
+      const activeResumeCursor = sessions[0]?.resumeCursor as
+        | {
+            threadId?: string;
+            resume?: string;
+            turnCount?: number;
+          }
+        | undefined;
+      assert.deepEqual(activeResumeCursor, {
+        threadId: THREAD_ID,
+        resume: "sdk-thread-real",
+        turnCount: 1,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2316,18 +2402,7 @@ describe("ClaudeAdapterLive", () => {
       });
       yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
 
-      harness.query.emit({
-        type: "stream_event",
-        session_id: "sdk-session-approval-1",
-        uuid: "stream-approval-thread",
-        parent_tool_use_id: null,
-        event: {
-          type: "message_start",
-          message: {
-            id: "msg-approval-thread",
-          },
-        },
-      } as unknown as SDKMessage);
+      emitClaudeSystemInit(harness.query, "sdk-session-approval-1");
 
       const threadStarted = yield* Stream.runHead(adapter.streamEvents);
       assert.equal(threadStarted._tag, "Some");
@@ -2405,78 +2480,112 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("classifies Agent tools and read-only Claude tools correctly for approvals", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
+  it.effect(
+    "classifies Agent, read-only, and file-edit Claude tools correctly for approvals",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
 
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "claudeAgent",
-        runtimeMode: "approval-required",
-      });
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "approval-required",
+        });
 
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+        yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
-      const createInput = harness.getLastCreateQueryInput();
-      const canUseTool = createInput?.options.canUseTool;
-      assert.equal(typeof canUseTool, "function");
-      if (!canUseTool) {
-        return;
-      }
+        const createInput = harness.getLastCreateQueryInput();
+        const canUseTool = createInput?.options.canUseTool;
+        assert.equal(typeof canUseTool, "function");
+        if (!canUseTool) {
+          return;
+        }
 
-      const agentPermissionPromise = canUseTool(
-        "Agent",
-        {},
-        {
-          signal: new AbortController().signal,
-          toolUseID: "tool-agent-1",
-        },
+        const agentPermissionPromise = canUseTool(
+          "Agent",
+          {},
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-agent-1",
+          },
+        );
+
+        const agentRequested = yield* Stream.runHead(adapter.streamEvents);
+        assert.equal(agentRequested._tag, "Some");
+        if (agentRequested._tag !== "Some" || agentRequested.value.type !== "request.opened") {
+          return;
+        }
+        assert.equal(agentRequested.value.payload.requestType, "dynamic_tool_call");
+
+        yield* adapter.respondToRequest(
+          session.threadId,
+          ApprovalRequestId.makeUnsafe(String(agentRequested.value.requestId)),
+          "accept",
+        );
+        yield* Stream.runHead(adapter.streamEvents);
+        yield* Effect.promise(() => agentPermissionPromise);
+
+        const grepPermissionPromise = canUseTool(
+          "Grep",
+          { pattern: "foo", path: "src" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-grep-approval-1",
+          },
+        );
+
+        const grepRequested = yield* Stream.runHead(adapter.streamEvents);
+        assert.equal(grepRequested._tag, "Some");
+        if (grepRequested._tag !== "Some" || grepRequested.value.type !== "request.opened") {
+          return;
+        }
+        assert.equal(grepRequested.value.payload.requestType, "file_read_approval");
+
+        yield* adapter.respondToRequest(
+          session.threadId,
+          ApprovalRequestId.makeUnsafe(String(grepRequested.value.requestId)),
+          "accept",
+        );
+        yield* Stream.runHead(adapter.streamEvents);
+        yield* Effect.promise(() => grepPermissionPromise);
+
+        const notebookEditPermissionPromise = canUseTool(
+          "NotebookEdit",
+          {
+            notebook_path: "/tmp/demo.ipynb",
+            new_source: "print('hello')",
+            edit_mode: "replace",
+          },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-notebook-edit-approval-1",
+          },
+        );
+
+        const notebookEditRequested = yield* Stream.runHead(adapter.streamEvents);
+        assert.equal(notebookEditRequested._tag, "Some");
+        if (
+          notebookEditRequested._tag !== "Some" ||
+          notebookEditRequested.value.type !== "request.opened"
+        ) {
+          return;
+        }
+        assert.equal(notebookEditRequested.value.payload.requestType, "file_change_approval");
+
+        yield* adapter.respondToRequest(
+          session.threadId,
+          ApprovalRequestId.makeUnsafe(String(notebookEditRequested.value.requestId)),
+          "accept",
+        );
+        yield* Stream.runHead(adapter.streamEvents);
+        yield* Effect.promise(() => notebookEditPermissionPromise);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
       );
-
-      const agentRequested = yield* Stream.runHead(adapter.streamEvents);
-      assert.equal(agentRequested._tag, "Some");
-      if (agentRequested._tag !== "Some" || agentRequested.value.type !== "request.opened") {
-        return;
-      }
-      assert.equal(agentRequested.value.payload.requestType, "dynamic_tool_call");
-
-      yield* adapter.respondToRequest(
-        session.threadId,
-        ApprovalRequestId.makeUnsafe(String(agentRequested.value.requestId)),
-        "accept",
-      );
-      yield* Stream.runHead(adapter.streamEvents);
-      yield* Effect.promise(() => agentPermissionPromise);
-
-      const grepPermissionPromise = canUseTool(
-        "Grep",
-        { pattern: "foo", path: "src" },
-        {
-          signal: new AbortController().signal,
-          toolUseID: "tool-grep-approval-1",
-        },
-      );
-
-      const grepRequested = yield* Stream.runHead(adapter.streamEvents);
-      assert.equal(grepRequested._tag, "Some");
-      if (grepRequested._tag !== "Some" || grepRequested.value.type !== "request.opened") {
-        return;
-      }
-      assert.equal(grepRequested.value.payload.requestType, "file_read_approval");
-
-      yield* adapter.respondToRequest(
-        session.threadId,
-        ApprovalRequestId.makeUnsafe(String(grepRequested.value.requestId)),
-        "accept",
-      );
-      yield* Stream.runHead(adapter.streamEvents);
-      yield* Effect.promise(() => grepPermissionPromise);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
+    },
+  );
 
   it.effect("passes Claude resume ids without pinning a stale assistant checkpoint", () => {
     const harness = makeHarness();
@@ -2513,7 +2622,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("uses an app-generated Claude session id for fresh sessions", () => {
+  it.effect("does not persist a provisional Claude resume id for fresh sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2531,14 +2640,10 @@ describe("ClaudeAdapterLive", () => {
         turnCount?: number;
       };
       assert.equal(sessionResumeCursor.threadId, THREAD_ID);
-      assert.equal(typeof sessionResumeCursor.resume, "string");
       assert.equal(sessionResumeCursor.turnCount, 0);
-      assert.match(
-        sessionResumeCursor.resume ?? "",
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-      );
+      assert.equal(sessionResumeCursor.resume, undefined);
       assert.equal(createInput?.options.resume, undefined);
-      assert.equal(createInput?.options.sessionId, sessionResumeCursor.resume);
+      assert.equal(createInput?.options.sessionId, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -3042,18 +3147,7 @@ describe("ClaudeAdapterLive", () => {
       });
       yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
 
-      harness.query.emit({
-        type: "stream_event",
-        session_id: "sdk-session-user-input-1",
-        uuid: "stream-user-input-thread",
-        parent_tool_use_id: null,
-        event: {
-          type: "message_start",
-          message: {
-            id: "msg-user-input-thread",
-          },
-        },
-      } as unknown as SDKMessage);
+      emitClaudeSystemInit(harness.query, "sdk-session-user-input-1");
 
       const threadStarted = yield* Stream.runHead(adapter.streamEvents);
       assert.equal(threadStarted._tag, "Some");
@@ -3378,6 +3472,248 @@ describe("ClaudeAdapterLive", () => {
         nativeThreadIds.every((threadId) => threadId === String(THREAD_ID)),
         true,
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+});
+
+describe("ClaudeAdapterLive reliability", () => {
+  it.effect("interruptTurn drains pendingUserInputs before returning", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "approval-required",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "ask something",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      emitClaudeSystemInit(harness.query, "sdk-session-interrupt-drain");
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) return;
+
+      // Fire AskUserQuestion so a pendingUserInput deferred is held open.
+      const userInputPromise = canUseTool(
+        "AskUserQuestion",
+        { questions: [{ question: "Confirm?", options: ["Yes", "No"] }] },
+        { signal: new AbortController().signal, toolUseID: "uq-1" },
+      );
+
+      // Consume the user-input.requested event so the deferred is registered.
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      // Now interrupt — the pending user-input should be drained and resolved.
+      yield* adapter.interruptTurn(THREAD_ID, undefined);
+
+      const result = yield* Effect.promise(() => userInputPromise);
+      // When interrupted we auto-answer empty and deny so the SDK doesn't run
+      // the tool with empty answers.
+      assert.equal((result as PermissionResult).behavior, "deny");
+      assert.ok(harness.query.interruptCalls.length >= 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("respondToRequest is a no-op once the session is interrupting", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "approval-required",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "do dangerous thing",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      emitClaudeSystemInit(harness.query, "sdk-session-late-approve");
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      if (!canUseTool) return;
+      const permissionPromise = canUseTool(
+        "Bash",
+        { command: "rm -rf /" },
+        { signal: new AbortController().signal, toolUseID: "tool-late-approve" },
+      );
+      const requested = yield* Stream.runHead(adapter.streamEvents);
+      if (requested._tag !== "Some" || requested.value.type !== "request.opened") return;
+      const runtimeRequestId = requested.value.requestId;
+      if (!runtimeRequestId) return;
+
+      // User clicks approve at the same moment the app issues interrupt.
+      yield* adapter.interruptTurn(THREAD_ID, undefined);
+      // Late-arriving approval should be a no-op and NOT emit a second
+      // request.resolved or re-register the deferred.
+      yield* adapter.respondToRequest(
+        THREAD_ID,
+        ApprovalRequestId.makeUnsafe(runtimeRequestId),
+        "accept",
+      );
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.equal((permissionResult as PermissionResult).behavior, "deny");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("treats a thrown SDK AbortError as an interrupt, not a crash", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "will be aborted",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const exitedFiber = yield* Effect.forkChild(
+        Stream.runHead(
+          adapter.streamEvents.pipe(
+            Stream.filter(
+              (event): event is Extract<ProviderRuntimeEvent, { type: "session.exited" }> =>
+                event.type === "session.exited",
+            ),
+          ),
+        ),
+      );
+
+      // Throw the SDK's typed AbortError — not a generic Error.
+      const { AbortError } = yield* Effect.promise(() => import("@anthropic-ai/claude-agent-sdk"));
+      harness.query.fail(new AbortError("interrupted"));
+
+      const exited = yield* Fiber.join(exitedFiber);
+      assert.equal(exited._tag, "Some");
+      if (exited._tag === "Some") {
+        // AbortError means graceful interrupt, not an error exit.
+        assert.equal(exited.value.payload.exitKind, "graceful");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("flags transient SDK stream failures as recoverable", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "transient hiccup",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const exitedFiber = yield* Effect.forkChild(
+        Stream.runHead(
+          adapter.streamEvents.pipe(
+            Stream.filter(
+              (event): event is Extract<ProviderRuntimeEvent, { type: "session.exited" }> =>
+                event.type === "session.exited",
+            ),
+          ),
+        ),
+      );
+
+      harness.query.fail(new Error("fetch failed: ECONNRESET socket hang up"));
+
+      const exited = yield* Fiber.join(exitedFiber);
+      assert.equal(exited._tag, "Some");
+      if (exited._tag === "Some") {
+        assert.equal(exited.value.payload.exitKind, "error");
+        assert.equal(exited.value.payload.recoverable, true);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("clears the resume cursor when the SDK reports a missing conversation", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "will hit missing conversation",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const exitedFiber = yield* Effect.forkChild(
+        Stream.runHead(
+          adapter.streamEvents.pipe(
+            Stream.filter(
+              (event): event is Extract<ProviderRuntimeEvent, { type: "session.exited" }> =>
+                event.type === "session.exited",
+            ),
+          ),
+        ),
+      );
+
+      // SDK result that the adapter classifies as "missing conversation".
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["No conversation found with session ID abc123"],
+        stop_reason: "end_turn",
+        session_id: "sdk-session-missing",
+        uuid: "result-missing",
+      } as unknown as SDKMessage);
+
+      const exited = yield* Fiber.join(exitedFiber);
+      if (exited._tag === "Some") {
+        assert.equal(exited.value.payload.recoverable, true);
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

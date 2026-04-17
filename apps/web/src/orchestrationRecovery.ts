@@ -51,6 +51,10 @@ export function createOrchestrationRecoveryCoordinator() {
       return snapshotState();
     },
 
+    shouldApplySnapshot(snapshotSequence: number): boolean {
+      return snapshotSequence >= state.latestSequence;
+    },
+
     classifyDomainEvent(sequence: number): "ignore" | "defer" | "recover" | "apply" {
       observeSequence(sequence);
       if (sequence <= state.latestSequence) {

@@ -1,8 +1,14 @@
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
+  GitPullRequestConversationInput,
+  GitPullRequestConversationResult,
+  GitPullRequestDiffInput,
+  GitPullRequestDiffResult,
   GitPullRequestRefInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
@@ -13,6 +19,8 @@ import type {
   GitResolvePullRequestResult,
   GitStatusInput,
   GitStatusResult,
+  GitSummarizePullRequestInput,
+  GitSummarizePullRequestResult,
 } from "./git";
 import type {
   ProjectSearchEntriesInput,
@@ -55,7 +63,15 @@ import type {
 } from "./orchestration";
 import type { OnboardingCompleteStepInput, OnboardingState } from "./onboarding";
 import { EditorId } from "./editor";
-import { ServerSettings, ServerSettingsPatch } from "./settings";
+import {
+  EffectiveMcpServerAuthInput,
+  EffectiveMcpServersResult,
+  EffectiveMcpServerRemoveInput,
+  EffectiveSkillRemoveInput,
+  EffectiveSkillsResult,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings";
 import type { TelemetryCaptureInput, TelemetryLogInput } from "./telemetry";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -188,6 +204,16 @@ export interface NativeApi {
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
+    listOpenPullRequests: (
+      input: GitListOpenPullRequestsInput,
+    ) => Promise<GitListOpenPullRequestsResult>;
+    getPullRequestDiff: (input: GitPullRequestDiffInput) => Promise<GitPullRequestDiffResult>;
+    summarizePullRequest: (
+      input: GitSummarizePullRequestInput,
+    ) => Promise<GitSummarizePullRequestResult>;
+    getPullRequestConversation: (
+      input: GitPullRequestConversationInput,
+    ) => Promise<GitPullRequestConversationResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
   };
   contextMenu: {
@@ -202,6 +228,11 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    listMcpServers: () => Promise<EffectiveMcpServersResult>;
+    authenticateMcpServer: (input: EffectiveMcpServerAuthInput) => Promise<void>;
+    removeMcpServer: (input: EffectiveMcpServerRemoveInput) => Promise<void>;
+    listSkills: () => Promise<EffectiveSkillsResult>;
+    removeSkill: (input: EffectiveSkillRemoveInput) => Promise<void>;
     setShioriAuthToken: (token: string | null) => Promise<void>;
     getProviderUsage: (provider: "codex" | "claudeAgent") => Promise<ServerProviderUsageSnapshot>;
     getHostedBillingSnapshot: () => Promise<HostedBillingSnapshot>;

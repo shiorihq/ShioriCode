@@ -761,6 +761,78 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("can skip upstream refresh for local-only status reads", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const defaultBranch = (yield* (yield* GitCore).listBranches({ cwd: source })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", defaultBranch]);
+
+        const realGitCore = yield* GitCore;
+        let refreshFetchAttempts = 0;
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+            refreshFetchAttempts += 1;
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+          return realGitCore.execute(input);
+        });
+
+        const status = yield* core.statusDetails(source, { refreshUpstream: false });
+        expect(status.branch).toBe(defaultBranch);
+        expect(refreshFetchAttempts).toBe(0);
+      }),
+    );
+
+    it.effect("runs upstream refresh for status with non-interactive git env", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const defaultBranch = (yield* (yield* GitCore).listBranches({ cwd: source })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", defaultBranch]);
+
+        const realGitCore = yield* GitCore;
+        let sawFetch = false;
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+            sawFetch = true;
+            expect(input.env?.GIT_TERMINAL_PROMPT).toBe("0");
+            expect(input.env?.GCM_INTERACTIVE).toBe("never");
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+          return realGitCore.execute(input);
+        });
+
+        const status = yield* core.statusDetails(source);
+        expect(sawFetch).toBe(true);
+        expect(status.branch).toBe(defaultBranch);
+      }),
+    );
+
     it.effect("shares upstream refreshes across worktrees that use the same git common dir", () =>
       Effect.gen(function* () {
         const ok = (stdout = "") =>

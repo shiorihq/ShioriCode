@@ -10,6 +10,9 @@ export function EmptyThreadAmbient({ promptLength }: EmptyThreadAmbientProps) {
   const fadeProgress = Math.min(1, promptLength / 14);
   const opacity = 1 - fadeProgress;
   const ref = useRef<HTMLDivElement>(null);
+  const boundsRef = useRef<DOMRect | null>(null);
+  const pendingPointRef = useRef<{ x: number; y: number } | null>(null);
+  const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -17,14 +20,59 @@ export function EmptyThreadAmbient({ promptLength }: EmptyThreadAmbientProps) {
     const parent = el.parentElement;
     if (!parent) return;
 
-    function onMove(e: MouseEvent) {
-      const rect = el!.getBoundingClientRect();
-      el!.style.setProperty("--mx", `${e.clientX - rect.left}px`);
-      el!.style.setProperty("--my", `${e.clientY - rect.top}px`);
+    const updateBounds = () => {
+      boundsRef.current = el.getBoundingClientRect();
+    };
+
+    const flushPointer = () => {
+      frameRef.current = null;
+      const point = pendingPointRef.current;
+      const bounds = boundsRef.current;
+      if (!point || !bounds) {
+        return;
+      }
+      el.style.setProperty("--mx", `${point.x - bounds.left}px`);
+      el.style.setProperty("--my", `${point.y - bounds.top}px`);
+    };
+
+    const schedulePointerFlush = () => {
+      if (frameRef.current !== null) {
+        return;
+      }
+      frameRef.current = window.requestAnimationFrame(flushPointer);
+    };
+
+    const onMove = (event: MouseEvent) => {
+      pendingPointRef.current = { x: event.clientX, y: event.clientY };
+      schedulePointerFlush();
+    };
+
+    const onPointerEnter = () => {
+      updateBounds();
+      schedulePointerFlush();
+    };
+
+    updateBounds();
+    parent.addEventListener("pointerenter", onPointerEnter);
+    parent.addEventListener("mousemove", onMove);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        updateBounds();
+      });
+      observer.observe(parent);
+      observer.observe(el);
     }
 
-    parent.addEventListener("mousemove", onMove);
-    return () => parent.removeEventListener("mousemove", onMove);
+    return () => {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+      observer?.disconnect();
+      parent.removeEventListener("pointerenter", onPointerEnter);
+      parent.removeEventListener("mousemove", onMove);
+    };
   }, []);
 
   return (

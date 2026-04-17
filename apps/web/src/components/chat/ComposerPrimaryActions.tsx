@@ -106,7 +106,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (isRunning) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {queuedTurnCount > 0 && !hasSendableContent ? (
+        {queuedTurnCount > 0 ? (
           <span className="text-xs text-muted-foreground">{queuedTurnCount} queued</span>
         ) : null}
         {hasSendableContent ? (
@@ -115,9 +115,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             size="sm"
             variant="outline"
             className={cn("rounded-full", compact ? "px-3" : "px-4")}
-            disabled={isSendBusy || isConnecting || queuedTurnCount > 0}
+            disabled={isSendBusy || isConnecting}
           >
-            {queuedTurnCount > 0 ? "Queued" : isSendBusy ? "Queueing..." : "Queue"}
+            {isSendBusy ? "Queueing..." : "Queue"}
           </Button>
         ) : null}
         <button

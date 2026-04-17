@@ -7,6 +7,7 @@ import {
   deriveMessagesTimelineRows,
   formatWorkEntry,
   getDisplayedWorkEntries,
+  isWorkRowInProgress,
 } from "./MessagesTimeline.logic";
 import type { TimelineEntry } from "../../session-logic";
 
@@ -152,6 +153,84 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary([claudeSearchEntry], false)).toBe("Explored 1 search");
   });
 
+  it("renders Codex webSearch open_page items with action-specific copy", () => {
+    const entry = {
+      id: "codex-web-open-page",
+      createdAt: "2026-04-11T21:14:01.000Z",
+      label: "Web search",
+      tone: "tool" as const,
+      itemType: "web_search" as const,
+      detail: "Web Search: https://developers.openai.com/codex/sdk/",
+      output: {
+        toolName: "webSearch",
+        input: {
+          action: {
+            type: "open_page",
+            value: "https://developers.openai.com/codex/sdk/",
+          },
+          action_type: "open_page",
+          action_value: "https://developers.openai.com/codex/sdk/",
+        },
+      },
+    };
+
+    expect(formatWorkEntry(entry)).toMatchObject({
+      kind: "search",
+      action: "Opened page",
+      detail: "https://developers.openai.com/codex/sdk/",
+      monospace: false,
+    });
+  });
+
+  it("renders fallback web search items with searched-web copy when the adapter only provides a query", () => {
+    const entry = {
+      id: "shiori-web-search-query",
+      createdAt: "2026-04-13T09:40:00.000Z",
+      label: "Web search",
+      tone: "tool" as const,
+      itemType: "web_search" as const,
+      detail: "best way to get rid of chicken pox treatment",
+      output: {
+        toolName: "web_search",
+        input: {
+          query: "best way to get rid of chicken pox treatment",
+        },
+      },
+    };
+
+    expect(formatWorkEntry(entry)).toMatchObject({
+      kind: "search",
+      action: "Searched web for",
+      detail: "best way to get rid of chicken pox treatment",
+      monospace: false,
+    });
+  });
+
+  it("pluralizes multiple search entries as searches", () => {
+    const entries = [
+      {
+        id: "search-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "rg completed",
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: "rg AGENTS.md",
+        detail: "rg AGENTS.md",
+      },
+      {
+        id: "search-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        label: "rg completed",
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: "rg workgroup",
+        detail: "rg workgroup",
+      },
+    ];
+
+    expect(buildWorkGroupSummary(entries, false)).toBe("Explored 2 searches");
+  });
+
   it("counts unique edited files in edit work group summaries", () => {
     const entries = [
       {
@@ -184,6 +263,113 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       buildWorkGroupSummary([...entries, { ...entries[2]!, id: "edit-4", running: true }], false),
     ).toBe("Editing 2 files");
+  });
+
+  it("distinguishes created, edited, and deleted files in file-change work group summaries", () => {
+    const entries = [
+      {
+        id: "create-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool" as const,
+        itemType: "dynamic_tool_call" as const,
+        detail: 'Create file: {"path":"notes/todo.md"}',
+      },
+      {
+        id: "write-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        label: "Tool call Write",
+        tone: "tool" as const,
+        itemType: "dynamic_tool_call" as const,
+        output: {
+          toolName: "write_file",
+          input: {
+            path: "src/index.ts",
+            content: "console.log('hi');",
+          },
+        },
+      },
+      {
+        id: "delete-1",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        label: "Tool call",
+        tone: "tool" as const,
+        itemType: "dynamic_tool_call" as const,
+        detail: 'Delete file: {"path":"src/old.ts"}',
+      },
+    ];
+
+    expect(buildWorkGroupSummary(entries, false)).toBe(
+      "Created 1 file, edited 1 file, deleted 1 file",
+    );
+  });
+
+  it("groups contiguous create, write, and delete tool calls into a single edit work row", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "entry-create-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "create-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Tool call",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          detail: 'Create file: {"path":"notes/todo.md"}',
+        },
+      },
+      {
+        id: "entry-write-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "write-1",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Tool call Write",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          output: {
+            toolName: "write_file",
+            input: {
+              path: "src/index.ts",
+              content: "console.log('hi');",
+            },
+          },
+        },
+      },
+      {
+        id: "entry-delete-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "delete-1",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Tool call",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          detail: 'Delete file: {"path":"src/old.ts"}',
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "create-1",
+      "write-1",
+      "delete-1",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Created 1 file, edited 1 file, deleted 1 file",
+    );
   });
 
   it("classifies generic provider tool calls from serialized detail prefixes", () => {
@@ -221,6 +407,48 @@ describe("deriveMessagesTimelineRows", () => {
       action: "",
       detail: "Review the database layer (code-reviewer)",
       monospace: false,
+    });
+  });
+
+  it("formats Codex wait/close subagent tool calls with the correct action", () => {
+    expect(
+      formatWorkEntry({
+        id: "codex-wait-agent",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Subagent task",
+        tone: "tool",
+        itemType: "collab_agent_tool_call",
+        output: {
+          toolName: "wait",
+          input: {
+            targets: ["agent-1"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "other",
+      action: "Waited for agent",
+      detail: "agent-1",
+    });
+
+    expect(
+      formatWorkEntry({
+        id: "codex-close-agent",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Subagent task",
+        tone: "tool",
+        itemType: "collab_agent_tool_call",
+        output: {
+          toolName: "closeAgent",
+          input: {
+            targets: ["agent-2"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "other",
+      action: "Closed agent",
+      detail: "agent-2",
     });
   });
 
@@ -262,6 +490,59 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "edit",
       action: "Wrote",
       detail: "/tmp/report.md",
+      monospace: true,
+    });
+
+    expect(
+      formatWorkEntry({
+        ...writeEntry,
+        id: "claude-file-write",
+        output: {
+          toolName: "FileWrite",
+          input: {
+            file_path: "/tmp/alias-report.md",
+            content: "# Alias Report",
+          },
+        },
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Wrote",
+      detail: "/tmp/alias-report.md",
+      monospace: true,
+    });
+  });
+
+  it("formats create and delete file tool calls with file-change specific actions", () => {
+    expect(
+      formatWorkEntry({
+        id: "create-file",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        detail: 'Create file: {"path":"notes/todo.md"}',
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Created",
+      detail: "notes/todo.md",
+      monospace: true,
+    });
+
+    expect(
+      formatWorkEntry({
+        id: "delete-file",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        detail: 'Delete file: {"path":"src/old.ts"}',
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Deleted",
+      detail: "src/old.ts",
       monospace: true,
     });
   });
@@ -309,6 +590,40 @@ describe("deriveMessagesTimelineRows", () => {
     ).toMatchObject({
       kind: "command",
       action: "Ran",
+      detail: null,
+    });
+  });
+
+  it("keeps runtime diagnostics out of compact work row summaries", () => {
+    expect(
+      formatWorkEntry({
+        id: "runtime-warning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Runtime warning",
+        detail:
+          '2026-04-10T10:02:09.111601Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed("Server returned error response: invalid_grant: Invalid refresh token"))',
+        tone: "info",
+      }),
+    ).toMatchObject({
+      action: "Runtime warning",
+      detail: null,
+    });
+  });
+
+  it("drops redundant generic tool detail when it matches the tool name", () => {
+    expect(
+      formatWorkEntry({
+        id: "context7-resolve-library-id",
+        createdAt: "2026-04-11T20:00:01.000Z",
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        toolTitle: "Resolve Library Id",
+        detail: "Resolve Library Id",
+      }),
+    ).toMatchObject({
+      kind: "other",
+      action: "Resolve Library Id",
       detail: null,
     });
   });
@@ -487,36 +802,61 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("keeps dissimilar running work entries separate", () => {
+  it("keeps distinct workgroup kinds in separate rows", () => {
     const timelineEntries: TimelineEntry[] = [
       {
-        id: "work-running",
+        id: "work-edit",
         kind: "work",
         createdAt: "2026-02-23T00:00:01.000Z",
         entry: {
-          id: "work-running",
+          id: "work-edit",
           createdAt: "2026-02-23T00:00:01.000Z",
-          label: "Execute command started",
+          label: "Edited app.ts",
           tone: "tool",
-          itemType: "command_execution",
-          requestKind: "command",
-          running: true,
-          detail: "bun run lint",
+          itemType: "file_change",
+          detail: "app.ts",
         },
       },
       {
-        id: "work-completed",
+        id: "work-read",
         kind: "work",
         createdAt: "2026-02-23T00:00:02.000Z",
         entry: {
-          id: "work-completed",
+          id: "work-read",
           createdAt: "2026-02-23T00:00:02.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
           requestKind: "file-read",
-          running: false,
           detail: "README.md",
+        },
+      },
+      {
+        id: "work-command",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "work-command",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Execute command completed",
+          tone: "tool",
+          itemType: "command_execution",
+          requestKind: "command",
+          detail: "bun run lint",
+          command: "bun run lint",
+        },
+      },
+      {
+        id: "work-web-search",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "work-web-search",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Web search",
+          tone: "tool",
+          itemType: "web_search",
+          detail: "Codex app workgroups",
         },
       },
     ];
@@ -529,11 +869,15 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     const workRows = rows.filter((row) => row.kind === "work");
-    expect(workRows).toHaveLength(2);
-    expect(workRows[0]?.groupedEntries).toHaveLength(1);
-    expect(workRows[0]?.groupedEntries[0]?.id).toBe("work-running");
-    expect(workRows[1]?.groupedEntries).toHaveLength(1);
-    expect(workRows[1]?.groupedEntries[0]?.id).toBe("work-completed");
+    expect(workRows).toHaveLength(4);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-edit"]);
+    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-read"]);
+    expect(workRows[2]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-command"]);
+    expect(workRows[3]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-web-search"]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe("Edited 1 file");
+    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe("Explored 1 file");
+    expect(buildWorkGroupSummary(workRows[2]!.groupedEntries, false)).toBe("Ran 1 command");
+    expect(buildWorkGroupSummary(workRows[3]!.groupedEntries, false)).toBe("Searched web 1 time");
   });
 
   it("marks the trailing work group as sticky in progress while the turn is still active", () => {
@@ -578,6 +922,7 @@ describe("deriveMessagesTimelineRows", () => {
     const workRows = rows.filter((row) => row.kind === "work");
     expect(workRows).toHaveLength(1);
     expect(workRows[0]?.stickyInProgress).toBe(true);
+    expect(isWorkRowInProgress(workRows[0]!)).toBe(true);
   });
 
   it("keeps reasoning entries as dedicated rows", () => {
@@ -617,6 +962,159 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
     ]);
+  });
+
+  it("integrates reasoning entries into a single extreme workgroup without changing the header group", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "reasoning-1",
+        kind: "reasoning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        reasoning: {
+          id: "reasoning-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          text: "Inspecting the worktree",
+          streaming: true,
+          turnId: null,
+        },
+      },
+      {
+        id: "work-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "command_execution",
+          toolTitle: "Read file",
+          detail: "AGENTS.md",
+        },
+      },
+      {
+        id: "reasoning-2",
+        kind: "reasoning",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        reasoning: {
+          id: "reasoning-2",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          text: "Checking for workgroup rendering hooks",
+          streaming: false,
+          turnId: null,
+        },
+      },
+      {
+        id: "work-2",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "work-2",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Run rg",
+          tone: "tool",
+          itemType: "command_execution",
+          command: "rg workgroup",
+          detail: "rg workgroup",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    const reasoningRows = rows.filter((row) => row.kind === "reasoning");
+    expect(workRows).toHaveLength(1);
+    expect(reasoningRows).toHaveLength(0);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-1", "work-2"]);
+    expect(workRows[0]?.inlineEntries?.map((entry) => entry.kind)).toEqual([
+      "reasoning",
+      "work",
+      "reasoning",
+      "work",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 1 file, 1 search",
+    );
+  });
+
+  it("distributes reasoning entries into adjacent extreme workgroups instead of separate top-level rows", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "reasoning-before-edit",
+        kind: "reasoning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        reasoning: {
+          id: "reasoning-before-edit",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          text: "Inspecting header semantics",
+          streaming: false,
+          turnId: null,
+        },
+      },
+      {
+        id: "work-edit",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "work-edit",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Edited file",
+          tone: "tool",
+          itemType: "file_change",
+          detail: "ChatHeader.test.tsx",
+        },
+      },
+      {
+        id: "reasoning-before-command",
+        kind: "reasoning",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        reasoning: {
+          id: "reasoning-before-command",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          text: "Preparing verification run",
+          streaming: true,
+          turnId: null,
+        },
+      },
+      {
+        id: "work-command",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "work-command",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Run typecheck",
+          tone: "tool",
+          itemType: "command_execution",
+          command: "bun typecheck",
+          detail: "bun typecheck",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    const reasoningRows = rows.filter((row) => row.kind === "reasoning");
+    expect(workRows).toHaveLength(2);
+    expect(reasoningRows).toHaveLength(0);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-edit"]);
+    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-command"]);
+    expect(workRows[0]?.inlineEntries?.map((entry) => entry.kind)).toEqual(["reasoning", "work"]);
+    expect(workRows[1]?.inlineEntries?.map((entry) => entry.kind)).toEqual(["reasoning", "work"]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe("Edited 1 file");
+    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe("Ran 1 command");
   });
 
   it("does not group consecutive status updates into one work disclosure", () => {

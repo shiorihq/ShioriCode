@@ -43,6 +43,7 @@ import {
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_SUBPROCESS_POLL_CONCURRENCY = 4;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -665,6 +666,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
     const subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+    const subprocessPollConcurrency = DEFAULT_SUBPROCESS_POLL_CONCURRENCY;
     const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
     const maxRetainedInactiveSessions =
       options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
@@ -681,11 +683,13 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
 
     const publishEvent = (event: TerminalEvent) =>
-      Effect.gen(function* () {
-        for (const listener of terminalEventListeners) {
-          yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
-        }
-      });
+      terminalEventListeners.size === 0
+        ? Effect.void
+        : Effect.forEach(
+            Array.from(terminalEventListeners),
+            (listener) => listener(event).pipe(Effect.ignoreCause({ log: true })),
+            { concurrency: "unbounded", discard: true },
+          );
 
     const historyPath = (threadId: string, terminalId: string) => {
       const threadPart = toSafeThreadId(threadId);
@@ -1428,6 +1432,10 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     });
 
     const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
+      if (terminalEventListeners.size === 0) {
+        return;
+      }
+
       const state = yield* readManagerState;
       const runningSessions = [...state.sessions.values()].filter(
         (session): session is TerminalSessionState & { pid: number } =>
@@ -1492,7 +1500,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       });
 
       yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
-        concurrency: "unbounded",
+        concurrency: subprocessPollConcurrency,
         discard: true,
       });
     });

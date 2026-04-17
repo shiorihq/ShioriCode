@@ -1,7 +1,9 @@
-import type { ThreadId } from "contracts";
-import { FolderIcon, GitForkIcon } from "lucide-react";
+import type { ProjectId, ThreadId } from "contracts";
+import { useNavigate } from "@tanstack/react-router";
+import { BoxIcon, FolderIcon, GitForkIcon } from "lucide-react";
 import { useCallback } from "react";
 
+import { openProjectDraftThread } from "../hooks/useHandleNewThread";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -42,6 +44,7 @@ export default function BranchToolbar({
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
   const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const navigate = useNavigate();
 
   const serverThread = threads.find((thread) => thread.id === threadId);
   const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
@@ -109,7 +112,44 @@ export default function BranchToolbar({
     ],
   );
 
+  const handleProjectChange = useCallback(
+    (nextProjectId: ProjectId) => {
+      if (!nextProjectId || nextProjectId === activeProjectId) {
+        return;
+      }
+      void openProjectDraftThread({
+        projectId: nextProjectId,
+        navigate,
+        routeThreadId: activeThreadId ?? null,
+      });
+    },
+    [activeProjectId, activeThreadId, navigate],
+  );
+
   if (!activeThreadId || !activeProject) return null;
+
+  const projectSelector = hasServerThread ? null : (
+    <Select
+      value={activeProject.id}
+      onValueChange={(value) => handleProjectChange(value as ProjectId)}
+      items={projects.map((project) => ({ value: project.id, label: project.name }))}
+    >
+      <SelectTrigger variant="ghost" size="xs" className="font-medium">
+        <BoxIcon className="size-3" />
+        <SelectValue className="max-w-[10rem] truncate" />
+      </SelectTrigger>
+      <SelectPopup>
+        {projects.map((project) => (
+          <SelectItem key={project.id} value={project.id}>
+            <span className="inline-flex items-center gap-1.5">
+              <BoxIcon className="size-3" />
+              <span className="truncate">{project.name}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
 
   const envModeSelector =
     envLocked || activeWorktreePath ? (
@@ -174,6 +214,7 @@ export default function BranchToolbar({
   if (inline) {
     return (
       <>
+        {projectSelector}
         {envModeSelector}
         {branchSelector}
       </>
@@ -182,7 +223,10 @@ export default function BranchToolbar({
 
   return (
     <div className="mx-auto flex w-full min-w-0 max-w-3xl items-center justify-between px-5 pb-3 pt-1">
-      {envModeSelector}
+      <div className="flex min-w-0 items-center gap-1">
+        {projectSelector}
+        {envModeSelector}
+      </div>
       {branchSelector}
     </div>
   );

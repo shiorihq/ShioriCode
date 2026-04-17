@@ -54,6 +54,7 @@ interface OpenPrInfo {
 
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
+  isDraft?: boolean;
   updatedAt: string | null;
 }
 
@@ -64,6 +65,7 @@ interface ResolvedPullRequest {
   baseBranch: string;
   headBranch: string;
   state: "open" | "closed" | "merged";
+  isDraft?: boolean;
 }
 
 interface PullRequestHeadRemoteInfo {
@@ -322,6 +324,7 @@ function toPullRequestInfo(summary: GitHubPullRequestSummary): PullRequestInfo {
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
+    ...(summary.isDraft !== undefined ? { isDraft: summary.isDraft } : {}),
     updatedAt: null,
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
@@ -515,6 +518,7 @@ function toResolvedPullRequest(pr: {
   baseRefName: string;
   headRefName: string;
   state?: "open" | "closed" | "merged";
+  isDraft?: boolean;
 }): ResolvedPullRequest {
   return {
     number: pr.number,
@@ -523,6 +527,7 @@ function toResolvedPullRequest(pr: {
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
     state: pr.state ?? "open",
+    ...(pr.isDraft !== undefined ? { isDraft: pr.isDraft } : {}),
   };
 }
 
@@ -694,7 +699,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
   const normalizeStatusCacheKey = (cwd: string) => canonicalizeExistingPath(cwd);
   const readStatus = Effect.fn("readStatus")(function* (cwd: string) {
-    const details = yield* gitCore.statusDetails(cwd).pipe(
+    const details = yield* gitCore.statusDetails(cwd, { refreshUpstream: false }).pipe(
       Effect.catchIf(isNotGitRepositoryError, () =>
         Effect.succeed({
           isRepo: false,
@@ -1326,6 +1331,77 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
 
+  const listOpenPullRequests: GitManagerShape["listOpenPullRequests"] = Effect.fn(
+    "listOpenPullRequests",
+  )(function* (input) {
+    const summaries = yield* gitHubCli.listPullRequests({
+      cwd: input.cwd,
+      filter: input.filter ?? "open",
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    });
+    return {
+      pullRequests: summaries.map((summary) => toResolvedPullRequest(summary)),
+    };
+  });
+
+  const getPullRequestDiff: GitManagerShape["getPullRequestDiff"] = Effect.fn("getPullRequestDiff")(
+    function* (input) {
+      const diff = yield* gitHubCli.getPullRequestDiff({
+        cwd: input.cwd,
+        number: input.number,
+      });
+      return { diff };
+    },
+  );
+
+  const summarizePullRequest: GitManagerShape["summarizePullRequest"] = Effect.fn(
+    "summarizePullRequest",
+  )(function* (input) {
+    const modelSelection = yield* serverSettingsService.getSettings.pipe(
+      Effect.map((settings) => settings.textGenerationModelSelection),
+      Effect.mapError((cause) =>
+        gitManagerError("summarizePullRequest", "Failed to get server settings.", cause),
+      ),
+    );
+    const prSummary =
+      input.title && input.baseBranch && input.headBranch
+        ? {
+            number: input.number,
+            title: input.title,
+            url: "",
+            baseRefName: input.baseBranch,
+            headRefName: input.headBranch,
+          }
+        : yield* gitHubCli.getPullRequest({
+            cwd: input.cwd,
+            reference: String(input.number),
+          });
+    const diff = yield* gitHubCli.getPullRequestDiff({
+      cwd: input.cwd,
+      number: input.number,
+    });
+    const generated = yield* textGeneration.generatePrContent({
+      cwd: input.cwd,
+      baseBranch: prSummary.baseRefName,
+      headBranch: prSummary.headRefName,
+      commitSummary: "",
+      diffSummary: `PR #${prSummary.number}: ${prSummary.title}`,
+      diffPatch: limitContext(diff, 60_000),
+      modelSelection,
+    });
+    return { summary: generated.body.trim() };
+  });
+
+  const getPullRequestConversation: GitManagerShape["getPullRequestConversation"] = Effect.fn(
+    "getPullRequestConversation",
+  )(function* (input) {
+    const conversation = yield* gitHubCli.getPullRequestConversation({
+      cwd: input.cwd,
+      number: input.number,
+    });
+    return conversation;
+  });
+
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -1689,6 +1765,10 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     status,
     resolvePullRequest,
     preparePullRequestThread,
+    listOpenPullRequests,
+    getPullRequestDiff,
+    summarizePullRequest,
+    getPullRequestConversation,
     runStackedAction,
   } satisfies GitManagerShape;
 });

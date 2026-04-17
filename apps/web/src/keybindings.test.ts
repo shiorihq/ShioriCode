@@ -83,6 +83,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
   { shortcut: modShortcut("o"), command: "project.add" },
+  { shortcut: { ...modShortcut("p"), modKey: false, metaKey: true }, command: "pullRequests.open" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -273,6 +274,10 @@ describe("shortcutLabelForCommand", () => {
       "⌘B",
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌘O");
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "pullRequests.open", "MacIntel"),
+      "⌘P",
+    );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⌘N");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
@@ -432,6 +437,16 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false, terminalOpen: false },
       }),
       "project.add",
+    );
+  });
+
+  it("resolves pullRequests.open shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false, terminalOpen: false },
+      }),
+      "pullRequests.open",
     );
   });
 

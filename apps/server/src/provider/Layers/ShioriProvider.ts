@@ -7,7 +7,11 @@ import type {
 } from "contracts";
 import { Effect, Layer, Stream } from "effect";
 
-import { buildServerProvider, providerModelsFromSettings } from "../providerSnapshot";
+import {
+  buildPendingServerProvider,
+  buildServerProvider,
+  providerModelsFromSettings,
+} from "../providerSnapshot";
 import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import { ShioriProvider } from "../Services/ShioriProvider";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
@@ -51,7 +55,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     } satisfies ModelCapabilities,
   },
   {
-    slug: "anthropic/claude-sonnet-4.5",
+    slug: "anthropic/claude-sonnet-4-5",
     name: "Claude Sonnet 4.5",
     isCustom: false,
     capabilities: {
@@ -168,6 +172,48 @@ const buildShioriProviderStatus = Effect.fn("buildShioriProviderStatus")(functio
   });
 });
 
+function buildPendingShioriProviderStatus(settings: {
+  enabled: boolean;
+  apiBaseUrl: string;
+  customModels: ReadonlyArray<string>;
+  authToken: string | null;
+}): ServerProvider {
+  const checkedAt = new Date().toISOString();
+  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, settings.customModels);
+
+  if (!settings.enabled) {
+    return buildPendingServerProvider({
+      provider: PROVIDER,
+      enabled: false,
+      installed: false,
+      checkedAt,
+      models,
+      auth: buildShioriAuth(settings),
+      message: "Shiori is disabled in ShioriCode settings.",
+    });
+  }
+
+  if (!settings.apiBaseUrl) {
+    return buildPendingServerProvider({
+      provider: PROVIDER,
+      enabled: true,
+      checkedAt,
+      models,
+      auth: buildShioriAuth(settings),
+      message: "Configure settings.providers.shiori.apiBaseUrl to enable Shiori API requests.",
+    });
+  }
+
+  return buildPendingServerProvider({
+    provider: PROVIDER,
+    enabled: true,
+    checkedAt,
+    models,
+    auth: buildShioriAuth(settings),
+    message: "Checking Shiori account access...",
+  });
+}
+
 export const ShioriProviderLive = Layer.effect(
   ShioriProvider,
   Effect.gen(function* () {
@@ -227,6 +273,7 @@ export const ShioriProviderLive = Layer.effect(
         Effect.flatten,
         Effect.orDie,
       ),
+      buildInitialSnapshot: buildPendingShioriProviderStatus,
       refreshInterval: "60 seconds",
     });
   }),

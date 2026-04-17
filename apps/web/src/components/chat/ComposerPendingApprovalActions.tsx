@@ -1,10 +1,12 @@
 import { type ApprovalRequestId, type ProviderApprovalDecision } from "contracts";
+import { Loader2Icon } from "lucide-react";
 import { memo } from "react";
 import { Button } from "../ui/button";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
   isResponding: boolean;
+  respondingDecision: ProviderApprovalDecision | null;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -14,6 +16,7 @@ interface ComposerPendingApprovalActionsProps {
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  respondingDecision,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
   return (
@@ -24,6 +27,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "cancel")}
       >
+        {respondingDecision === "cancel" ? (
+          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+        ) : null}
         Cancel turn
       </Button>
       <Button
@@ -32,6 +38,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "decline")}
       >
+        {respondingDecision === "decline" ? (
+          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+        ) : null}
         Decline
       </Button>
       <Button
@@ -40,7 +49,10 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
       >
-        Always allow this session
+        {respondingDecision === "acceptForSession" ? (
+          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+        ) : null}
+        Auto-approve for session
       </Button>
       <Button
         size="sm"
@@ -48,6 +60,9 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "accept")}
       >
+        {respondingDecision === "accept" ? (
+          <Loader2Icon className="mr-1.5 size-3.5 animate-spin" />
+        ) : null}
         Approve once
       </Button>
     </>

@@ -8,6 +8,6 @@ export function truncate(text: string, maxLength = 50): string {
 }
 
 export function normalizeProjectTitle(title: string): string {
-  const normalized = title.trim().toLowerCase();
+  const normalized = title.trim();
   return normalized.length > 0 ? normalized : "project";
 }

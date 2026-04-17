@@ -43,6 +43,8 @@ const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
+export const GitPullRequestListFilter = Schema.Literals(["open", "closed", "draft"]);
+export type GitPullRequestListFilter = typeof GitPullRequestListFilter.Type;
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
@@ -85,13 +87,14 @@ const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
-const GitResolvedPullRequest = Schema.Struct({
+export const GitResolvedPullRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitPullRequestState,
+  isDraft: Schema.optional(Schema.Boolean),
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
@@ -174,6 +177,34 @@ export const GitInitInput = Schema.Struct({
 });
 export type GitInitInput = typeof GitInitInput.Type;
 
+export const GitListOpenPullRequestsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(200))),
+  filter: Schema.optional(GitPullRequestListFilter),
+});
+export type GitListOpenPullRequestsInput = typeof GitListOpenPullRequestsInput.Type;
+
+export const GitPullRequestDiffInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  number: PositiveInt,
+});
+export type GitPullRequestDiffInput = typeof GitPullRequestDiffInput.Type;
+
+export const GitSummarizePullRequestInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  number: PositiveInt,
+  title: Schema.optional(TrimmedNonEmptyStringSchema),
+  baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+  headBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type GitSummarizePullRequestInput = typeof GitSummarizePullRequestInput.Type;
+
+export const GitPullRequestConversationInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  number: PositiveInt,
+});
+export type GitPullRequestConversationInput = typeof GitPullRequestConversationInput.Type;
+
 // RPC Results
 
 const GitStatusPr = Schema.Struct({
@@ -234,6 +265,58 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
+
+export const GitListOpenPullRequestsResult = Schema.Struct({
+  pullRequests: Schema.Array(GitResolvedPullRequest),
+});
+export type GitListOpenPullRequestsResult = typeof GitListOpenPullRequestsResult.Type;
+
+export const GitPullRequestDiffResult = Schema.Struct({
+  diff: Schema.String,
+});
+export type GitPullRequestDiffResult = typeof GitPullRequestDiffResult.Type;
+
+export const GitSummarizePullRequestResult = Schema.Struct({
+  summary: Schema.String,
+});
+export type GitSummarizePullRequestResult = typeof GitSummarizePullRequestResult.Type;
+
+export const GitPullRequestReviewState = Schema.Literals([
+  "approved",
+  "changes_requested",
+  "commented",
+  "dismissed",
+  "pending",
+]);
+export type GitPullRequestReviewState = typeof GitPullRequestReviewState.Type;
+
+export const GitPullRequestComment = Schema.Struct({
+  id: Schema.String,
+  author: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  body: Schema.String,
+  createdAt: Schema.String,
+  url: Schema.optional(Schema.String),
+});
+export type GitPullRequestComment = typeof GitPullRequestComment.Type;
+
+export const GitPullRequestReview = Schema.Struct({
+  id: Schema.String,
+  author: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  body: Schema.String,
+  state: GitPullRequestReviewState,
+  submittedAt: Schema.String,
+  url: Schema.optional(Schema.String),
+});
+export type GitPullRequestReview = typeof GitPullRequestReview.Type;
+
+export const GitPullRequestConversationResult = Schema.Struct({
+  description: Schema.String,
+  descriptionAuthor: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  descriptionCreatedAt: Schema.NullOr(Schema.String),
+  comments: Schema.Array(GitPullRequestComment),
+  reviews: Schema.Array(GitPullRequestReview),
+});
+export type GitPullRequestConversationResult = typeof GitPullRequestConversationResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

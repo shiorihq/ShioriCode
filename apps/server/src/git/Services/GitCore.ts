@@ -154,7 +154,10 @@ export interface GitCoreShape {
   /**
    * Read detailed working tree / branch status for a repository.
    */
-  readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+  readonly statusDetails: (
+    cwd: string,
+    options?: { refreshUpstream?: boolean },
+  ) => Effect.Effect<GitStatusDetails, GitCommandError>;
 
   /**
    * Build staged change context for commit generation.

@@ -319,7 +319,13 @@ export function HostedShioriAuthPanel(props?: {
               </div>
             </div>
 
-            <div className="space-y-3">
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handlePasswordSubmit();
+              }}
+            >
               {(stage === "signIn" || stage === "signUp" || stage === "forgot") && (
                 <div className="space-y-2">
                   <Label htmlFor="hosted-auth-email">Email</Label>
@@ -330,6 +336,7 @@ export function HostedShioriAuthPanel(props?: {
                     type="email"
                     autoComplete="email"
                     spellCheck={false}
+                    required
                     disabled={disabled}
                   />
                 </div>
@@ -344,6 +351,7 @@ export function HostedShioriAuthPanel(props?: {
                     onChange={(event) => setPassword(event.target.value)}
                     type="password"
                     autoComplete={stage === "signIn" ? "current-password" : "new-password"}
+                    required
                     disabled={disabled}
                   />
                 </div>
@@ -361,6 +369,7 @@ export function HostedShioriAuthPanel(props?: {
                       value={code}
                       onChange={(event) => setCode(event.target.value)}
                       autoComplete="one-time-code"
+                      required
                       disabled={disabled}
                     />
                   </div>
@@ -379,6 +388,7 @@ export function HostedShioriAuthPanel(props?: {
                       value={code}
                       onChange={(event) => setCode(event.target.value)}
                       autoComplete="one-time-code"
+                      required
                       disabled={disabled}
                     />
                   </div>
@@ -390,6 +400,7 @@ export function HostedShioriAuthPanel(props?: {
                       onChange={(event) => setNewPassword(event.target.value)}
                       type="password"
                       autoComplete="new-password"
+                      required
                       disabled={disabled}
                     />
                   </div>
@@ -402,8 +413,8 @@ export function HostedShioriAuthPanel(props?: {
               <Button
                 className="w-full"
                 size={props?.compact ? "sm" : "default"}
+                type="submit"
                 disabled={disabled || isAuthLoading}
-                onClick={handlePasswordSubmit}
               >
                 {pendingAction?.startsWith("password:") ? (
                   <LoadingText>{pendingPasswordLabel}</LoadingText>
@@ -502,7 +513,7 @@ export function HostedShioriAuthPanel(props?: {
                   </button>
                 )}
               </div>
-            </div>
+            </form>
           </>
         )}
       </div>

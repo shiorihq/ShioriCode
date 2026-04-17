@@ -18,6 +18,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadRowClickAction,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -58,6 +59,7 @@ describe("hasUnseenCompletion", () => {
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
         session: null,
+        resumeState: "resumed",
       }),
     ).toBe(true);
   });
@@ -614,6 +616,68 @@ describe("isContextMenuPointerDown", () => {
   });
 });
 
+describe("resolveThreadRowClickAction", () => {
+  it("treats macOS ctrl+click as a context-menu gesture", () => {
+    expect(
+      resolveThreadRowClickAction({
+        button: 0,
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        isMac: true,
+      }),
+    ).toBe("noop");
+  });
+
+  it("uses cmd-click for multi-select on macOS", () => {
+    expect(
+      resolveThreadRowClickAction({
+        button: 0,
+        ctrlKey: false,
+        metaKey: true,
+        shiftKey: false,
+        isMac: true,
+      }),
+    ).toBe("toggle-selection");
+  });
+
+  it("uses ctrl-click for multi-select on non-macOS platforms", () => {
+    expect(
+      resolveThreadRowClickAction({
+        button: 0,
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        isMac: false,
+      }),
+    ).toBe("toggle-selection");
+  });
+
+  it("uses shift-click for range selection", () => {
+    expect(
+      resolveThreadRowClickAction({
+        button: 0,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: true,
+        isMac: false,
+      }),
+    ).toBe("range-select");
+  });
+
+  it("navigates on an unmodified primary click", () => {
+    expect(
+      resolveThreadRowClickAction({
+        button: 0,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        isMac: false,
+      }),
+    ).toBe("navigate");
+  });
+});
+
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
@@ -622,6 +686,7 @@ describe("resolveThreadStatusPill", () => {
     interactionMode: "plan" as const,
     latestTurn: null,
     lastVisitedAt: undefined,
+    resumeState: "resumed" as const,
     session: {
       provider: "codex" as const,
       status: "running" as const,
@@ -658,6 +723,22 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while a turn is locally pending before the session flips running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingDispatch: true,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "idle",
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -710,31 +791,39 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({ label: "Completed", dotClass: "bg-primary", pulse: false });
   });
 });
 
 describe("resolveThreadRowClassName", () => {
   it("uses the darker selected palette when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-primary/22");
-    expect(className).toContain("hover:bg-primary/26");
-    expect(className).toContain("dark:bg-primary/30");
-    expect(className).not.toContain("bg-accent/85");
+    expect(className).toContain("sidebar-thread-row");
+    expect(className).toContain("sidebar-thread-row--selected-active");
+    expect(className).toContain("font-medium");
+    expect(className).not.toContain("sidebar-thread-row--active");
   });
 
   it("uses selected hover colors for selected threads", () => {
     const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-primary/15");
-    expect(className).toContain("hover:bg-primary/19");
-    expect(className).toContain("dark:bg-primary/22");
-    expect(className).not.toContain("hover:bg-accent");
+    expect(className).toContain("sidebar-thread-row");
+    expect(className).toContain("sidebar-thread-row--selected");
+    expect(className).not.toContain("sidebar-thread-row--active");
   });
 
   it("keeps the accent palette for active-only threads", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-accent/85");
-    expect(className).toContain("hover:bg-accent");
+    expect(className).toContain("sidebar-thread-row");
+    expect(className).toContain("sidebar-thread-row--active");
+    expect(className).toContain("font-medium");
+  });
+
+  it("keeps inactive thread titles on the standard foreground color", () => {
+    const className = resolveThreadRowClassName({ isActive: false, isSelected: false });
+    expect(className).toContain("sidebar-thread-row");
+    expect(className).toContain("text-foreground");
+    expect(className).not.toContain("sidebar-thread-row--active");
+    expect(className).not.toContain("sidebar-thread-row--selected");
   });
 });
 
@@ -873,6 +962,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
+    resumeState: "resumed",
     messages: [],
     proposedPlans: [],
     error: null,

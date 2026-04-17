@@ -19,7 +19,6 @@ import {
   Scope,
   ServiceMap,
 } from "effect";
-import { execFileSync } from "node:child_process";
 import { normalizeProjectTitle } from "shared/String";
 
 import { ServerConfig } from "./config";
@@ -32,31 +31,8 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
-/**
- * Tries to resolve the project title from the git remote origin URL as `owner/repo`.
- * Falls back to the basename of the cwd if not a git repo or no parseable remote.
- */
-function resolveProjectTitle(cwd: string, pathService: Path.Path): string {
-  try {
-    const remoteUrl = execFileSync("git", ["remote", "get-url", "origin"], {
-      cwd,
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-
-    const match = /[/:]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/.exec(remoteUrl);
-    if (match?.[1]) {
-      const normalizedTitle = normalizeProjectTitle(match[1]);
-      if (normalizedTitle.length > 0) {
-        return normalizedTitle;
-      }
-    }
-  } catch {
-    // Not a git repo or no origin remote — fall through
-  }
-  const fallbackTitle = normalizeProjectTitle(pathService.basename(cwd));
-  return fallbackTitle.length > 0 ? fallbackTitle : "project";
+function resolveProjectTitle(cwd: string, pathService: Pick<Path.Path, "basename">): string {
+  return normalizeProjectTitle(pathService.basename(cwd));
 }
 
 const isWildcardHost = (host: string | undefined): boolean =>
@@ -176,12 +152,13 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
   Effect.asVoid,
 );
 
-const autoBootstrapWelcome = Effect.gen(function* () {
+export const autoBootstrapWelcome = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const serverSettings = yield* ServerSettingsService;
   const path = yield* Path.Path;
+  const bootstrapProjectTitle = resolveProjectTitle(serverConfig.cwd, path);
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
@@ -197,7 +174,6 @@ const autoBootstrapWelcome = Effect.gen(function* () {
       if (Option.isNone(existingProject)) {
         const createdAt = new Date().toISOString();
         nextProjectId = ProjectId.makeUnsafe(crypto.randomUUID());
-        const bootstrapProjectTitle = resolveProjectTitle(serverConfig.cwd, path);
         const settings = yield* serverSettings.getSettings;
         nextProjectDefaultModelSelection =
           settings.defaultModelSelection ?? DEFAULT_SERVER_SETTINGS.defaultModelSelection;
@@ -216,6 +192,14 @@ const autoBootstrapWelcome = Effect.gen(function* () {
           existingProject.value.defaultModelSelection ??
           (yield* serverSettings.getSettings).defaultModelSelection ??
           DEFAULT_SERVER_SETTINGS.defaultModelSelection;
+        if (normalizeProjectTitle(existingProject.value.title) !== bootstrapProjectTitle) {
+          yield* orchestrationEngine.dispatch({
+            type: "project.meta.update",
+            commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+            projectId: nextProjectId,
+            title: bootstrapProjectTitle,
+          });
+        }
       }
 
       const existingThreadId =
@@ -247,13 +231,9 @@ const autoBootstrapWelcome = Effect.gen(function* () {
     });
   }
 
-  const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
-  const rawProjectName = segments[segments.length - 1] ?? "project";
-  const projectName = normalizeProjectTitle(rawProjectName) || "project";
-
   return {
     cwd: serverConfig.cwd,
-    projectName,
+    projectName: bootstrapProjectTitle,
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
   } as const;

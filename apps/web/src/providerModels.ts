@@ -2,6 +2,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelCapabilities,
   type ProviderKind,
+  PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
   type ServerProviderModel,
 } from "contracts";
@@ -45,6 +46,27 @@ export function resolveSelectableProvider(
     return requested;
   }
   return providers.find((candidate) => candidate.enabled)?.provider ?? requested;
+}
+
+export function getProviderUnavailableReason(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): string | null {
+  const snapshot = getProviderSnapshot(providers, provider);
+  if (!snapshot || snapshot.status === "ready") {
+    return null;
+  }
+
+  const providerLabel = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  if (!snapshot.enabled || snapshot.status === "disabled") {
+    return `${providerLabel} is disabled in settings.`;
+  }
+  if (snapshot.message && snapshot.message.trim().length > 0) {
+    return snapshot.message;
+  }
+  return snapshot.status === "error"
+    ? `${providerLabel} provider is unavailable.`
+    : `${providerLabel} provider is not ready yet. Resolve the provider warning before starting a turn.`;
 }
 
 export function getProviderModelCapabilities(

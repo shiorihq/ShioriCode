@@ -13,7 +13,7 @@ Methods mirror the `NativeApi` interface defined in `contracts`:
 - `providers.respondToRequest`, `providers.stopSession`
 - `shell.openInEditor`, `server.getConfig`
 
-Codex is the only implemented provider. `claudeCode` is reserved in contracts/UI.
+The local app currently exposes Shiori, Codex, and Claude provider integrations through the shared orchestration pipeline. Provider availability and readiness still depend on the runtime environment, auth state, and any hosted rollout gates.
 
 ## Client transport
 

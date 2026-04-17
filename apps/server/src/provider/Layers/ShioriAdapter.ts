@@ -1,7 +1,3 @@
-// @effect-diagnostics anyUnknownInErrorContext:off
-// @effect-diagnostics tryCatchInEffectGen:off
-// @effect-diagnostics unnecessaryFailYieldableError:off
-// @effect-diagnostics runEffectInsideEffect:off
 import { readFile } from "node:fs/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -36,12 +32,14 @@ import {
   type UIMessageChunk,
   uiMessageChunkSchema,
 } from "ai";
-import { Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
+import { Duration, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
 import {
   classifyProviderToolLifecycleItemType,
   classifyProviderToolRequestKind,
   providerToolTitle,
+  summarizeProviderToolInvocation,
 } from "shared/providerTool";
+import { resolveModelSlugForProvider } from "shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts";
@@ -52,15 +50,23 @@ import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import {
   buildProviderMcpToolRuntime,
+  loadEffectiveMcpServersForProvider,
   type ProviderMcpToolExecutor,
   type ProviderMcpToolRuntime,
 } from "../mcpServers.ts";
+import { buildShioriSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { ShioriAdapter } from "../Services/ShioriAdapter.ts";
+import { executeShioriWebSearch } from "../shioriWebSearch.ts";
+import {
+  fetchShioriCodeBootstrap,
+  type ShioriCodeBootstrapConfig,
+  type ShioriCodeBootstrapProbe,
+} from "../shioriCodeBootstrap.ts";
+import { ShioriAdapter, type ShioriAdapterShape } from "../Services/ShioriAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 
 const PROVIDER = "shiori" as const;
@@ -145,6 +151,7 @@ interface ShioriRuntimePromptContext {
   readonly timeZone?: string | undefined;
   readonly personality?: AssistantPersonality | undefined;
   readonly interactionMode?: "default" | "plan" | undefined;
+  readonly skillPrompt?: string | undefined;
 }
 
 function resolveLocalTimeZone(): string {
@@ -199,6 +206,7 @@ export function buildShioriWorkspaceRules(
           ].join("\n"),
         ]
       : []),
+    ...(input.skillPrompt ? [input.skillPrompt] : []),
     ...(personalityAppendix ? [personalityAppendix] : []),
     [
       "## Runtime Context",
@@ -222,9 +230,11 @@ const MAX_PERSISTED_MESSAGES = 48;
 const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
 const LOCAL_TOOL_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_TOOL_FILE_CHARS = 20_000;
+const MAX_TOOL_COMMAND_OUTPUT_CHARS = 12_000;
 const MAX_SUBAGENT_TOOL_ROUNDS = 16;
 const SUBAGENT_NOTIFICATION_OPEN_TAG = "<subagent_notification>";
 const SUBAGENT_NOTIFICATION_CLOSE_TAG = "</subagent_notification>";
+const INTERNAL_HOSTED_TOOL_NAMES = new Set(["wait_for_response"]);
 const SUBAGENT_TOOL_NAMES = new Set([
   "spawn_agent",
   "send_input",
@@ -233,6 +243,29 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "agent",
   "send_message",
 ]);
+const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
+  approvalPolicies: {
+    fileWrite: "ask",
+    shellCommand: "ask",
+    destructiveChange: "ask",
+    networkCommand: "ask",
+    mcpSideEffect: "ask",
+    outsideWorkspace: "ask",
+  },
+  protectedPaths: [
+    ".git",
+    ".env",
+    ".env.*",
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/.shioricode",
+  ],
+  subagents: {
+    enabled: false,
+    profiles: {},
+  },
+};
 
 export type ApprovalRequestKind = "command" | "file-read" | "file-change";
 
@@ -251,6 +284,56 @@ type ShioriResumeCursor = {
     readonly items?: ReadonlyArray<unknown>;
     readonly messageCount: number;
   }>;
+  readonly runtime?: {
+    readonly activeTurn?: {
+      readonly turnId: string;
+      readonly interactionMode: "default" | "plan";
+      readonly modelSettings?: HostedShioriModelSettings;
+    };
+    readonly pendingApprovals?: ReadonlyArray<{
+      readonly requestId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly input: Record<string, unknown>;
+      readonly assistantMessageId: string;
+      readonly approvalId?: string;
+      readonly requestKind?: ApprovalRequestKind;
+      readonly callProviderMetadata?: unknown;
+    }>;
+    readonly pendingUserInputs?: ReadonlyArray<{
+      readonly requestId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly input: Record<string, unknown>;
+      readonly assistantMessageId: string;
+      readonly callProviderMetadata?: unknown;
+    }>;
+    readonly allowedRequestKinds?: ReadonlyArray<ApprovalRequestKind>;
+    readonly subagents?: ReadonlyArray<{
+      readonly id: string;
+      readonly taskName: string;
+      readonly nickname?: string | null;
+      readonly toolStyle: "codex" | "claude";
+      readonly description: string;
+      readonly subagentType?: string | null;
+      readonly modelId: string;
+      readonly status: ShioriSubagentLifecycleStatus;
+      readonly queuedInputs?: ReadonlyArray<{
+        readonly id: string;
+        readonly prompt: string;
+        readonly submittedAt: string;
+      }>;
+      readonly history?: ReadonlyArray<HostedShioriMessage>;
+      readonly terminalSequence?: number;
+      readonly createdAt: string;
+      readonly updatedAt: string;
+      readonly parentTurnId?: string;
+      readonly parentToolUseId?: string;
+      readonly lastSummary?: string;
+      readonly lastError?: string;
+    }>;
+    readonly pendingSubagentNotifications?: ReadonlyArray<string>;
+  };
 };
 
 interface ActiveTurnState {
@@ -261,9 +344,12 @@ interface ActiveTurnState {
   readonly mcpToolDescriptors: ReadonlyArray<HostedToolDescriptor>;
   readonly mcpTools: ReadonlyMap<string, ProviderMcpToolExecutor>;
   readonly closeMcpTools: () => Promise<void>;
+  readonly skillPrompt?: string | undefined;
   readonly modelSettings?: HostedShioriModelSettings | undefined;
+  hostedBootstrap?: ShioriCodeBootstrapConfig | null;
   assistantText: string;
   assistantFinalText: string;
+  assistantActiveItemId: RuntimeItemId | null;
   assistantStarted: boolean;
   commentaryCount: number;
   reasoningBlocks: Map<
@@ -278,6 +364,8 @@ interface ActiveTurnState {
   >;
   reasoningBlockOrder: string[];
 }
+
+type ShioriSessionToolRuntime = ProviderSkillRuntime;
 
 interface HostedShioriModelSettings {
   readonly reasoningEnabled?: boolean;
@@ -296,6 +384,7 @@ interface HostedToolContext {
   session: Pick<ProviderSession, "runtimeMode">;
   interactionMode?: "default" | "plan";
   mcpToolDescriptors?: ReadonlyArray<HostedToolDescriptor>;
+  hostedBootstrap?: ShioriCodeBootstrapConfig | null;
 }
 
 interface PendingToolCall {
@@ -308,6 +397,21 @@ interface PendingToolCall {
   requestKind?: ApprovalRequestKind;
   callProviderMetadata?: unknown;
   reasoningBlockIds?: string[];
+}
+
+interface DecodedShioriResumeState {
+  readonly messages: HostedShioriMessage[];
+  readonly turns: ShioriTurnState[];
+  readonly activeTurnSnapshot: {
+    readonly turnId: TurnId;
+    readonly interactionMode: "default" | "plan";
+    readonly modelSettings?: HostedShioriModelSettings;
+  } | null;
+  readonly pendingApprovals: ReadonlyArray<PendingToolCall>;
+  readonly pendingUserInputs: ReadonlyArray<PendingToolCall>;
+  readonly allowedRequestKinds: ReadonlyArray<ApprovalRequestKind>;
+  readonly subagents: ReadonlyArray<ShioriSubagentState>;
+  readonly pendingSubagentNotifications: ReadonlyArray<string>;
 }
 
 type ShioriSubagentLifecycleStatus =
@@ -355,6 +459,7 @@ interface ShioriSessionContext {
   messages: HostedShioriMessage[];
   turns: ShioriTurnState[];
   activeTurn: ActiveTurnState | null;
+  toolRuntime: ShioriSessionToolRuntime | null;
   pendingApprovals: Map<ApprovalRequestId, PendingToolCall>;
   pendingUserInputs: Map<ApprovalRequestId, PendingToolCall>;
   allowedRequestKinds: Set<ApprovalRequestKind>;
@@ -369,6 +474,25 @@ export interface ShioriAdapterLiveOptions {
     readonly servers: ReadonlyArray<McpServerEntry>;
     readonly cwd?: string;
   }) => Promise<ProviderMcpToolRuntime>;
+  readonly buildSkillToolRuntime?: (input: {
+    readonly cwd?: string;
+  }) => Promise<ProviderSkillRuntime>;
+  readonly fetchBootstrapProbe?: (input: {
+    readonly apiBaseUrl: string;
+    readonly authToken: string | null;
+  }) => Effect.Effect<ShioriCodeBootstrapProbe>;
+  // Max retry attempts for transient hosted-stream failures (default 3). Set to 0
+  // to disable retries. Tests typically override this to produce deterministic
+  // attempt counts.
+  readonly maxFetchRetries?: number;
+  // Delay before the nth retry attempt (1-indexed). Default is exponential backoff
+  // starting at 250ms. Tests commonly override this to () => 0.
+  readonly fetchRetryDelayMs?: (attempt: number) => number;
+  // Overridable stream-read timeout. Tests can shorten this to exercise the timeout
+  // path without waiting 5 minutes.
+  readonly streamReadTimeout?: Duration.Input;
+  // Overridable payload byte cap. Tests can lower this to force an overflow error.
+  readonly maxStreamBytes?: number;
 }
 
 function buildHostedModelSettings(
@@ -422,6 +546,131 @@ function describeToken(token: string | null | undefined) {
   };
 }
 
+const SHIORI_API_VERSION = "1" as const;
+// 300s is the remote Next.js maxDuration; allow 15s buffer for the final chunk / close.
+const STREAM_READ_TIMEOUT = Duration.seconds(315);
+// Hard cap on the total bytes the adapter will consume from the hosted stream. Matches
+// remote practice of ~16 MiB max response and protects against runaway/malformed bodies.
+const MAX_STREAM_BYTES = 16 * 1024 * 1024;
+// Exponential backoff: 250ms, 500ms, 1s — up to 3 retries (4 attempts total).
+const FETCH_RETRY_MAX_ATTEMPTS = 3;
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableCause(cause: unknown): boolean {
+  if (cause === undefined || cause === null) {
+    return false;
+  }
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const needle = message.toLowerCase();
+  return (
+    needle.includes("econnreset") ||
+    needle.includes("econnrefused") ||
+    needle.includes("eai_again") ||
+    needle.includes("etimedout") ||
+    needle.includes("enetunreach") ||
+    needle.includes("socket hang up") ||
+    needle.includes("network error") ||
+    needle.includes("fetch failed") ||
+    needle.includes("terminated") ||
+    needle.includes("other side closed")
+  );
+}
+
+function isAbortCause(cause: unknown): boolean {
+  if (cause instanceof Error && cause.name === "AbortError") {
+    return true;
+  }
+  const message = cause instanceof Error ? cause.message : String(cause ?? "");
+  return message.toLowerCase().includes("aborted");
+}
+
+interface HostedFetchFailure {
+  readonly kind: "http" | "network" | "timeout";
+  readonly status?: number;
+  readonly detail: string;
+  readonly retryable: boolean;
+  readonly cause?: unknown;
+}
+
+function buildShioriRequestHeaders(input: {
+  authToken: string;
+  contentLength: number;
+}): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Content-Length": String(input.contentLength),
+    "X-Convex-Auth-Token": input.authToken,
+    "X-Shiori-Client": "electron",
+    "X-ShioriCode-Api-Version": SHIORI_API_VERSION,
+    "User-Agent": "ShioriCode-macOS/1.0",
+  };
+}
+
+// Wrap a byte stream with a running size cap. If the cap is exceeded, the stream errors
+// so the downstream reader surfaces the failure instead of the adapter silently OOMing.
+function boundStreamSize(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): ReadableStream<Uint8Array> {
+  let bytesSeen = 0;
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytesSeen += chunk.byteLength;
+      if (bytesSeen > maxBytes) {
+        controller.error(
+          new Error(
+            `Shiori stream exceeded maximum size (${maxBytes} bytes); aborting to avoid runaway memory use.`,
+          ),
+        );
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+  return body.pipeThrough(transform);
+}
+
+// Read a failure body once the hosted API returns a non-2xx response. Prefer JSON error
+// objects, fall back to plain text, and never let the response body read itself throw.
+const readHostedFailureDetail = (response: Response) =>
+  Effect.tryPromise({
+    try: async () => {
+      const text = await response.text();
+      const trimmed = text.trim();
+      if (trimmed.length === 0) {
+        return `Shiori API returned ${response.status} ${response.statusText}`.trim();
+      }
+      if (trimmed.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(trimmed) as unknown;
+          if (parsed && typeof parsed === "object") {
+            const errorField = (parsed as Record<string, unknown>).error;
+            const detailField = (parsed as Record<string, unknown>).detail;
+            const messageField = (parsed as Record<string, unknown>).message;
+            const candidate =
+              typeof errorField === "string"
+                ? errorField
+                : typeof messageField === "string"
+                  ? messageField
+                  : typeof detailField === "string"
+                    ? detailField
+                    : null;
+            if (candidate && candidate.trim().length > 0) {
+              return candidate.trim();
+            }
+          }
+        } catch {
+          // fall through to raw text
+        }
+      }
+      return trimmed;
+    },
+    catch: () => `Shiori API returned ${response.status} ${response.statusText}`.trim(),
+  }).pipe(Effect.orElseSucceed(() => `Shiori API returned ${response.status}`.trim()));
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -465,7 +714,7 @@ function hasMessageParts(message: HostedShioriMessage): boolean {
   return Array.isArray(message.parts) && message.parts.length > 0;
 }
 
-function assistantToolMessage(input: {
+function buildAssistantToolPart(input: {
   messageId: string;
   text: string;
   reasoningParts?: ReadonlyArray<HostedShioriMessage["parts"][number]>;
@@ -484,7 +733,7 @@ function assistantToolMessage(input: {
   errorText?: string;
   callProviderMetadata?: unknown;
   resultProviderMetadata?: unknown;
-}): HostedShioriMessage {
+}): HostedShioriMessage["parts"][number] {
   const toolPart: any = {
     type: "dynamic-tool",
     toolName: input.toolName,
@@ -519,12 +768,61 @@ function assistantToolMessage(input: {
       toolPart.approval = { id: input.approvalId, approved: true };
     }
   }
+  return toolPart;
+}
+
+function assistantToolMessage(input: {
+  messageId: string;
+  text: string;
+  reasoningParts?: ReadonlyArray<HostedShioriMessage["parts"][number]>;
+  toolName: string;
+  toolCallId: string;
+  toolInput: Record<string, unknown>;
+  state:
+    | "input-available"
+    | "approval-requested"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  approvalId?: string;
+  approved?: boolean;
+  output?: unknown;
+  errorText?: string;
+  callProviderMetadata?: unknown;
+  resultProviderMetadata?: unknown;
+}): HostedShioriMessage {
   return assistantMessageWithParts({
     messageId: input.messageId,
     text: input.text,
     ...(input.reasoningParts ? { reasoningParts: input.reasoningParts } : {}),
-    extraParts: [toolPart],
+    extraParts: [buildAssistantToolPart(input)],
   });
+}
+
+function replaceToolPartInMessage(input: {
+  message: HostedShioriMessage;
+  toolCallId: string;
+  nextToolPart: HostedShioriMessage["parts"][number];
+}): HostedShioriMessage {
+  if (!Array.isArray(input.message.parts)) {
+    return input.message;
+  }
+
+  let changed = false;
+  const nextParts = input.message.parts.map((part) => {
+    if (
+      part &&
+      typeof part === "object" &&
+      part.type === "dynamic-tool" &&
+      part.toolCallId === input.toolCallId
+    ) {
+      changed = true;
+      return input.nextToolPart;
+    }
+    return part;
+  });
+
+  return changed ? { ...input.message, parts: nextParts } : input.message;
 }
 
 export function toolRequestKind(toolName: string): ApprovalRequestKind | undefined {
@@ -533,6 +831,10 @@ export function toolRequestKind(toolName: string): ApprovalRequestKind | undefin
 
 function isSubagentToolName(toolName: string): boolean {
   return SUBAGENT_TOOL_NAMES.has(toolName);
+}
+
+function isInternalHostedToolName(toolName: string): boolean {
+  return INTERNAL_HOSTED_TOOL_NAMES.has(toolName);
 }
 
 function sanitizeTaskName(value: unknown): string {
@@ -596,10 +898,129 @@ function clampSubagentWaitTimeout(value: unknown): number {
   return Math.max(1, Math.min(120_000, Math.round(value)));
 }
 
+function effectiveShioriBootstrap(
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
+): ShioriCodeBootstrapConfig {
+  return bootstrap ?? CONSERVATIVE_SHIORI_BOOTSTRAP;
+}
+
+function hostedPolicyAsks(
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
+  ...keys: ReadonlyArray<keyof ShioriCodeBootstrapConfig["approvalPolicies"]>
+): boolean {
+  const resolvedBootstrap = effectiveShioriBootstrap(bootstrap);
+  return keys.some((key) => resolvedBootstrap.approvalPolicies[key] === "ask");
+}
+
+function canUseHostedSubagentTool(
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
+  toolName: string,
+): boolean {
+  const resolvedBootstrap = effectiveShioriBootstrap(bootstrap);
+  if (!resolvedBootstrap.subagents?.enabled) {
+    return false;
+  }
+
+  return Object.values(resolvedBootstrap.subagents.profiles).some(
+    (profile) => profile?.supported === true && profile.tools.includes(toolName),
+  );
+}
+
+function isHostedApprovalRequired(input: {
+  toolName: string;
+  requestKind: ApprovalRequestKind | undefined;
+  runtimeMode: ProviderSession["runtimeMode"];
+  allowedRequestKinds: ReadonlySet<ApprovalRequestKind>;
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined;
+}): boolean {
+  const runtimeRequiresApproval =
+    input.requestKind !== undefined &&
+    input.runtimeMode !== "full-access" &&
+    !input.allowedRequestKinds.has(input.requestKind);
+  if (runtimeRequiresApproval) {
+    return true;
+  }
+
+  switch (input.toolName) {
+    case "write_file":
+    case "apply_patch":
+      return hostedPolicyAsks(input.bootstrap, "fileWrite", "destructiveChange");
+    case "exec_command":
+      return hostedPolicyAsks(
+        input.bootstrap,
+        "shellCommand",
+        "networkCommand",
+        "outsideWorkspace",
+      );
+    default:
+      return false;
+  }
+}
+
+function canPersistSessionApproval(input: {
+  toolName: string;
+  requestKind: ApprovalRequestKind | undefined;
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined;
+}): boolean {
+  if (input.requestKind === undefined) {
+    return false;
+  }
+
+  switch (input.toolName) {
+    case "write_file":
+    case "apply_patch":
+      return !hostedPolicyAsks(input.bootstrap, "fileWrite", "destructiveChange");
+    case "exec_command":
+      return !hostedPolicyAsks(
+        input.bootstrap,
+        "shellCommand",
+        "networkCommand",
+        "outsideWorkspace",
+      );
+    default:
+      return true;
+  }
+}
+
+function withHostedToolApproval(
+  descriptor: HostedToolDescriptor,
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
+): HostedToolDescriptor {
+  const schema = { ...descriptor.inputSchema };
+  const requestKindValue = schema["x-shioricode-request-kind"];
+  const requestKind =
+    requestKindValue === "command" ||
+    requestKindValue === "file-read" ||
+    requestKindValue === "file-change"
+      ? requestKindValue
+      : undefined;
+  const alreadyNeedsApproval = schema["x-shioricode-needs-approval"] === true;
+  const mcpNeedsApproval =
+    requestKind !== "file-read" && hostedPolicyAsks(bootstrap, "mcpSideEffect");
+
+  if (!alreadyNeedsApproval && !mcpNeedsApproval) {
+    return descriptor;
+  }
+
+  return {
+    ...descriptor,
+    inputSchema: {
+      ...schema,
+      "x-shioricode-needs-approval": alreadyNeedsApproval || mcpNeedsApproval,
+    },
+  };
+}
+
 export function buildHostedToolDescriptors(input: HostedToolContext): HostedToolDescriptor[] {
   const runtimeMode = input.session.runtimeMode;
-  const requiresApproval = (kind: ApprovalRequestKind) =>
-    runtimeMode !== "full-access" && !input.allowedRequestKinds.has(kind);
+  const requiresApproval = (toolName: string, kind: ApprovalRequestKind | undefined) =>
+    isHostedApprovalRequired({
+      toolName,
+      requestKind: kind,
+      runtimeMode,
+      allowedRequestKinds: input.allowedRequestKinds,
+      bootstrap: input.hostedBootstrap,
+    });
 
   const descriptors: HostedToolDescriptor[] = [
     {
@@ -617,7 +1038,7 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         },
         additionalProperties: false,
         "x-shioricode-request-kind": "file-read",
-        "x-shioricode-needs-approval": requiresApproval("file-read"),
+        "x-shioricode-needs-approval": requiresApproval("list_directory", "file-read"),
       },
     },
     {
@@ -632,7 +1053,7 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         required: ["path"],
         additionalProperties: false,
         "x-shioricode-request-kind": "file-read",
-        "x-shioricode-needs-approval": requiresApproval("file-read"),
+        "x-shioricode-needs-approval": requiresApproval("read_file", "file-read"),
       },
     },
     {
@@ -648,7 +1069,7 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         required: ["path", "content"],
         additionalProperties: false,
         "x-shioricode-request-kind": "file-change",
-        "x-shioricode-needs-approval": requiresApproval("file-change"),
+        "x-shioricode-needs-approval": requiresApproval("write_file", "file-change"),
       },
     },
     {
@@ -663,7 +1084,7 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         required: ["patch"],
         additionalProperties: false,
         "x-shioricode-request-kind": "file-change",
-        "x-shioricode-needs-approval": requiresApproval("file-change"),
+        "x-shioricode-needs-approval": requiresApproval("apply_patch", "file-change"),
       },
     },
     {
@@ -678,7 +1099,28 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         required: ["command"],
         additionalProperties: false,
         "x-shioricode-request-kind": "command",
-        "x-shioricode-needs-approval": requiresApproval("command"),
+        "x-shioricode-needs-approval": requiresApproval("exec_command", "command"),
+      },
+    },
+    {
+      name: "web_search",
+      title: "Web search",
+      description:
+        "Search the public web for up-to-date information and return ranked results with snippets.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query to run on the public web.",
+          },
+          max_results: {
+            type: "number",
+            description: "Optional maximum number of results to return. Defaults to 5.",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
       },
     },
     {
@@ -708,135 +1150,162 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         additionalProperties: false,
       },
     },
-    {
-      name: "spawn_agent",
-      title: "Spawn agent",
-      description:
-        "Spawn a background subagent for a scoped task. Returns a stable task name that can be used with send_input, wait_agent, and close_agent.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          task_name: {
-            type: "string",
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "spawn_agent")
+      ? [
+          {
+            name: "spawn_agent",
+            title: "Spawn agent",
             description:
-              "Optional canonical task name. Use lowercase letters, digits, and underscores.",
+              "Spawn a background subagent for a scoped task. Returns a stable task name that can be used with send_input, wait_agent, and close_agent.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                task_name: {
+                  type: "string",
+                  description:
+                    "Optional canonical task name. Use lowercase letters, digits, and underscores.",
+                },
+                message: {
+                  type: "string",
+                  description: "Initial task prompt for the new subagent.",
+                },
+                agent_type: {
+                  type: "string",
+                  description: "Optional role label, such as researcher or verifier.",
+                },
+              },
+              required: ["message"],
+              additionalProperties: false,
+            },
           },
-          message: {
-            type: "string",
-            description: "Initial task prompt for the new subagent.",
-          },
-          agent_type: {
-            type: "string",
-            description: "Optional role label, such as researcher or verifier.",
-          },
-        },
-        required: ["message"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "send_input",
-      title: "Send input",
-      description:
-        "Queue a follow-up message for an existing subagent. The target can be an agent id or task name.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          target: {
-            type: "string",
-            description: "Agent id or task name returned by spawn_agent.",
-          },
-          message: {
-            type: "string",
-            description: "Follow-up prompt to queue for that subagent.",
-          },
-        },
-        required: ["target", "message"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "wait_agent",
-      title: "Wait agent",
-      description:
-        "Wait for one or more subagents to finish. Returns final statuses keyed by target.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          targets: {
-            type: "array",
-            items: { type: "string" },
+        ]
+      : []),
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "send_input")
+      ? [
+          {
+            name: "send_input",
+            title: "Send input",
             description:
-              "Optional list of agent ids or task names. If omitted, waits for any tracked subagent.",
+              "Queue a follow-up message for an existing subagent. The target can be an agent id or task name.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                target: {
+                  type: "string",
+                  description: "Agent id or task name returned by spawn_agent.",
+                },
+                message: {
+                  type: "string",
+                  description: "Follow-up prompt to queue for that subagent.",
+                },
+              },
+              required: ["target", "message"],
+              additionalProperties: false,
+            },
           },
-          timeout_ms: {
-            type: "number",
-            description: "Optional timeout in milliseconds. Defaults to 30000.",
-          },
-        },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "close_agent",
-      title: "Close agent",
-      description:
-        "Stop a subagent and mark it as closed. Use after completion to release resources.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          target: {
-            type: "string",
-            description: "Agent id or task name returned by spawn_agent.",
-          },
-        },
-        required: ["target"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "agent",
-      title: "Agent",
-      description:
-        "Claude-style agent spawn. Starts a subagent for the provided prompt and description.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          description: { type: "string", description: "Short summary of the delegated task." },
-          prompt: { type: "string", description: "Detailed delegated prompt." },
-          subagent_type: {
-            type: "string",
-            description: "Optional agent type label, such as explore or code-reviewer.",
-          },
-          run_in_background: {
-            type: "boolean",
+        ]
+      : []),
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "wait_agent")
+      ? [
+          {
+            name: "wait_agent",
+            title: "Wait agent",
             description:
-              "When true (default), return immediately after launch. When false, wait for completion.",
+              "Wait for one or more subagents to finish. Returns final statuses keyed by target.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                targets: {
+                  type: "array",
+                  items: { type: "string" },
+                  description:
+                    "Optional list of agent ids or task names. If omitted, waits for any tracked subagent.",
+                },
+                timeout_ms: {
+                  type: "number",
+                  description: "Optional timeout in milliseconds. Defaults to 30000.",
+                },
+              },
+              additionalProperties: false,
+            },
           },
-          name: {
-            type: "string",
-            description: "Optional stable task name for follow-up messages.",
+        ]
+      : []),
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "close_agent")
+      ? [
+          {
+            name: "close_agent",
+            title: "Close agent",
+            description:
+              "Stop a subagent and mark it as closed. Use after completion to release resources.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                target: {
+                  type: "string",
+                  description: "Agent id or task name returned by spawn_agent.",
+                },
+              },
+              required: ["target"],
+              additionalProperties: false,
+            },
           },
-        },
-        required: ["description", "prompt"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "send_message",
-      title: "Send message",
-      description:
-        "Claude-style follow-up for a running subagent. Equivalent to send_input with fields to/message.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          to: { type: "string", description: "Agent id or task name." },
-          message: { type: "string", description: "Follow-up prompt." },
-        },
-        required: ["to", "message"],
-        additionalProperties: false,
-      },
-    },
+        ]
+      : []),
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "agent")
+      ? [
+          {
+            name: "agent",
+            title: "Agent",
+            description:
+              "Claude-style agent spawn. Starts a subagent for the provided prompt and description.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                description: {
+                  type: "string",
+                  description: "Short summary of the delegated task.",
+                },
+                prompt: { type: "string", description: "Detailed delegated prompt." },
+                subagent_type: {
+                  type: "string",
+                  description: "Optional agent type label, such as explore or code-reviewer.",
+                },
+                run_in_background: {
+                  type: "boolean",
+                  description:
+                    "When true (default), return immediately after launch. When false, wait for completion.",
+                },
+                name: {
+                  type: "string",
+                  description: "Optional stable task name for follow-up messages.",
+                },
+              },
+              required: ["description", "prompt"],
+              additionalProperties: false,
+            },
+          },
+        ]
+      : []),
+    ...(canUseHostedSubagentTool(input.hostedBootstrap, "send_message")
+      ? [
+          {
+            name: "send_message",
+            title: "Send message",
+            description:
+              "Claude-style follow-up for a running subagent. Equivalent to send_input with fields to/message.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                to: { type: "string", description: "Agent id or task name." },
+                message: { type: "string", description: "Follow-up prompt." },
+              },
+              required: ["to", "message"],
+              additionalProperties: false,
+            },
+          },
+        ]
+      : []),
   ];
 
   if (input.interactionMode === "plan") {
@@ -919,7 +1388,11 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
   }
 
   if (input.mcpToolDescriptors && input.mcpToolDescriptors.length > 0) {
-    descriptors.push(...input.mcpToolDescriptors);
+    descriptors.push(
+      ...input.mcpToolDescriptors.map((descriptor) =>
+        withHostedToolApproval(descriptor, input.hostedBootstrap),
+      ),
+    );
   }
 
   return descriptors;
@@ -1050,6 +1523,14 @@ function closeActiveTurnMcpTools(activeTurn: ActiveTurnState | null): Promise<vo
   return activeTurn.closeMcpTools();
 }
 
+function trimHostedMessageHistory(
+  messages: ReadonlyArray<HostedShioriMessage>,
+): HostedShioriMessage[] {
+  return messages.length <= MAX_PERSISTED_MESSAGES
+    ? [...messages]
+    : messages.slice(-MAX_PERSISTED_MESSAGES);
+}
+
 function stripMessageForResume(message: HostedShioriMessage): HostedShioriMessage | null {
   if (!Array.isArray(message.parts)) {
     return null;
@@ -1061,60 +1542,42 @@ function stripMessageForResume(message: HostedShioriMessage): HostedShioriMessag
   };
 }
 
-function encodeResumeCursor(
-  messages: ReadonlyArray<HostedShioriMessage>,
-  turns: ReadonlyArray<ShioriTurnState>,
-): ShioriResumeCursor {
-  const sanitizedMessages = messages
-    .map(stripMessageForResume)
-    .filter((message): message is HostedShioriMessage => message !== null);
-
-  const defaultSliceStart = Math.max(0, sanitizedMessages.length - MAX_PERSISTED_MESSAGES);
-  const sliceStart =
-    turns.length === 0
-      ? defaultSliceStart
-      : turns.reduce((currentStart, turn, index) => {
-          const previousMessageCount = index === 0 ? 0 : (turns[index - 1]?.messageCount ?? 0);
-          return sanitizedMessages.length - previousMessageCount <= MAX_PERSISTED_MESSAGES
-            ? previousMessageCount
-            : currentStart;
-        }, defaultSliceStart);
-
+function serializeSubagentState(
+  state: ShioriSubagentState,
+): NonNullable<NonNullable<ShioriResumeCursor["runtime"]>["subagents"]>[number] {
   return {
-    messages: sanitizedMessages.slice(sliceStart),
-    turns: turns.flatMap((turn) =>
-      turn.messageCount <= sliceStart
-        ? []
-        : [
-            {
-              id: String(turn.id),
-              items: turn.items,
-              messageCount: turn.messageCount - sliceStart,
-            },
-          ],
-    ),
+    id: state.id,
+    taskName: state.taskName,
+    ...(state.nickname !== null ? { nickname: state.nickname } : {}),
+    toolStyle: state.toolStyle,
+    description: state.description,
+    ...(state.subagentType !== null ? { subagentType: state.subagentType } : {}),
+    modelId: state.modelId,
+    status: state.status,
+    ...(state.queuedInputs.length > 0 ? { queuedInputs: [...state.queuedInputs] } : {}),
+    ...(state.history.length > 0
+      ? {
+          history: trimHostedMessageHistory(state.history)
+            .map(stripMessageForResume)
+            .filter((message): message is HostedShioriMessage => message !== null),
+        }
+      : {}),
+    ...(state.terminalSequence > 0 ? { terminalSequence: state.terminalSequence } : {}),
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt,
+    ...(state.parentTurnId ? { parentTurnId: String(state.parentTurnId) } : {}),
+    ...(state.parentToolUseId ? { parentToolUseId: state.parentToolUseId } : {}),
+    ...(state.lastSummary ? { lastSummary: state.lastSummary } : {}),
+    ...(state.lastError ? { lastError: state.lastError } : {}),
   };
 }
 
-function decodeResumeCursor(value: unknown): {
-  readonly messages: HostedShioriMessage[];
-  readonly turns: ShioriTurnState[];
-} {
-  if (!value || typeof value !== "object") {
-    return {
-      messages: [],
-      turns: [],
-    };
-  }
-  const messages = (value as { messages?: unknown }).messages;
-  if (!Array.isArray(messages)) {
-    return {
-      messages: [],
-      turns: [],
-    };
+function decodeHostedMessages(input: unknown): HostedShioriMessage[] {
+  if (!Array.isArray(input)) {
+    return [];
   }
 
-  const decodedMessages = messages.flatMap((message) => {
+  return input.flatMap((message) => {
     if (!message || typeof message !== "object") {
       return [];
     }
@@ -1134,6 +1597,208 @@ function decodeResumeCursor(value: unknown): {
       } satisfies HostedShioriMessage,
     ];
   });
+}
+
+function decodeSubagentState(input: unknown): ShioriSubagentState | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    typeof record.taskName !== "string" ||
+    (record.toolStyle !== "codex" && record.toolStyle !== "claude") ||
+    typeof record.description !== "string" ||
+    typeof record.modelId !== "string" ||
+    (record.status !== "pending_init" &&
+      record.status !== "running" &&
+      record.status !== "completed" &&
+      record.status !== "failed" &&
+      record.status !== "shutdown") ||
+    typeof record.createdAt !== "string" ||
+    typeof record.updatedAt !== "string"
+  ) {
+    return null;
+  }
+
+  const queuedInputs = Array.isArray(record.queuedInputs)
+    ? record.queuedInputs.flatMap((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return [];
+        }
+        const queuedInput = entry as Record<string, unknown>;
+        if (
+          typeof queuedInput.id !== "string" ||
+          typeof queuedInput.prompt !== "string" ||
+          typeof queuedInput.submittedAt !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            id: queuedInput.id,
+            prompt: queuedInput.prompt,
+            submittedAt: queuedInput.submittedAt,
+          } satisfies ShioriSubagentQueuedInput,
+        ];
+      })
+    : [];
+
+  return {
+    id: record.id,
+    taskName: record.taskName,
+    nickname: typeof record.nickname === "string" ? record.nickname : null,
+    toolStyle: record.toolStyle,
+    description: record.description,
+    subagentType: typeof record.subagentType === "string" ? record.subagentType : null,
+    modelId: record.modelId,
+    status: record.status,
+    queuedInputs,
+    history: decodeHostedMessages(record.history),
+    runnerActive: false,
+    terminalSequence:
+      typeof record.terminalSequence === "number" && Number.isFinite(record.terminalSequence)
+        ? Math.max(0, Math.round(record.terminalSequence))
+        : 0,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(typeof record.parentTurnId === "string"
+      ? { parentTurnId: TurnId.makeUnsafe(record.parentTurnId) }
+      : {}),
+    ...(typeof record.parentToolUseId === "string"
+      ? { parentToolUseId: record.parentToolUseId }
+      : {}),
+    ...(typeof record.lastSummary === "string" ? { lastSummary: record.lastSummary } : {}),
+    ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
+  };
+}
+
+function encodeResumeCursor(
+  context: Pick<
+    ShioriSessionContext,
+    | "messages"
+    | "turns"
+    | "activeTurn"
+    | "pendingApprovals"
+    | "pendingUserInputs"
+    | "allowedRequestKinds"
+    | "subagents"
+    | "pendingSubagentNotifications"
+  >,
+): ShioriResumeCursor {
+  const sanitizedMessages = context.messages
+    .map(stripMessageForResume)
+    .filter((message): message is HostedShioriMessage => message !== null);
+
+  const defaultSliceStart = Math.max(0, sanitizedMessages.length - MAX_PERSISTED_MESSAGES);
+  const sliceStart =
+    context.turns.length === 0
+      ? defaultSliceStart
+      : context.turns.reduce((currentStart, turn, index) => {
+          const previousMessageCount =
+            index === 0 ? 0 : (context.turns[index - 1]?.messageCount ?? 0);
+          return sanitizedMessages.length - previousMessageCount <= MAX_PERSISTED_MESSAGES
+            ? previousMessageCount
+            : currentStart;
+        }, defaultSliceStart);
+
+  const hasRecoverablePendingRequest =
+    context.pendingApprovals.size > 0 || context.pendingUserInputs.size > 0;
+  const runtime =
+    hasRecoverablePendingRequest ||
+    context.allowedRequestKinds.size > 0 ||
+    context.subagents.size > 0 ||
+    context.pendingSubagentNotifications.length > 0
+      ? {
+          ...(context.activeTurn && hasRecoverablePendingRequest
+            ? {
+                activeTurn: {
+                  turnId: String(context.activeTurn.turnId),
+                  interactionMode: context.activeTurn.interactionMode,
+                  ...(context.activeTurn.modelSettings
+                    ? { modelSettings: context.activeTurn.modelSettings }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(context.pendingApprovals.size > 0
+            ? {
+                pendingApprovals: Array.from(context.pendingApprovals.values()).map(
+                  serializePendingToolCall,
+                ),
+              }
+            : {}),
+          ...(context.pendingUserInputs.size > 0
+            ? {
+                pendingUserInputs: Array.from(context.pendingUserInputs.values()).map(
+                  serializePendingToolCall,
+                ),
+              }
+            : {}),
+          ...(context.allowedRequestKinds.size > 0
+            ? {
+                allowedRequestKinds: Array.from(context.allowedRequestKinds.values()),
+              }
+            : {}),
+          ...(context.subagents.size > 0
+            ? {
+                subagents: Array.from(context.subagents.values()).map(serializeSubagentState),
+              }
+            : {}),
+          ...(context.pendingSubagentNotifications.length > 0
+            ? {
+                pendingSubagentNotifications: [...context.pendingSubagentNotifications],
+              }
+            : {}),
+        }
+      : undefined;
+
+  return {
+    messages: sanitizedMessages.slice(sliceStart),
+    turns: context.turns.flatMap((turn) =>
+      turn.messageCount <= sliceStart
+        ? []
+        : [
+            {
+              id: String(turn.id),
+              items: turn.items,
+              messageCount: turn.messageCount - sliceStart,
+            },
+          ],
+    ),
+    ...(runtime ? { runtime } : {}),
+  };
+}
+
+function decodeResumeCursor(value: unknown): DecodedShioriResumeState {
+  if (!value || typeof value !== "object") {
+    return {
+      messages: [],
+      turns: [],
+      activeTurnSnapshot: null,
+      pendingApprovals: [],
+      pendingUserInputs: [],
+      allowedRequestKinds: [],
+      subagents: [],
+      pendingSubagentNotifications: [],
+    };
+  }
+  const messages = (value as { messages?: unknown }).messages;
+  if (!Array.isArray(messages)) {
+    return {
+      messages: [],
+      turns: [],
+      activeTurnSnapshot: null,
+      pendingApprovals: [],
+      pendingUserInputs: [],
+      allowedRequestKinds: [],
+      subagents: [],
+      pendingSubagentNotifications: [],
+    };
+  }
+
+  const decodedMessages = decodeHostedMessages(messages);
 
   const rawTurns = Array.isArray((value as { turns?: unknown }).turns)
     ? ((value as { turns: unknown[] }).turns ?? [])
@@ -1159,24 +1824,140 @@ function decodeResumeCursor(value: unknown): {
     ];
   });
 
+  const runtime =
+    "runtime" in (value as Record<string, unknown>) &&
+    typeof (value as { runtime?: unknown }).runtime === "object" &&
+    (value as { runtime?: unknown }).runtime !== null
+      ? ((value as { runtime: Record<string, unknown> }).runtime ?? {})
+      : undefined;
+
+  const decodePendingToolCalls = (
+    input: unknown,
+    options?: { includeApprovalFields?: boolean },
+  ): ReadonlyArray<PendingToolCall> =>
+    Array.isArray(input)
+      ? input.flatMap((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return [];
+          }
+          const record = entry as Record<string, unknown>;
+          if (
+            typeof record.requestId !== "string" ||
+            typeof record.toolCallId !== "string" ||
+            typeof record.toolName !== "string" ||
+            typeof record.assistantMessageId !== "string" ||
+            !record.input ||
+            typeof record.input !== "object" ||
+            Array.isArray(record.input)
+          ) {
+            return [];
+          }
+
+          const requestKind =
+            record.requestKind === "command" ||
+            record.requestKind === "file-read" ||
+            record.requestKind === "file-change"
+              ? record.requestKind
+              : undefined;
+          const approvalId =
+            options?.includeApprovalFields === true && typeof record.approvalId === "string"
+              ? record.approvalId
+              : undefined;
+
+          return [
+            {
+              requestId: ApprovalRequestId.makeUnsafe(record.requestId),
+              toolCallId: record.toolCallId,
+              toolName: record.toolName,
+              input: record.input as Record<string, unknown>,
+              assistantMessageId: record.assistantMessageId,
+              ...(approvalId ? { approvalId } : {}),
+              ...(requestKind ? { requestKind } : {}),
+              ...(record.callProviderMetadata !== undefined
+                ? { callProviderMetadata: record.callProviderMetadata }
+                : {}),
+            } satisfies PendingToolCall,
+          ];
+        })
+      : [];
+
+  const allowedRequestKinds = Array.isArray(runtime?.allowedRequestKinds)
+    ? runtime.allowedRequestKinds.flatMap((entry) =>
+        entry === "command" || entry === "file-read" || entry === "file-change" ? [entry] : [],
+      )
+    : [];
+  const pendingSubagentNotifications = Array.isArray(runtime?.pendingSubagentNotifications)
+    ? runtime.pendingSubagentNotifications.flatMap((entry) =>
+        typeof entry === "string" ? [entry] : [],
+      )
+    : [];
+  const pendingApprovals = decodePendingToolCalls(runtime?.pendingApprovals, {
+    includeApprovalFields: true,
+  });
+  const pendingUserInputs = decodePendingToolCalls(runtime?.pendingUserInputs);
+  const subagents = Array.isArray(runtime?.subagents)
+    ? runtime.subagents
+        .map(decodeSubagentState)
+        .filter((state): state is ShioriSubagentState => state !== null)
+    : [];
+  const activeTurnRecord =
+    runtime?.activeTurn &&
+    typeof runtime.activeTurn === "object" &&
+    !Array.isArray(runtime.activeTurn)
+      ? (runtime.activeTurn as Record<string, unknown>)
+      : null;
+  const activeTurnSnapshot =
+    activeTurnRecord &&
+    typeof activeTurnRecord.turnId === "string" &&
+    (activeTurnRecord.interactionMode === "default" || activeTurnRecord.interactionMode === "plan")
+      ? {
+          turnId: TurnId.makeUnsafe(activeTurnRecord.turnId),
+          interactionMode: activeTurnRecord.interactionMode as "default" | "plan",
+          ...(activeTurnRecord.modelSettings &&
+          typeof activeTurnRecord.modelSettings === "object" &&
+          !Array.isArray(activeTurnRecord.modelSettings)
+            ? {
+                modelSettings: activeTurnRecord.modelSettings as HostedShioriModelSettings,
+              }
+            : {}),
+        }
+      : null;
+
   return {
     messages: decodedMessages,
     turns: decodedTurns,
+    activeTurnSnapshot,
+    pendingApprovals,
+    pendingUserInputs,
+    allowedRequestKinds,
+    subagents,
+    pendingSubagentNotifications,
   };
 }
 
 function computeResumeCursor(
-  messages: ReadonlyArray<HostedShioriMessage>,
-  turns: ReadonlyArray<ShioriTurnState>,
+  context: Pick<
+    ShioriSessionContext,
+    | "messages"
+    | "turns"
+    | "activeTurn"
+    | "pendingApprovals"
+    | "pendingUserInputs"
+    | "allowedRequestKinds"
+    | "subagents"
+    | "pendingSubagentNotifications"
+  >,
 ): ShioriResumeCursor | undefined {
-  const resumeCursor = encodeResumeCursor(messages, turns);
+  const resumeCursor = encodeResumeCursor(context);
   return resumeCursor.messages.length > 0 || resumeCursor.turns.length > 0
     ? resumeCursor
-    : undefined;
+    : resumeCursor.runtime !== undefined
+      ? resumeCursor
+      : undefined;
 }
 
 function withResumeCursor(context: ShioriSessionContext): ShioriSessionContext {
-  const resumeCursor = computeResumeCursor(context.messages, context.turns);
+  const resumeCursor = computeResumeCursor(context);
   const { resumeCursor: _resumeCursor, ...sessionWithoutCursor } = context.session;
 
   return {
@@ -1185,6 +1966,100 @@ function withResumeCursor(context: ShioriSessionContext): ShioriSessionContext {
       ...sessionWithoutCursor,
       ...(resumeCursor ? { resumeCursor } : {}),
     },
+  };
+}
+
+function extractAssistantToolReplayState(input: {
+  messages: ReadonlyArray<HostedShioriMessage>;
+  assistantMessageId: string;
+}): {
+  text: string;
+  reasoningParts: ReadonlyArray<HostedShioriMessage["parts"][number]>;
+} {
+  const message = input.messages.find((entry) => entry.id === input.assistantMessageId);
+  if (!message || !Array.isArray(message.parts)) {
+    return {
+      text: "",
+      reasoningParts: [],
+    };
+  }
+
+  const reasoningParts: HostedShioriMessage["parts"] = [];
+  let text = "";
+  for (const part of message.parts) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    if (part.type === "reasoning" && typeof part.text === "string") {
+      reasoningParts.push(part);
+      continue;
+    }
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    }
+  }
+
+  return {
+    text,
+    reasoningParts,
+  };
+}
+
+function serializePendingToolCall(pending: PendingToolCall) {
+  return Object.assign(
+    {
+      requestId: String(pending.requestId),
+      toolCallId: pending.toolCallId,
+      toolName: pending.toolName,
+      input: pending.input,
+      assistantMessageId: pending.assistantMessageId,
+    },
+    pending.approvalId ? { approvalId: pending.approvalId } : {},
+    pending.requestKind ? { requestKind: pending.requestKind } : {},
+    pending.callProviderMetadata !== undefined
+      ? { callProviderMetadata: pending.callProviderMetadata }
+      : {},
+  );
+}
+
+function resolveSubagentTarget(
+  context: ShioriSessionContext,
+  target: unknown,
+): ShioriSubagentState | null {
+  const value = typeof target === "string" ? target.trim() : "";
+  if (value.length === 0) {
+    return null;
+  }
+  const byId = context.subagents.get(value);
+  if (byId) {
+    return byId;
+  }
+  for (const state of context.subagents.values()) {
+    if (state.taskName === value) {
+      return state;
+    }
+  }
+  return null;
+}
+
+function subagentWaitSnapshot(
+  state: ShioriSubagentState,
+  target: string,
+): {
+  target: string;
+  id: string;
+  task_name: string;
+  status: ShioriSubagentLifecycleStatus;
+  summary?: string;
+  error?: string;
+} {
+  return {
+    target,
+    id: state.id,
+    task_name: state.taskName,
+    status: state.status,
+    ...(state.lastSummary ? { summary: state.lastSummary } : {}),
+    ...(state.lastError ? { error: state.lastError } : {}),
   };
 }
 
@@ -1223,6 +2098,67 @@ function resolveWorkspacePath(rootCwd: string | undefined, requestedPath: unknow
     throw new Error("Requested path must stay within the workspace root.");
   }
   return resolvedPath;
+}
+
+function normalizeWorkspaceRelativePathForProtection(relativePath: string): string {
+  return relativePath
+    .split(path.sep)
+    .join("/")
+    .replace(/^\.\/+/, "");
+}
+
+function matchesProtectedWorkspacePattern(relativePath: string, pattern: string): boolean {
+  const normalizedPath = normalizeWorkspaceRelativePathForProtection(relativePath);
+  const normalizedPattern = pattern.replace(/^~\//, "").replace(/^\/+/, "");
+  if (normalizedPattern.length === 0 || normalizedPattern.startsWith(".config/")) {
+    return false;
+  }
+  if (normalizedPattern.includes("/")) {
+    return (
+      normalizedPath === normalizedPattern || normalizedPath.startsWith(`${normalizedPattern}/`)
+    );
+  }
+  const rootEntry = normalizedPath.split("/")[0] ?? normalizedPath;
+  if (normalizedPattern.endsWith(".*")) {
+    const base = normalizedPattern.slice(0, -2);
+    return rootEntry === base || rootEntry.startsWith(`${base}.`);
+  }
+  return rootEntry === normalizedPattern;
+}
+
+function assertWorkspacePathAllowed(input: {
+  rootCwd: string | undefined;
+  resolvedPath: string;
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined;
+  toolName: string;
+}): void {
+  const bootstrap = effectiveShioriBootstrap(input.bootstrap);
+  if (!input.rootCwd || bootstrap.protectedPaths.length === 0) {
+    return;
+  }
+
+  const relativePath = path.relative(path.resolve(input.rootCwd), input.resolvedPath);
+  if (
+    bootstrap.protectedPaths.some((pattern) =>
+      matchesProtectedWorkspacePattern(relativePath, pattern),
+    )
+  ) {
+    throw new Error(`Tool '${input.toolName}' cannot access protected path '${relativePath}'.`);
+  }
+}
+
+function extractPatchTargetPaths(patch: string): string[] {
+  return patch.split(/\r?\n/u).flatMap((line) => {
+    if (line.startsWith("+++ b/") || line.startsWith("--- a/")) {
+      const candidate = line.slice(6).trim();
+      return candidate === "/dev/null" ? [] : [candidate];
+    }
+    if (line.startsWith("rename to ") || line.startsWith("rename from ")) {
+      const candidate = line.replace(/^rename (?:to|from) /u, "").trim();
+      return candidate === "/dev/null" ? [] : [candidate];
+    }
+    return [];
+  });
 }
 
 function killChildProcessTree(
@@ -1391,6 +2327,14 @@ function sanitizeToolOutput(toolName: string, output: unknown): unknown {
   if (toolName === "read_file" && typeof record.content === "string") {
     record.content = truncateToolText(record.content, MAX_TOOL_FILE_CHARS);
   }
+  if (toolName === "exec_command") {
+    if (typeof record.stdout === "string") {
+      record.stdout = truncateToolText(record.stdout, MAX_TOOL_COMMAND_OUTPUT_CHARS);
+    }
+    if (typeof record.stderr === "string") {
+      record.stderr = truncateToolText(record.stderr, MAX_TOOL_COMMAND_OUTPUT_CHARS);
+    }
+  }
   return record;
 }
 
@@ -1402,7 +2346,7 @@ function buildAssistantCompletionEvent(input: {
   threadId: ThreadId;
   turnId: TurnId;
   itemId: RuntimeItemId;
-  detail: string;
+  detail?: string;
 }): ProviderRuntimeEvent {
   return {
     ...runtimeEventBase({
@@ -1414,14 +2358,20 @@ function buildAssistantCompletionEvent(input: {
     payload: {
       itemType: "assistant_message",
       status: "completed",
-      ...(input.detail.trim().length > 0 ? { detail: input.detail } : {}),
+      ...(input.detail && input.detail.trim().length > 0 ? { detail: input.detail } : {}),
     },
   } satisfies ProviderRuntimeEvent;
 }
 
 const HOSTED_COMMENTARY_PREFIXES = [
-  "i'll ",
-  "i will ",
+  "i'll start",
+  "i will start",
+  "i'll begin",
+  "i will begin",
+  "i'll search",
+  "i will search",
+  "i'll search the web",
+  "i will search the web",
   "i’m going to ",
   "i am going to ",
   "let me ",
@@ -1443,20 +2393,50 @@ const HOSTED_COMMENTARY_VERBS = [
   "open",
   "read",
   "scan",
+  "explore",
+  "exploring",
+  "launch",
+  "investigate",
   "take a look",
 ] as const;
+
+const HOSTED_COMMENTARY_PROBE_MAX_CHARS = 96;
+
+function normalizeHostedCommentarySourceText(text: string): string {
+  return text.trim().replace(/\s+/g, " ").replaceAll("’", "'").toLowerCase();
+}
+
+function hasHostedCommentaryPrefix(normalized: string): boolean {
+  return HOSTED_COMMENTARY_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function hasHostedCommentaryVerb(normalized: string): boolean {
+  return HOSTED_COMMENTARY_VERBS.some((verb) => normalized.includes(verb));
+}
+
+function shouldProbeHostedCommentaryText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > HOSTED_COMMENTARY_PROBE_MAX_CHARS) {
+    return false;
+  }
+
+  const normalized = normalizeHostedCommentarySourceText(trimmed);
+  if (hasHostedCommentaryVerb(normalized)) {
+    return false;
+  }
+
+  return HOSTED_COMMENTARY_PREFIXES.some((prefix) => prefix.startsWith(normalized));
+}
 
 function normalizeHostedCommentaryText(text: string): string | null {
   const trimmed = text.trim();
   if (trimmed.length === 0 || trimmed.length > 240) {
     return null;
   }
-  const normalized = trimmed.replace(/\s+/g, " ").replaceAll("’", "'").toLowerCase();
-  const hasCommentaryPrefix = HOSTED_COMMENTARY_PREFIXES.some((prefix) =>
-    normalized.startsWith(prefix),
-  );
-  const hasCommentaryVerb = HOSTED_COMMENTARY_VERBS.some((verb) => normalized.includes(verb));
-  return hasCommentaryPrefix && hasCommentaryVerb ? trimmed : null;
+  const normalized = normalizeHostedCommentarySourceText(trimmed);
+  return hasHostedCommentaryPrefix(normalized) && hasHostedCommentaryVerb(normalized)
+    ? trimmed
+    : null;
 }
 
 function buildCommentaryAssistantCompletionEvent(input: {
@@ -1509,10 +2489,9 @@ function buildTurnCompletedEvent(input: {
 export function buildInterruptedTurnEvents(input: {
   threadId: ThreadId;
   turnId: TurnId;
-  assistantItemId: RuntimeItemId;
+  assistantItemId: RuntimeItemId | null;
   assistantStarted: boolean;
   openReasoningItemIds: ReadonlyArray<RuntimeItemId>;
-  assistantText: string;
 }): ReadonlyArray<ProviderRuntimeEvent> {
   const events: ProviderRuntimeEvent[] = [];
 
@@ -1531,13 +2510,12 @@ export function buildInterruptedTurnEvents(input: {
     } satisfies ProviderRuntimeEvent);
   }
 
-  if (input.assistantStarted) {
+  if (input.assistantStarted && input.assistantItemId) {
     events.push(
       buildAssistantCompletionEvent({
         threadId: input.threadId,
         turnId: input.turnId,
         itemId: input.assistantItemId,
-        detail: input.assistantText,
       }),
     );
   }
@@ -1557,8 +2535,29 @@ function runtimeItemTypeForTool(toolName: string): CanonicalItemType {
   return classifyProviderToolLifecycleItemType(toolName);
 }
 
+function assistantTextItemId(turnId: TurnId, textId: string): RuntimeItemId {
+  return RuntimeItemId.makeUnsafe(`${SHIORI_ASSISTANT_ITEM_PREFIX}:${String(turnId)}:${textId}`);
+}
+
 function toolTitle(toolName: string): string {
   return providerToolTitle(toolName);
+}
+
+function toolLifecycleDetail(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): string | undefined {
+  const summary = summarizeProviderToolInvocation(toolName, toolInput);
+  if (!summary) {
+    return undefined;
+  }
+
+  const titlePrefix = `${providerToolTitle(toolName)}: `;
+  if (summary.startsWith(titlePrefix)) {
+    return summary.slice(titlePrefix.length);
+  }
+
+  return summary === providerToolTitle(toolName) ? undefined : summary;
 }
 
 function ensureReasoningBlock(
@@ -1633,9 +2632,28 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const sessionsRef = yield* Ref.make(new Map<string, ShioriSessionContext>());
       const finalizedTurnIdsRef = yield* Ref.make(new Set<string>());
       const eventsPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+      const toolRuntimeLoads = new Map<string, Promise<ShioriSessionToolRuntime>>();
 
       const emit = (event: ProviderRuntimeEvent) =>
         PubSub.publish(eventsPubSub, event).pipe(Effect.asVoid);
+
+      const emitSessionExited = (input: {
+        threadId: ThreadId;
+        reason?: string;
+        exitKind?: "graceful" | "error";
+        recoverable?: boolean;
+      }) =>
+        emit({
+          ...runtimeEventBase({
+            threadId: input.threadId,
+          }),
+          type: "session.exited",
+          payload: {
+            ...(input.reason ? { reason: input.reason } : {}),
+            ...(input.exitKind ? { exitKind: input.exitKind } : {}),
+            ...(input.recoverable !== undefined ? { recoverable: input.recoverable } : {}),
+          },
+        } satisfies ProviderRuntimeEvent);
 
       const markTurnFinalized = (turnId: TurnId) =>
         Ref.update(finalizedTurnIdsRef, (existing) => {
@@ -1667,9 +2685,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             threadId: context.session.threadId,
             provider: PROVIDER,
             status: context.activeTurn ? "running" : "stopped",
-            ...(computeResumeCursor(context.messages, context.turns)
-              ? { resumeCursor: computeResumeCursor(context.messages, context.turns) }
-              : {}),
+            ...(computeResumeCursor(context) ? { resumeCursor: computeResumeCursor(context) } : {}),
             runtimePayload: {
               ...(context.session.cwd ? { cwd: context.session.cwd } : {}),
               ...(context.session.model
@@ -1713,6 +2729,422 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           next.set(String(threadId), nextContext);
           return next;
         }).pipe(Effect.asVoid);
+
+      const updateContextAndPersist = (
+        threadId: ThreadId,
+        updater: (context: ShioriSessionContext) => ShioriSessionContext,
+      ) =>
+        Effect.gen(function* () {
+          yield* updateContext(threadId, updater);
+          const updatedContext = yield* getContext(threadId);
+          yield* persistContext(updatedContext);
+          return updatedContext;
+        });
+
+      // Single attempt at the hosted stream endpoint. Converts network failures and
+      // non-2xx responses into a classified HostedFetchFailure so the retry schedule
+      // can decide whether another attempt makes sense. Success returns the open
+      // Response with its streamable body.
+      const attemptHostedStreamFetch = Effect.fn("attemptHostedStreamFetch")(function* (input: {
+        method: string;
+        apiBaseUrl: string;
+        authToken: string;
+        requestBody: Buffer;
+        signal: AbortSignal;
+      }) {
+        const response = yield* Effect.tryPromise({
+          try: () =>
+            fetch(`${input.apiBaseUrl}/api/shiori-code/agent/stream`, {
+              method: "POST",
+              headers: buildShioriRequestHeaders({
+                authToken: input.authToken,
+                contentLength: input.requestBody.byteLength,
+              }),
+              body: input.requestBody,
+              signal: input.signal,
+            }),
+          catch: (error): HostedFetchFailure => ({
+            kind: "network",
+            detail: toMessage(error),
+            retryable: !isAbortCause(error) && isRetryableCause(error),
+            cause: error,
+          }),
+        });
+
+        if (response.ok && response.body) {
+          return response;
+        }
+
+        const detail = yield* readHostedFailureDetail(response);
+        const httpFailure: HostedFetchFailure = {
+          kind: "http",
+          status: response.status,
+          detail,
+          retryable: isRetryableStatus(response.status),
+        };
+        return yield* Effect.fail(httpFailure);
+      });
+
+      const effectiveMaxRetries = options?.maxFetchRetries ?? FETCH_RETRY_MAX_ATTEMPTS;
+      const effectiveRetryDelayMs =
+        options?.fetchRetryDelayMs ?? ((attempt: number) => 250 * 2 ** (attempt - 1));
+      const effectiveStreamReadTimeout: Duration.Input =
+        options?.streamReadTimeout ?? STREAM_READ_TIMEOUT;
+      const effectiveMaxStreamBytes = options?.maxStreamBytes ?? MAX_STREAM_BYTES;
+
+      // Perform the hosted stream fetch with exponential backoff. 401 responses clear
+      // the cached Shiori token so the UI prompts for a fresh sign-in instead of
+      // hammering the endpoint with the same expired credential.
+      const performHostedStreamFetch = Effect.fn("performHostedStreamFetch")(function* (input: {
+        method: string;
+        apiBaseUrl: string;
+        authToken: string;
+        requestBody: Buffer;
+        signal: AbortSignal;
+        logLabel: string;
+      }) {
+        // Manual retry loop: Effect v4's schedule+while combination for typed failures
+        // is finicky, and we want deterministic attempt counts and classification.
+        let lastFailure: HostedFetchFailure = {
+          kind: "network",
+          detail: "Shiori fetch was aborted before a response was received.",
+          retryable: false,
+        };
+        for (let attempt = 0; attempt <= effectiveMaxRetries; attempt += 1) {
+          if (input.signal.aborted) {
+            break;
+          }
+          const attemptResult = yield* Effect.result(
+            attemptHostedStreamFetch({
+              method: input.method,
+              apiBaseUrl: input.apiBaseUrl,
+              authToken: input.authToken,
+              requestBody: input.requestBody,
+              signal: input.signal,
+            }),
+          );
+          if (attemptResult._tag === "Success") {
+            return attemptResult.success;
+          }
+          lastFailure = attemptResult.failure;
+          yield* Effect.logDebug("shiori hosted fetch attempt failed", {
+            label: input.logLabel,
+            attempt: attempt + 1,
+            kind: lastFailure.kind,
+            ...(lastFailure.status !== undefined ? { status: lastFailure.status } : {}),
+            retryable: lastFailure.retryable,
+            detail: lastFailure.detail,
+          });
+          if (!lastFailure.retryable || attempt >= effectiveMaxRetries) {
+            break;
+          }
+          const delayMs = effectiveRetryDelayMs(attempt);
+          if (delayMs > 0) {
+            yield* Effect.sleep(Duration.millis(delayMs));
+          }
+        }
+
+        const failure = lastFailure;
+        if (failure.kind === "http" && failure.status === 401) {
+          yield* Effect.logWarning("shiori hosted fetch 401; clearing cached auth token", {
+            label: input.logLabel,
+            detail: failure.detail,
+          });
+          yield* hostedAuthTokenStore.setToken(null);
+          return yield* Effect.fail(
+            requestError(
+              input.logLabel,
+              "Shiori rejected the hosted session (401). Sign out and sign back in to continue.",
+            ),
+          );
+        }
+
+        if (failure.kind === "http" && failure.status === 403) {
+          return yield* Effect.fail(
+            requestError(
+              input.logLabel,
+              "Shiori rejected the hosted session (403). Verify your subscription and plan access.",
+            ),
+          );
+        }
+
+        yield* Effect.logWarning("shiori hosted fetch failed", {
+          label: input.logLabel,
+          kind: failure.kind,
+          ...(failure.status !== undefined ? { status: failure.status } : {}),
+          retryable: failure.retryable,
+          detail: failure.detail,
+        });
+        return yield* Effect.fail(
+          requestError(
+            input.logLabel,
+            failure.kind === "http"
+              ? failure.detail
+              : `Shiori API request failed: ${failure.detail}`,
+            failure.cause,
+          ),
+        );
+      });
+
+      const emptyToolRuntime = {
+        descriptors: [],
+        executors: new Map(),
+        warnings: [],
+        skillPrompt: undefined,
+        close: async () => undefined,
+      } satisfies ProviderSkillRuntime;
+
+      const buildMcpRuntimeForCwd = Effect.fn("buildMcpRuntimeForCwd")(function* (
+        cwd: string | undefined,
+      ) {
+        const currentSettings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError((error) =>
+            requestError(
+              "shiori.mcp.runtime",
+              "Failed to load server settings while preparing MCP tools.",
+              error,
+            ),
+          ),
+        );
+
+        const mcpRuntime = yield* Effect.tryPromise(() =>
+          loadEffectiveMcpServersForProvider({
+            provider: PROVIDER,
+            settings: currentSettings,
+            ...(cwd ? { cwd } : {}),
+          }).then(async (effectiveServers) => {
+            const runtime = options?.buildMcpToolRuntime
+              ? await options.buildMcpToolRuntime({
+                  provider: PROVIDER,
+                  servers: effectiveServers.servers,
+                  ...(cwd ? { cwd } : {}),
+                })
+              : await buildProviderMcpToolRuntime(
+                  {
+                    provider: PROVIDER,
+                    servers: effectiveServers.servers,
+                    ...(cwd ? { cwd } : {}),
+                  },
+                  {
+                    oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
+                  },
+                );
+            return {
+              ...runtime,
+              warnings: [...effectiveServers.warnings, ...runtime.warnings],
+            };
+          }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning(
+                "shiori mcp runtime initialization failed; continuing without MCP tools",
+              );
+              yield* Effect.logWarning(
+                toMessage(error).trim().length > 0
+                  ? toMessage(error)
+                  : "Failed to initialize MCP servers for Shiori.",
+              );
+              return emptyToolRuntime satisfies ProviderMcpToolRuntime;
+            }),
+          ),
+        );
+
+        const skillRuntime = yield* Effect.tryPromise(() =>
+          cwd
+            ? (options?.buildSkillToolRuntime ?? buildShioriSkillToolRuntime)({ cwd })
+            : (options?.buildSkillToolRuntime ?? buildShioriSkillToolRuntime)({}),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning(
+                "shiori skill runtime initialization failed; continuing without skill tools",
+              );
+              yield* Effect.logWarning(
+                toMessage(error).trim().length > 0
+                  ? toMessage(error)
+                  : "Failed to initialize skills for Shiori.",
+              );
+              return emptyToolRuntime;
+            }),
+          ),
+        );
+
+        const runtime = {
+          descriptors: [...mcpRuntime.descriptors, ...skillRuntime.descriptors],
+          executors: new Map([...mcpRuntime.executors, ...skillRuntime.executors]),
+          warnings: [...mcpRuntime.warnings, ...skillRuntime.warnings],
+          skillPrompt: skillRuntime.skillPrompt,
+          close: async () => {
+            await Promise.allSettled([mcpRuntime.close(), skillRuntime.close()]);
+          },
+        } satisfies ProviderSkillRuntime;
+
+        for (const warning of runtime.warnings) {
+          yield* Effect.logWarning("shiori tool runtime warning", {
+            cwd,
+            warning,
+          });
+        }
+
+        return runtime;
+      });
+
+      const loadSessionToolRuntime = (input: { threadId: ThreadId; cwd: string | undefined }) => {
+        const key = String(input.threadId);
+        const existing = toolRuntimeLoads.get(key);
+        if (existing) {
+          return existing;
+        }
+
+        const load = Effect.runPromise(buildMcpRuntimeForCwd(input.cwd))
+          .then(async (runtime) => {
+            const shouldClose = await Effect.runPromise(
+              Ref.modify(sessionsRef, (sessions) => {
+                const context = sessions.get(key);
+                if (!context) {
+                  return [true, sessions] as const;
+                }
+
+                if (context.toolRuntime === null) {
+                  context.toolRuntime = runtime;
+                }
+
+                return [false, sessions] as const;
+              }),
+            );
+
+            if (shouldClose) {
+              await runtime.close();
+            }
+
+            return runtime;
+          })
+          .finally(() => {
+            toolRuntimeLoads.delete(key);
+          });
+
+        toolRuntimeLoads.set(key, load);
+        return load;
+      };
+
+      const prewarmSessionToolRuntime = Effect.fn("prewarmSessionToolRuntime")(function* (
+        threadId: ThreadId,
+        cwd: string | undefined,
+      ) {
+        yield* Effect.sync(() => {
+          void loadSessionToolRuntime({ threadId, cwd });
+        });
+      });
+
+      const fetchHostedBootstrapForToken = Effect.fn("fetchHostedBootstrapForToken")(function* (
+        authToken: string,
+      ) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError((error) =>
+            requestError(
+              "shiori.bootstrap",
+              "Failed to load server settings while preparing hosted bootstrap policy.",
+              error,
+            ),
+          ),
+        );
+        const probe = yield* (options?.fetchBootstrapProbe ?? fetchShioriCodeBootstrap)({
+          apiBaseUrl: settings.providers.shiori.apiBaseUrl,
+          authToken,
+        });
+        if (probe.message) {
+          yield* Effect.logWarning("shiori hosted bootstrap unavailable", {
+            message: probe.message,
+          });
+        }
+        return effectiveShioriBootstrap(probe.bootstrap);
+      });
+
+      const resolveHostedBootstrapForContext = Effect.fn("resolveHostedBootstrapForContext")(
+        function* (input: { threadId: ThreadId; authToken: string }) {
+          const context = yield* getContext(input.threadId);
+          const existing = context.activeTurn?.hostedBootstrap;
+          if (existing !== undefined) {
+            return existing;
+          }
+
+          const bootstrap = yield* fetchHostedBootstrapForToken(input.authToken);
+          if (context.activeTurn) {
+            context.activeTurn.hostedBootstrap = bootstrap;
+          }
+          return bootstrap;
+        },
+      );
+
+      const getOrCreateSessionToolRuntime = Effect.fn("getOrCreateSessionToolRuntime")(function* (
+        context: ShioriSessionContext,
+      ) {
+        if (context.toolRuntime) {
+          return context.toolRuntime;
+        }
+
+        const runtime = yield* Effect.tryPromise({
+          try: () =>
+            loadSessionToolRuntime({
+              threadId: context.session.threadId,
+              cwd: context.session.cwd,
+            }),
+          catch: (error) =>
+            requestError("shiori.mcp.runtime", "Failed to initialize MCP tools for Shiori.", error),
+        });
+        context.toolRuntime = runtime;
+        return runtime;
+      });
+
+      const closeSessionToolRuntime = (context: ShioriSessionContext | null | undefined) => {
+        if (!context?.toolRuntime) {
+          return Effect.void;
+        }
+
+        return Effect.promise(() => context.toolRuntime!.close()).pipe(
+          Effect.ignore({ log: false }),
+        );
+      };
+
+      const restoreRecoverableActiveTurn = (input: {
+        session: ProviderSession;
+        snapshot: NonNullable<DecodedShioriResumeState["activeTurnSnapshot"]>;
+        messages: ReadonlyArray<HostedShioriMessage>;
+        pendingApprovals: ReadonlyArray<PendingToolCall>;
+        pendingUserInputs: ReadonlyArray<PendingToolCall>;
+        toolRuntime: ShioriSessionToolRuntime;
+      }): ActiveTurnState => {
+        const latestPending =
+          [...input.pendingApprovals, ...input.pendingUserInputs].at(-1) ?? null;
+        const replayState = latestPending
+          ? extractAssistantToolReplayState({
+              messages: input.messages,
+              assistantMessageId: latestPending.assistantMessageId,
+            })
+          : { text: "", reasoningParts: [] };
+
+        return {
+          turnId: input.snapshot.turnId,
+          controller: new AbortController(),
+          assistantItemId: RuntimeItemId.makeUnsafe(
+            `${SHIORI_ASSISTANT_ITEM_PREFIX}:${String(input.snapshot.turnId)}`,
+          ),
+          interactionMode: input.snapshot.interactionMode,
+          mcpToolDescriptors: input.toolRuntime.descriptors,
+          mcpTools: input.toolRuntime.executors,
+          closeMcpTools: async () => undefined,
+          skillPrompt: input.toolRuntime.skillPrompt,
+          ...(input.snapshot.modelSettings ? { modelSettings: input.snapshot.modelSettings } : {}),
+          assistantText: replayState.text,
+          assistantFinalText: replayState.text,
+          assistantActiveItemId: null,
+          assistantStarted: false,
+          commentaryCount: 0,
+          reasoningBlocks: new Map(),
+          reasoningBlockOrder: [],
+        };
+      };
 
       const emitApprovalRequest = Effect.fn("emitApprovalRequest")(function* (input: {
         threadId: ThreadId;
@@ -1864,6 +3296,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           session: {
             ...context.session,
             status: "ready",
+            activeTurnId: undefined,
             updatedAt: nowIso(),
           },
         });
@@ -1881,13 +3314,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           buildInterruptedTurnEvents({
             threadId: context.session.threadId,
             turnId: activeTurn.turnId,
-            assistantItemId: activeTurn.assistantItemId,
+            assistantItemId: activeTurn.assistantActiveItemId,
             assistantStarted: activeTurn.assistantStarted,
             openReasoningItemIds: activeTurn.reasoningBlockOrder.flatMap((blockId) => {
               const block = activeTurn.reasoningBlocks.get(blockId);
               return block && !block.completed ? [block.itemId] : [];
             }),
-            assistantText: activeTurn.assistantFinalText,
           }),
           emit,
           { concurrency: 1 },
@@ -1911,6 +3343,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           session: {
             ...input.context.session,
             status: "ready",
+            activeTurnId: undefined,
             updatedAt: nowIso(),
             lastError: input.detail,
           },
@@ -1942,6 +3375,48 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         );
       });
 
+      // Last-resort handler for failures that escape runHostedTurn's own try/catch
+      // (for example, a fetch rejected before the stream-read loop started). Without
+      // this, a background fork can fail silently and leave the UI stuck waiting for
+      // a turn.completed event.
+      const finalizeFailedBackgroundTurn = Effect.fn("finalizeFailedBackgroundTurn")(
+        function* (input: { threadId: ThreadId; turnId: TurnId; error: unknown }) {
+          const detail = toMessage(input.error);
+          const finalized = yield* isTurnFinalized(input.turnId);
+          if (finalized) {
+            return;
+          }
+          const context = yield* Ref.get(sessionsRef).pipe(
+            Effect.map((sessions) => sessions.get(String(input.threadId)) ?? null),
+          );
+          if (context?.activeTurn && context.activeTurn.turnId === input.turnId) {
+            yield* failTurn({ context, detail });
+            return;
+          }
+          // No activeTurn to own the failure; surface the event anyway so the UI moves on.
+          yield* markTurnFinalized(input.turnId);
+          yield* emit({
+            ...runtimeEventBase({
+              threadId: input.threadId,
+              turnId: input.turnId,
+            }),
+            type: "runtime.error",
+            payload: {
+              message: detail,
+              class: "provider_error",
+            },
+          } satisfies ProviderRuntimeEvent);
+          yield* emit(
+            buildTurnCompletedEvent({
+              threadId: input.threadId,
+              turnId: input.turnId,
+              state: "failed",
+              errorMessage: detail,
+            }),
+          );
+        },
+      );
+
       const emitToolStarted = (input: {
         threadId: ThreadId;
         turnId: TurnId;
@@ -1968,7 +3443,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 ? String(input.toolInput.command ?? input.toolName)
                 : typeof input.toolInput.path === "string"
                   ? input.toolInput.path
-                  : undefined),
+                  : toolLifecycleDetail(input.toolName, input.toolInput)),
             data: {
               toolName: input.toolName,
               input: input.toolInput,
@@ -2006,45 +3481,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           },
         } satisfies ProviderRuntimeEvent);
 
-      const resolveSubagentTarget = (
-        context: ShioriSessionContext,
-        target: unknown,
-      ): ShioriSubagentState | null => {
-        const value = typeof target === "string" ? target.trim() : "";
-        if (value.length === 0) {
-          return null;
-        }
-        const byId = context.subagents.get(value);
-        if (byId) {
-          return byId;
-        }
-        for (const state of context.subagents.values()) {
-          if (state.taskName === value) {
-            return state;
-          }
-        }
-        return null;
-      };
-
-      const subagentWaitSnapshot = (
-        state: ShioriSubagentState,
-        target: string,
-      ): {
-        target: string;
-        id: string;
-        task_name: string;
-        status: ShioriSubagentLifecycleStatus;
-        summary?: string;
-        error?: string;
-      } => ({
-        target,
-        id: state.id,
-        task_name: state.taskName,
-        status: state.status,
-        ...(state.lastSummary ? { summary: state.lastSummary } : {}),
-        ...(state.lastError ? { error: state.lastError } : {}),
-      });
-
       const allocateSubagentTaskName = (
         context: ShioriSessionContext,
         preferred: unknown,
@@ -2071,7 +3507,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         status: ShioriSubagentLifecycleStatus;
         summary?: string;
       }) =>
-        updateContext(input.threadId, (context) => ({
+        updateContextAndPersist(input.threadId, (context) => ({
           ...context,
           pendingSubagentNotifications: [
             ...context.pendingSubagentNotifications,
@@ -2081,7 +3517,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               ...(input.summary ? { summary: input.summary } : {}),
             }),
           ],
-        }));
+        })).pipe(Effect.asVoid);
 
       const emitSubagentTaskStarted = (input: {
         threadId: ThreadId;
@@ -2103,7 +3539,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...(input.taskType ? { taskType: input.taskType } : {}),
           },
           raw: {
-            source: "claude.sdk.message",
+            source: "shiori.hosted",
             method: "shiori/subagent/task_started",
             payload: {
               task_id: input.taskId,
@@ -2132,7 +3568,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...(input.summary ? { summary: input.summary } : {}),
           },
           raw: {
-            source: "claude.sdk.message",
+            source: "shiori.hosted",
             method: "shiori/subagent/task_progress",
             payload: {
               task_id: input.taskId,
@@ -2161,7 +3597,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...(input.summary ? { summary: input.summary } : {}),
           },
           raw: {
-            source: "claude.sdk.message",
+            source: "shiori.hosted",
             method: "shiori/subagent/task_completed",
             payload: {
               task_id: input.taskId,
@@ -2246,6 +3682,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         const settings = yield* serverSettings.getSettings;
         const apiBaseUrl = resolveApiBaseUrl(settings.providers.shiori.apiBaseUrl);
         const sessionContext = yield* getContext(input.threadId);
+        const hostedBootstrap = yield* resolveHostedBootstrapForContext({
+          threadId: input.threadId,
+          authToken: input.authToken,
+        });
         const requestBody = JSON.stringify({
           sessionId: `${String(input.threadId)}:subagent`,
           turnId: crypto.randomUUID(),
@@ -2258,65 +3698,39 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             rules: buildShioriWorkspaceRules({
               cwd: sessionContext.session.cwd,
               personality: settings.assistantPersonality,
+              skillPrompt: sessionContext.activeTurn?.skillPrompt,
             }),
           },
           tools: buildHostedToolDescriptors({
             ...sessionContext,
             interactionMode: "default",
+            mcpToolDescriptors: sessionContext.activeTurn?.mcpToolDescriptors ?? [],
+            hostedBootstrap,
           })
             .filter((descriptor) => descriptor.name !== "request_user_input")
-            .map((descriptor) => ({
-              name: descriptor.name,
-              description: descriptor.description,
-              inputSchema: descriptor.inputSchema,
-              ...(descriptor.title ? { title: descriptor.title } : {}),
-            })),
-        });
-
-        const response = yield* Effect.tryPromise({
-          try: () =>
-            fetch(`${apiBaseUrl}/api/shiori-code/agent/stream`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Content-Length": String(Buffer.byteLength(requestBody)),
-                "X-Convex-Auth-Token": input.authToken,
-                "X-Shiori-Client": "electron",
-                "User-Agent": "ShioriCode-macOS/1.0",
-              },
-              body: Buffer.from(requestBody, "utf8"),
-              signal: input.signal,
-            }),
-          catch: (error) =>
-            requestError(
-              `shiori.subagent.start:${String(input.threadId)}`,
-              toMessage(error),
-              error,
+            .map((descriptor) =>
+              Object.assign(
+                {
+                  name: descriptor.name,
+                  description: descriptor.description,
+                  inputSchema: descriptor.inputSchema,
+                },
+                descriptor.title ? { title: descriptor.title } : {},
+              ),
             ),
         });
 
-        if (!response.ok || !response.body) {
-          const detail = yield* Effect.tryPromise({
-            try: async () => {
-              const text = await response.text();
-              return text.trim().length > 0
-                ? text
-                : `Shiori API returned ${response.status} ${response.statusText}`.trim();
-            },
-            catch: (error) =>
-              requestError(
-                `shiori.subagent.start:${String(input.threadId)}`,
-                `Shiori API returned ${response.status}.`,
-                error,
-              ),
-          });
-          return yield* Effect.fail(
-            requestError(`shiori.subagent.start:${String(input.threadId)}`, detail),
-          );
-        }
+        const response = yield* performHostedStreamFetch({
+          method: "POST",
+          apiBaseUrl,
+          authToken: input.authToken,
+          requestBody: Buffer.from(requestBody, "utf8"),
+          signal: input.signal,
+          logLabel: `shiori.subagent.start:${String(input.threadId)}`,
+        });
 
         const reader = parseJsonEventStream({
-          stream: response.body,
+          stream: boundStreamSize(response.body!, effectiveMaxStreamBytes),
           schema: uiMessageChunkSchema,
         }).getReader();
 
@@ -2339,7 +3753,18 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   toMessage(error),
                   error,
                 ),
-            });
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: effectiveStreamReadTimeout,
+                orElse: () =>
+                  Effect.fail(
+                    requestError(
+                      `shiori.subagent.stream:${String(input.threadId)}`,
+                      `Shiori subagent stream stalled for more than ${Duration.format(Duration.fromInputUnsafe(effectiveStreamReadTimeout))}; closing to recover.`,
+                    ),
+                  ),
+              }),
+            );
             if (next.done) {
               break;
             }
@@ -2367,10 +3792,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                       ? (chunk.input as Record<string, unknown>)
                       : {},
                 };
-                return {
-                  assistantText,
-                  nextToolCall,
-                };
+                break;
               }
               case "tool-input-error":
                 return yield* Effect.fail(
@@ -2400,7 +3822,14 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 toMessage(error),
                 error,
               ),
-          }).pipe(Effect.ignore({ log: false }));
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logDebug("shiori subagent reader cancel failed", {
+                threadId: input.threadId,
+                detail: toMessage(error),
+              }),
+            ),
+          );
         }
       });
 
@@ -2449,7 +3878,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             },
           ],
         };
-        let requestMessages: HostedShioriMessage[] = [...subagent.history, startUserMessage];
+        let requestMessages: HostedShioriMessage[] = trimHostedMessageHistory([
+          ...subagent.history,
+          startUserMessage,
+        ]);
         let rounds = 0;
 
         for (;;) {
@@ -2480,8 +3912,8 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               text: assistantPrefixText,
             });
             const nextHistory = hasMessageParts(assistantMessage)
-              ? [...requestMessages, assistantMessage]
-              : requestMessages;
+              ? trimHostedMessageHistory([...requestMessages, assistantMessage])
+              : trimHostedMessageHistory(requestMessages);
             return {
               state: "completed" as const,
               history: nextHistory,
@@ -2500,6 +3932,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             toolName: step.nextToolCall.toolName,
             toolInput: step.nextToolCall.toolInput,
             selectedModel: input.modelId,
+            hostedBootstrap: yield* resolveHostedBootstrapForContext({
+              threadId: input.threadId,
+              authToken,
+            }),
             signal: input.signal,
           });
           const assistantMessage = assistantToolMessage({
@@ -2513,7 +3949,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               ? { output: execution.output }
               : { errorText: execution.errorText }),
           });
-          requestMessages = [...requestMessages, assistantMessage];
+          requestMessages = trimHostedMessageHistory([...requestMessages, assistantMessage]);
         }
       });
 
@@ -2532,7 +3968,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             return;
           }
           if (state.status === "shutdown") {
-            yield* updateContext(input.threadId, (current) => {
+            yield* updateContextAndPersist(input.threadId, (current) => {
               const currentState = current.subagents.get(input.subagentId);
               if (!currentState) {
                 return current;
@@ -2553,7 +3989,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           }
 
           if (state.queuedInputs.length === 0) {
-            yield* updateContext(input.threadId, (current) => {
+            yield* updateContextAndPersist(input.threadId, (current) => {
               const currentState = current.subagents.get(input.subagentId);
               if (!currentState) {
                 return current;
@@ -2579,7 +4015,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           const runController = new AbortController();
           const nextInput = state.queuedInputs[0];
           const queuedSummary = normalizeSubagentSummary(nextInput?.prompt);
-          yield* updateContext(input.threadId, (current) => {
+          yield* updateContextAndPersist(input.threadId, (current) => {
             const currentState = current.subagents.get(input.subagentId);
             if (!currentState || currentState.queuedInputs.length === 0) {
               return current;
@@ -2623,7 +4059,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const detail = toMessage(attempt.failure);
             const aborted = runController.signal.aborted;
             const updatedAt = nowIso();
-            yield* updateContext(input.threadId, (current) => {
+            yield* updateContextAndPersist(input.threadId, (current) => {
               const currentState = current.subagents.get(input.subagentId);
               if (!currentState) {
                 return current;
@@ -2673,7 +4109,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
           const runSummary = normalizeSubagentSummary(completedAttempt.summary);
           let queuedInputCount = 0;
-          yield* updateContext(input.threadId, (current) => {
+          yield* updateContextAndPersist(input.threadId, (current) => {
             const currentState = current.subagents.get(input.subagentId);
             if (!currentState) {
               return current;
@@ -2730,12 +4166,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
       const ensureSubagentRunner = (threadId: ThreadId, subagentId: string) =>
         Effect.gen(function* () {
-          const shouldStart = yield* Ref.modify(sessionsRef, (sessions) => {
-            const next = new Map(sessions);
-            const context = next.get(String(threadId));
-            if (!context) {
-              return [false, sessions] as const;
-            }
+          const updatedContext = yield* updateContextAndPersist(threadId, (context) => {
             const state = context.subagents.get(subagentId);
             if (
               !state ||
@@ -2743,7 +4174,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               state.status === "shutdown" ||
               state.queuedInputs.length === 0
             ) {
-              return [false, sessions] as const;
+              return context;
             }
             const nextSubagents = new Map(context.subagents);
             nextSubagents.set(subagentId, {
@@ -2757,12 +4188,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   : state.status,
               updatedAt: nowIso(),
             });
-            next.set(String(threadId), {
+            return {
               ...context,
               subagents: nextSubagents,
-            });
-            return [true, next] as const;
+            };
           });
+          const updatedState = updatedContext.subagents.get(subagentId);
+          const shouldStart =
+            updatedState !== undefined &&
+            updatedState.runnerActive &&
+            updatedState.status !== "shutdown" &&
+            updatedState.queuedInputs.length > 0;
           if (!shouldStart) {
             return;
           }
@@ -2781,9 +4217,19 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         toolName: string;
         toolInput: Record<string, unknown>;
         selectedModel: string;
+        hostedBootstrap: ShioriCodeBootstrapConfig | null | undefined;
         signal?: AbortSignal;
       }) {
         const toolName = input.toolName;
+        if (
+          isSubagentToolName(toolName) &&
+          !canUseHostedSubagentTool(input.hostedBootstrap, toolName)
+        ) {
+          return {
+            state: "output-error" as const,
+            errorText: `Tool '${toolName}' is disabled by the hosted ShioriCode policy.`,
+          };
+        }
         if (toolName === "update_plan") {
           return {
             state: "output-available" as const,
@@ -2844,20 +4290,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             };
           }
           state.currentRun?.controller.abort();
-          yield* updateContext(input.threadId, (current) => {
+          yield* updateContextAndPersist(input.threadId, (current) => {
             const currentState = current.subagents.get(state.id);
             if (!currentState) {
               return current;
             }
             const nextSubagents = new Map(current.subagents);
-            nextSubagents.set(state.id, {
-              ...currentState,
-              status: "shutdown",
-              runnerActive: false,
-              currentRun: undefined,
-              queuedInputs: [],
-              updatedAt: nowIso(),
-            });
+            nextSubagents.delete(state.id);
             return {
               ...current,
               subagents: nextSubagents,
@@ -2911,40 +4350,62 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               errorText: "Subagent message must be a non-empty string.",
             };
           }
-          if (state.status === "shutdown") {
-            return {
-              state: "output-error" as const,
-              errorText: `Subagent '${state.taskName}' is closed and cannot accept new input.`,
-            };
-          }
 
           const queuedInput: ShioriSubagentQueuedInput = {
             id: crypto.randomUUID(),
             prompt: message,
             submittedAt: nowIso(),
           };
-          yield* updateContext(input.threadId, (current) => {
-            const currentState = current.subagents.get(state.id);
-            if (!currentState) {
-              return current;
+
+          // Atomically check the subagent status and queue the input in a single CAS
+          // so a concurrent close_agent cannot slip in between the status check and
+          // the write.
+          const enqueueOutcome = yield* Ref.modify(sessionsRef, (sessions) => {
+            const existing = sessions.get(String(input.threadId));
+            if (!existing) {
+              return ["missing" as const, sessions];
             }
-            const nextSubagents = new Map(current.subagents);
+            const currentState = existing.subagents.get(state.id);
+            if (!currentState) {
+              return ["missing" as const, sessions];
+            }
+            if (currentState.status === "shutdown") {
+              return ["shutdown" as const, sessions];
+            }
+            const nextSubagents = new Map(existing.subagents);
             nextSubagents.set(state.id, {
               ...currentState,
               queuedInputs: [...currentState.queuedInputs, queuedInput],
               status:
-                currentState.status === "shutdown"
-                  ? currentState.status
-                  : currentState.status === "failed" || currentState.status === "completed"
-                    ? "running"
-                    : currentState.status,
+                currentState.status === "failed" || currentState.status === "completed"
+                  ? "running"
+                  : currentState.status,
               updatedAt: nowIso(),
             });
-            return {
-              ...current,
+            const nextSessions = new Map(sessions);
+            nextSessions.set(String(input.threadId), {
+              ...existing,
               subagents: nextSubagents,
-            };
+            });
+            return ["queued" as const, nextSessions];
           });
+
+          if (enqueueOutcome === "shutdown") {
+            return {
+              state: "output-error" as const,
+              errorText: `Subagent '${state.taskName}' is closed and cannot accept new input.`,
+            };
+          }
+          if (enqueueOutcome === "missing") {
+            return {
+              state: "output-error" as const,
+              errorText: `Unknown subagent target '${targetValue}'.`,
+            };
+          }
+
+          // Persist after the atomic state update lands.
+          const updatedContext = yield* getContext(input.threadId);
+          yield* persistContext(updatedContext);
           yield* ensureSubagentRunner(input.threadId, state.id);
           return {
             state: "output-available" as const,
@@ -3021,7 +4482,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...(input.turnId ? { parentTurnId: input.turnId } : {}),
             parentToolUseId: input.toolCallId,
           };
-          yield* updateContext(input.threadId, (current) => ({
+          yield* updateContextAndPersist(input.threadId, (current) => ({
             ...current,
             subagentSequence: current.subagentSequence + 1,
             subagents: new Map(current.subagents).set(state.id, state),
@@ -3075,9 +4536,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         const context = yield* getContext(input.threadId);
         const requestKind = toolRequestKind(toolName);
         if (
-          requestKind !== undefined &&
-          context.session.runtimeMode !== "full-access" &&
-          !context.allowedRequestKinds.has(requestKind)
+          isHostedApprovalRequired({
+            toolName,
+            requestKind,
+            runtimeMode: context.session.runtimeMode,
+            allowedRequestKinds: context.allowedRequestKinds,
+            bootstrap: context.activeTurn?.hostedBootstrap,
+          })
         ) {
           return {
             state: "output-error" as const,
@@ -3088,6 +4553,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           toolName,
           toolInput: input.toolInput,
           cwd: context.session.cwd,
+          hostedBootstrap: context.activeTurn?.hostedBootstrap,
           ...(input.signal ? { signal: input.signal } : {}),
         });
       });
@@ -3096,6 +4562,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         toolName: string;
         toolInput: Record<string, unknown>;
         cwd: string | undefined;
+        hostedBootstrap: ShioriCodeBootstrapConfig | null | undefined;
         signal?: AbortSignal;
       }) {
         const execution = yield* Effect.result(executeLocalTool(input));
@@ -3120,6 +4587,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         toolName: string;
         toolInput: Record<string, unknown>;
         cwd: string | undefined;
+        hostedBootstrap: ShioriCodeBootstrapConfig | null | undefined;
         signal?: AbortSignal;
       }) {
         switch (input.toolName) {
@@ -3158,6 +4626,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               catch: (error) =>
                 requestError(`shiori.tool.${input.toolName}`, toMessage(error), error),
             });
+            yield* Effect.try({
+              try: () =>
+                assertWorkspacePathAllowed({
+                  rootCwd: input.cwd,
+                  resolvedPath,
+                  bootstrap: input.hostedBootstrap,
+                  toolName: input.toolName,
+                }),
+              catch: (error) =>
+                requestError(`shiori.tool.${input.toolName}`, toMessage(error), error),
+            });
             const content = yield* Effect.tryPromise({
               try: () => readFile(resolvedPath, "utf8"),
               catch: (error) =>
@@ -3176,6 +4655,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             });
             const content =
               typeof input.toolInput.content === "string" ? input.toolInput.content : "";
+            yield* Effect.try({
+              try: () =>
+                assertWorkspacePathAllowed({
+                  rootCwd: input.cwd,
+                  resolvedPath,
+                  bootstrap: input.hostedBootstrap,
+                  toolName: input.toolName,
+                }),
+              catch: (error) =>
+                requestError(`shiori.tool.${input.toolName}`, toMessage(error), error),
+            });
             yield* Effect.tryPromise({
               try: async () => {
                 await mkdir(path.dirname(resolvedPath), { recursive: true });
@@ -3192,6 +4682,21 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           case "apply_patch": {
             const patchText =
               typeof input.toolInput.patch === "string" ? input.toolInput.patch : "";
+            yield* Effect.try({
+              try: () => {
+                for (const targetPath of extractPatchTargetPaths(patchText)) {
+                  const resolvedPath = resolveWorkspacePath(input.cwd, targetPath);
+                  assertWorkspacePathAllowed({
+                    rootCwd: input.cwd,
+                    resolvedPath,
+                    bootstrap: input.hostedBootstrap,
+                    toolName: input.toolName,
+                  });
+                }
+              },
+              catch: (error) =>
+                requestError(`shiori.tool.${input.toolName}`, toMessage(error), error),
+            });
             const result = yield* Effect.tryPromise({
               try: () => applyUnifiedPatch(patchText, input.cwd ?? process.cwd(), input.signal),
               catch: (error) =>
@@ -3219,6 +4724,16 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             });
             return sanitizeToolOutput(input.toolName, result);
           }
+          case "web_search":
+            return yield* Effect.tryPromise({
+              try: () =>
+                executeShioriWebSearch({
+                  toolInput: input.toolInput,
+                  ...(input.signal ? { signal: input.signal } : {}),
+                }),
+              catch: (error) =>
+                requestError(`shiori.tool.${input.toolName}`, "Failed to search the web.", error),
+            });
           default:
             return yield* requestError(
               `shiori.tool.${input.toolName}`,
@@ -3227,7 +4742,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         }
       });
 
-      const replaceMessageInContext = (
+      const _replaceMessageInContext = (
         threadId: ThreadId,
         messageId: string,
         nextMessage: HostedShioriMessage,
@@ -3246,6 +4761,44 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           return nextContext;
         });
 
+      const replaceToolPartInContext = (input: {
+        threadId: ThreadId;
+        messageId: string;
+        toolCallId: string;
+        nextToolPart: HostedShioriMessage["parts"][number];
+        dropApprovalRequestId?: ApprovalRequestId;
+        dropUserInputRequestId?: ApprovalRequestId;
+      }) =>
+        Effect.gen(function* () {
+          const context = yield* getContext(input.threadId);
+          const nextMessages = context.messages.map((message) =>
+            message.id === input.messageId
+              ? replaceToolPartInMessage({
+                  message,
+                  toolCallId: input.toolCallId,
+                  nextToolPart: input.nextToolPart,
+                })
+              : message,
+          );
+          const nextPendingApprovals = new Map(context.pendingApprovals);
+          const nextPendingUserInputs = new Map(context.pendingUserInputs);
+          if (input.dropApprovalRequestId) {
+            nextPendingApprovals.delete(input.dropApprovalRequestId);
+          }
+          if (input.dropUserInputRequestId) {
+            nextPendingUserInputs.delete(input.dropUserInputRequestId);
+          }
+          const nextContext = withResumeCursor({
+            ...context,
+            messages: nextMessages,
+            pendingApprovals: nextPendingApprovals,
+            pendingUserInputs: nextPendingUserInputs,
+          });
+          yield* setContext(input.threadId, nextContext);
+          yield* persistContext(nextContext);
+          return nextContext;
+        });
+
       const runHostedTurn: (input: {
         context: ShioriSessionContext;
         turnId: TurnId;
@@ -3259,10 +4812,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         const settings = yield* serverSettings.getSettings;
         const apiBaseUrl = resolveApiBaseUrl(settings.providers.shiori.apiBaseUrl);
         const interactionMode = input.context.activeTurn?.interactionMode ?? "default";
+        const hostedBootstrap = yield* resolveHostedBootstrapForContext({
+          threadId: input.context.session.threadId,
+          authToken: input.authToken,
+        });
         const tools = buildHostedToolDescriptors({
           ...input.context,
           interactionMode,
           mcpToolDescriptors: input.context.activeTurn?.mcpToolDescriptors ?? [],
+          hostedBootstrap,
         }).map((descriptor) =>
           Object.assign(
             {
@@ -3288,6 +4846,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               cwd: input.context.session.cwd,
               personality: settings.assistantPersonality,
               interactionMode,
+              skillPrompt: input.context.activeTurn?.skillPrompt,
             }),
           },
           tools,
@@ -3302,61 +4861,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           requestBodyBytes: Buffer.byteLength(requestBody),
           token: describeToken(input.authToken),
         });
-        const response = yield* Effect.tryPromise({
-          try: () =>
-            fetch(`${apiBaseUrl}/api/shiori-code/agent/stream`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Content-Length": String(Buffer.byteLength(requestBody)),
-                "X-Convex-Auth-Token": input.authToken,
-                "X-Shiori-Client": "electron",
-                "User-Agent": "ShioriCode-macOS/1.0",
-              },
-              body: Buffer.from(requestBody, "utf8"),
-              signal: input.controller.signal,
-            }),
-          catch: (error) =>
-            requestError(
-              `shiori.turn.start:${String(input.context.session.threadId)}`,
-              toMessage(error),
-              error,
-            ),
-        });
-
-        if (!response.ok || !response.body) {
-          const detail = yield* Effect.tryPromise({
-            try: async () => {
-              const text = await response.text();
-              return text.trim().length > 0
-                ? text
-                : `Shiori API returned ${response.status} ${response.statusText}`.trim();
-            },
-            catch: (error) =>
-              requestError(
-                `shiori.turn.start:${String(input.context.session.threadId)}`,
-                `Shiori API returned ${response.status}.`,
-                error,
-              ),
-          });
-          yield* Effect.logWarning("shiori turn request failed", {
-            threadId: input.context.session.threadId,
-            turnId: input.turnId,
-            status: response.status,
-            statusText: response.statusText,
-            detail,
-          });
-          return yield* Effect.fail(
-            requestError(`shiori.turn.start:${String(input.context.session.threadId)}`, detail),
-          );
-        }
-
-        yield* Effect.logInfo("shiori turn request accepted", {
-          threadId: input.context.session.threadId,
-          turnId: input.turnId,
-          status: response.status,
-        });
-
         if (input.resumeExistingTurn !== true) {
           yield* emit({
             ...runtimeEventBase({
@@ -3369,33 +4873,78 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             },
           } satisfies ProviderRuntimeEvent);
         }
+        const response = yield* performHostedStreamFetch({
+          method: "POST",
+          apiBaseUrl,
+          authToken: input.authToken,
+          requestBody: Buffer.from(requestBody, "utf8"),
+          signal: input.controller.signal,
+          logLabel: `shiori.turn.start:${String(input.context.session.threadId)}`,
+        });
+
+        yield* Effect.logInfo("shiori turn request accepted", {
+          threadId: input.context.session.threadId,
+          turnId: input.turnId,
+          status: response.status,
+        });
 
         const reader = parseJsonEventStream({
-          stream: response.body,
+          stream: boundStreamSize(response.body!, effectiveMaxStreamBytes),
           schema: uiMessageChunkSchema,
         }).getReader();
 
         let assistantText = "";
+        let assistantTextProbeActive = false;
+        let assistantTextEmittedLength = 0;
         let assistantCompletionText = input.context.activeTurn?.assistantText ?? "";
         let assistantFinalText = input.context.activeTurn?.assistantFinalText ?? "";
+        let assistantActiveItemId = input.context.activeTurn?.assistantActiveItemId ?? null;
         let assistantStarted = input.context.activeTurn?.assistantStarted ?? false;
+        let persistedMessages = input.requestMessages;
+        const pendingToolInputAvailableChunks: Array<
+          Extract<UIMessageChunk, { type: "tool-input-available" }>
+        > = [];
+        const ignoredToolCallIds = new Set<string>();
+        const hostedToolExecutions = new Map<
+          string,
+          | {
+              state: "output-available";
+              output: unknown;
+              resultProviderMetadata?: unknown;
+            }
+          | {
+              state: "output-error";
+              errorText: string;
+              resultProviderMetadata?: unknown;
+            }
+          | {
+              state: "output-denied";
+            }
+        >();
+
+        const syncAssistantStreamingState = () => {
+          if (!input.context.activeTurn) {
+            return;
+          }
+          input.context.activeTurn.assistantStarted = assistantStarted;
+          input.context.activeTurn.assistantActiveItemId =
+            assistantStarted && assistantActiveItemId ? assistantActiveItemId : null;
+        };
 
         const flushVisibleAssistantSegment = Effect.fn("flushVisibleAssistantSegment")(function* (
           segmentText: string,
         ) {
-          if (interactionMode === "plan" || segmentText.length === 0) {
+          if (interactionMode === "plan" || segmentText.length === 0 || !assistantActiveItemId) {
             return;
           }
           if (!assistantStarted) {
             assistantStarted = true;
-            if (input.context.activeTurn) {
-              input.context.activeTurn.assistantStarted = true;
-            }
+            syncAssistantStreamingState();
             yield* emit({
               ...runtimeEventBase({
                 threadId: input.context.session.threadId,
                 turnId: input.turnId,
-                itemId: input.assistantItemId,
+                itemId: assistantActiveItemId,
               }),
               type: "item.started",
               payload: {
@@ -3415,7 +4964,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             ...runtimeEventBase({
               threadId: input.context.session.threadId,
               turnId: input.turnId,
-              itemId: input.assistantItemId,
+              itemId: assistantActiveItemId,
             }),
             type: "content.delta",
             payload: {
@@ -3423,6 +4972,488 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               delta: segmentText,
             },
           } satisfies ProviderRuntimeEvent);
+        });
+
+        const flushPendingAssistantText = Effect.fn("flushPendingAssistantText")(function* () {
+          const pendingText = assistantText.slice(assistantTextEmittedLength);
+          if (pendingText.length === 0) {
+            return;
+          }
+          yield* flushVisibleAssistantSegment(pendingText);
+          assistantTextEmittedLength = assistantText.length;
+        });
+
+        const resetAssistantTextBlock = () => {
+          assistantText = "";
+          assistantTextProbeActive = false;
+          assistantTextEmittedLength = 0;
+          assistantActiveItemId = null;
+          assistantStarted = false;
+          syncAssistantStreamingState();
+        };
+
+        const startAssistantTextBlock = (blockId: string) => {
+          assistantText = "";
+          assistantTextProbeActive = interactionMode !== "plan";
+          assistantTextEmittedLength = 0;
+          assistantActiveItemId = assistantTextItemId(input.turnId, blockId);
+          assistantStarted = false;
+          syncAssistantStreamingState();
+        };
+
+        const completeAssistantTextBlock = Effect.fn("completeAssistantTextBlock")(function* () {
+          if (interactionMode === "plan" || !assistantStarted || !assistantActiveItemId) {
+            resetAssistantTextBlock();
+            return;
+          }
+
+          yield* emit(
+            buildAssistantCompletionEvent({
+              threadId: input.context.session.threadId,
+              turnId: input.turnId,
+              itemId: assistantActiveItemId,
+            }),
+          );
+          resetAssistantTextBlock();
+        });
+
+        const processPendingToolStep = Effect.fn("processPendingToolStep")(function* () {
+          if (pendingToolInputAvailableChunks.length === 0) {
+            return false;
+          }
+
+          const stepToolChunks = pendingToolInputAvailableChunks.splice(
+            0,
+            pendingToolInputAvailableChunks.length,
+          );
+          const reasoningBlockIds =
+            input.context.activeTurn !== null
+              ? takeUnconsumedReasoningBlockIds(input.context.activeTurn)
+              : [];
+          const reasoningParts =
+            input.context.activeTurn && reasoningBlockIds.length > 0
+              ? buildReasoningPartsForBlockIds(input.context.activeTurn, reasoningBlockIds)
+              : undefined;
+          const commentaryText =
+            interactionMode === "plan" ? null : normalizeHostedCommentaryText(assistantText);
+
+          if (commentaryText && !assistantStarted && input.context.activeTurn) {
+            input.context.activeTurn.commentaryCount += 1;
+            const commentaryItemId = RuntimeItemId.makeUnsafe(
+              `commentary:${String(input.turnId)}:${input.context.activeTurn.commentaryCount}`,
+            );
+            yield* emit(
+              buildCommentaryAssistantCompletionEvent({
+                threadId: input.context.session.threadId,
+                turnId: input.turnId,
+                itemId: commentaryItemId,
+                detail: commentaryText,
+              }),
+            );
+            resetAssistantTextBlock();
+          } else {
+            yield* flushPendingAssistantText();
+            yield* completeAssistantTextBlock();
+          }
+
+          const latestContext = yield* getContext(input.context.session.threadId);
+          const nextPendingApprovals = new Map(latestContext.pendingApprovals);
+          const nextPendingUserInputs = new Map(latestContext.pendingUserInputs);
+          const assistantMessageId =
+            stepToolChunks.length === 1
+              ? `assistant-tool:${stepToolChunks[0]?.toolCallId ?? String(input.turnId)}`
+              : `assistant-tools:${String(input.turnId)}`;
+          const toolParts: HostedShioriMessage["parts"] = [];
+          const pendingRequestEvents: Array<
+            | {
+                kind: "approval";
+                requestId: ApprovalRequestId;
+                toolName: string;
+                toolInput: Record<string, unknown>;
+                requestKind: ApprovalRequestKind;
+              }
+            | {
+                kind: "user-input";
+                requestId: ApprovalRequestId;
+                toolInput: Record<string, unknown>;
+              }
+          > = [];
+          let waitingOnUser = false;
+          let requiresContinuation = false;
+
+          for (const chunk of stepToolChunks) {
+            const toolName = chunk.toolName;
+            const toolInput =
+              chunk.input && typeof chunk.input === "object" && !Array.isArray(chunk.input)
+                ? (chunk.input as Record<string, unknown>)
+                : {};
+            const hostedExecution = hostedToolExecutions.get(chunk.toolCallId) ?? null;
+            hostedToolExecutions.delete(chunk.toolCallId);
+            const requestKind = toolRequestKind(toolName);
+            const mcpTool = input.context.activeTurn?.mcpTools.get(toolName);
+            const requestId = ApprovalRequestId.makeUnsafe(crypto.randomUUID());
+            const approvalRequired =
+              mcpTool === undefined &&
+              requestKind !== undefined &&
+              input.context.session.runtimeMode !== "full-access" &&
+              !input.context.allowedRequestKinds.has(requestKind);
+
+            if (toolName === "update_plan") {
+              const planUpdate = extractPlanUpdatePayload(toolInput);
+              if (!planUpdate) {
+                const detail =
+                  "Invalid tool input for update_plan: expected at least one plan step.";
+                yield* Effect.logWarning("shiori stream emitted invalid update_plan payload", {
+                  threadId: input.context.session.threadId,
+                  turnId: input.turnId,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                });
+                yield* failTurn({
+                  context: yield* getContext(input.context.session.threadId),
+                  detail,
+                });
+                return true;
+              }
+
+              yield* emit({
+                ...runtimeEventBase({
+                  threadId: input.context.session.threadId,
+                  turnId: input.turnId,
+                }),
+                type: "turn.plan.updated",
+                payload: planUpdate,
+              } satisfies ProviderRuntimeEvent);
+
+              toolParts.push(
+                buildAssistantToolPart({
+                  messageId: assistantMessageId,
+                  text: assistantCompletionText,
+                  ...(reasoningParts ? { reasoningParts } : {}),
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  state: "output-available",
+                  output: { ok: true },
+                  ...(chunk.providerMetadata !== undefined
+                    ? { callProviderMetadata: chunk.providerMetadata }
+                    : {}),
+                }),
+              );
+              requiresContinuation = true;
+              continue;
+            }
+
+            if (hostedExecution || chunk.providerExecuted) {
+              toolParts.push(
+                buildAssistantToolPart({
+                  messageId: assistantMessageId,
+                  text: assistantCompletionText,
+                  ...(reasoningParts ? { reasoningParts } : {}),
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  state: hostedExecution?.state ?? "input-available",
+                  ...(hostedExecution?.state === "output-available"
+                    ? {
+                        output: hostedExecution.output,
+                        ...(hostedExecution.resultProviderMetadata !== undefined
+                          ? {
+                              resultProviderMetadata: hostedExecution.resultProviderMetadata,
+                            }
+                          : {}),
+                      }
+                    : hostedExecution?.state === "output-error"
+                      ? {
+                          errorText: hostedExecution.errorText,
+                          ...(hostedExecution.resultProviderMetadata !== undefined
+                            ? {
+                                resultProviderMetadata: hostedExecution.resultProviderMetadata,
+                              }
+                            : {}),
+                        }
+                      : {}),
+                  ...(chunk.providerMetadata !== undefined
+                    ? { callProviderMetadata: chunk.providerMetadata }
+                    : {}),
+                }),
+              );
+
+              if (hostedExecution?.state === "output-available") {
+                yield* emitToolCompleted({
+                  threadId: input.context.session.threadId,
+                  turnId: input.turnId,
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  ...(mcpTool ? { title: mcpTool.title } : {}),
+                  detail:
+                    toolName === "exec_command"
+                      ? String(toolInput.command ?? "")
+                      : typeof toolInput.path === "string"
+                        ? toolInput.path
+                        : (toolLifecycleDetail(toolName, toolInput) ?? toolTitle(toolName)),
+                  data: hostedExecution.output,
+                });
+              } else if (hostedExecution?.state === "output-error") {
+                yield* emitToolCompleted({
+                  threadId: input.context.session.threadId,
+                  turnId: input.turnId,
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  status: "failed",
+                  ...(mcpTool ? { title: mcpTool.title } : {}),
+                  detail: hostedExecution.errorText,
+                  data: { errorText: hostedExecution.errorText },
+                });
+              } else if (hostedExecution?.state === "output-denied") {
+                yield* emitToolCompleted({
+                  threadId: input.context.session.threadId,
+                  turnId: input.turnId,
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  status: "failed",
+                  ...(mcpTool ? { title: mcpTool.title } : {}),
+                  detail: "Tool output denied.",
+                  data: { errorText: "Tool output denied." },
+                });
+              } else {
+                yield* Effect.logWarning(
+                  "shiori stream step ended before hosted tool result arrived",
+                  {
+                    threadId: input.context.session.threadId,
+                    turnId: input.turnId,
+                    toolCallId: chunk.toolCallId,
+                    toolName,
+                  },
+                );
+              }
+
+              continue;
+            }
+
+            if (isUserInputToolName(toolName)) {
+              nextPendingUserInputs.set(requestId, {
+                requestId,
+                toolCallId: chunk.toolCallId,
+                toolName,
+                input: toolInput,
+                assistantMessageId,
+                ...(reasoningBlockIds.length > 0 ? { reasoningBlockIds } : {}),
+                ...(chunk.providerMetadata !== undefined
+                  ? { callProviderMetadata: chunk.providerMetadata }
+                  : {}),
+              });
+              toolParts.push(
+                buildAssistantToolPart({
+                  messageId: assistantMessageId,
+                  text: assistantCompletionText,
+                  ...(reasoningParts ? { reasoningParts } : {}),
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  state: "input-available",
+                  ...(chunk.providerMetadata !== undefined
+                    ? { callProviderMetadata: chunk.providerMetadata }
+                    : {}),
+                }),
+              );
+              pendingRequestEvents.push({
+                kind: "user-input",
+                requestId,
+                toolInput,
+              });
+              waitingOnUser = true;
+              continue;
+            }
+
+            if (approvalRequired && requestKind) {
+              nextPendingApprovals.set(requestId, {
+                requestId,
+                toolCallId: chunk.toolCallId,
+                toolName,
+                input: toolInput,
+                assistantMessageId,
+                approvalId: requestId,
+                requestKind,
+                ...(reasoningBlockIds.length > 0 ? { reasoningBlockIds } : {}),
+                ...(chunk.providerMetadata !== undefined
+                  ? { callProviderMetadata: chunk.providerMetadata }
+                  : {}),
+              });
+              toolParts.push(
+                buildAssistantToolPart({
+                  messageId: assistantMessageId,
+                  text: assistantCompletionText,
+                  ...(reasoningParts ? { reasoningParts } : {}),
+                  toolName,
+                  toolCallId: chunk.toolCallId,
+                  toolInput,
+                  state: "approval-requested",
+                  approvalId: requestId,
+                  ...(chunk.providerMetadata !== undefined
+                    ? { callProviderMetadata: chunk.providerMetadata }
+                    : {}),
+                }),
+              );
+              pendingRequestEvents.push({
+                kind: "approval",
+                requestId,
+                toolName,
+                toolInput,
+                requestKind,
+              });
+              waitingOnUser = true;
+              continue;
+            }
+
+            const execution = mcpTool
+              ? yield* Effect.tryPromise({
+                  try: async () => ({
+                    state: "output-available" as const,
+                    output: await mcpTool.execute(toolInput),
+                  }),
+                  catch: (error) => ({
+                    state: "output-error" as const,
+                    errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
+                  }),
+                })
+              : isSubagentToolName(toolName)
+                ? yield* executeSubagentToolForTurn({
+                    threadId: input.context.session.threadId,
+                    turnId: input.turnId,
+                    toolCallId: chunk.toolCallId,
+                    toolName,
+                    toolInput,
+                    selectedModel: input.selectedModel,
+                    hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
+                    signal: input.controller.signal,
+                  })
+                : yield* executeLocalToolForTurn({
+                    toolName,
+                    toolInput,
+                    cwd: input.context.session.cwd,
+                    hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
+                    signal: input.controller.signal,
+                  });
+
+            toolParts.push(
+              buildAssistantToolPart({
+                messageId: assistantMessageId,
+                text: assistantCompletionText,
+                ...(reasoningParts ? { reasoningParts } : {}),
+                toolName,
+                toolCallId: chunk.toolCallId,
+                toolInput,
+                state: execution.state,
+                ...(execution.state === "output-available"
+                  ? { output: execution.output }
+                  : { errorText: execution.errorText }),
+                ...(chunk.providerMetadata !== undefined
+                  ? { callProviderMetadata: chunk.providerMetadata }
+                  : {}),
+              }),
+            );
+            yield* emitToolCompleted({
+              threadId: input.context.session.threadId,
+              turnId: input.turnId,
+              toolName,
+              toolCallId: chunk.toolCallId,
+              toolInput,
+              status: execution.state === "output-error" ? "failed" : "completed",
+              ...(mcpTool ? { title: mcpTool.title } : {}),
+              detail:
+                execution.state === "output-error"
+                  ? execution.errorText
+                  : toolName === "exec_command"
+                    ? String(toolInput.command ?? "")
+                    : typeof toolInput.path === "string"
+                      ? toolInput.path
+                      : (toolLifecycleDetail(toolName, toolInput) ?? toolTitle(toolName)),
+              data:
+                execution.state === "output-available"
+                  ? execution.output
+                  : { errorText: execution.errorText },
+            });
+            requiresContinuation = true;
+          }
+
+          const nextMessage = assistantMessageWithParts({
+            messageId: assistantMessageId,
+            text: assistantCompletionText,
+            ...(reasoningParts ? { reasoningParts } : {}),
+            extraParts: toolParts,
+          });
+          const latestContextAfterTools = yield* getContext(input.context.session.threadId);
+          const nextContext = withResumeCursor({
+            ...latestContextAfterTools,
+            messages: [...persistedMessages, nextMessage],
+            pendingApprovals: nextPendingApprovals,
+            pendingUserInputs: nextPendingUserInputs,
+          });
+          persistedMessages = nextContext.messages;
+          yield* setContext(input.context.session.threadId, nextContext);
+          yield* persistContext(nextContext);
+          for (const pendingRequestEvent of pendingRequestEvents) {
+            if (pendingRequestEvent.kind === "user-input") {
+              yield* emitUserInputRequest({
+                threadId: input.context.session.threadId,
+                turnId: input.turnId,
+                requestId: pendingRequestEvent.requestId,
+                toolInput: pendingRequestEvent.toolInput,
+              });
+              continue;
+            }
+
+            yield* emitApprovalRequest({
+              threadId: input.context.session.threadId,
+              turnId: input.turnId,
+              requestId: pendingRequestEvent.requestId,
+              toolName: pendingRequestEvent.toolName,
+              toolInput: pendingRequestEvent.toolInput,
+              requestKind: pendingRequestEvent.requestKind,
+            });
+          }
+          if (waitingOnUser) {
+            return true;
+          }
+          if (requiresContinuation) {
+            if (input.controller.signal.aborted || (yield* isTurnFinalized(input.turnId))) {
+              return yield* Effect.fail(
+                requestError(
+                  `shiori.turn.start:${String(input.context.session.threadId)}`,
+                  "Interrupted",
+                ),
+              );
+            }
+            const continuedController = new AbortController();
+            yield* updateContext(input.context.session.threadId, (context) => ({
+              ...context,
+              activeTurn: context.activeTurn
+                ? {
+                    ...context.activeTurn,
+                    controller: continuedController,
+                  }
+                : context.activeTurn,
+            }));
+            const refreshedContext = yield* getContext(input.context.session.threadId);
+            if (yield* isTurnFinalized(input.turnId)) {
+              return true;
+            }
+            return yield* runHostedTurn({
+              ...input,
+              context: refreshedContext,
+              requestMessages: refreshedContext.messages,
+              controller: continuedController,
+              resumeExistingTurn: true,
+            }).pipe(Effect.as(true));
+          }
+
+          assistantCompletionText = "";
+          assistantFinalText = "";
+          return false;
         });
 
         try {
@@ -3435,7 +5466,18 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   toMessage(error),
                   error,
                 ),
-            });
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: effectiveStreamReadTimeout,
+                orElse: () =>
+                  Effect.fail(
+                    requestError(
+                      `shiori.turn.start:${String(input.context.session.threadId)}`,
+                      `Shiori turn stream stalled for more than ${Duration.format(Duration.fromInputUnsafe(effectiveStreamReadTimeout))}; closing to recover.`,
+                    ),
+                  ),
+              }),
+            );
             if (next.done) {
               break;
             }
@@ -3468,7 +5510,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const chunk = next.value.value as UIMessageChunk;
             switch (chunk.type) {
               case "text-start": {
-                assistantText = "";
+                startAssistantTextBlock(chunk.id);
                 break;
               }
               case "text-delta": {
@@ -3490,13 +5532,24 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   } satisfies ProviderRuntimeEvent);
                   break;
                 }
-                // Buffer assistant text until the next boundary so we can keep
-                // commentary-style pre-tool narration out of the final message.
+                if (assistantTextProbeActive) {
+                  if (
+                    shouldProbeHostedCommentaryText(assistantText) ||
+                    normalizeHostedCommentaryText(assistantText) !== null
+                  ) {
+                    break;
+                  }
+                  assistantTextProbeActive = false;
+                  yield* flushPendingAssistantText();
+                  break;
+                }
+                yield* flushVisibleAssistantSegment(chunk.delta);
+                assistantTextEmittedLength = assistantText.length;
                 break;
               }
               case "text-end": {
-                yield* flushVisibleAssistantSegment(assistantText);
-                assistantText = "";
+                yield* flushPendingAssistantText();
+                yield* completeAssistantTextBlock();
                 break;
               }
               case "reasoning-start": {
@@ -3563,306 +5616,65 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 break;
               }
               case "tool-input-available": {
-                const toolName = chunk.toolName;
-                const toolInput =
-                  chunk.input && typeof chunk.input === "object" && !Array.isArray(chunk.input)
-                    ? (chunk.input as Record<string, unknown>)
-                    : {};
-                const requestKind = toolRequestKind(toolName);
-                const mcpTool = input.context.activeTurn?.mcpTools.get(toolName);
-                const requestId = ApprovalRequestId.makeUnsafe(crypto.randomUUID());
-                const approvalRequired =
-                  mcpTool === undefined &&
-                  requestKind !== undefined &&
-                  input.context.session.runtimeMode !== "full-access" &&
-                  !input.context.allowedRequestKinds.has(requestKind);
-                const assistantMessageId = `assistant-tool:${chunk.toolCallId}`;
-                const reasoningBlockIds =
-                  input.context.activeTurn !== null
-                    ? takeUnconsumedReasoningBlockIds(input.context.activeTurn)
-                    : [];
-                const reasoningParts =
-                  input.context.activeTurn && reasoningBlockIds.length > 0
-                    ? buildReasoningPartsForBlockIds(input.context.activeTurn, reasoningBlockIds)
-                    : undefined;
-                const commentaryText =
-                  interactionMode === "plan" ? null : normalizeHostedCommentaryText(assistantText);
-
-                if (commentaryText && input.context.activeTurn) {
-                  input.context.activeTurn.commentaryCount += 1;
-                  const commentaryItemId = RuntimeItemId.makeUnsafe(
-                    `commentary:${String(input.turnId)}:${input.context.activeTurn.commentaryCount}`,
-                  );
-                  yield* emit(
-                    buildCommentaryAssistantCompletionEvent({
-                      threadId: input.context.session.threadId,
-                      turnId: input.turnId,
-                      itemId: commentaryItemId,
-                      detail: commentaryText,
-                    }),
-                  );
-                } else {
-                  yield* flushVisibleAssistantSegment(assistantText);
+                if (isInternalHostedToolName(chunk.toolName)) {
+                  ignoredToolCallIds.add(chunk.toolCallId);
+                  break;
                 }
-                assistantText = "";
-
-                if (toolName === "update_plan") {
-                  const planUpdate = extractPlanUpdatePayload(toolInput);
-                  if (!planUpdate) {
-                    const detail =
-                      "Invalid tool input for update_plan: expected at least one plan step.";
-                    yield* Effect.logWarning("shiori stream emitted invalid update_plan payload", {
-                      threadId: input.context.session.threadId,
-                      turnId: input.turnId,
-                      toolCallId: chunk.toolCallId,
-                      toolInput,
-                    });
-                    yield* failTurn({
-                      context: yield* getContext(input.context.session.threadId),
-                      detail,
-                    });
-                    return;
-                  }
-
-                  yield* emit({
-                    ...runtimeEventBase({
-                      threadId: input.context.session.threadId,
-                      turnId: input.turnId,
-                    }),
-                    type: "turn.plan.updated",
-                    payload: planUpdate,
-                  } satisfies ProviderRuntimeEvent);
-
-                  const completedMessage = assistantToolMessage({
-                    messageId: assistantMessageId,
-                    text: assistantCompletionText,
-                    ...(reasoningParts ? { reasoningParts } : {}),
-                    toolName,
-                    toolCallId: chunk.toolCallId,
-                    toolInput,
-                    state: "output-available",
-                    output: { ok: true },
-                    ...(chunk.providerMetadata !== undefined
-                      ? { callProviderMetadata: chunk.providerMetadata }
-                      : {}),
-                  });
-                  yield* updateContext(input.context.session.threadId, (context) =>
-                    withResumeCursor({
-                      ...context,
-                      messages: [...input.requestMessages, completedMessage],
-                    }),
-                  );
-                  const persistedAfterPlanTool = yield* getContext(input.context.session.threadId);
-                  yield* persistContext(persistedAfterPlanTool);
-                  if (input.controller.signal.aborted || (yield* isTurnFinalized(input.turnId))) {
-                    return yield* Effect.fail(
-                      requestError(
-                        `shiori.turn.start:${String(input.context.session.threadId)}`,
-                        "Interrupted",
-                      ),
-                    );
-                  }
-                  const continuedController = new AbortController();
-                  yield* updateContext(input.context.session.threadId, (context) => ({
-                    ...context,
-                    activeTurn: context.activeTurn
-                      ? {
-                          ...context.activeTurn,
-                          controller: continuedController,
-                        }
-                      : context.activeTurn,
-                  }));
-                  const refreshedContext = yield* getContext(input.context.session.threadId);
-                  if (yield* isTurnFinalized(input.turnId)) {
-                    return;
-                  }
-                  return yield* runHostedTurn({
-                    ...input,
-                    context: refreshedContext,
-                    requestMessages: refreshedContext.messages,
-                    controller: continuedController,
-                    resumeExistingTurn: true,
-                  });
-                }
-
-                yield* emitToolStarted({
-                  threadId: input.context.session.threadId,
-                  turnId: input.turnId,
-                  toolName,
-                  toolCallId: chunk.toolCallId,
-                  toolInput,
-                  ...(mcpTool ? { title: mcpTool.title } : {}),
-                });
-                const pendingMessage = assistantToolMessage({
-                  messageId: assistantMessageId,
-                  text: assistantCompletionText,
-                  ...(reasoningParts ? { reasoningParts } : {}),
-                  toolName,
-                  toolCallId: chunk.toolCallId,
-                  toolInput,
-                  state: approvalRequired ? "approval-requested" : "input-available",
-                  ...(approvalRequired ? { approvalId: requestId } : {}),
-                  ...(chunk.providerMetadata !== undefined
-                    ? { callProviderMetadata: chunk.providerMetadata }
-                    : {}),
-                });
-
-                const latestContext = yield* getContext(input.context.session.threadId);
-                const nextContext = withResumeCursor({
-                  ...latestContext,
-                  messages: [...input.requestMessages, pendingMessage],
-                  pendingApprovals: new Map(latestContext.pendingApprovals),
-                  pendingUserInputs: new Map(latestContext.pendingUserInputs),
-                });
-
-                if (isUserInputToolName(toolName)) {
-                  nextContext.pendingUserInputs.set(requestId, {
-                    requestId,
-                    toolCallId: chunk.toolCallId,
-                    toolName,
-                    input: toolInput,
-                    assistantMessageId,
-                    ...(reasoningBlockIds.length > 0 ? { reasoningBlockIds } : {}),
-                    ...(chunk.providerMetadata !== undefined
-                      ? { callProviderMetadata: chunk.providerMetadata }
-                      : {}),
-                  });
-                  yield* setContext(input.context.session.threadId, nextContext);
-                  yield* persistContext(nextContext);
-                  yield* emitUserInputRequest({
+                pendingToolInputAvailableChunks.push(chunk);
+                if (chunk.toolName !== "update_plan") {
+                  const toolInput =
+                    chunk.input && typeof chunk.input === "object" && !Array.isArray(chunk.input)
+                      ? (chunk.input as Record<string, unknown>)
+                      : {};
+                  const mcpTool = input.context.activeTurn?.mcpTools.get(chunk.toolName);
+                  yield* emitToolStarted({
                     threadId: input.context.session.threadId,
                     turnId: input.turnId,
-                    requestId,
-                    toolInput,
-                  });
-                  return;
-                }
-
-                if (approvalRequired && requestKind) {
-                  nextContext.pendingApprovals.set(requestId, {
-                    requestId,
+                    toolName: chunk.toolName,
                     toolCallId: chunk.toolCallId,
-                    toolName,
-                    input: toolInput,
-                    assistantMessageId,
-                    approvalId: requestId,
-                    requestKind,
-                    ...(reasoningBlockIds.length > 0 ? { reasoningBlockIds } : {}),
-                    ...(chunk.providerMetadata !== undefined
-                      ? { callProviderMetadata: chunk.providerMetadata }
-                      : {}),
-                  });
-                  yield* setContext(input.context.session.threadId, nextContext);
-                  yield* persistContext(nextContext);
-                  yield* emitApprovalRequest({
-                    threadId: input.context.session.threadId,
-                    turnId: input.turnId,
-                    requestId,
-                    toolName,
                     toolInput,
-                    requestKind,
+                    ...(mcpTool ? { title: mcpTool.title } : {}),
                   });
-                  return;
                 }
-
-                const execution = mcpTool
-                  ? yield* Effect.tryPromise({
-                      try: async () => ({
-                        state: "output-available" as const,
-                        output: await mcpTool.execute(toolInput),
-                      }),
-                      catch: (error) => ({
-                        state: "output-error" as const,
-                        errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
-                      }),
-                    })
-                  : isSubagentToolName(toolName)
-                    ? yield* executeSubagentToolForTurn({
-                        threadId: input.context.session.threadId,
-                        turnId: input.turnId,
-                        toolCallId: chunk.toolCallId,
-                        toolName,
-                        toolInput,
-                        selectedModel: input.selectedModel,
-                        signal: input.controller.signal,
-                      })
-                    : yield* executeLocalToolForTurn({
-                        toolName,
-                        toolInput,
-                        cwd: input.context.session.cwd,
-                        signal: input.controller.signal,
-                      });
-                const completedMessage = assistantToolMessage({
-                  messageId: assistantMessageId,
-                  text: assistantCompletionText,
-                  ...(reasoningParts ? { reasoningParts } : {}),
-                  toolName,
-                  toolCallId: chunk.toolCallId,
-                  toolInput,
-                  state: execution.state,
-                  ...(execution.state === "output-available"
-                    ? { output: execution.output }
-                    : { errorText: execution.errorText }),
+                break;
+              }
+              case "tool-output-available": {
+                if (ignoredToolCallIds.has(chunk.toolCallId)) {
+                  ignoredToolCallIds.delete(chunk.toolCallId);
+                  break;
+                }
+                hostedToolExecutions.set(chunk.toolCallId, {
+                  state: "output-available",
+                  output: chunk.output,
                   ...(chunk.providerMetadata !== undefined
-                    ? { callProviderMetadata: chunk.providerMetadata }
+                    ? { resultProviderMetadata: chunk.providerMetadata }
                     : {}),
                 });
-                yield* emitToolCompleted({
-                  threadId: input.context.session.threadId,
-                  turnId: input.turnId,
-                  toolName,
-                  toolCallId: chunk.toolCallId,
-                  toolInput,
-                  status: execution.state === "output-error" ? "failed" : "completed",
-                  ...(mcpTool ? { title: mcpTool.title } : {}),
-                  detail:
-                    execution.state === "output-error"
-                      ? execution.errorText
-                      : toolName === "exec_command"
-                        ? String(toolInput.command ?? "")
-                        : typeof toolInput.path === "string"
-                          ? toolInput.path
-                          : toolTitle(toolName),
-                  data:
-                    execution.state === "output-available"
-                      ? execution.output
-                      : { errorText: execution.errorText },
-                });
-                const resumedContext = withResumeCursor({
-                  ...(yield* getContext(input.context.session.threadId)),
-                  messages: [...input.requestMessages, completedMessage],
-                });
-                yield* setContext(input.context.session.threadId, resumedContext);
-                yield* persistContext(resumedContext);
-                if (input.controller.signal.aborted || (yield* isTurnFinalized(input.turnId))) {
-                  return yield* Effect.fail(
-                    requestError(
-                      `shiori.turn.start:${String(input.context.session.threadId)}`,
-                      "Interrupted",
-                    ),
-                  );
+                break;
+              }
+              case "tool-output-error": {
+                if (ignoredToolCallIds.has(chunk.toolCallId)) {
+                  ignoredToolCallIds.delete(chunk.toolCallId);
+                  break;
                 }
-                const continuedController = new AbortController();
-                yield* updateContext(input.context.session.threadId, (context) => ({
-                  ...context,
-                  activeTurn: context.activeTurn
-                    ? {
-                        ...context.activeTurn,
-                        controller: continuedController,
-                      }
-                    : context.activeTurn,
-                }));
-                const refreshedContext = yield* getContext(input.context.session.threadId);
-                if (yield* isTurnFinalized(input.turnId)) {
-                  return;
-                }
-                return yield* runHostedTurn({
-                  ...input,
-                  context: refreshedContext,
-                  requestMessages: refreshedContext.messages,
-                  controller: continuedController,
-                  resumeExistingTurn: true,
+                hostedToolExecutions.set(chunk.toolCallId, {
+                  state: "output-error",
+                  errorText: chunk.errorText,
+                  ...(chunk.providerMetadata !== undefined
+                    ? { resultProviderMetadata: chunk.providerMetadata }
+                    : {}),
                 });
+                break;
+              }
+              case "tool-output-denied": {
+                if (ignoredToolCallIds.has(chunk.toolCallId)) {
+                  ignoredToolCallIds.delete(chunk.toolCallId);
+                  break;
+                }
+                hostedToolExecutions.set(chunk.toolCallId, {
+                  state: "output-denied",
+                });
+                break;
               }
               case "tool-input-error": {
                 const toolInput =
@@ -3915,8 +5727,22 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   ),
                 );
               }
+              case "finish-step": {
+                const didStop = yield* processPendingToolStep();
+                if (didStop) {
+                  return;
+                }
+                break;
+              }
               default:
                 break;
+            }
+          }
+
+          if (pendingToolInputAvailableChunks.length > 0) {
+            const didStop = yield* processPendingToolStep();
+            if (didStop) {
+              return;
             }
           }
 
@@ -3934,8 +5760,8 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           }
 
           if (interactionMode !== "plan") {
-            yield* flushVisibleAssistantSegment(assistantText);
-            assistantText = "";
+            yield* flushPendingAssistantText();
+            yield* completeAssistantTextBlock();
           }
 
           if (interactionMode === "plan" && assistantCompletionText.trim().length > 0) {
@@ -3949,15 +5775,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 planMarkdown: assistantCompletionText,
               },
             } satisfies ProviderRuntimeEvent);
-          } else if (assistantStarted && assistantFinalText.trim().length > 0) {
-            yield* emit(
-              buildAssistantCompletionEvent({
-                threadId: input.context.session.threadId,
-                turnId: input.turnId,
-                itemId: input.assistantItemId,
-                detail: assistantFinalText,
-              }),
-            );
           }
 
           const assistantMessage = assistantMessageWithParts({
@@ -3981,8 +5798,8 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             assistantChars: assistantFinalText.length,
           });
           const finalizedMessages = hasMessageParts(assistantMessage)
-            ? [...input.requestMessages, assistantMessage]
-            : input.requestMessages;
+            ? [...persistedMessages, assistantMessage]
+            : persistedMessages;
 
           yield* updateContext(input.context.session.threadId, (context) =>
             withResumeCursor({
@@ -3996,6 +5813,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               session: {
                 ...context.session,
                 status: "ready",
+                activeTurnId: undefined,
                 updatedAt: nowIso(),
               },
             }),
@@ -4023,18 +5841,42 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             return;
           }
 
-          yield* updateContext(input.context.session.threadId, (context) =>
-            withResumeCursor({
+          // Preserve whatever assistant text we managed to stream before the failure
+          // so the user sees partial output instead of a blank "failed" turn.
+          const partialAssistantMessage =
+            assistantFinalText.trim().length > 0
+              ? assistantMessageWithParts({
+                  messageId: `assistant-${String(input.turnId)}`,
+                  text: assistantFinalText,
+                  ...(input.context.activeTurn
+                    ? {
+                        reasoningParts: buildReasoningPartsForBlockIds(
+                          input.context.activeTurn,
+                          takeUnconsumedReasoningBlockIds(input.context.activeTurn),
+                        ),
+                      }
+                    : {}),
+                })
+              : null;
+
+          yield* updateContext(input.context.session.threadId, (context) => {
+            const nextMessages =
+              partialAssistantMessage && hasMessageParts(partialAssistantMessage)
+                ? [...context.messages, partialAssistantMessage]
+                : context.messages;
+            return withResumeCursor({
               ...context,
+              messages: nextMessages,
               activeTurn: null,
               session: {
                 ...context.session,
                 status: "ready",
+                activeTurnId: undefined,
                 updatedAt: nowIso(),
                 ...(aborted ? {} : { lastError: detail }),
               },
-            }),
-          );
+            });
+          });
           const updatedContext = yield* getContext(input.context.session.threadId);
           yield* persistContext(updatedContext);
 
@@ -4044,7 +5886,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               buildInterruptedTurnEvents({
                 threadId: input.context.session.threadId,
                 turnId: input.turnId,
-                assistantItemId: input.assistantItemId,
+                assistantItemId: assistantActiveItemId,
                 assistantStarted,
                 openReasoningItemIds:
                   input.context.activeTurn !== null
@@ -4053,7 +5895,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                         return block && !block.completed ? [block.itemId] : [];
                       })
                     : [],
-                assistantText: assistantFinalText,
               }),
               emit,
               { concurrency: 1 },
@@ -4089,7 +5930,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 toMessage(error),
                 error,
               ),
-          }).pipe(Effect.ignore({ log: false }));
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logDebug("shiori turn reader cancel failed", {
+                threadId: input.context.session.threadId,
+                turnId: input.turnId,
+                detail: toMessage(error),
+              }),
+            ),
+          );
         }
       });
 
@@ -4097,48 +5946,103 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         provider: PROVIDER,
         capabilities: {
           sessionModelSwitch: "in-session",
+          recovery: {
+            supportsResumeCursor: true,
+            supportsAdoptActiveSession: true,
+          },
+          observability: {
+            emitsStructuredSessionExit: true,
+            emitsRuntimeDiagnostics: true,
+          },
         },
-        startSession: (input) => {
+        startSession: Effect.fn("startSession")(function* (input) {
           const providerError = ensureProvider("startSession", input.provider);
           if (providerError) {
-            return Effect.fail(providerError);
+            return yield* Effect.fail(providerError);
           }
 
           const now = nowIso();
           const restoredState = decodeResumeCursor(input.resumeCursor);
-          const restoredResumeCursor = computeResumeCursor(
-            restoredState.messages,
-            restoredState.turns,
+          const pendingApprovals = new Map(
+            restoredState.pendingApprovals.map((pending) => [pending.requestId, pending] as const),
           );
-          const session: ProviderSession = {
+          const pendingUserInputs = new Map(
+            restoredState.pendingUserInputs.map((pending) => [pending.requestId, pending] as const),
+          );
+          const provisionalSession: ProviderSession = {
             provider: PROVIDER,
-            status: "ready",
+            status:
+              restoredState.activeTurnSnapshot &&
+              (pendingApprovals.size > 0 || pendingUserInputs.size > 0)
+                ? "running"
+                : "ready",
             runtimeMode: input.runtimeMode,
             threadId: input.threadId,
             ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
             ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
-            ...(restoredResumeCursor ? { resumeCursor: restoredResumeCursor } : {}),
+            ...(restoredState.activeTurnSnapshot &&
+            (pendingApprovals.size > 0 || pendingUserInputs.size > 0)
+              ? { activeTurnId: restoredState.activeTurnSnapshot.turnId }
+              : {}),
             createdAt: now,
             updatedAt: now,
           };
-          const context: ShioriSessionContext = {
-            session,
+          const toolRuntime =
+            restoredState.activeTurnSnapshot &&
+            (pendingApprovals.size > 0 || pendingUserInputs.size > 0)
+              ? yield* buildMcpRuntimeForCwd(provisionalSession.cwd)
+              : null;
+          const activeTurn =
+            restoredState.activeTurnSnapshot &&
+            (pendingApprovals.size > 0 || pendingUserInputs.size > 0)
+              ? restoreRecoverableActiveTurn({
+                  session: provisionalSession,
+                  snapshot: restoredState.activeTurnSnapshot,
+                  messages: restoredState.messages,
+                  pendingApprovals: restoredState.pendingApprovals,
+                  pendingUserInputs: restoredState.pendingUserInputs,
+                  toolRuntime: toolRuntime!,
+                })
+              : null;
+          const restoredSubagents = new Map(
+            restoredState.subagents.map((state) => [state.id, state] as const),
+          );
+          const contextWithoutCursor: ShioriSessionContext = {
+            session: provisionalSession,
             messages: restoredState.messages,
             turns: restoredState.turns,
-            activeTurn: null,
-            pendingApprovals: new Map(),
-            pendingUserInputs: new Map(),
-            allowedRequestKinds: new Set(),
-            subagents: new Map(),
-            subagentSequence: 0,
-            pendingSubagentNotifications: [],
+            activeTurn,
+            toolRuntime,
+            pendingApprovals,
+            pendingUserInputs,
+            allowedRequestKinds: new Set(restoredState.allowedRequestKinds),
+            subagents: restoredSubagents,
+            subagentSequence: restoredSubagents.size,
+            pendingSubagentNotifications: [...restoredState.pendingSubagentNotifications],
           };
-          return Ref.update(sessionsRef, (sessions) => {
+          const context = withResumeCursor(contextWithoutCursor);
+
+          yield* Ref.update(sessionsRef, (sessions) => {
             const next = new Map(sessions);
             next.set(String(input.threadId), context);
             return next;
-          }).pipe(Effect.as(session));
-        },
+          });
+
+          if (!context.toolRuntime) {
+            yield* prewarmSessionToolRuntime(input.threadId, provisionalSession.cwd);
+          }
+          for (const subagent of context.subagents.values()) {
+            if (
+              subagent.status !== "shutdown" &&
+              subagent.queuedInputs.length > 0 &&
+              !subagent.runnerActive
+            ) {
+              yield* ensureSubagentRunner(input.threadId, subagent.id);
+            }
+          }
+
+          return context.session;
+        }) as ShioriAdapterShape["startSession"],
         sendTurn: (input) =>
           Effect.gen(function* () {
             const context = yield* getContext(input.threadId);
@@ -4172,10 +6076,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               );
             }
 
-            const selectedModel =
+            const selectedModel = resolveModelSlugForProvider(
+              PROVIDER,
               input.modelSelection?.provider === PROVIDER
                 ? input.modelSelection.model
-                : (context.session.model ?? "openai/gpt-5.4");
+                : context.session.model,
+            );
             const modelSettings =
               input.modelSelection?.provider === PROVIDER
                 ? buildHostedModelSettings(input.modelSelection.options)
@@ -4227,47 +6133,8 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               `${SHIORI_ASSISTANT_ITEM_PREFIX}:${String(turnId)}`,
             );
             const controller = new AbortController();
-            const currentSettings = yield* serverSettings.getSettings.pipe(
-              Effect.mapError((error) =>
-                requestError(
-                  `shiori.turn.start:${String(input.threadId)}`,
-                  "Failed to load server settings.",
-                  error,
-                ),
-              ),
-            );
-            const mcpToolRuntime: ProviderMcpToolRuntime = yield* Effect.tryPromise(() =>
-              (options?.buildMcpToolRuntime ?? buildProviderMcpToolRuntime)({
-                provider: PROVIDER,
-                servers: currentSettings.mcpServers.servers,
-                ...(context.session.cwd ? { cwd: context.session.cwd } : {}),
-              }),
-            ).pipe(
-              Effect.catch((error) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    "shiori mcp runtime initialization failed; continuing without MCP tools",
-                  );
-                  yield* Effect.logWarning(
-                    toMessage(error).trim().length > 0
-                      ? toMessage(error)
-                      : "Failed to initialize MCP servers for Shiori.",
-                  );
-                  return {
-                    descriptors: [],
-                    executors: new Map(),
-                    warnings: [],
-                    close: async () => undefined,
-                  } satisfies ProviderMcpToolRuntime;
-                }),
-              ),
-            );
-            for (const warning of mcpToolRuntime.warnings) {
-              yield* Effect.logWarning("shiori mcp runtime warning", {
-                threadId: input.threadId,
-                warning,
-              });
-            }
+            const toolRuntime = yield* getOrCreateSessionToolRuntime(context);
+            const hostedBootstrap = yield* fetchHostedBootstrapForToken(authToken);
 
             const runningContext = withResumeCursor({
               ...context,
@@ -4278,21 +6145,26 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 controller,
                 assistantItemId,
                 interactionMode: input.interactionMode ?? "default",
-                mcpToolDescriptors: mcpToolRuntime.descriptors,
-                mcpTools: mcpToolRuntime.executors,
-                closeMcpTools: mcpToolRuntime.close,
+                mcpToolDescriptors: toolRuntime.descriptors,
+                mcpTools: toolRuntime.executors,
+                closeMcpTools: async () => undefined,
+                skillPrompt: toolRuntime.skillPrompt,
                 ...(modelSettings ? { modelSettings } : {}),
+                hostedBootstrap,
                 assistantText: "",
                 assistantFinalText: "",
+                assistantActiveItemId: null,
                 assistantStarted: false,
                 commentaryCount: 0,
                 reasoningBlocks: new Map(),
                 reasoningBlockOrder: [],
               },
+              toolRuntime,
               session: {
                 ...context.session,
                 model: selectedModel,
                 status: "running",
+                activeTurnId: turnId,
                 updatedAt: nowIso(),
               },
             });
@@ -4307,9 +6179,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const turnResult: ProviderTurnStartResult = {
               threadId: input.threadId,
               turnId,
-              ...(computeResumeCursor(requestMessages, context.turns)
-                ? { resumeCursor: computeResumeCursor(requestMessages, context.turns) }
-                : {}),
             };
 
             const background = runHostedTurn({
@@ -4321,7 +6190,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               controller,
               assistantItemId,
             });
-            void Effect.runFork(background);
+            void Effect.runFork(
+              background.pipe(
+                Effect.catch((error) =>
+                  finalizeFailedBackgroundTurn({
+                    threadId: runningContext.session.threadId,
+                    turnId,
+                    error,
+                  }),
+                ),
+              ),
+            );
 
             return turnResult;
           }),
@@ -4349,8 +6228,19 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               );
             }
             const activeTurn = context.activeTurn;
-
-            context.pendingApprovals.delete(requestId);
+            const bootstrapAuthToken = yield* hostedAuthTokenStore.getToken;
+            if (!isJwtLikeToken(bootstrapAuthToken)) {
+              return yield* Effect.fail(
+                requestError(
+                  "shiori.respondToRequest",
+                  "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
+                ),
+              );
+            }
+            const hostedBootstrap = yield* resolveHostedBootstrapForContext({
+              threadId,
+              authToken: bootstrapAuthToken,
+            });
             yield* emitApprovalResolved({
               threadId,
               turnId: activeTurn.turnId,
@@ -4365,7 +6255,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
 
-            if (decision === "acceptForSession" && pending.requestKind) {
+            if (
+              decision === "acceptForSession" &&
+              pending.requestKind &&
+              canPersistSessionApproval({
+                toolName: pending.toolName,
+                requestKind: pending.requestKind,
+                bootstrap: hostedBootstrap,
+              })
+            ) {
               context.allowedRequestKinds.add(pending.requestKind);
             }
 
@@ -4378,6 +6276,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                         toolName: pending.toolName,
                         toolInput: pending.input,
                         cwd: context.session.cwd,
+                        hostedBootstrap,
                         signal: activeTurn.controller.signal,
                       }),
                     );
@@ -4395,17 +6294,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
 
-            const nextMessage = assistantToolMessage({
+            const nextToolPart = buildAssistantToolPart({
               messageId: pending.assistantMessageId,
-              text: context.activeTurn.assistantText,
-              ...(pending.reasoningBlockIds && pending.reasoningBlockIds.length > 0
-                ? {
-                    reasoningParts: buildReasoningPartsForBlockIds(
-                      context.activeTurn,
-                      pending.reasoningBlockIds,
-                    ),
-                  }
-                : {}),
+              text: "",
               toolName: pending.toolName,
               toolCallId: pending.toolCallId,
               toolInput: pending.input,
@@ -4445,13 +6336,21 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                     : undefined,
             });
 
-            const updatedContext = yield* replaceMessageInContext(
+            const updatedContext = yield* replaceToolPartInContext({
               threadId,
-              pending.assistantMessageId,
-              nextMessage,
-            );
+              messageId: pending.assistantMessageId,
+              toolCallId: pending.toolCallId,
+              nextToolPart,
+              dropApprovalRequestId: requestId,
+            });
             if (context.activeTurn.controller.signal.aborted) {
               yield* finalizeInterruptedTurn(yield* getContext(threadId));
+              return;
+            }
+            if (
+              updatedContext.pendingApprovals.size > 0 ||
+              updatedContext.pendingUserInputs.size > 0
+            ) {
               return;
             }
             const continuedController = new AbortController();
@@ -4465,6 +6364,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 : latest.activeTurn,
             }));
             const continuedContext = yield* getContext(threadId);
+            // If an interrupt landed between the update above and this point, the turn
+            // is already finalized. Skip the fork instead of spawning a duplicate stream.
+            if (
+              !continuedContext.activeTurn ||
+              continuedController.signal.aborted ||
+              (yield* isTurnFinalized(context.activeTurn.turnId))
+            ) {
+              return;
+            }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
             if (!isJwtLikeToken(continuedAuthToken)) {
               const detail =
@@ -4475,17 +6383,26 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               });
               return yield* Effect.fail(requestError("shiori.respondToRequest", detail));
             }
+            const continuedTurnId = context.activeTurn.turnId;
             void Effect.runFork(
               runHostedTurn({
                 context: continuedContext,
-                turnId: context.activeTurn.turnId,
+                turnId: continuedTurnId,
                 requestMessages: updatedContext.messages,
                 selectedModel: context.session.model ?? "openai/gpt-5.4",
                 authToken: continuedAuthToken,
                 controller: continuedController,
                 assistantItemId: context.activeTurn.assistantItemId,
                 resumeExistingTurn: true,
-              }),
+              }).pipe(
+                Effect.catch((error) =>
+                  finalizeFailedBackgroundTurn({
+                    threadId,
+                    turnId: continuedTurnId,
+                    error,
+                  }),
+                ),
+              ),
             );
           }),
         respondToUserInput: (threadId, requestId, answers) =>
@@ -4500,7 +6417,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 ),
               );
             }
-            context.pendingUserInputs.delete(requestId);
             yield* emitUserInputResolved({
               threadId,
               turnId: context.activeTurn.turnId,
@@ -4510,17 +6426,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const output = {
               answers,
             };
-            const nextMessage = assistantToolMessage({
+            const nextToolPart = buildAssistantToolPart({
               messageId: pending.assistantMessageId,
-              text: context.activeTurn.assistantText,
-              ...(pending.reasoningBlockIds && pending.reasoningBlockIds.length > 0
-                ? {
-                    reasoningParts: buildReasoningPartsForBlockIds(
-                      context.activeTurn,
-                      pending.reasoningBlockIds,
-                    ),
-                  }
-                : {}),
+              text: "",
               toolName: pending.toolName,
               toolCallId: pending.toolCallId,
               toolInput: pending.input,
@@ -4540,13 +6448,21 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 typeof pending.input.question === "string" ? pending.input.question : "User input",
               data: output,
             });
-            const updatedContext = yield* replaceMessageInContext(
+            const updatedContext = yield* replaceToolPartInContext({
               threadId,
-              pending.assistantMessageId,
-              nextMessage,
-            );
+              messageId: pending.assistantMessageId,
+              toolCallId: pending.toolCallId,
+              nextToolPart,
+              dropUserInputRequestId: requestId,
+            });
             if (context.activeTurn.controller.signal.aborted) {
               yield* finalizeInterruptedTurn(yield* getContext(threadId));
+              return;
+            }
+            if (
+              updatedContext.pendingApprovals.size > 0 ||
+              updatedContext.pendingUserInputs.size > 0
+            ) {
               return;
             }
             const continuedController = new AbortController();
@@ -4560,6 +6476,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 : latest.activeTurn,
             }));
             const continuedContext = yield* getContext(threadId);
+            // If an interrupt landed between the update above and this point, the turn
+            // is already finalized. Skip the fork instead of spawning a duplicate stream.
+            if (
+              !continuedContext.activeTurn ||
+              continuedController.signal.aborted ||
+              (yield* isTurnFinalized(context.activeTurn.turnId))
+            ) {
+              return;
+            }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
             if (!isJwtLikeToken(continuedAuthToken)) {
               const detail =
@@ -4570,17 +6495,26 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               });
               return yield* Effect.fail(requestError("shiori.respondToUserInput", detail));
             }
+            const continuedUserTurnId = context.activeTurn.turnId;
             void Effect.runFork(
               runHostedTurn({
                 context: continuedContext,
-                turnId: context.activeTurn.turnId,
+                turnId: continuedUserTurnId,
                 requestMessages: updatedContext.messages,
                 selectedModel: context.session.model ?? "openai/gpt-5.4",
                 authToken: continuedAuthToken,
                 controller: continuedController,
                 assistantItemId: context.activeTurn.assistantItemId,
                 resumeExistingTurn: true,
-              }),
+              }).pipe(
+                Effect.catch((error) =>
+                  finalizeFailedBackgroundTurn({
+                    threadId,
+                    turnId: continuedUserTurnId,
+                    error,
+                  }),
+                ),
+              ),
             );
           }),
         stopSession: (threadId) =>
@@ -4606,6 +6540,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 }
               }
             }
+            if (context) {
+              yield* emitSessionExited({
+                threadId,
+                reason: "Session stopped.",
+                exitKind: "graceful",
+                recoverable: true,
+              });
+            }
+            yield* closeSessionToolRuntime(context);
             yield* Ref.update(sessionsRef, (sessions) => {
               const next = new Map(sessions);
               next.delete(String(threadId));
@@ -4616,7 +6559,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           Ref.get(sessionsRef).pipe(
             Effect.map((sessions) =>
               Array.from(sessions.values()).map((context) => {
-                const resumeCursor = computeResumeCursor(context.messages, context.turns);
+                const resumeCursor = computeResumeCursor(context);
                 return resumeCursor
                   ? Object.assign({}, context.session, { resumeCursor })
                   : context.session;
@@ -4694,6 +6637,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 }),
               ),
             ).pipe(Effect.asVoid);
+            yield* Effect.forEach(contexts, (context) =>
+              emitSessionExited({
+                threadId: context.session.threadId,
+                reason: "All sessions stopped.",
+                exitKind: "graceful",
+                recoverable: true,
+              }),
+            ).pipe(Effect.asVoid);
+            yield* Effect.forEach(contexts, (context) => closeSessionToolRuntime(context)).pipe(
+              Effect.asVoid,
+            );
             yield* Ref.set(sessionsRef, new Map()).pipe(Effect.asVoid);
           }),
         streamEvents: Stream.fromPubSub(eventsPubSub),

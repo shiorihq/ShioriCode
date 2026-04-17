@@ -7,6 +7,7 @@ import {
   type OrchestrationProposedPlanId,
   CheckpointRef,
   isToolLifecycleItemType,
+  type OrchestrationSession,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -15,6 +16,8 @@ import {
 } from "contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "shared/DrainableWorker";
+import { isMcpRefreshTokenDiagnosticMessage } from "shared/mcpDiagnostics";
+import { snapshotProviderToolData } from "shared/providerTool";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -117,6 +120,10 @@ function commentaryAssistantTextFromEvent(event: ProviderRuntimeEvent): string |
 
 function rawPayloadFromEvent(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
   return asObject(event.raw?.payload);
+}
+
+function snapshotActivityToolData(data: unknown): unknown {
+  return snapshotProviderToolData(data);
 }
 
 function parentItemIdFromRuntimeEvent(event: ProviderRuntimeEvent): string | undefined {
@@ -245,6 +252,24 @@ function orchestrationSessionStatusFromRuntimeState(
   }
 }
 
+function orchestrationSessionStatusFromProviderSessionStatus(
+  status: "connecting" | "ready" | "running" | "error" | "closed",
+): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+  switch (status) {
+    case "connecting":
+      return "starting";
+    case "running":
+      return "running";
+    case "error":
+      return "error";
+    case "closed":
+      return "stopped";
+    case "ready":
+    default:
+      return "ready";
+  }
+}
+
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
 ): "command" | "file-read" | "file-change" | undefined {
@@ -363,6 +388,9 @@ function runtimeEventToActivities(
     }
 
     case "runtime.warning": {
+      if (isMcpRefreshTokenDiagnosticMessage(event.payload.message)) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
@@ -371,7 +399,7 @@ function runtimeEventToActivities(
           kind: "runtime.warning",
           summary: "Runtime warning",
           payload: {
-            message: truncateDetail(event.payload.message),
+            message: truncateDetail(event.payload.message, 2_000),
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -579,6 +607,9 @@ function runtimeEventToActivities(
             ...(event.itemId ? { itemId: event.itemId } : {}),
             streamKind: event.payload.streamKind,
             delta: event.payload.delta,
+            ...(typeof event.payload.summaryIndex === "number"
+              ? { summaryIndex: event.payload.summaryIndex }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -626,7 +657,9 @@ function runtimeEventToActivities(
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: snapshotActivityToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -696,7 +729,9 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: snapshotActivityToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -740,6 +775,9 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.data !== undefined
+              ? { data: snapshotActivityToolData(event.payload.data) }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -800,6 +838,22 @@ const make = Effect.fn("make")(function* () {
       return false;
     }
     return isGitRepository(workspaceCwd);
+  });
+
+  const setThreadResumeState = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly resumeState: "resumed" | "resuming" | "needs_resume" | "unrecoverable";
+    readonly createdAt: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.resume-state.set",
+      commandId: CommandId.makeUnsafe(
+        `provider:thread-resume-state:${input.threadId}:${crypto.randomUUID()}`,
+      ),
+      threadId: input.threadId,
+      resumeState: input.resumeState,
+      createdAt: input.createdAt,
+    });
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
@@ -1302,6 +1356,21 @@ const make = Effect.fn("make")(function* () {
             : status === "ready"
               ? null
               : (thread.session?.lastError ?? null);
+      const nextResumeState = (() => {
+        switch (event.type) {
+          case "session.exited":
+            return event.payload.recoverable === false || event.payload.exitKind === "graceful"
+              ? "resumed"
+              : "needs_resume";
+          case "session.state.changed":
+            return event.payload.state === "error" ? "needs_resume" : "resumed";
+          case "session.started":
+          case "thread.started":
+          case "turn.started":
+          case "turn.completed":
+            return "resumed";
+        }
+      })();
 
       if (shouldApplyThreadLifecycle) {
         if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1336,7 +1405,41 @@ const make = Effect.fn("make")(function* () {
           },
           createdAt: now,
         });
+        yield* setThreadResumeState({
+          threadId: thread.id,
+          resumeState: nextResumeState,
+          createdAt: now,
+        });
       }
+    }
+
+    const shouldRecoverRunningSessionFromIdleThreadStatus =
+      event.type === "thread.state.changed" &&
+      event.payload.state === "idle" &&
+      activeTurnId !== null &&
+      thread.session?.status === "running";
+
+    if (shouldRecoverRunningSessionFromIdleThreadStatus) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.session.set",
+        commandId: providerCommandId(event, "thread-session-idle-recovery"),
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "ready",
+          providerName: event.provider,
+          runtimeMode: thread.session?.runtimeMode ?? "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* setThreadResumeState({
+        threadId: thread.id,
+        resumeState: "resumed",
+        createdAt: now,
+      });
     }
 
     const commentaryAssistantItemId =
@@ -1563,6 +1666,11 @@ const make = Effect.fn("make")(function* () {
           },
           createdAt: now,
         });
+        yield* setThreadResumeState({
+          threadId: thread.id,
+          resumeState: "needs_resume",
+          createdAt: now,
+        });
       }
     }
 
@@ -1644,6 +1752,68 @@ const make = Effect.fn("make")(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: ProviderRuntimeIngestionShape["start"] = Effect.fn("start")(function* () {
+    const reconciledSessions = yield* providerService.reconcileSessions().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider runtime ingestion failed to reconcile provider sessions", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as([])),
+      ),
+    );
+
+    yield* Effect.forEach(
+      reconciledSessions,
+      Effect.fn(function* (entry) {
+        const readModel = yield* orchestrationEngine.getReadModel();
+        if (!readModel.threads.some((thread) => thread.id === entry.threadId)) {
+          return;
+        }
+        const inactiveStatus: OrchestrationSession["status"] =
+          entry.resumeState === "unrecoverable" ? "error" : "stopped";
+        const projectedSession: OrchestrationSession =
+          entry.session !== null
+            ? {
+                threadId: entry.threadId,
+                status: orchestrationSessionStatusFromProviderSessionStatus(entry.session.status),
+                providerName: entry.provider,
+                runtimeMode: entry.runtimeMode,
+                activeTurnId: null,
+                lastError: entry.lastError,
+                updatedAt: entry.session.updatedAt,
+              }
+            : {
+                threadId: entry.threadId,
+                status: inactiveStatus,
+                providerName: entry.provider,
+                runtimeMode: entry.runtimeMode,
+                activeTurnId: null,
+                lastError: entry.lastError,
+                updatedAt: new Date().toISOString(),
+              };
+
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.makeUnsafe(
+            `provider:startup-thread-session:${entry.threadId}:${crypto.randomUUID()}`,
+          ),
+          threadId: entry.threadId,
+          session: projectedSession,
+          createdAt: projectedSession.updatedAt,
+        });
+        yield* setThreadResumeState({
+          threadId: entry.threadId,
+          resumeState: entry.resumeState,
+          createdAt: projectedSession.updatedAt,
+        });
+      }),
+      { concurrency: 1 },
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider runtime ingestion failed to project reconciled sessions", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
         worker.enqueue({ source: "runtime", event }),

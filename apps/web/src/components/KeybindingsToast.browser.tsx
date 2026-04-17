@@ -2,6 +2,7 @@ import "../index.css";
 
 import {
   DEFAULT_ONBOARDING_PROGRESS,
+  ONBOARDING_STEP_IDS,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -83,7 +84,10 @@ function createBaseServerConfig(): ServerConfig {
       defaultThreadEnvMode: "local" as const,
       defaultModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
-      onboarding: DEFAULT_ONBOARDING_PROGRESS,
+      onboarding: {
+        ...DEFAULT_ONBOARDING_PROGRESS,
+        completedStepIds: [...ONBOARDING_STEP_IDS],
+      },
       mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },
@@ -127,6 +131,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         branchSourceTurnId: null,
         branch: "main",
         worktreePath: null,
+        resumeState: "resumed",
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

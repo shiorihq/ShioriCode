@@ -1,7 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerKeybindings } from "~/rpc/serverState";
-import { resolveShortcutCommand } from "~/keybindings";
 import { useDesktopWindowControlsInset } from "~/hooks/useDesktopWindowControlsInset";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { useTerminalStateStore } from "~/terminalStateStore";
@@ -11,7 +10,7 @@ import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 
 import ThreadSidebar from "./Sidebar";
-import { shouldHandleSidebarToggleShortcut } from "./AppSidebarLayout.logic";
+import { resolveAppSidebarShortcutCommand } from "./AppSidebarLayout.logic";
 import { CommandKModal, useCommandK } from "./CommandKModal";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 
@@ -22,6 +21,7 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 function AppSidebarKeyboardShortcuts() {
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
+  const navigate = useNavigate();
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const terminalOpen = useTerminalStateStore((state) =>
     Object.values(state.terminalStateByThreadId).some(
@@ -32,29 +32,23 @@ function AppSidebarKeyboardShortcuts() {
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const terminalFocus = isTerminalFocused();
-      if (
-        !shouldHandleSidebarToggleShortcut(event, keybindings, {
-          terminalFocus,
-          terminalOpen,
-        })
-      ) {
-        return;
-      }
-
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus,
-          terminalOpen,
-        },
+      const command = resolveAppSidebarShortcutCommand(event, keybindings, {
+        terminalFocus,
+        terminalOpen,
       });
-      if (command !== "sidebar.toggle") {
-        if (command !== "project.add") {
-          return;
-        }
+      if (!command) return;
 
+      if (command === "project.add") {
         event.preventDefault();
         event.stopPropagation();
         requestProjectAdd();
+        return;
+      }
+
+      if (command === "pullRequests.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        void navigate({ to: "/pull-requests" });
         return;
       }
 
@@ -63,11 +57,13 @@ function AppSidebarKeyboardShortcuts() {
       toggleSidebar();
     };
 
-    window.addEventListener("keydown", onWindowKeyDown);
+    // Capture-phase handling lets app-level shortcuts override focused editors and
+    // browser defaults like Cmd+P before those handlers consume the event.
+    window.addEventListener("keydown", onWindowKeyDown, { capture: true });
     return () => {
-      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("keydown", onWindowKeyDown, { capture: true });
     };
-  }, [keybindings, requestProjectAdd, terminalOpen, toggleSidebar]);
+  }, [keybindings, navigate, requestProjectAdd, terminalOpen, toggleSidebar]);
 
   return null;
 }
@@ -82,15 +78,24 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+        "relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+        // Keep the decorative curved shell from swallowing pointer events meant for the resize rail.
         showCurvedSidebarEdge &&
-          "overflow-hidden rounded-tl-[1.375rem] rounded-bl-[1.375rem] border-l border-border",
+          "z-20 -ml-[var(--app-sidebar-shell-radius)] pl-[var(--app-sidebar-shell-radius)] bg-transparent pointer-events-none",
       )}
       style={
         applyClosedSidebarMacPadding ? { paddingLeft: `${macWindowControlsInset}px` } : undefined
       }
     >
-      {children}
+      <div
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+          showCurvedSidebarEdge &&
+            "pointer-events-auto overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)] rounded-bl-[var(--app-sidebar-shell-radius)] border-l border-border",
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -140,8 +145,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       <Sidebar
         side="left"
         collapsible="offcanvas"
+        data-app-sidebar-shell
         data-translucent={translucent || undefined}
-        className={cn("!border-r-0 text-foreground", translucent ? "bg-transparent" : "bg-card")}
+        className="!border-r-0 bg-transparent text-foreground"
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>
@@ -149,7 +155,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        <ThreadSidebar />
+        <ThreadSidebar onSearchClick={() => setCommandKOpen(true)} />
         <SidebarRail />
       </Sidebar>
       <AppSidebarContent>{children}</AppSidebarContent>

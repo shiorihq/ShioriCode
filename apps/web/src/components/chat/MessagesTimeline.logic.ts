@@ -1,12 +1,14 @@
 import { type MessageId } from "contracts";
 import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
-import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { parseEditDiff } from "./InlineEditDiff";
 import { summarizeToolOutput } from "./toolOutput";
 import {
+  classifyProviderToolRequestKind,
   extractStructuredProviderToolData,
+  getProviderToolInputActionType,
+  getProviderToolInputActionValue,
   getProviderToolInputPath,
   getProviderToolInputQuery,
   isSubagentToolName,
@@ -26,6 +28,8 @@ export interface FormattedWorkEntry {
   dedupeKey: string | null;
 }
 
+type FileChangeOperation = "create" | "edit" | "delete";
+
 export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -36,10 +40,39 @@ export interface TimelineDurationMessage {
 export interface WorkTimelineRow {
   kind: "work";
   id: string;
+  expansionId: string;
   createdAt: string;
   groupedEntries: WorkLogEntry[];
+  inlineEntries?: ReadonlyArray<
+    | {
+        kind: "work";
+        id: string;
+        entry: WorkLogEntry;
+      }
+    | {
+        kind: "reasoning";
+        id: string;
+        reasoning: Extract<TimelineEntry, { kind: "reasoning" }>["reasoning"];
+      }
+  >;
   stickyInProgress: boolean;
   childRows: WorkTimelineRow[];
+}
+
+function deriveWorkRowExpansionId(entry: WorkLogEntry): string {
+  const itemId = entry.itemId?.trim();
+  return itemId && itemId.length > 0 ? `work-item:${itemId}` : entry.id;
+}
+
+function readExplicitWorkGroupVisibility(
+  row: Pick<WorkTimelineRow, "id" | "expansionId">,
+  expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
+): boolean | undefined {
+  const explicit = expandedWorkGroups?.[row.expansionId];
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  return expandedWorkGroups?.[row.id];
 }
 
 export function isWorkRowInProgress(row: WorkTimelineRow): boolean {
@@ -54,14 +87,14 @@ export function isWorkRowExpanded(
   expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
 ): boolean {
   // Respect explicit user preference (collapse/expand) even while in-progress.
-  const explicit = expandedWorkGroups?.[row.id];
+  const explicit = readExplicitWorkGroupVisibility(row, expandedWorkGroups);
   if (explicit !== undefined) {
     return explicit;
   }
-  // Default: always collapsed.  The summary header shows a shimmer when
-  // in-progress so the user can tell work is happening without being forced
-  // to watch every streaming item.  They can expand manually if curious.
-  return false;
+  // Default: active work stays open so the header and nested tool activity are
+  // visible while the group is streaming, then falls back to collapsed once the
+  // work settles.
+  return isWorkRowInProgress(row);
 }
 
 export function getGroupedWorkEntryExpansionKey(entryId: string): string {
@@ -130,6 +163,8 @@ const TOOL_NAME_SEARCH_ALIASES = new Set([
   "search",
   "web search",
 ]);
+const TOOL_NAME_CREATE_ALIASES = new Set(["create file"]);
+const TOOL_NAME_DELETE_ALIASES = new Set(["delete file"]);
 const EXPLORATION_COMMAND_PREFIXES = [
   "cat",
   "fd",
@@ -146,6 +181,11 @@ const EXPLORATION_COMMAND_PREFIXES = [
   "tail",
   "tree",
 ];
+const CREATE_SENTINEL_PATH_KEYS = new Set(["oldPath", "old_path", "prevPath", "prev_path"]);
+const DELETE_SENTINEL_PATH_KEYS = new Set(["newPath", "new_path"]);
+const CREATED_FILE_PATCH_PATTERN = /(^new file mode\b|^--- \/dev\/null$)/m;
+const DELETED_FILE_PATCH_PATTERN = /(^deleted file mode\b|^\+\+\+ \/dev\/null$)/m;
+const DEV_NULL_PATH = "/dev/null";
 
 function normalizeWorkEntryTitle(entry: WorkLogEntry): string {
   return normalizeCompactToolLabel(entry.toolTitle ?? entry.label)
@@ -153,6 +193,11 @@ function normalizeWorkEntryTitle(entry: WorkLogEntry): string {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+export function isRuntimeDiagnosticWorkEntry(entry: WorkLogEntry): boolean {
+  const normalizedLabel = normalizeWorkEntryTitle(entry);
+  return normalizedLabel === "runtime warning" || normalizedLabel === "runtime error";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -214,6 +259,112 @@ function getEntryToolInput(entry: WorkLogEntry): Record<string, unknown> | null 
   return parseToolInputFromDetail(entry.detail);
 }
 
+function recordContainsSentinelPath(value: unknown, keys: ReadonlySet<string>, depth = 0): boolean {
+  if (depth > 5) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => recordContainsSentinelPath(entry, keys, depth + 1));
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return false;
+  }
+
+  for (const [key, nestedValue] of Object.entries(record)) {
+    if (keys.has(key) && asTrimmedString(nestedValue) === DEV_NULL_PATH) {
+      return true;
+    }
+    if (recordContainsSentinelPath(nestedValue, keys, depth + 1)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function recordContainsPatchMarker(value: unknown, pattern: RegExp, depth = 0): boolean {
+  if (depth > 5 || value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return pattern.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => recordContainsPatchMarker(entry, pattern, depth + 1));
+  }
+
+  const record = asRecord(value);
+  return record
+    ? Object.values(record).some((nestedValue) =>
+        recordContainsPatchMarker(nestedValue, pattern, depth + 1),
+      )
+    : false;
+}
+
+function classifyFileChangeOperation(entry: WorkLogEntry): FileChangeOperation | null {
+  const toolName = getEntryToolName(entry);
+  if (toolName && TOOL_NAME_CREATE_ALIASES.has(toolName)) {
+    return "create";
+  }
+  if (toolName && TOOL_NAME_DELETE_ALIASES.has(toolName)) {
+    return "delete";
+  }
+
+  if (
+    recordContainsSentinelPath(entry.output, CREATE_SENTINEL_PATH_KEYS) ||
+    recordContainsPatchMarker(entry.output, CREATED_FILE_PATCH_PATTERN)
+  ) {
+    return "create";
+  }
+  if (
+    recordContainsSentinelPath(entry.output, DELETE_SENTINEL_PATH_KEYS) ||
+    recordContainsPatchMarker(entry.output, DELETED_FILE_PATCH_PATTERN)
+  ) {
+    return "delete";
+  }
+
+  if (
+    entry.requestKind === "file-change" ||
+    entry.itemType === "file_change" ||
+    classifyProviderToolRequestKind(toolName) === "file-change"
+  ) {
+    return "edit";
+  }
+
+  return null;
+}
+
+function isFileChangeWorkEntry(entry: WorkLogEntry): boolean {
+  return classifyFileChangeOperation(entry) !== null;
+}
+
+function actionForFileChangeOperation(input: {
+  operation: FileChangeOperation;
+  running: boolean;
+  providerToolName: string | null;
+}): string {
+  switch (input.operation) {
+    case "create":
+      return input.running ? "Creating" : "Created";
+    case "delete":
+      return input.running ? "Deleting" : "Deleted";
+    case "edit":
+      if (
+        input.providerToolName === "write" ||
+        input.providerToolName === "write file" ||
+        input.providerToolName === "file write"
+      ) {
+        return input.running ? "Writing" : "Wrote";
+      }
+      if (input.providerToolName === "apply patch") {
+        return input.running ? "Applying patch" : "Applied patch";
+      }
+      return input.running ? "Editing" : "Edited";
+  }
+}
+
 function classifyToolName(toolName: string | null): WorkEntryDisplayKind | null {
   if (!toolName) {
     return null;
@@ -244,6 +395,20 @@ function getExplicitDetail(entry: WorkLogEntry): string | null {
     return null;
   }
   return isEmptyStructuredToolDetail(detail) ? null : detail;
+}
+
+function normalizeRedundantDetailText(value: string): string {
+  return value.replace(/[._-]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function coalesceRedundantDetail(action: string, detail: string | null): string | null {
+  if (!detail) {
+    return null;
+  }
+
+  return normalizeRedundantDetailText(action) === normalizeRedundantDetailText(detail)
+    ? null
+    : detail;
 }
 
 function normalizeWorkEntryCommand(entry: WorkLogEntry): string {
@@ -368,13 +533,73 @@ function formatAgentTargetDetail(input: Record<string, unknown> | null): string 
 
   const targets = Array.isArray(input.targets) ? input.targets : null;
   if (!targets || targets.length === 0) {
-    return null;
+    const agentsStates = asRecord(input.agentsStates);
+    if (!agentsStates) {
+      return null;
+    }
+    const ids = Object.keys(agentsStates).filter((id) => id.trim().length > 0);
+    return ids.length > 0 ? ids.join(", ") : null;
   }
 
   const normalizedTargets = targets
     .map((target) => asTrimmedString(target))
     .filter((target): target is string => target !== null);
   return normalizedTargets.length > 0 ? normalizedTargets.join(", ") : null;
+}
+
+function formatWebSearchWorkEntry(input: {
+  providerToolInput: Record<string, unknown> | null;
+  running: boolean;
+  fallbackDetail: string | null;
+}): FormattedWorkEntry {
+  const query = getProviderToolInputQuery(input.providerToolInput);
+  const actionType = getProviderToolInputActionType(input.providerToolInput);
+  const actionValue = getProviderToolInputActionValue(input.providerToolInput);
+  const detail = query ?? actionValue ?? input.fallbackDetail;
+
+  if (actionType === "open_page") {
+    return {
+      kind: "search",
+      action: input.running ? "Opening page" : "Opened page",
+      detail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (actionType === "find_in_page") {
+    return {
+      kind: "search",
+      action: input.running ? "Searching in page" : "Searched in page",
+      detail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (actionType === "search") {
+    return {
+      kind: "search",
+      action: input.running ? "Searching for" : "Searched for",
+      detail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  return {
+    kind: "search",
+    action: detail
+      ? input.running
+        ? "Searching web for"
+        : "Searched web for"
+      : input.running
+        ? "Searching web"
+        : "Searched web",
+    detail,
+    monospace: false,
+    dedupeKey: null,
+  };
 }
 
 const COMMAND_TOKEN_PATTERN = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|[^\s]+/g;
@@ -553,11 +778,42 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   const providerToolKind = classifyToolName(providerToolName);
   const providerToolPath = getProviderToolInputPath(providerToolInput);
   const providerToolQuery = getProviderToolInputQuery(providerToolInput);
+  const fileChangeOperation = classifyFileChangeOperation(entry);
   const subagentTaskDetail = formatSubagentTaskDetail(providerToolInput);
   const skillToolDetail = formatSkillToolDetail(providerToolInput);
   const userInputToolDetail = formatUserInputToolDetail(providerToolInput);
   const planToolDetail = formatPlanToolDetail(providerToolInput);
   const agentTargetDetail = formatAgentTargetDetail(providerToolInput);
+
+  if (isRuntimeDiagnosticWorkEntry(entry)) {
+    return {
+      kind: "other",
+      action: normalizedLabel === "runtime error" ? "Runtime error" : "Runtime warning",
+      detail: null,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "wait agent" || providerToolName === "wait") {
+    return {
+      kind: "other",
+      action: running ? "Waiting for agent" : "Waited for agent",
+      detail: agentTargetDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "close agent") {
+    return {
+      kind: "other",
+      action: running ? "Closing agent" : "Closed agent",
+      detail: agentTargetDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
 
   if (entry.itemType === "collab_agent_tool_call") {
     return {
@@ -584,16 +840,6 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
       kind: "other",
       action: running ? "Launching skill" : "Launched skill",
       detail: skillToolDetail ?? explicitDetail,
-      monospace: false,
-      dedupeKey: null,
-    };
-  }
-
-  if (providerToolName === "wait agent") {
-    return {
-      kind: "other",
-      action: running ? "Waiting for agent" : "Waited for agent",
-      detail: agentTargetDetail ?? explicitDetail,
       monospace: false,
       dedupeKey: null,
     };
@@ -629,34 +875,26 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     };
   }
 
-  if (providerToolName === "write") {
+  if (fileChangeOperation) {
     return {
       kind: "edit",
-      action: running ? "Writing" : "Wrote",
+      action: actionForFileChangeOperation({
+        operation: fileChangeOperation,
+        running,
+        providerToolName,
+      }),
       detail: providerToolPath ?? explicitDetail,
-      monospace: true,
-      dedupeKey: providerToolPath ? `write:${providerToolPath}` : null,
-    };
-  }
-
-  if (entry.requestKind === "file-change" || entry.itemType === "file_change") {
-    return {
-      kind: "edit",
-      action: running ? "Editing" : "Edited",
-      detail: explicitDetail,
       monospace: true,
       dedupeKey: null,
     };
   }
 
   if (entry.itemType === "web_search") {
-    return {
-      kind: "search",
-      action: running ? "Searching for" : "Searched for",
-      detail: explicitDetail || entry.command || null,
-      monospace: false,
-      dedupeKey: null,
-    };
+    return formatWebSearchWorkEntry({
+      providerToolInput,
+      running,
+      fallbackDetail: explicitDetail || entry.command || null,
+    });
   }
 
   if (providerToolKind === "list") {
@@ -758,18 +996,57 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   return {
     kind: "other",
     action: heading,
-    detail: entry.command || explicitDetail || null,
+    detail: coalesceRedundantDetail(heading, entry.command || explicitDetail || null),
     monospace: false,
     dedupeKey: null,
   };
 }
 
-function pluralizeCount(count: number, singular: string, plural = `${singular}s`): string {
+function pluralizeCount(
+  count: number,
+  singular: string,
+  plural = pluralizeEnglishNoun(singular),
+): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function pluralizeEnglishNoun(singular: string): string {
+  if (/(?:s|x|z|ch|sh)$/i.test(singular)) {
+    return `${singular}es`;
+  }
+  if (/[^aeiou]y$/i.test(singular)) {
+    return `${singular.slice(0, -1)}ies`;
+  }
+  return `${singular}s`;
+}
+
+function workGroupTextSegment(input: {
+  count: number;
+  leadingVerb: string;
+  trailingVerb: string;
+  singular: string;
+  plural?: string;
+}): { leading: string; trailing: string } | null {
+  if (input.count <= 0) {
+    return null;
+  }
+  const label = pluralizeCount(input.count, input.singular, input.plural);
+  return {
+    leading: `${input.leadingVerb} ${label}`,
+    trailing: `${input.trailingVerb} ${label}`,
+  };
+}
+
+function joinWorkGroupSummarySegments(
+  segments: ReadonlyArray<{ leading: string; trailing: string }>,
+): string {
+  return segments
+    .map((segment, index) => (index === 0 ? segment.leading : segment.trailing))
+    .join(", ");
+}
+
 export function getDisplayedWorkEntries(entries: ReadonlyArray<WorkLogEntry>): WorkLogEntry[] {
-  if (entries.length <= 1 || deriveWorkEntryGroupKey(entries[0]!) !== "explore") {
+  if (entries.length <= 1) {
     return [...entries];
   }
 
@@ -796,88 +1073,178 @@ export function buildWorkGroupSummary(
   entries: ReadonlyArray<WorkLogEntry>,
   stickyInProgress: boolean,
 ): string {
-  const primaryGroupKey = deriveWorkEntryGroupKey(entries[0]!);
   const isInProgress = entries.some((entry) => entry.running) || stickyInProgress;
+  const createdFiles = new Set<string>();
+  const editedFiles = new Set<string>();
+  const deletedFiles = new Set<string>();
+  const exploredReadKeys = new Set<string>();
+  let unknownCreatedFileCount = 0;
+  let unknownEditedFileCount = 0;
+  let unknownDeletedFileCount = 0;
+  let searchCount = 0;
+  let listCount = 0;
+  let commandCount = 0;
+  let genericToolCallCount = 0;
+  let webSearchCount = 0;
 
-  switch (primaryGroupKey) {
-    case "edit": {
-      const editedFiles = new Set<string>();
-      let unknownFileCount = 0;
-
-      for (const entry of entries) {
-        const formattedEntry = formatWorkEntry(entry);
-        if (formattedEntry.detail) {
-          editedFiles.add(formattedEntry.detail);
-        } else {
-          unknownFileCount += 1;
-        }
-      }
-
-      const editedFileCount = editedFiles.size + unknownFileCount;
-      if (editedFileCount === 0) {
-        return isInProgress ? "Editing" : "Edited";
-      }
-
-      return `${isInProgress ? "Editing" : "Edited"} ${pluralizeCount(editedFileCount, "file")}`;
+  for (const entry of getDisplayedWorkEntries(entries)) {
+    if (entry.itemType === "web_search") {
+      webSearchCount += 1;
+      continue;
     }
-    case "command": {
-      const commandCount = getDisplayedWorkEntries(entries).length;
-      const commandLabel =
-        commandCount <= 1
-          ? isInProgress
-            ? "Executing command"
-            : "Executed command"
-          : `${isInProgress ? "Executing" : "Executed"} ${pluralizeCount(commandCount, "command")}`;
-      return commandLabel;
-    }
-    case "explore": {
-      const displayedEntries = getDisplayedWorkEntries(entries);
-      const readKeys = new Set<string>();
-      let searchCount = 0;
-      let listCount = 0;
 
-      for (const entry of displayedEntries) {
-        const formattedEntry = formatWorkEntry(entry);
-        if (formattedEntry.kind === "read") {
-          readKeys.add(formattedEntry.dedupeKey ?? `entry:${entry.id}`);
+    const formattedEntry = formatWorkEntry(entry);
+    const fileChangeOperation = classifyFileChangeOperation(entry);
+    if (fileChangeOperation) {
+      if (formattedEntry.detail) {
+        if (fileChangeOperation === "create") {
+          createdFiles.add(formattedEntry.detail);
           continue;
         }
-        if (formattedEntry.kind === "search") {
-          searchCount += 1;
+        if (fileChangeOperation === "delete") {
+          deletedFiles.add(formattedEntry.detail);
           continue;
         }
-        if (formattedEntry.kind === "list") {
-          listCount += 1;
-        }
+        editedFiles.add(formattedEntry.detail);
+        continue;
       }
 
-      const countParts: string[] = [];
-      if (readKeys.size > 0) {
-        countParts.push(pluralizeCount(readKeys.size, "file"));
+      if (fileChangeOperation === "create") {
+        unknownCreatedFileCount += 1;
+        continue;
       }
-      if (searchCount > 0) {
-        countParts.push(pluralizeCount(searchCount, "search"));
+      if (fileChangeOperation === "delete") {
+        unknownDeletedFileCount += 1;
+        continue;
       }
-      if (listCount > 0) {
-        countParts.push(pluralizeCount(listCount, "list"));
-      }
-
-      if (countParts.length === 0 || (isInProgress && displayedEntries.length === 1)) {
-        return isInProgress ? "Exploring" : "Explored";
-      }
-
-      return `${isInProgress ? "Exploring" : "Explored"} ${countParts.join(", ")}`;
+      unknownEditedFileCount += 1;
+      continue;
     }
-    default:
-      return isInProgress ? "Working" : "Worked";
+
+    if (isExplorationWorkEntry(entry)) {
+      if (formattedEntry.kind === "read") {
+        exploredReadKeys.add(formattedEntry.dedupeKey ?? `entry:${entry.id}`);
+        continue;
+      }
+      if (formattedEntry.kind === "search") {
+        searchCount += 1;
+        continue;
+      }
+      if (formattedEntry.kind === "list") {
+        listCount += 1;
+        continue;
+      }
+    }
+
+    if (entry.requestKind === "command" || entry.itemType === "command_execution") {
+      commandCount += 1;
+      continue;
+    }
+
+    if (
+      entry.tone === "tool" &&
+      entry.itemType !== "collab_agent_tool_call" &&
+      deriveWorkEntryGroupKey(entry) !== null
+    ) {
+      genericToolCallCount += 1;
+    }
   }
+
+  const summarySegments = [
+    workGroupTextSegment({
+      count: createdFiles.size + unknownCreatedFileCount,
+      leadingVerb: isInProgress ? "Creating" : "Created",
+      trailingVerb: isInProgress ? "creating" : "created",
+      singular: "file",
+    }),
+    workGroupTextSegment({
+      count: editedFiles.size + unknownEditedFileCount,
+      leadingVerb: isInProgress ? "Editing" : "Edited",
+      trailingVerb: isInProgress ? "editing" : "edited",
+      singular: "file",
+    }),
+    workGroupTextSegment({
+      count: deletedFiles.size + unknownDeletedFileCount,
+      leadingVerb: isInProgress ? "Deleting" : "Deleted",
+      trailingVerb: isInProgress ? "deleting" : "deleted",
+      singular: "file",
+    }),
+  ].filter((segment): segment is { leading: string; trailing: string } => segment !== null);
+
+  const explorationParts: string[] = [];
+  if (exploredReadKeys.size > 0) {
+    explorationParts.push(pluralizeCount(exploredReadKeys.size, "file"));
+  }
+  if (searchCount > 0) {
+    explorationParts.push(pluralizeCount(searchCount, "search"));
+  }
+  if (listCount > 0) {
+    explorationParts.push(pluralizeCount(listCount, "list"));
+  }
+  if (explorationParts.length > 0) {
+    const details = explorationParts.join(", ");
+    summarySegments.push({
+      leading: `${isInProgress ? "Exploring" : "Explored"} ${details}`,
+      trailing: `${isInProgress ? "exploring" : "explored"} ${details}`,
+    });
+  }
+
+  const commandSegment = workGroupTextSegment({
+    count: commandCount,
+    leadingVerb: isInProgress ? "Running" : "Ran",
+    trailingVerb: isInProgress ? "running" : "ran",
+    singular: "command",
+  });
+  if (commandSegment) {
+    summarySegments.push(commandSegment);
+  }
+
+  const toolCallSegment = workGroupTextSegment({
+    count: genericToolCallCount,
+    leadingVerb: isInProgress ? "Calling" : "Called",
+    trailingVerb: isInProgress ? "calling" : "called",
+    singular: "tool",
+  });
+  if (toolCallSegment) {
+    summarySegments.push(toolCallSegment);
+  }
+
+  const webSearchSegment = workGroupTextSegment({
+    count: webSearchCount,
+    leadingVerb: isInProgress ? "Searching web" : "Searched web",
+    trailingVerb: isInProgress ? "searching web" : "searched web",
+    singular: "time",
+    plural: "times",
+  });
+  if (webSearchSegment) {
+    summarySegments.push(webSearchSegment);
+  }
+
+  if (summarySegments.length > 0) {
+    return joinWorkGroupSummarySegments(summarySegments);
+  }
+
+  if (entries.length === 1) {
+    const formattedEntry = formatWorkEntry(entries[0]!);
+    const singleSummary = formattedEntry.detail
+      ? `${formattedEntry.action} ${formattedEntry.detail}`
+      : formattedEntry.action;
+    if (singleSummary.trim().length > 0) {
+      return singleSummary;
+    }
+  }
+
+  return isInProgress ? "Working" : "Worked";
 }
 
 export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
   if (entry.label.trim().toLowerCase() === "status update") {
     return null;
   }
-  if (entry.requestKind === "file-change" || entry.itemType === "file_change") {
+  if (entry.itemType === "web_search") {
+    return "web-search";
+  }
+  if (isFileChangeWorkEntry(entry)) {
     return "edit";
   }
   if (isExplorationWorkEntry(entry)) {
@@ -889,6 +1256,9 @@ export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
   if (entry.itemType === "collab_agent_tool_call") {
     const formatted = formatWorkEntry(entry);
     return formatted.detail ? `subagent:${formatted.detail}` : `subagent:${entry.id}`;
+  }
+  if (entry.itemType === "mcp_tool_call" || entry.itemType === "dynamic_tool_call") {
+    return "tool";
   }
 
   const normalized = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
@@ -912,38 +1282,35 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    switch (timelineEntry.kind) {
-      case "work": {
-        let cursor = index + 1;
-        const workEntries = [timelineEntry.entry];
-        while (cursor < input.timelineEntries.length) {
-          const nextEntry = input.timelineEntries[cursor];
-          if (!nextEntry || nextEntry.kind !== "work") break;
-          workEntries.push(nextEntry.entry);
-          cursor += 1;
+    if (timelineEntry.kind === "work" || timelineEntry.kind === "reasoning") {
+      let cursor = index + 1;
+      const mixedEntries: Array<
+        Extract<TimelineEntry, { kind: "work" }> | Extract<TimelineEntry, { kind: "reasoning" }>
+      > = [timelineEntry];
+      while (cursor < input.timelineEntries.length) {
+        const nextEntry = input.timelineEntries[cursor];
+        if (!nextEntry || (nextEntry.kind !== "work" && nextEntry.kind !== "reasoning")) {
+          break;
         }
-        nextRows.push(
-          ...deriveNestedWorkRows(workEntries, {
-            stickyTailInProgress: input.isWorking && cursor >= input.timelineEntries.length,
-          }),
-        );
-        index = cursor - 1;
-        continue;
+        mixedEntries.push(nextEntry);
+        cursor += 1;
       }
+      nextRows.push(
+        ...deriveMixedWorkAndReasoningRows(mixedEntries, {
+          stickyTailInProgress: input.isWorking && cursor >= input.timelineEntries.length,
+        }),
+      );
+      index = cursor - 1;
+      continue;
+    }
+
+    switch (timelineEntry.kind) {
       case "proposed-plan":
         nextRows.push({
           kind: "proposed-plan",
           id: timelineEntry.id,
           createdAt: timelineEntry.createdAt,
           proposedPlan: timelineEntry.proposedPlan,
-        });
-        continue;
-      case "reasoning":
-        nextRows.push({
-          kind: "reasoning",
-          id: timelineEntry.id,
-          createdAt: timelineEntry.createdAt,
-          reasoning: timelineEntry.reasoning,
         });
         continue;
       case "message":
@@ -972,6 +1339,124 @@ export function deriveMessagesTimelineRows(input: {
   }
 
   return nextRows;
+}
+
+function deriveMixedWorkAndReasoningRows(
+  entries: ReadonlyArray<
+    Extract<TimelineEntry, { kind: "work" }> | Extract<TimelineEntry, { kind: "reasoning" }>
+  >,
+  options: {
+    stickyTailInProgress: boolean;
+  },
+): MessagesTimelineRow[] {
+  const workEntries = entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : []));
+  const hasReasoningEntries = entries.some((entry) => entry.kind === "reasoning");
+  if (workEntries.length === 0) {
+    return entries.flatMap((entry) =>
+      entry.kind === "reasoning"
+        ? [
+            {
+              kind: "reasoning" as const,
+              id: entry.id,
+              createdAt: entry.createdAt,
+              reasoning: entry.reasoning,
+            },
+          ]
+        : [],
+    );
+  }
+
+  const workRows = deriveNestedWorkRows(workEntries, options);
+  if (hasReasoningEntries && workRows.every((row) => row.childRows.length === 0)) {
+    type InlineRowEntry = NonNullable<WorkTimelineRow["inlineEntries"]>[number];
+    const workEntryRowIndex = new Map<string, number>();
+    for (let rowIndex = 0; rowIndex < workRows.length; rowIndex += 1) {
+      const workRow = workRows[rowIndex];
+      if (!workRow) {
+        continue;
+      }
+      for (const workEntry of workRow.groupedEntries) {
+        workEntryRowIndex.set(workEntry.id, rowIndex);
+      }
+    }
+
+    const inlineEntriesByRow = workRows.map(() => [] as InlineRowEntry[]);
+    let pendingReasoningEntries: InlineRowEntry[] = [];
+    let lastRowIndex: number | null = null;
+
+    for (const entry of entries) {
+      if (entry.kind === "reasoning") {
+        pendingReasoningEntries.push({
+          kind: "reasoning",
+          id: entry.id,
+          reasoning: entry.reasoning,
+        });
+        continue;
+      }
+
+      const rowIndex = workEntryRowIndex.get(entry.entry.id);
+      if (rowIndex === undefined) {
+        continue;
+      }
+      if (pendingReasoningEntries.length > 0) {
+        inlineEntriesByRow[rowIndex]?.push(...pendingReasoningEntries);
+        pendingReasoningEntries = [];
+      }
+      inlineEntriesByRow[rowIndex]?.push({
+        kind: "work",
+        id: entry.id,
+        entry: entry.entry,
+      });
+      lastRowIndex = rowIndex;
+    }
+
+    if (pendingReasoningEntries.length > 0 && lastRowIndex !== null) {
+      inlineEntriesByRow[lastRowIndex]?.push(...pendingReasoningEntries);
+    }
+
+    return workRows.map((workRow, rowIndex) => {
+      const inlineEntries = inlineEntriesByRow[rowIndex];
+      if (!inlineEntries || inlineEntries.length === 0) {
+        return workRow;
+      }
+      return Object.assign({}, workRow, { inlineEntries });
+    });
+  }
+
+  const fallbackRows: MessagesTimelineRow[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+    if (entry.kind === "reasoning") {
+      fallbackRows.push({
+        kind: "reasoning",
+        id: entry.id,
+        createdAt: entry.createdAt,
+        reasoning: entry.reasoning,
+      });
+      continue;
+    }
+
+    let cursor = index + 1;
+    const contiguousWorkEntries = [entry.entry];
+    while (cursor < entries.length) {
+      const nextEntry = entries[cursor];
+      if (!nextEntry || nextEntry.kind !== "work") {
+        break;
+      }
+      contiguousWorkEntries.push(nextEntry.entry);
+      cursor += 1;
+    }
+    fallbackRows.push(
+      ...deriveNestedWorkRows(contiguousWorkEntries, {
+        stickyTailInProgress: options.stickyTailInProgress && cursor >= entries.length,
+      }),
+    );
+    index = cursor - 1;
+  }
+  return fallbackRows;
 }
 
 function deriveNestedWorkRows(
@@ -1008,22 +1493,33 @@ function deriveNestedWorkRows(
   const topLevelEntries = entries.filter((entry) => !childEntryIds.has(entry.id));
   const rows: WorkTimelineRow[] = [];
 
+  const hasNestedChildren = (entry: WorkLogEntry): boolean =>
+    typeof entry.itemId === "string" && (childrenByParentItemId.get(entry.itemId)?.length ?? 0) > 0;
+
+  const mixedToolActivityGroupKey = (entry: WorkLogEntry): string | null => {
+    if (
+      entry.tone !== "tool" ||
+      entry.itemType === "collab_agent_tool_call" ||
+      hasNestedChildren(entry)
+    ) {
+      return null;
+    }
+    return deriveWorkEntryGroupKey(entry);
+  };
+
   for (let index = 0; index < topLevelEntries.length; index += 1) {
     const entry = topLevelEntries[index]!;
     const groupedEntries = [entry];
-    const groupKey = deriveWorkEntryGroupKey(entry);
-    const hasNestedChildren =
-      typeof entry.itemId === "string" &&
-      (childrenByParentItemId.get(entry.itemId)?.length ?? 0) > 0;
+    const groupKey = mixedToolActivityGroupKey(entry);
 
     let cursor = index + 1;
-    if (!hasNestedChildren) {
+    if (groupKey !== null) {
       while (cursor < topLevelEntries.length) {
         const nextEntry = topLevelEntries[cursor];
         if (!nextEntry) {
           break;
         }
-        if (groupKey === null || deriveWorkEntryGroupKey(nextEntry) !== groupKey) {
+        if (mixedToolActivityGroupKey(nextEntry) !== groupKey) {
           break;
         }
         groupedEntries.push(nextEntry);
@@ -1040,6 +1536,7 @@ function deriveNestedWorkRows(
     rows.push({
       kind: "work",
       id: primaryEntry.id,
+      expansionId: deriveWorkRowExpansionId(primaryEntry),
       createdAt: primaryEntry.createdAt,
       groupedEntries,
       stickyInProgress: options.stickyTailInProgress && cursor >= topLevelEntries.length,
@@ -1057,7 +1554,6 @@ export function estimateMessagesTimelineRowHeight(
   input: {
     timelineWidthPx: number | null;
     expandedWorkGroups?: Readonly<Record<string, boolean>>;
-    allDirectoriesExpandedByTurnId?: Readonly<Record<string, boolean>>;
     turnDiffSummaryByAssistantMessageId?: ReadonlyMap<MessageId, TurnDiffSummary>;
   },
 ): number {
@@ -1076,10 +1572,7 @@ export function estimateMessagesTimelineRowHeight(
       });
       const turnDiffSummary = input.turnDiffSummaryByAssistantMessageId?.get(row.message.id);
       if (turnDiffSummary && turnDiffSummary.files.length > 0) {
-        estimate += estimateChangedFilesCardHeight(
-          turnDiffSummary,
-          input.allDirectoriesExpandedByTurnId?.[turnDiffSummary.turnId] ?? false,
-        );
+        estimate += estimateChangedFilesCardHeight(turnDiffSummary);
       }
       return estimate;
     }
@@ -1098,7 +1591,7 @@ function estimateWorkRowHeight(
   },
 ): number {
   const estimateExpandedWorkEntryHeight = (entry: WorkLogEntry): number => {
-    const isFileChange = entry.requestKind === "file-change" || entry.itemType === "file_change";
+    const isFileChange = isFileChangeWorkEntry(entry);
     const diff = isFileChange ? parseEditDiff(entry.output, entry.detail) : null;
     if (diff) {
       // header (28px) + lines (20px each) + border/padding (8px) + outer margin
@@ -1112,9 +1605,41 @@ function estimateWorkRowHeight(
   const nestedRowsHeight = (childRows: ReadonlyArray<WorkTimelineRow>): number =>
     childRows.reduce((total, childRow) => total + estimateWorkRowHeight(childRow, input) + 6, 0);
 
+  const inlineReasoningHeight = (
+    inlineEntries: NonNullable<WorkTimelineRow["inlineEntries"]>,
+  ): number =>
+    inlineEntries.reduce((total, item) => {
+      if (item.kind !== "reasoning") {
+        return total;
+      }
+      return total + estimateReasoningRowHeight(item.reasoning.text) + 6;
+    }, 0);
+
+  const estimateGroupedWorkListEntryHeight = (entry: WorkLogEntry): number => {
+    if (entry.running) {
+      return 22;
+    }
+    if (entry.itemType === "web_search") {
+      return 26;
+    }
+    const isEntryExpanded =
+      input.expandedWorkGroups?.[getGroupedWorkEntryExpansionKey(entry.id)] ?? false;
+    return isEntryExpanded ? estimateExpandedWorkEntryHeight(entry) : 26;
+  };
+
+  const estimateGroupedInlineItemsHeight = (
+    inlineEntries: NonNullable<WorkTimelineRow["inlineEntries"]>,
+  ): number =>
+    inlineEntries.reduce((total, item) => {
+      if (item.kind === "reasoning") {
+        return total + estimateReasoningRowHeight(item.reasoning.text) + 6;
+      }
+      return total + estimateGroupedWorkListEntryHeight(item.entry);
+    }, 0);
+
   if (row.childRows.length > 0) {
     const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
-    return 16 + 26 + (isExpanded ? nestedRowsHeight(row.childRows) + 8 : 0);
+    return 16 + 26 + (isExpanded ? Math.min(nestedRowsHeight(row.childRows), 192) + 8 : 0);
   }
 
   const displayedEntries = getDisplayedWorkEntries(row.groupedEntries);
@@ -1122,8 +1647,19 @@ function estimateWorkRowHeight(
 
   if (entryCount === 1) {
     const entry = displayedEntries[0]!;
+    const usesGroupedPanel = (row.inlineEntries?.length ?? 0) > 0 || isWorkRowInProgress(row);
+
+    if (usesGroupedPanel) {
+      const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
+      if (!isExpanded) {
+        return 16 + 26;
+      }
+      const visibleItems = row.inlineEntries ?? [{ kind: "work" as const, id: entry.id, entry }];
+      return 16 + 26 + estimateGroupedInlineItemsHeight(visibleItems);
+    }
+
     if (!entry.running) {
-      const isExpanded = input.expandedWorkGroups?.[row.id] ?? false;
+      const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
       if (isExpanded) {
         return estimateExpandedWorkEntryHeight(entry);
       }
@@ -1136,14 +1672,11 @@ function estimateWorkRowHeight(
   const visibleEntries = isExpanded ? displayedEntries.slice(0, MAX_VISIBLE_WORK_LOG_ENTRIES) : [];
   const showMoreToggleHeight = isExpanded && entryCount > MAX_VISIBLE_WORK_LOG_ENTRIES ? 24 : 0;
   const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
-    if (entry.running) {
-      return total + 22;
-    }
-    const isEntryExpanded =
-      input.expandedWorkGroups?.[getGroupedWorkEntryExpansionKey(entry.id)] ?? false;
-    return total + (isEntryExpanded ? estimateExpandedWorkEntryHeight(entry) : 26);
+    return total + estimateGroupedWorkListEntryHeight(entry);
   }, 0);
-  return 16 + 26 + visibleEntriesHeight + showMoreToggleHeight;
+  const reasoningHeight =
+    isExpanded && row.inlineEntries ? inlineReasoningHeight(row.inlineEntries) : 0;
+  return 16 + 26 + visibleEntriesHeight + reasoningHeight + showMoreToggleHeight;
 }
 
 function estimateOutputLineCount(output: unknown): number {
@@ -1155,27 +1688,7 @@ function estimateTimelineProposedPlanHeight(proposedPlan: ProposedPlan): number 
   return 120 + Math.min(estimatedLines * 22, 880);
 }
 
-function estimateChangedFilesCardHeight(
-  turnDiffSummary: TurnDiffSummary,
-  allDirectoriesExpanded: boolean,
-): number {
-  const treeNodes = buildTurnDiffTree(turnDiffSummary.files);
-  const visibleNodeCount = countVisibleTurnDiffTreeNodes(treeNodes, allDirectoriesExpanded);
-
-  // Card chrome: top/bottom padding, header row, and tree spacing.
-  return 60 + visibleNodeCount * 25;
-}
-
-function countVisibleTurnDiffTreeNodes(
-  nodes: ReadonlyArray<TurnDiffTreeNode>,
-  allDirectoriesExpanded: boolean,
-): number {
-  let count = 0;
-  for (const node of nodes) {
-    count += 1;
-    if (node.kind === "directory" && allDirectoriesExpanded) {
-      count += countVisibleTurnDiffTreeNodes(node.children, allDirectoriesExpanded);
-    }
-  }
-  return count;
+function estimateChangedFilesCardHeight(turnDiffSummary: TurnDiffSummary): number {
+  // Card chrome (header + borders + padding) plus a flat row per file.
+  return 68 + turnDiffSummary.files.length * 24;
 }

@@ -909,4 +909,93 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("rejects duplicate active project creation for the same workspace root", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-duplicate-root-1"),
+        projectId: asProjectId("project-root-1"),
+        title: "Project Root One",
+        workspaceRoot: "/tmp/project-root",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-duplicate-root-2"),
+          projectId: asProjectId("project-root-2"),
+          title: "Project Root Two",
+          workspaceRoot: "/tmp/project-root",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          createdAt: now(),
+        }),
+      ),
+    ).rejects.toThrow("Workspace root '/tmp/project-root' is already assigned");
+
+    await system.dispose();
+  });
+
+  it("rejects moving a project onto another active project's workspace root", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-meta-root-1"),
+        projectId: asProjectId("project-meta-1"),
+        title: "Project Meta One",
+        workspaceRoot: "/tmp/project-meta-one",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-meta-root-2"),
+        projectId: asProjectId("project-meta-2"),
+        title: "Project Meta Two",
+        workspaceRoot: "/tmp/project-meta-two",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt: now(),
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-project-meta-root-update"),
+          projectId: asProjectId("project-meta-2"),
+          workspaceRoot: "/tmp/project-meta-one",
+        }),
+      ),
+    ).rejects.toThrow("Workspace root '/tmp/project-meta-one' is already assigned");
+
+    await system.dispose();
+  });
 });

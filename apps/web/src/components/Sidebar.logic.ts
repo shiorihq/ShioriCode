@@ -27,13 +27,17 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Needs Attention"
+    | "Session Error";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
+  "Session Error": 7,
+  "Needs Attention": 6,
   "Pending Approval": 5,
   "Awaiting Input": 4,
   Working: 3,
@@ -50,7 +54,9 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestTurn"
   | "session"
+  | "resumeState"
 > & {
+  hasPendingDispatch?: boolean;
   lastVisitedAt?: string | undefined;
 };
 
@@ -379,41 +385,87 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
+export function resolveThreadRowClickAction(input: {
+  button: number;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  isMac: boolean;
+}): "noop" | "toggle-selection" | "range-select" | "navigate" {
+  if (
+    isContextMenuPointerDown({
+      button: input.button,
+      ctrlKey: input.ctrlKey,
+      isMac: input.isMac,
+    })
+  ) {
+    return "noop";
+  }
+
+  if (input.isMac ? input.metaKey : input.ctrlKey) {
+    return "toggle-selection";
+  }
+
+  if (input.shiftKey) {
+    return "range-select";
+  }
+
+  return "navigate";
+}
+
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none transition-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+    "sidebar-thread-row h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none transition-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
-    return cn(
-      baseClassName,
-      "bg-primary/22 text-foreground font-medium hover:bg-primary/26 hover:text-foreground dark:bg-primary/30 dark:hover:bg-primary/36",
-    );
+    return cn(baseClassName, "sidebar-thread-row--selected-active text-foreground font-medium");
   }
 
   if (input.isSelected) {
-    return cn(
-      baseClassName,
-      "bg-primary/15 text-foreground hover:bg-primary/19 hover:text-foreground dark:bg-primary/22 dark:hover:bg-primary/28",
-    );
+    return cn(baseClassName, "sidebar-thread-row--selected text-foreground");
   }
 
   if (input.isActive) {
-    return cn(
-      baseClassName,
-      "bg-accent/85 text-foreground font-medium hover:bg-accent hover:text-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
-    );
+    return cn(baseClassName, "sidebar-thread-row--active text-foreground font-medium");
   }
 
-  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+  return cn(baseClassName, "text-foreground");
 }
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
   const { thread } = input;
+
+  if (thread.resumeState === "unrecoverable") {
+    return {
+      label: "Session Error",
+      colorClass: "text-red-600 dark:text-red-400/90",
+      dotClass: "bg-red-500 dark:bg-red-400/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.resumeState === "needs_resume") {
+    return {
+      label: "Needs Attention",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.session?.status === "error") {
+    return {
+      label: "Session Error",
+      colorClass: "text-red-600 dark:text-red-400/90",
+      dotClass: "bg-red-500 dark:bg-red-400/90",
+      pulse: false,
+    };
+  }
 
   if (thread.hasPendingApprovals) {
     return {
@@ -451,6 +503,15 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  if (thread.hasPendingDispatch) {
+    return {
+      label: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
   const hasPlanReadyPrompt =
     !thread.hasPendingUserInput &&
     thread.interactionMode === "plan" &&
@@ -468,8 +529,8 @@ export function resolveThreadStatusPill(input: {
   if (hasUnseenCompletion(thread)) {
     return {
       label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      colorClass: "text-primary dark:text-primary",
+      dotClass: "bg-primary",
       pulse: false,
     };
   }

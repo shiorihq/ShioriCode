@@ -1,7 +1,13 @@
-import { type ResolvedKeybindingsConfig } from "contracts";
+import { type KeybindingCommand, type ResolvedKeybindingsConfig } from "contracts";
 import { resolveShortcutCommand, type ShortcutEventLike } from "~/keybindings";
 
-export function shouldHandleSidebarToggleShortcut(
+const APP_SIDEBAR_SHORTCUT_COMMANDS = new Set<KeybindingCommand>([
+  "sidebar.toggle",
+  "project.add",
+  "pullRequests.open",
+]);
+
+export function resolveAppSidebarShortcutCommand(
   event: ShortcutEventLike & { defaultPrevented?: boolean },
   keybindings: ResolvedKeybindingsConfig,
   options: {
@@ -9,14 +15,18 @@ export function shouldHandleSidebarToggleShortcut(
     terminalOpen: boolean;
     platform?: string;
   },
-): boolean {
-  return (
-    resolveShortcutCommand(event, keybindings, {
-      ...(options.platform != null && { platform: options.platform }),
-      context: {
-        terminalFocus: options.terminalFocus,
-        terminalOpen: options.terminalOpen,
-      },
-    }) === "sidebar.toggle"
-  );
+): KeybindingCommand | null {
+  const command = resolveShortcutCommand(event, keybindings, {
+    ...(options.platform != null ? { platform: options.platform } : {}),
+    context: {
+      terminalFocus: options.terminalFocus,
+      terminalOpen: options.terminalOpen,
+    },
+  });
+
+  if (!command || !APP_SIDEBAR_SHORTCUT_COMMANDS.has(command)) {
+    return null;
+  }
+
+  return command;
 }

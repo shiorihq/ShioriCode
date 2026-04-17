@@ -2,6 +2,8 @@ import { ProjectId, ThreadId } from "contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  beginThreadPendingDispatch,
+  clearThreadPendingDispatch,
   clearThreadUi,
   markThreadUnread,
   reorderProjects,
@@ -16,6 +18,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     projectAddRequestNonce: 0,
+    pendingThreadDispatchStartedAtById: {},
     threadLastVisitedAtById: {},
     ...overrides,
   };
@@ -58,6 +61,19 @@ describe("uiStateStore pure functions", () => {
     });
 
     const next = reorderProjects(initialState, project1, project3);
+
+    expect(next.projectOrder).toEqual([project2, project3, project1]);
+  });
+
+  it("reorderProjects can adopt the current visible project order before moving", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const initialState = makeUiState({
+      projectOrder: [project1, project2, project3],
+    });
+
+    const next = reorderProjects(initialState, project2, project3, [project3, project1, project2]);
 
     expect(next.projectOrder).toEqual([project2, project3, project1]);
   });
@@ -134,6 +150,9 @@ describe("uiStateStore pure functions", () => {
     const thread1 = ThreadId.makeUnsafe("thread-1");
     const thread2 = ThreadId.makeUnsafe("thread-2");
     const initialState = makeUiState({
+      pendingThreadDispatchStartedAtById: {
+        [thread2]: "2026-02-25T12:36:30.000Z",
+      },
       threadLastVisitedAtById: {
         [thread1]: "2026-02-25T12:35:00.000Z",
         [thread2]: "2026-02-25T12:36:00.000Z",
@@ -145,6 +164,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
     });
+    expect(next.pendingThreadDispatchStartedAtById).toEqual({});
   });
 
   it("syncThreads seeds visit state for unseen snapshot threads", () => {
@@ -181,6 +201,9 @@ describe("uiStateStore pure functions", () => {
   it("clearThreadUi removes visit state for deleted threads", () => {
     const thread1 = ThreadId.makeUnsafe("thread-1");
     const initialState = makeUiState({
+      pendingThreadDispatchStartedAtById: {
+        [thread1]: "2026-02-25T12:34:00.000Z",
+      },
       threadLastVisitedAtById: {
         [thread1]: "2026-02-25T12:35:00.000Z",
       },
@@ -189,5 +212,33 @@ describe("uiStateStore pure functions", () => {
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
+    expect(next.pendingThreadDispatchStartedAtById).toEqual({});
+  });
+
+  it("beginThreadPendingDispatch keeps the first send timestamp for a thread", () => {
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const initialState = beginThreadPendingDispatch(
+      makeUiState(),
+      thread1,
+      "2026-02-25T12:35:00.000Z",
+    );
+
+    const next = beginThreadPendingDispatch(initialState, thread1, "2026-02-25T12:36:00.000Z");
+
+    expect(next).toBe(initialState);
+    expect(next.pendingThreadDispatchStartedAtById[thread1]).toBe("2026-02-25T12:35:00.000Z");
+  });
+
+  it("clearThreadPendingDispatch removes the active send marker", () => {
+    const thread1 = ThreadId.makeUnsafe("thread-1");
+    const initialState = makeUiState({
+      pendingThreadDispatchStartedAtById: {
+        [thread1]: "2026-02-25T12:35:00.000Z",
+      },
+    });
+
+    const next = clearThreadPendingDispatch(initialState, thread1);
+
+    expect(next.pendingThreadDispatchStartedAtById).toEqual({});
   });
 });

@@ -51,6 +51,10 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("claude-sonnet-4.5", "shiori")).toBe("anthropic/claude-sonnet-4-5");
+    expect(normalizeModelSlug("anthropic/claude-sonnet-4.5", "shiori")).toBe(
+      "anthropic/claude-sonnet-4-5",
+    );
   });
 
   it("returns null for empty or missing values", () => {

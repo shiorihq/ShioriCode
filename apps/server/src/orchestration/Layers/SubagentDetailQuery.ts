@@ -405,11 +405,19 @@ const make = Effect.gen(function* () {
 
     const resolvedMode =
       metadata.mode === "unknown" && outputFilePath ? "background" : metadata.mode;
+    const hasContents =
+      transcript.length > 0 ||
+      providerThreadIds.length > 0 ||
+      activities.length > 1 ||
+      metadata.resultText !== null ||
+      outputFilePath !== null ||
+      outputText !== null;
 
     return {
       provider,
       rootItemId: input.rootItemId,
       title,
+      hasContents,
       description: metadata.description,
       prompt: metadata.prompt,
       agentType: metadata.agentType,

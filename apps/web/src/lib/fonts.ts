@@ -3,6 +3,7 @@ import {
   DEFAULT_UI_FONT_FAMILY,
   type ClientSettings,
 } from "contracts/settings";
+import { normalizeUserFacingFontFamily } from "shared/fontFamily";
 
 const SYSTEM_SANS_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const SYSTEM_MONO_STACK =
@@ -21,14 +22,10 @@ type FontCatalog = {
 
 let fontCatalogPromise: Promise<FontCatalog> | null = null;
 
-function normalizeFontFamily(fontFamily: string): string {
-  return fontFamily.trim().replace(/^['"]+|['"]+$/g, "");
-}
-
 function dedupeFontFamilies(fontFamilies: readonly string[]): string[] {
   const seen = new Map<string, string>();
   for (const fontFamily of fontFamilies) {
-    const normalized = normalizeFontFamily(fontFamily);
+    const normalized = normalizeUserFacingFontFamily(fontFamily);
     if (!normalized) continue;
     const key = normalized.toLocaleLowerCase();
     if (!seen.has(key)) {
@@ -127,7 +124,8 @@ export function getUiFontFamilyCssValue(fontFamily: string): string {
     return SYSTEM_SANS_STACK;
   }
 
-  return `${escapeFontFamily(fontFamily)}, ${SYSTEM_SANS_STACK}`;
+  const normalized = normalizeUserFacingFontFamily(fontFamily);
+  return normalized ? `${escapeFontFamily(normalized)}, ${SYSTEM_SANS_STACK}` : SYSTEM_SANS_STACK;
 }
 
 export function getCodeFontFamilyCssValue(fontFamily: string): string {
@@ -135,7 +133,8 @@ export function getCodeFontFamilyCssValue(fontFamily: string): string {
     return SYSTEM_MONO_STACK;
   }
 
-  return `${escapeFontFamily(fontFamily)}, ${SYSTEM_MONO_STACK}`;
+  const normalized = normalizeUserFacingFontFamily(fontFamily);
+  return normalized ? `${escapeFontFamily(normalized)}, ${SYSTEM_MONO_STACK}` : SYSTEM_MONO_STACK;
 }
 
 export function applyFontSettingsToDocument(

@@ -2,15 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownIcon,
-  ArrowLeftIcon,
-  ArrowRightIcon,
   ArrowUpIcon,
   DiffIcon,
   FolderOpenIcon,
   MessageSquareIcon,
   PanelBottomIcon,
   PanelLeftIcon,
-  SearchIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -186,30 +183,6 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
     groups.push({
       label: "Navigation",
       items: [
-        {
-          id: "nav-find",
-          label: "Find",
-          icon: <SearchIcon className="size-4" />,
-          onSelect: close,
-        },
-        {
-          id: "nav-back",
-          label: "Back",
-          icon: <ArrowLeftIcon className="size-4" />,
-          onSelect: () => {
-            close();
-            window.history.back();
-          },
-        },
-        {
-          id: "nav-forward",
-          label: "Forward",
-          icon: <ArrowRightIcon className="size-4" />,
-          onSelect: () => {
-            close();
-            window.history.forward();
-          },
-        },
         {
           id: "nav-prev-thread",
           label: "Previous thread",

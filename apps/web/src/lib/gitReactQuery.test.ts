@@ -10,11 +10,12 @@ vi.mock("../wsRpcClient", () => ({
 }));
 
 import type { InfiniteData } from "@tanstack/react-query";
-import type { GitListBranchesResult } from "contracts";
+import type { GitListBranchesResult, GitResolvedPullRequest } from "contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
   gitMutationKeys,
+  gitPullRequestSummaryQueryOptions,
   gitQueryKeys,
   gitPreparePullRequestThreadMutationOptions,
   invalidateGitStatusQuery,
@@ -33,6 +34,15 @@ const BRANCH_QUERY_RESULT: GitListBranchesResult = {
 const BRANCH_SEARCH_RESULT: InfiniteData<GitListBranchesResult, number> = {
   pages: [BRANCH_QUERY_RESULT],
   pageParams: [0],
+};
+
+const PULL_REQUEST: GitResolvedPullRequest = {
+  number: 17,
+  title: "Speed up PR summaries",
+  url: "https://github.com/example/repo/pull/17",
+  baseBranch: "main",
+  headBranch: "feature/speed-up-pr-summaries",
+  state: "open",
 };
 
 describe("gitMutationKeys", () => {
@@ -118,5 +128,40 @@ describe("invalidateGitStatusQuery", () => {
     expect(
       queryClient.getQueryState(gitStatusQueryOptions("/repo/b").queryKey)?.isInvalidated,
     ).toBe(false);
+  });
+
+  it("disables retries for git status polling", () => {
+    const options = gitStatusQueryOptions("/repo/a");
+
+    expect(options.retry).toBe(false);
+  });
+});
+
+describe("gitPullRequestSummaryQueryOptions", () => {
+  it("forwards available pull request metadata to the summary RPC", async () => {
+    const summarizePullRequest = vi.fn().mockResolvedValue({ summary: "ok" });
+    const { ensureNativeApi } = await import("../nativeApi");
+    vi.mocked(ensureNativeApi).mockReturnValue({
+      git: {
+        summarizePullRequest,
+      },
+    } as never);
+
+    const options = gitPullRequestSummaryQueryOptions({
+      cwd: "/repo/a",
+      number: 17,
+      pullRequest: PULL_REQUEST,
+    });
+
+    const result = await (options.queryFn as () => Promise<unknown>)();
+
+    expect(result).toEqual({ summary: "ok" });
+    expect(summarizePullRequest).toHaveBeenCalledWith({
+      cwd: "/repo/a",
+      number: 17,
+      title: "Speed up PR summaries",
+      baseBranch: "main",
+      headBranch: "feature/speed-up-pr-summaries",
+    });
   });
 });

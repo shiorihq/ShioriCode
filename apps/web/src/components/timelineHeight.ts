@@ -5,11 +5,10 @@ const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
 const USER_LINE_HEIGHT_PX = 22;
 const ASSISTANT_LINE_HEIGHT_PX = 22.75;
-// Assistant rows render as markdown content plus a compact timestamp meta line.
-// The DOM baseline is much smaller than the user bubble chrome, so model it
-// separately instead of reusing the old shared constant.
-const ASSISTANT_BASE_HEIGHT_PX = 41;
-const USER_BASE_HEIGHT_PX = 96;
+// Message rows now use the same compact bottom rhythm as the adjacent work-log
+// rows, so keep the base chrome aligned with that shared gap.
+const ASSISTANT_BASE_HEIGHT_PX = 33;
+const USER_BASE_HEIGHT_PX = 88;
 const ATTACHMENTS_PER_ROW = 2;
 // Attachment thumbnails render with `max-h-[220px]` plus ~8px row gap.
 const USER_ATTACHMENT_ROW_HEIGHT_PX = 228;

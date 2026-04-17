@@ -12,14 +12,22 @@ import {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
+  GitPullRequestConversationInput,
+  GitPullRequestConversationResult,
+  GitPullRequestDiffInput,
+  GitPullRequestDiffResult,
   GitPullRequestRefInput,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitStatusInput,
   GitStatusResult,
+  GitSummarizePullRequestInput,
+  GitSummarizePullRequestResult,
 } from "./git";
 import { KeybindingsConfigError } from "./keybindings";
 import { OnboardingCompleteStepInput, OnboardingError, OnboardingState } from "./onboarding";
@@ -74,7 +82,16 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server";
-import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings";
+import {
+  EffectiveMcpServerAuthInput,
+  EffectiveMcpServersResult,
+  EffectiveMcpServerRemoveInput,
+  EffectiveSkillRemoveInput,
+  EffectiveSkillsResult,
+  ServerSettings,
+  ServerSettingsError,
+  ServerSettingsPatch,
+} from "./settings";
 import { TelemetryCaptureInput, TelemetryLogInput } from "./telemetry";
 
 export const WS_METHODS = {
@@ -98,6 +115,10 @@ export const WS_METHODS = {
   gitInit: "git.init",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitListOpenPullRequests: "git.listOpenPullRequests",
+  gitGetPullRequestDiff: "git.getPullRequestDiff",
+  gitSummarizePullRequest: "git.summarizePullRequest",
+  gitGetPullRequestConversation: "git.getPullRequestConversation",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -113,6 +134,11 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverListMcpServers: "server.listMcpServers",
+  serverAuthenticateMcpServer: "server.authenticateMcpServer",
+  serverRemoveMcpServer: "server.removeMcpServer",
+  serverListSkills: "server.listSkills",
+  serverRemoveSkill: "server.removeSkill",
   serverSetShioriAuthToken: "server.setShioriAuthToken",
   serverGetProviderUsage: "server.getProviderUsage",
   serverGetHostedBillingSnapshot: "server.getHostedBillingSnapshot",
@@ -161,6 +187,36 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
+  error: ServerSettingsError,
+});
+
+export const WsServerListMcpServersRpc = Rpc.make(WS_METHODS.serverListMcpServers, {
+  payload: Schema.Struct({}),
+  success: EffectiveMcpServersResult,
+  error: ServerSettingsError,
+});
+
+export const WsServerAuthenticateMcpServerRpc = Rpc.make(WS_METHODS.serverAuthenticateMcpServer, {
+  payload: EffectiveMcpServerAuthInput,
+  success: Schema.Struct({}),
+  error: ServerSettingsError,
+});
+
+export const WsServerRemoveMcpServerRpc = Rpc.make(WS_METHODS.serverRemoveMcpServer, {
+  payload: EffectiveMcpServerRemoveInput,
+  success: Schema.Struct({}),
+  error: ServerSettingsError,
+});
+
+export const WsServerListSkillsRpc = Rpc.make(WS_METHODS.serverListSkills, {
+  payload: Schema.Struct({}),
+  success: EffectiveSkillsResult,
+  error: ServerSettingsError,
+});
+
+export const WsServerRemoveSkillRpc = Rpc.make(WS_METHODS.serverRemoveSkill, {
+  payload: EffectiveSkillRemoveInput,
+  success: Schema.Struct({}),
   error: ServerSettingsError,
 });
 
@@ -296,6 +352,33 @@ export const WsGitInitRpc = Rpc.make(WS_METHODS.gitInit, {
   error: GitCommandError,
 });
 
+export const WsGitListOpenPullRequestsRpc = Rpc.make(WS_METHODS.gitListOpenPullRequests, {
+  payload: GitListOpenPullRequestsInput,
+  success: GitListOpenPullRequestsResult,
+  error: GitManagerServiceError,
+});
+
+export const WsGitGetPullRequestDiffRpc = Rpc.make(WS_METHODS.gitGetPullRequestDiff, {
+  payload: GitPullRequestDiffInput,
+  success: GitPullRequestDiffResult,
+  error: GitManagerServiceError,
+});
+
+export const WsGitSummarizePullRequestRpc = Rpc.make(WS_METHODS.gitSummarizePullRequest, {
+  payload: GitSummarizePullRequestInput,
+  success: GitSummarizePullRequestResult,
+  error: GitManagerServiceError,
+});
+
+export const WsGitGetPullRequestConversationRpc = Rpc.make(
+  WS_METHODS.gitGetPullRequestConversation,
+  {
+    payload: GitPullRequestConversationInput,
+    success: GitPullRequestConversationResult,
+    error: GitManagerServiceError,
+  },
+);
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -407,6 +490,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerListMcpServersRpc,
+  WsServerAuthenticateMcpServerRpc,
+  WsServerRemoveMcpServerRpc,
+  WsServerListSkillsRpc,
+  WsServerRemoveSkillRpc,
   WsServerSetShioriAuthTokenRpc,
   WsServerGetProviderUsageRpc,
   WsServerGetHostedBillingSnapshotRpc,
@@ -429,6 +517,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitCreateBranchRpc,
   WsGitCheckoutRpc,
   WsGitInitRpc,
+  WsGitListOpenPullRequestsRpc,
+  WsGitGetPullRequestDiffRpc,
+  WsGitSummarizePullRequestRpc,
+  WsGitGetPullRequestConversationRpc,
   WsTerminalOpenRpc,
   WsTerminalWriteRpc,
   WsTerminalResizeRpc,

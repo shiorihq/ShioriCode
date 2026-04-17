@@ -10,6 +10,10 @@ import {
   UserIcon,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
+import {
+  readSettingsReturnPath,
+  resolveSettingsBackNavigation,
+} from "../../lib/settingsNavigation";
 
 import {
   SidebarContent,
@@ -17,7 +21,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
 } from "../ui/sidebar";
 
 export type SettingsSectionPath =
@@ -45,26 +48,23 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const navigateBack = () => {
+    void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
+  };
+  const itemClassName = "gap-2 px-2 py-2 text-left text-sm transition-none";
 
   return (
     <SidebarContent className="overflow-x-hidden">
       <SidebarGroup className="px-2 pt-3 pb-0">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-2 text-xs text-muted-foreground transition-none hover:bg-accent hover:text-foreground"
-              onClick={() => window.history.back()}
-            >
+            <SidebarMenuButton size="sm" className={itemClassName} onClick={navigateBack}>
               <ArrowLeftIcon className="size-4" />
               <span>Back</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
-
-      <SidebarSeparator />
-
       <SidebarGroup className="px-2 py-3">
         <SidebarMenu>
           {SETTINGS_NAV_ITEMS.map((item) => {
@@ -75,20 +75,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <SidebarMenuButton
                   size="sm"
                   isActive={isActive}
-                  className={
-                    isActive
-                      ? "gap-2 px-2 py-2 text-left text-xs text-foreground transition-none hover:bg-accent hover:text-foreground"
-                      : "gap-2 px-2 py-2 text-left text-xs text-muted-foreground transition-none hover:bg-accent hover:text-foreground"
-                  }
+                  className={itemClassName}
                   onClick={() => void navigate({ to: item.to, replace: true })}
                 >
-                  <Icon
-                    className={
-                      isActive
-                        ? "size-4 shrink-0 text-foreground"
-                        : "size-4 shrink-0 text-muted-foreground"
-                    }
-                  />
+                  <Icon className="size-4 shrink-0" />
                   <span className="truncate">{item.label}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>

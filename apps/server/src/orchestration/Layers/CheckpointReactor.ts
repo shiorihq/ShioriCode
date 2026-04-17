@@ -45,6 +45,15 @@ type ReactorInput =
       readonly event: OrchestrationEvent;
     };
 
+class RetryAttachmentCloneError extends Error {
+  readonly _tag = "RetryAttachmentCloneError";
+
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "RetryAttachmentCloneError";
+  }
+}
+
 function toTurnId(value: string | undefined): TurnId | null {
   return value === undefined ? null : TurnId.makeUnsafe(String(value));
 }
@@ -287,9 +296,12 @@ const make = Effect.gen(function* () {
           return nextAttachment;
         },
         catch: (error) =>
-          error instanceof Error
-            ? error
-            : new Error(`Failed to clone retry attachment: ${String(error)}`),
+          new RetryAttachmentCloneError(
+            error instanceof Error
+              ? error.message
+              : `Failed to clone retry attachment: ${String(error)}`,
+            error,
+          ),
       }),
     );
   });
@@ -399,6 +411,13 @@ const make = Effect.gen(function* () {
     const thread = readModel.threads.find((entry) => entry.id === input.threadId);
     if (!thread) {
       return yield* failWithMessage("Thread was not found in read model.");
+    }
+
+    const hasActiveSession = (yield* providerService.listSessions()).some(
+      (session) => session.threadId === input.threadId,
+    );
+    if (input.requireFilesystemRestore && !hasActiveSession) {
+      return yield* failWithMessage("No active provider session is bound to this thread.");
     }
 
     const currentTurnCount = thread.checkpoints.reduce(

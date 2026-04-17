@@ -30,6 +30,11 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --radius-sm: calc(var(--radius) - 4px);
@@ -57,6 +62,13 @@
     user-select: none;
     -webkit-user-select: none;
   }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
 /* Suppress all transitions during theme changes */
@@ -68,13 +80,52 @@
   animation-duration: 0s !important;
 }
 
+.assistant-text-selectable,
+.assistant-text-selectable * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --cubic-enter: cubic-bezier(0.19, 1, 0.22, 1);
+  --cubic-exit-snappy: cubic-bezier(0.65, 0, 0.4, 1);
+  --transition-duration-basic: 0.15s;
+  --transition-duration-relaxed: 0.3s;
+  --transition-ease-basic: ease;
+  --app-sidebar-shell-radius: 1.375rem;
+  --app-sidebar-shell-background: color-mix(in srgb, var(--color-white) 94%, transparent);
+  --app-sidebar-shell-background-translucent: color-mix(
+    in srgb,
+    var(--color-white) 24%,
+    transparent
+  );
+  --app-sidebar-shell-border: color-mix(in srgb, var(--color-black) 10%, transparent);
+  --app-sidebar-shell-border-translucent: color-mix(
+    in srgb,
+    var(--color-white) 16%,
+    var(--color-black) 8%
+  );
+  --sidebar-interactive-surface: color-mix(
+    in srgb,
+    var(--background) 82%,
+    var(--muted-foreground) 18%
+  );
+  --sidebar-interactive-surface-foreground: var(--foreground);
+  --sidebar-interactive-outline: color-mix(in srgb, var(--background) 84%, var(--foreground) 16%);
+  --sidebar-thread-surface-active: var(--sidebar-interactive-surface);
+  --sidebar-thread-surface-selected: color-mix(in srgb, var(--background) 91%, var(--ring) 9%);
+  --sidebar-thread-surface-selected-active: var(--sidebar-interactive-surface);
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--card-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
   --popover: var(--color-white);
   --popover-foreground: var(--color-neutral-800);
   --primary: oklch(0.671 0.101 241.4);
@@ -99,6 +150,24 @@
 
   @variant dark {
     color-scheme: dark;
+    --app-sidebar-shell-background: color-mix(in srgb, var(--color-white) 6%, var(--background));
+    --app-sidebar-shell-background-translucent: color-mix(
+      in srgb,
+      var(--background) 20%,
+      transparent
+    );
+    --app-sidebar-shell-border: color-mix(in srgb, var(--color-white) 9%, transparent);
+    --app-sidebar-shell-border-translucent: color-mix(in srgb, var(--color-white) 12%, transparent);
+    --sidebar-interactive-surface: color-mix(
+      in srgb,
+      var(--background) 72%,
+      var(--muted-foreground) 28%
+    );
+    --sidebar-interactive-surface-foreground: var(--foreground);
+    --sidebar-interactive-outline: color-mix(in srgb, var(--background) 76%, var(--foreground) 24%);
+    --sidebar-thread-surface-active: var(--sidebar-interactive-surface);
+    --sidebar-thread-surface-selected: color-mix(in srgb, var(--background) 84%, var(--ring) 16%);
+    --sidebar-thread-surface-selected-active: var(--sidebar-interactive-surface);
     --background: #101010;
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
@@ -134,18 +203,153 @@ body {
   min-height: 100vh;
 }
 
+.duration-relaxed {
+  transition-duration: var(--transition-duration-relaxed);
+}
+
+.ease-basic {
+  transition-timing-function: var(--transition-ease-basic);
+}
+
 /* Translucent sidebar — strip opaque backgrounds so native vibrancy shows through */
 :root[data-sidebar-translucent],
 :root[data-sidebar-translucent] body {
   background-color: transparent !important;
 }
 
-[data-translucent] [data-slot="sidebar-container"] {
+:root[data-sidebar-translucent] {
+  --sidebar-accent: var(--sidebar-interactive-surface);
+  --sidebar-accent-foreground: var(--sidebar-interactive-surface-foreground);
+  --sidebar-border: var(--sidebar-interactive-outline);
+}
+
+[data-translucent] [data-slot="sidebar-container"],
+[data-translucent][data-slot="sidebar-container"] {
   background-color: transparent !important;
 }
 
-[data-translucent] [data-slot="sidebar-inner"] {
+[data-translucent]:not([data-app-sidebar-shell]) [data-slot="sidebar-inner"] {
   background-color: transparent !important;
+}
+
+[data-app-sidebar-shell][data-slot="sidebar-container"] {
+  background-color: transparent !important;
+}
+
+[data-app-sidebar-shell][data-slot="sidebar-container"] [data-slot="sidebar-inner"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-top-left-radius: var(--app-sidebar-shell-radius);
+  border-bottom-left-radius: var(--app-sidebar-shell-radius);
+  background: transparent;
+}
+
+[data-app-sidebar-shell][data-slot="sidebar-container"] [data-slot="sidebar-inner"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
+  background: var(--app-sidebar-shell-background);
+  pointer-events: none;
+}
+
+[data-app-sidebar-shell][data-slot="sidebar-container"][data-translucent]
+  [data-slot="sidebar-inner"]::before {
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:root[data-sidebar-translucent]
+  [data-app-sidebar-shell][data-slot="sidebar-container"]
+  [data-slot="sidebar-inner"] {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-white) 16%, transparent);
+}
+
+.sidebar-scroll-fade [data-slot="scroll-area-viewport"] {
+  --sidebar-scroll-fade-distance: 4.5rem;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - var(--sidebar-scroll-fade-distance)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - var(--sidebar-scroll-fade-distance)),
+    transparent 100%
+  );
+}
+
+.sidebar-thread-row:not(.sidebar-thread-row--active):not(.sidebar-thread-row--selected):not(
+    .sidebar-thread-row--selected-active
+  ):hover {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.sidebar-thread-row.sidebar-thread-row--active,
+.sidebar-thread-row.sidebar-thread-row--active:hover,
+.sidebar-thread-row.sidebar-thread-row--active:focus-visible {
+  background-color: var(--sidebar-thread-surface-active);
+  color: var(--color-foreground);
+}
+
+.sidebar-thread-row.sidebar-thread-row--selected,
+.sidebar-thread-row.sidebar-thread-row--selected:hover,
+.sidebar-thread-row.sidebar-thread-row--selected:focus-visible {
+  background-color: var(--sidebar-thread-surface-selected);
+  color: var(--color-foreground);
+}
+
+.sidebar-thread-row.sidebar-thread-row--selected-active,
+.sidebar-thread-row.sidebar-thread-row--selected-active:hover,
+.sidebar-thread-row.sidebar-thread-row--selected-active:focus-visible {
+  background-color: var(--sidebar-thread-surface-selected-active);
+  color: var(--color-foreground);
+}
+
+:root[data-sidebar-translucent]
+  :is(
+    [data-slot="sidebar-menu-button"],
+    [data-slot="sidebar-menu-sub-button"],
+    [data-slot="sidebar-menu-action"],
+    [data-slot="sidebar-trigger"],
+    .sidebar-thread-row
+  ) {
+  transition: none !important;
+}
+
+:root[data-sidebar-translucent]
+  :is(
+    [data-slot="sidebar-menu-button"],
+    [data-slot="sidebar-menu-sub-button"],
+    [data-slot="sidebar-menu-action"],
+    [data-slot="sidebar-trigger"]
+  ):is(:hover, :focus-visible) {
+  background-color: var(--sidebar-interactive-surface);
+  color: var(--sidebar-interactive-surface-foreground);
+}
+
+:root[data-sidebar-translucent]
+  :is(
+    [data-slot="sidebar-menu-button"],
+    [data-slot="sidebar-menu-sub-button"],
+    [data-slot="sidebar-menu-action"],
+    [data-slot="sidebar-trigger"],
+    .sidebar-thread-row
+  ):focus-visible {
+  box-shadow: inset 0 0 0 1px var(--sidebar-interactive-outline);
+  outline: none;
+}
+
+:root[data-sidebar-translucent] .sidebar-scroll-fade [data-slot="scroll-area-viewport"] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 html,
@@ -181,13 +385,6 @@ code,
 kbd,
 samp {
   font-family: var(--font-mono);
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
 }
 
 /* Window drag region (frameless titlebar) */
@@ -291,7 +488,7 @@ textarea {
 .chat-markdown blockquote,
 .chat-markdown pre,
 .chat-markdown table {
-  margin: 0.65rem 0;
+  margin: 0.5rem 0;
 }
 
 .chat-markdown ul {
@@ -368,7 +565,7 @@ textarea {
 
 .chat-markdown .chat-markdown-codeblock {
   position: relative;
-  margin: 0.65rem 0;
+  margin: 0.5rem 0;
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
@@ -532,10 +729,6 @@ textarea {
 
 /* ── Auth screen ── */
 
-.auth-branded-panel {
-  background: oklch(0.1 0.035 241.4);
-}
-
 @keyframes auth-drift {
   0%,
   100% {
@@ -569,42 +762,6 @@ textarea {
 
 .auth-form-enter {
   animation: auth-fade-in 0.5s ease-out both;
-}
-
-.auth-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(100px);
-  will-change: transform;
-  pointer-events: none;
-}
-
-.auth-orb-1 {
-  width: 500px;
-  height: 500px;
-  top: -15%;
-  right: -15%;
-  background: oklch(0.3 0.14 241.4 / 28%);
-  animation: auth-drift 22s ease-in-out infinite;
-}
-
-.auth-orb-2 {
-  width: 350px;
-  height: 350px;
-  bottom: 5%;
-  left: -10%;
-  background: oklch(0.22 0.1 280 / 22%);
-  animation: auth-drift 28s ease-in-out infinite reverse;
-}
-
-.auth-orb-3 {
-  width: 280px;
-  height: 280px;
-  top: 45%;
-  left: 35%;
-  background: oklch(0.25 0.08 200 / 16%);
-  animation: auth-drift 32s ease-in-out infinite;
-  animation-delay: -12s;
 }
 
 /* ── Onboarding screen ── */

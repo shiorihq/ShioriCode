@@ -17,7 +17,7 @@ const toggleVariants = cva(
         default: "h-9 min-w-9 px-[calc(--spacing(2)-1px)] sm:h-8 sm:min-w-8",
         lg: "h-10 min-w-10 px-[calc(--spacing(2.5)-1px)] sm:h-9 sm:min-w-9",
         sm: "h-8 min-w-8 px-[calc(--spacing(1.5)-1px)] sm:h-7 sm:min-w-7",
-        xs: "h-7 min-w-7 px-[calc(--spacing(1)-1px)] sm:h-6 sm:min-w-6 rounded-md",
+        xs: "h-7 min-w-7 px-[calc(--spacing(1)-1px)] text-sm sm:h-6 sm:min-w-6 sm:text-xs rounded-md",
       },
       variant: {
         default: "border-transparent",

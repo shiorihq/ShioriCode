@@ -3,7 +3,13 @@ import { CopyIcon, CheckIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
-export const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: string }) {
+export const MessageCopyButton = memo(function MessageCopyButton({
+  text,
+  title = "Copy message",
+}: {
+  text: string;
+  title?: string;
+}) {
   const { copyToClipboard, isCopied } = useCopyToClipboard();
 
   return (
@@ -12,7 +18,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({ text }: { tex
       size="xs"
       variant="ghost"
       onClick={() => copyToClipboard(text)}
-      title="Copy message"
+      title={title}
+      aria-label={title}
     >
       {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
     </Button>

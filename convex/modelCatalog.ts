@@ -67,7 +67,7 @@ export const DEFAULT_HOSTED_MODEL_CATALOG: ReadonlyArray<HostedCatalogProvider> 
     sortOrder: 20,
     models: [
       {
-        id: "anthropic/claude-sonnet-4.5",
+        id: "anthropic/claude-sonnet-4-5",
         name: "Claude Sonnet 4.5",
         description: "Balanced Claude model for coding, editing, and agent workflows.",
         reasoning: false,

@@ -160,7 +160,7 @@ describe("MessagesTimeline", () => {
               id: "work-status-update",
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Status update",
-              detail: "The first pass should keep the turn open.",
+              detail: "The first pass should keep the `typecheck` step plain text.",
               tone: "info",
             },
           },
@@ -183,9 +183,56 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("The first pass should keep the turn open.");
+    expect(markup).toContain("The first pass should keep the `typecheck` step plain text.");
     expect(markup).not.toContain("Status update");
     expect(markup).not.toContain("aria-expanded");
+    expect(markup).not.toContain("<code>");
+  });
+
+  it("renders a copy button for expanded runtime warnings", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-runtime-warning",
+            kind: "work",
+            createdAt: "2026-04-10T10:02:09.111Z",
+            entry: {
+              id: "work-runtime-warning",
+              createdAt: "2026-04-10T10:02:09.111Z",
+              label: "Runtime warning",
+              detail:
+                '2026-04-10T10:02:09.111601Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed("Server returned error response: invalid_grant: Invalid refresh token"))',
+              tone: "info",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-runtime-warning": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Copy runtime warning");
+    expect(markup).toContain("Invalid refresh token");
   });
 
   it("keeps full work-log output in the DOM while visually clamping it behind a show-more affordance", async () => {
@@ -221,7 +268,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-command-output": true }}
+        expandedWorkGroups={{ "work-command-output": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -292,6 +339,55 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("bun run lint");
   });
 
+  it("keeps completed single tool rows collapsed by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-command-compact",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-command-compact",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "exec_command completed",
+              detail: "bun run lint",
+              command: "bun run lint",
+              tone: "tool",
+              toolTitle: "exec_command",
+              itemType: "command_execution",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Ran");
+    expect(markup).toContain("bun run lint");
+    expect(markup).toContain('aria-expanded="false"');
+  });
+
   it("renders codex command execution payloads as structured metadata instead of raw JSON", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -316,6 +412,10 @@ describe("MessagesTimeline", () => {
               toolTitle: "exec_command",
               itemType: "command_execution",
               output: {
+                result: {
+                  stdout: "Typecheck passed\n",
+                  stderr: "Warning: generated files skipped\n",
+                },
                 item: {
                   type: "commandExecution",
                   id: "call_QdDkospw0L10iY12ezfMEdDH",
@@ -324,7 +424,11 @@ describe("MessagesTimeline", () => {
                   processId: "99228",
                   source: "unifiedExecStartup",
                   status: "completed",
-                  commandActions: [{ label: "Open in terminal" }, { label: "Copy command" }],
+                  commandActions: [
+                    { label: "Open in terminal" },
+                    { label: "unknown" },
+                    { label: "Copy command" },
+                  ],
                 },
               },
             },
@@ -333,7 +437,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-command-execution-payload": true }}
+        expandedWorkGroups={{ "work-command-execution-payload": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -356,6 +460,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("unifiedExecStartup");
     expect(markup).toContain("Open in terminal");
     expect(markup).toContain("Copy command");
+    expect(markup).toContain("Typecheck passed");
+    expect(markup).toContain("Warning: generated files skipped");
+    expect(markup).not.toContain(">unknown</span>");
     expect(markup).not.toContain("&quot;commandActions&quot;");
     expect(markup).not.toContain("&quot;processId&quot;");
   });
@@ -398,7 +505,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-skill-tool": true }}
+        expandedWorkGroups={{ "work-skill-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -456,7 +563,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-agent-tool": true }}
+        expandedWorkGroups={{ "work-agent-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -476,6 +583,73 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Explore the app");
     expect(markup).toContain("Background");
     expect(markup).not.toContain("&quot;subagent_type&quot;");
+  });
+
+  it("renders Codex webSearch items as a non-expandable minimal entry", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-web-search-tool",
+            kind: "work",
+            createdAt: "2026-04-11T23:14:01.000Z",
+            entry: {
+              id: "work-web-search-tool",
+              createdAt: "2026-04-11T23:14:01.000Z",
+              label: "Web search",
+              tone: "tool",
+              itemType: "web_search",
+              output: {
+                toolName: "webSearch",
+                input: {
+                  action: {
+                    type: "open_page",
+                    value: "https://developers.openai.com/codex/sdk/",
+                  },
+                  action_type: "open_page",
+                  action_value: "https://developers.openai.com/codex/sdk/",
+                },
+                item: {
+                  type: "webSearch",
+                  id: "ws_123",
+                  query: "",
+                  action: {
+                    type: "open_page",
+                    value: "https://developers.openai.com/codex/sdk/",
+                  },
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-web-search-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Opened page");
+    expect(markup).toContain("https://developers.openai.com/codex/sdk/");
+    expect(markup).not.toContain("aria-expanded");
+    expect(markup).not.toContain("&quot;action_type&quot;");
   });
 
   it("renders spawn_agent tool calls as delegated agent workflow cards", async () => {
@@ -513,7 +687,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-spawn-agent-tool": true }}
+        expandedWorkGroups={{ "work-spawn-agent-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -574,7 +748,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-write-tool": true }}
+        expandedWorkGroups={{ "work-write-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -633,7 +807,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-write-file-tool": true }}
+        expandedWorkGroups={{ "work-write-file-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -648,9 +822,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Edited");
+    expect(markup).toContain("Wrote");
     expect(markup).toContain("index.css");
     expect(markup).toContain("color: red;");
+    expect(markup).toContain('class="mt-1"><div data-inline-diff="true"');
     expect(markup).not.toContain("Wrote 22 bytes to apps/web/src/index.css");
   });
 
@@ -736,7 +911,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-read-file-output": true }}
+        expandedWorkGroups={{ "work-read-file-output": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -874,7 +1049,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{ "entry-1": true }}
+        expandedWorkGroups={{ "work-list-directory": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -1020,7 +1195,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Explored");
   });
 
-  it("keeps in-progress exploration groups collapsed by default (user can expand manually)", async () => {
+  it("keeps in-progress exploration groups expanded by default", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1134,14 +1309,61 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    // In-progress groups default to collapsed; summary header is visible.
     expect(markup).toContain("Exploring 6 files");
-    expect(markup).toContain('aria-expanded="false"');
-    // Individual entries are hidden behind the collapsed panel.
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("file-6.ts");
     expect(markup).not.toContain("Show 1 more");
   });
 
-  it("shows capped entries when in-progress group is explicitly expanded", async () => {
+  it("shimmers a sticky single-entry workgroup header while the turn is still active", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-sticky-read",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-sticky-read",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "package.json",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Exploring 1 file");
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("shimmer shimmer-spread-200");
+  });
+
+  it("keeps expanded in-progress groups in a capped scroll viewport instead of hiding later entries", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1259,9 +1481,195 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("<ul");
     expect(markup).toContain("file-1.ts");
     expect(markup).toContain("file-5.ts");
-    // The running entry (file-6) is beyond the MAX_VISIBLE cap.
-    expect(markup).not.toContain("file-6.ts");
+    expect(markup).toContain("file-6.ts");
+    expect(markup).toContain("max-h-48");
+    expect(markup).toContain("overflow-y-auto");
+    expect(markup).not.toContain("Show 1 more");
+  });
+
+  it("still uses a show-more affordance for completed groups with more than five entries", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-complete-capped-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-complete-capped-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-1.ts",
+            },
+          },
+          {
+            id: "entry-complete-capped-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-complete-capped-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-2.ts",
+            },
+          },
+          {
+            id: "entry-complete-capped-3",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-complete-capped-3",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-3.ts",
+            },
+          },
+          {
+            id: "entry-complete-capped-4",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-complete-capped-4",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-4.ts",
+            },
+          },
+          {
+            id: "entry-complete-capped-5",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            entry: {
+              id: "work-complete-capped-5",
+              createdAt: "2026-03-17T19:12:32.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-5.ts",
+            },
+          },
+          {
+            id: "entry-complete-capped-6",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:33.000Z",
+            entry: {
+              id: "work-complete-capped-6",
+              createdAt: "2026-03-17T19:12:33.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "file-6.ts",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-complete-capped-1": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Explored 6 files");
     expect(markup).toContain("Show 1 more");
+    expect(markup).not.toContain("file-6.ts");
+    expect(markup).not.toContain("overflow-y-auto");
+  });
+
+  it("caps expanded nested subagent activity lists inside the chat timeline", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "subagent-parent-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "subagent-parent-entry",
+              itemId: "subagent-root-item",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Subagent task",
+              tone: "tool",
+              itemType: "collab_agent_tool_call",
+              detail:
+                'Agent: {"description":"Find message action row implementation","subagent_type":"explore"}',
+            },
+          },
+          ...Array.from({ length: 8 }, (_, index) => ({
+            id: `subagent-child-entry-${index + 1}`,
+            kind: "work" as const,
+            createdAt: `2026-03-17T19:12:${String(29 + index).padStart(2, "0")}.000Z`,
+            entry: {
+              id: `subagent-child-entry-${index + 1}`,
+              createdAt: `2026-03-17T19:12:${String(29 + index).padStart(2, "0")}.000Z`,
+              label: "Read file",
+              tone: "tool" as const,
+              itemType: "command_execution" as const,
+              toolTitle: "Read file",
+              detail: `apps/web/src/components/chat/file-${index + 1}.tsx`,
+              parentItemId: "subagent-root-item",
+            },
+          })),
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-item:subagent-root-item": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Find message action row implementation (explore)");
+    expect(markup).toContain("apps/web/src/components/chat/file-1.tsx");
+    expect(markup).toContain("apps/web/src/components/chat/file-8.tsx");
+    expect(markup).toContain("max-h-48");
+    expect(markup).toContain("overflow-y-auto");
   });
 
   it("keeps completed exploration groups collapsed by default", async () => {
@@ -1367,7 +1775,7 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        expandedWorkGroups={{}}
+        expandedWorkGroups={{ "work-edit-1": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -1438,10 +1846,8 @@ describe("MessagesTimeline", () => {
 
     expect(completedMarkup).toContain("Edited 2 files");
     expect(completedMarkup).not.toContain("Editing");
-    expect(completedMarkup).toContain("font-mono");
     expect(completedMarkup).toContain("a.ts");
     expect(runningMarkup).toContain("Editing 2 files");
-    expect(runningMarkup).toContain("font-mono");
     expect(runningMarkup).toContain("b.ts");
   });
 
@@ -1578,8 +1984,166 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Executing");
-    expect(markup).toContain("Ran");
+    expect(markup).toContain("Running 2 commands");
+  });
+
+  it("keeps grouped running and completed work entries flush without left padding", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-list-alignment",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-list-alignment",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "list directory",
+              tone: "tool",
+              itemType: "command_execution",
+              detail: "apps/web/src",
+            },
+          },
+          {
+            id: "entry-run-alignment",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-run-alignment",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "exec_command started",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "bun run lint",
+              detail: "bun run lint",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-list-alignment": true, "work-run-alignment": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/class="list-none py-0\.5"/g)).toHaveLength(1);
+    expect(markup).not.toContain('class="list-none py-0.5 pl-4"');
+  });
+
+  it("keeps a single running work row collapsible after the user toggles its visibility", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-running-toggle",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-running-toggle",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "exec_command started",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "bun run typecheck",
+              detail: "bun run typecheck",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-running-toggle": false }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-controls="work-group-items-work-running-toggle"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Running 1 command");
+  });
+
+  it("keeps a single running work row collapsible when visibility is keyed by item id", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-running-toggle-stable",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-running-toggle-stable",
+              itemId: "tool-call-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "exec_command started",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "bun run lint",
+              detail: "bun run lint",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-item:tool-call-1": false }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Running 1 command");
   });
 
   it("renders reasoning blocks with Thinking while streaming and Thought after completion", async () => {
@@ -1668,6 +2232,181 @@ describe("MessagesTimeline", () => {
     expect(streamingMarkup).toContain("<strong>Inspecting project details</strong>");
     expect(completedMarkup).toContain("Thought");
     expect(completedMarkup).not.toContain("bg-muted/20");
+  });
+
+  it("renders reasoning blocks inside an expanded extreme workgroup without adding them to the header summary", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "reasoning-inline-1",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            reasoning: {
+              id: "reasoning-inline-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              text: "**Inspecting project details**",
+              streaming: true,
+              turnId: null,
+            },
+          },
+          {
+            id: "work-inline-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-inline-1",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "AGENTS.md",
+            },
+          },
+          {
+            id: "reasoning-inline-2",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            reasoning: {
+              id: "reasoning-inline-2",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              text: "Comparing tool runs",
+              streaming: false,
+              turnId: null,
+            },
+          },
+          {
+            id: "work-inline-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-inline-2",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Run rg",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "rg workgroup",
+              detail: "rg workgroup",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-inline-1": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Explored 1 file, 1 search");
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("<strong>Inspecting project details</strong>");
+  });
+
+  it("does not leave reasoning as separate top-level rows when adjacent extreme workgroups exist", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "reasoning-inline-edit",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            reasoning: {
+              id: "reasoning-inline-edit",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              text: "Checking the header label",
+              streaming: false,
+              turnId: null,
+            },
+          },
+          {
+            id: "work-inline-edit",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-inline-edit",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Edited file",
+              tone: "tool",
+              itemType: "file_change",
+              detail: "ChatHeader.test.tsx",
+            },
+          },
+          {
+            id: "reasoning-inline-command",
+            kind: "reasoning",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            reasoning: {
+              id: "reasoning-inline-command",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              text: "Running the verification suite",
+              streaming: true,
+              turnId: null,
+            },
+          },
+          {
+            id: "work-inline-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-inline-command",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Run typecheck",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "bun typecheck",
+              detail: "bun typecheck",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{
+          "work-inline-edit": true,
+          "work-inline-command": true,
+        }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Edited 1 file");
+    expect(markup).toContain("Ran 1 command");
+    expect(markup).toContain("Running the verification suite");
+    expect(markup).not.toContain('data-timeline-row-kind="reasoning"');
   });
 
   it("keeps reasoning rows as the same disclosure even when no visible details are available", async () => {
@@ -1775,6 +2514,59 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("Copy message");
+  });
+
+  it("keeps the bottom working indicator as elapsed time instead of the current workgroup", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-17T19:13:32.000Z"));
+    try {
+      const { MessagesTimeline } = await import("./MessagesTimeline");
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          hasMessages
+          isWorking
+          activeTurnInProgress
+          activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+          scrollContainer={null}
+          timelineEntries={[
+            {
+              id: "entry-working-read",
+              kind: "work",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              entry: {
+                id: "work-working-read",
+                createdAt: "2026-03-17T19:12:28.000Z",
+                label: "Read file started",
+                tone: "tool",
+                itemType: "command_execution",
+                toolTitle: "Read file",
+                detail: "package.json",
+                running: true,
+              },
+            },
+          ]}
+          completionDividerBeforeEntryId={null}
+          completionSummary={null}
+          turnDiffSummaryByAssistantMessageId={new Map()}
+          expandedWorkGroups={{}}
+          onToggleWorkGroup={() => {}}
+          onOpenTurnDiff={() => {}}
+          revertTurnCountByUserMessageId={new Map()}
+          onRevertUserMessage={() => {}}
+          onRetryAssistantMessage={() => {}}
+          isRevertingCheckpoint={false}
+          onImageExpand={() => {}}
+          markdownCwd={undefined}
+          resolvedTheme="light"
+          timestampFormat="locale"
+          workspaceRoot={undefined}
+        />,
+      );
+
+      expect(markup).toContain("Working for 1 minute 5 seconds");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps top-level assistant and activity rows on a shared leading edge", async () => {

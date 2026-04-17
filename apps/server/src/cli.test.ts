@@ -37,25 +37,22 @@ const CliRuntimeLayer = Layer.mergeAll(
   }),
 );
 
+function runCliForParserOnly(args: ReadonlyArray<string>) {
+  // These tests only exercise CLI parsing/version short-circuits and never
+  // execute the server handler, so we can narrow away the runtime-only context.
+  return Effect.scoped(
+    Command.runWith(cli, { version: "0.0.0" })([...args]).pipe(Effect.provide(CliRuntimeLayer)),
+  ) as Effect.Effect<void, CliError.CliError, never>;
+}
+
 describe("cli log-level parsing", () => {
   it("accepts the built-in lowercase log-level flag values", async () => {
-    await Effect.runPromise(
-      Effect.scoped(
-        Command.runWith(cli, { version: "0.0.0" })(["--log-level", "debug", "--version"]).pipe(
-          Effect.provide(CliRuntimeLayer),
-        ),
-      ),
-    );
+    await Effect.runPromise(runCliForParserOnly(["--log-level", "debug", "--version"]));
   });
 
   it("rejects invalid log-level casing before launching the server", async () => {
     const error = await Effect.runPromise(
-      Effect.scoped(
-        Command.runWith(cli, { version: "0.0.0" })(["--log-level", "Debug"]).pipe(
-          Effect.provide(CliRuntimeLayer),
-          Effect.flip,
-        ),
-      ),
+      runCliForParserOnly(["--log-level", "Debug"]).pipe(Effect.flip),
     );
 
     if (!CliError.isCliError(error)) {

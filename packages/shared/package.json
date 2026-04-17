@@ -16,6 +16,10 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./mcpDiagnostics": {
+      "types": "./src/mcpDiagnostics.ts",
+      "import": "./src/mcpDiagnostics.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
@@ -35,6 +39,26 @@
     "./providerTool": {
       "types": "./src/providerTool.ts",
       "import": "./src/providerTool.ts"
+    },
+    "./shioriCodeClient": {
+      "types": "./src/shioriCodeClient.ts",
+      "import": "./src/shioriCodeClient.ts"
+    },
+    "./orchestrationClientTypes": {
+      "types": "./src/orchestrationClientTypes.ts",
+      "import": "./src/orchestrationClientTypes.ts"
+    },
+    "./orchestrationSession": {
+      "types": "./src/orchestrationSession.ts",
+      "import": "./src/orchestrationSession.ts"
+    },
+    "./orchestrationClientProjection": {
+      "types": "./src/orchestrationClientProjection.ts",
+      "import": "./src/orchestrationClientProjection.ts"
+    },
+    "./fontFamily": {
+      "types": "./src/fontFamily.ts",
+      "import": "./src/fontFamily.ts"
     },
     "./Net": {
       "types": "./src/Net.ts",

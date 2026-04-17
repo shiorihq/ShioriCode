@@ -10,6 +10,17 @@ export interface DebouncedStorage<R = unknown> extends StateStorage<R> {
   flush: () => void;
 }
 
+interface BeforeUnloadRegistry {
+  callbacks: Map<string, () => void>;
+  listenerAttached: boolean;
+}
+
+declare global {
+  interface Window {
+    __shioricodeBeforeUnloadRegistry__?: BeforeUnloadRegistry;
+  }
+}
+
 export function createMemoryStorage(): StateStorage {
   const store = new Map<string, string>();
   return {
@@ -37,6 +48,43 @@ export function isStateStorage(
 
 export function resolveStorage(storage: Partial<StateStorage> | null | undefined): StateStorage {
   return isStateStorage(storage) ? storage : createMemoryStorage();
+}
+
+function ensureBeforeUnloadRegistry(): BeforeUnloadRegistry | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const existing = window.__shioricodeBeforeUnloadRegistry__;
+  if (existing) {
+    return existing;
+  }
+
+  const registry: BeforeUnloadRegistry = {
+    callbacks: new Map(),
+    listenerAttached: false,
+  };
+  window.__shioricodeBeforeUnloadRegistry__ = registry;
+  return registry;
+}
+
+export function registerBeforeUnloadCallback(key: string, callback: () => void): void {
+  const registry = ensureBeforeUnloadRegistry();
+  if (!registry) {
+    return;
+  }
+
+  registry.callbacks.set(key, callback);
+  if (registry.listenerAttached) {
+    return;
+  }
+
+  window.addEventListener("beforeunload", () => {
+    for (const flush of registry.callbacks.values()) {
+      flush();
+    }
+  });
+  registry.listenerAttached = true;
 }
 
 export function createDebouncedStorage(

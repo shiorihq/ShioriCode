@@ -18,6 +18,15 @@ export interface ShioriCodeEntitlementsProbe {
 
 const ENTITLEMENTS_REQUEST_TIMEOUT_MS = 2_500;
 
+function resolveShioriCodeEntitlementsMessage(entitlements: ShioriCodeEntitlements): string | null {
+  const hasPaidPlan = entitlements.plan !== null && entitlements.plan !== "free";
+  const isActive = entitlements.status === "active" || entitlements.status === "grace";
+  if (hasPaidPlan && isActive && !entitlements.allowed) {
+    return "ShioriCode is disabled for this Shiori deployment. Enable the `code_enabled` feature flag in Convex.";
+  }
+  return null;
+}
+
 export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlements")(
   function* (input: {
     readonly apiBaseUrl: string;
@@ -79,13 +88,15 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
         .catch(() => ({}) as Record<string, unknown>),
     );
 
+    const entitlements = {
+      allowed: payload.allowed === true,
+      plan: typeof payload.plan === "string" ? payload.plan : null,
+      status: typeof payload.status === "string" ? payload.status : null,
+    } satisfies ShioriCodeEntitlements;
+
     return {
-      entitlements: {
-        allowed: payload.allowed === true,
-        plan: typeof payload.plan === "string" ? payload.plan : null,
-        status: typeof payload.status === "string" ? payload.status : null,
-      },
-      message: null,
+      entitlements,
+      message: resolveShioriCodeEntitlementsMessage(entitlements),
     };
   },
 );

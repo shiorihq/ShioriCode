@@ -51,6 +51,10 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
   const fastModeEnabled =
     caps.supportsFastMode &&
     (modelOptions as { fastMode?: boolean } | undefined)?.fastMode === true;
+  const fastModeDescription =
+    provider === "claudeAgent"
+      ? "About 2.5x faster, with credits used at 6x"
+      : "About 1.5x faster, with credits used at 2x";
 
   const handleThinkingToggle = useCallback(() => {
     const next = { ...(modelOptions as Record<string, unknown>), thinking: !thinkingEnabled };
@@ -165,9 +169,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
                     <MenuRadioItem value="fast">
                       <div className="flex flex-col">
                         <span>Fast</span>
-                        <span className="text-muted-foreground text-xs">
-                          About 1.5x faster, with credits used at 2x
-                        </span>
+                        <span className="text-muted-foreground text-xs">{fastModeDescription}</span>
                       </div>
                     </MenuRadioItem>
                   </MenuRadioGroup>

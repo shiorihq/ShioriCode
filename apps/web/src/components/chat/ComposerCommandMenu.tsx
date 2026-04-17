@@ -17,6 +17,13 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "agent";
+      mentionName: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
       label: string;
@@ -123,6 +130,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {null}
+      {props.item.type === "agent" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          agent
+        </Badge>
+      ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model

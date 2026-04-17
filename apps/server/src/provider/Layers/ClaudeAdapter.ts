@@ -7,6 +7,7 @@
  * @module ClaudeAdapterLive
  */
 import {
+  AbortError,
   type CanUseTool,
   query,
   type Options as ClaudeQueryOptions,
@@ -61,6 +62,7 @@ import {
   Cause,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -77,6 +79,7 @@ import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts
 import { ServerConfig } from "../../config.ts";
 import { fetchClaudeUsageSnapshot } from "../claudeUsage.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
+import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import { filterMcpServersForProvider } from "../mcpServers.ts";
@@ -123,6 +126,9 @@ interface ClaudeTurnState {
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
   readonly capturedProposedPlanKeys: Set<string>;
   nextSyntheticAssistantBlockIndex: number;
+  // Captured from the first user-type SDKMessage we see on this turn when
+  // file checkpointing is enabled. Used as the checkpoint id for rewindFiles.
+  checkpointUuid?: string;
 }
 
 interface AssistantTextBlockState {
@@ -174,6 +180,9 @@ interface ClaudeSessionContext {
   readonly turns: Array<{
     id: TurnId;
     items: Array<unknown>;
+    // First user message UUID observed for this turn. Used as the checkpoint
+    // id for SDK file-rewind when file checkpointing is enabled.
+    checkpointUuid?: string;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   turnState: ClaudeTurnState | undefined;
@@ -182,6 +191,10 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  // Set before calling query.interrupt() and before tearing a session down so
+  // late approval/user-input responders can fail fast instead of racing with
+  // teardown. Same reason applies to unblocking canUseTool deferreds.
+  interrupting: boolean;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -190,6 +203,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly close: () => void;
+  readonly rewindFiles?: (userMessageUuid: string) => Promise<unknown>;
 }
 
 export interface ClaudeAdapterLiveOptions {
@@ -200,6 +214,18 @@ export interface ClaudeAdapterLiveOptions {
   readonly fetchUsage?: (input?: { readonly signal?: AbortSignal }) => Promise<ClaudeUsageSnapshot>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  // Max time a canUseTool approval or user-input question can wait for the UI
+  // before we auto-decline / auto-answer-empty. Prevents pending deferreds from
+  // leaking forever when the UI disconnects mid-request.
+  readonly approvalWaitTimeout?: Duration.Input;
+  // Max time to wait for `context.query.close()` to resolve before we log a
+  // warning and move on. Prevents a hung SDK child from stalling session stop.
+  readonly queryCloseTimeout?: Duration.Input;
+  // Opt-in: enable SDK file checkpointing so rollbackThread can call
+  // rewindFiles and keep on-disk state in sync with the in-memory turn trim.
+  // Off by default to avoid surprising users who don't expect their files to
+  // be mutated on rollback.
+  readonly enableFileCheckpointing?: boolean;
 }
 
 function translateToClaudeMcpConfig(
@@ -287,11 +313,59 @@ function isClaudeInterruptedMessage(message: string): boolean {
   );
 }
 
+// Prefer the SDK's typed AbortError so we can distinguish a real user interrupt
+// from a coincidental error message containing the word "interrupted".
+function causeContainsAbortError(cause: Cause.Cause<Error>): boolean {
+  const squashed = Cause.squash(cause);
+  if (squashed instanceof AbortError) {
+    return true;
+  }
+  for (const error of Cause.prettyErrors(cause)) {
+    if (error instanceof AbortError) {
+      return true;
+    }
+    const nested = (error as Error & { cause?: unknown }).cause;
+    if (nested instanceof AbortError) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isClaudeInterruptedCause(cause: Cause.Cause<Error>): boolean {
   return (
     Cause.hasInterruptsOnly(cause) ||
+    causeContainsAbortError(cause) ||
     normalizeClaudeStreamMessages(cause).some(isClaudeInterruptedMessage)
   );
+}
+
+// Errors that look like a transient hiccup the UI should be able to retry
+// (network drops, gateway timeouts, rate limits) rather than a permanent
+// provider failure. We use this to flag `recoverable: true` on session exit
+// so the UI can reopen the session against the same resume cursor instead of
+// showing a fatal error.
+function isTransientClaudeFailureMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("econnreset") ||
+    normalized.includes("econnrefused") ||
+    normalized.includes("etimedout") ||
+    normalized.includes("enetunreach") ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("network error") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("rate_limit") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("timeout") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("server_error")
+  );
+}
+
+function isTransientClaudeFailureCause(cause: Cause.Cause<Error>): boolean {
+  return normalizeClaudeStreamMessages(cause).some(isTransientClaudeFailureMessage);
 }
 
 function messageFromClaudeStreamCause(cause: Cause.Cause<Error>, fallback: string): string {
@@ -934,6 +1008,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       readonly options: ClaudeQueryOptions;
     }) => query({ prompt: input.prompt, options: input.options }) as ClaudeQueryRuntime);
 
+  // 10 minutes default: long enough for a human to pick up the tab and click
+  // approve, short enough that an abandoned tab doesn't leak a deferred forever.
+  const approvalWaitTimeout: Duration.Input = options?.approvalWaitTimeout ?? "10 minutes";
+  // 5 seconds default for SDK query.close() before we log and move on.
+  const queryCloseTimeout: Duration.Input = options?.queryCloseTimeout ?? "5 seconds";
+  const fileCheckpointingEnabled = options?.enableFileCheckpointing === true;
+
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const serverSettingsService = yield* ServerSettingsService;
@@ -1209,7 +1290,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
   ) {
-    if (typeof message.session_id !== "string" || message.session_id.length === 0) {
+    if (
+      message.type !== "system" ||
+      message.subtype !== "init" ||
+      typeof message.session_id !== "string" ||
+      message.session_id.length === 0
+    ) {
       return;
     }
     const nextThreadId = message.session_id;
@@ -1450,9 +1536,39 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    // On failure/interruption the SDK's `assistant` snapshot may never arrive.
+    // If we have accumulated any text on blocks, synthesize a partial assistant
+    // message so readThread / resume don't silently drop the content the user
+    // already saw stream in.
+    const finalItems: Array<unknown> =
+      status !== "completed" && turnState.items.length === 0
+        ? (() => {
+            const parts = turnState.assistantTextBlockOrder
+              .filter((block) => block.runtimeItemType === "assistant_message")
+              .map((block) => block.fallbackText)
+              .filter((text) => text.length > 0);
+            if (parts.length === 0) {
+              return [...turnState.items];
+            }
+            return [
+              {
+                id: `synthetic:${String(turnState.turnId)}`,
+                type: "message",
+                role: "assistant",
+                ...(context.currentApiModelId ? { model: context.currentApiModelId } : {}),
+                content: parts.map((text) => ({ type: "text", text })),
+                stop_reason: status === "interrupted" ? "end_turn" : "end_turn",
+                partial: true,
+              },
+              ...turnState.items,
+            ];
+          })()
+        : [...turnState.items];
+
     context.turns.push({
       id: turnState.turnId,
-      items: [...turnState.items],
+      items: finalItems,
+      ...(turnState.checkpointUuid ? { checkpointUuid: turnState.checkpointUuid } : {}),
     });
 
     if (usageSnapshot) {
@@ -1543,6 +1659,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               });
         if (assistantBlockEntry?.block) {
           assistantBlockEntry.block.emittedTextDelta = true;
+          // Accumulate each delta into fallbackText so a crash before the SDK
+          // emits its `assistant` snapshot still leaves the partial reply
+          // recoverable via the block state.
+          assistantBlockEntry.block.fallbackText += deltaText;
         }
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -1743,6 +1863,17 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (context.turnState) {
       context.turnState.items.push(message.message);
+      // Capture the first user-message uuid as the turn's checkpoint id so
+      // rollbackThread can hand it to SDK.rewindFiles when file checkpointing
+      // is enabled. Only the first one matters — subsequent user messages in
+      // the same turn (e.g. tool-result injections) share the same checkpoint.
+      if (
+        !context.turnState.checkpointUuid &&
+        "uuid" in message &&
+        typeof message.uuid === "string"
+      ) {
+        context.turnState.checkpointUuid = message.uuid;
+      }
     }
 
     for (const toolResult of toolResultBlocksFromUserMessage(message)) {
@@ -1940,6 +2071,24 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+
+    if (status === "failed" && isClaudeMissingConversationErrorMessage(errorMessage)) {
+      // The SDK reports the stored conversation is gone (e.g. deleted on the
+      // backend or compacted away). Invalidate the resume cursor so the next
+      // start won't loop on a poisoned sessionId.
+      context.resumeSessionId = undefined;
+      context.lastAssistantUuid = undefined;
+      yield* updateResumeCursor(context);
+      yield* Effect.forkDetach(
+        stopSessionInternal(context, {
+          emitExitEvent: true,
+          ...(errorMessage !== undefined ? { reason: errorMessage } : {}),
+          exitKind: "graceful",
+          recoverable: true,
+          interruptStreamFiber: false,
+        }),
+      );
+    }
   });
 
   const handleSystemMessage = Effect.fn("handleSystemMessage")(function* (
@@ -1968,13 +2117,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     switch (message.subtype) {
       case "init":
-        yield* offerRuntimeEvent({
-          ...base,
-          type: "session.configured",
-          payload: {
-            config: message as Record<string, unknown>,
-          },
-        });
+        // Session configuration is emitted at adapter startup from the local
+        // query options; `system.init` is used to confirm the provider
+        // session_id and should not duplicate `session.configured`.
         return;
       case "status":
         yield* offerRuntimeEvent({
@@ -2278,28 +2423,49 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             interruptionMessageFromClaudeCause(exit.cause),
           );
         }
+        yield* stopSessionInternal(context, {
+          emitExitEvent: true,
+          reason: "Claude runtime interrupted.",
+          exitKind: "graceful",
+        });
       } else {
         const message = messageFromClaudeStreamCause(exit.cause, "Claude runtime stream failed.");
+        const transient = isTransientClaudeFailureCause(exit.cause);
         yield* emitRuntimeError(context, message, Cause.pretty(exit.cause));
         yield* completeTurn(context, "failed", message);
+        yield* stopSessionInternal(context, {
+          emitExitEvent: true,
+          reason: message,
+          exitKind: "error",
+          // Flag transient failures as recoverable so the UI can reopen against
+          // the same resume cursor instead of showing a fatal error for a
+          // network blip / rate limit / SDK timeout.
+          recoverable: transient,
+        });
       }
     } else if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Claude runtime stream ended.");
+      yield* stopSessionInternal(context, {
+        emitExitEvent: true,
+        reason: "Claude runtime stream ended.",
+        exitKind: "graceful",
+      });
+      return;
     }
-
-    yield* stopSessionInternal(context, {
-      emitExitEvent: true,
-    });
+    if (!context.turnState) {
+      yield* stopSessionInternal(context, {
+        emitExitEvent: true,
+      });
+    }
   });
 
-  const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
+  // Cancel every pending approval + user-input for this session. Called from both
+  // interruptTurn (before query.interrupt()) and stopSessionInternal so that a
+  // late-clicking user never races a teardown.
+  const drainPendingDeferreds = Effect.fn("drainPendingDeferreds")(function* (
     context: ClaudeSessionContext,
-    options?: { readonly emitExitEvent?: boolean },
+    options: { readonly reason: "cancel" | "stopped" },
   ) {
-    if (context.stopped) return;
-
-    context.stopped = true;
-
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
       const stamp = yield* makeEventStamp();
@@ -2316,9 +2482,54 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           decision: "cancel",
         },
         providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.permission",
+          method: `drain/${options.reason}`,
+          payload: { reason: options.reason },
+        },
       });
     }
     context.pendingApprovals.clear();
+
+    for (const [requestId, pending] of context.pendingUserInputs) {
+      yield* Deferred.succeed(pending.answers, {} as ProviderUserInputAnswers);
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "user-input.resolved",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        requestId: asRuntimeRequestId(requestId),
+        payload: { answers: {} as ProviderUserInputAnswers },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.permission",
+          method: `drain/${options.reason}`,
+          payload: { reason: options.reason },
+        },
+      });
+    }
+    context.pendingUserInputs.clear();
+  });
+
+  const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
+    context: ClaudeSessionContext,
+    options?: {
+      readonly emitExitEvent?: boolean;
+      readonly reason?: string;
+      readonly exitKind?: "graceful" | "error";
+      readonly recoverable?: boolean;
+      readonly interruptStreamFiber?: boolean;
+    },
+  ) {
+    if (context.stopped) return;
+
+    context.stopped = true;
+    context.interrupting = true;
+
+    yield* drainPendingDeferreds(context, { reason: "stopped" });
 
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
@@ -2328,16 +2539,39 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const streamFiber = context.streamFiber;
     context.streamFiber = undefined;
-    if (streamFiber && streamFiber.pollUnsafe() === undefined) {
+    if (
+      options?.interruptStreamFiber !== false &&
+      streamFiber &&
+      streamFiber.pollUnsafe() === undefined
+    ) {
       yield* Fiber.interrupt(streamFiber);
     }
 
-    // @effect-diagnostics-next-line tryCatchInEffectGen:off
-    try {
-      context.query.close();
-    } catch (cause) {
-      yield* emitRuntimeError(context, "Failed to close Claude runtime query.", cause);
-    }
+    // Close the SDK query runtime under a bounded timeout so a hung child
+    // process never stalls session teardown indefinitely. `query.close()` is
+    // documented as synchronous, but we wrap it in Effect.tryPromise to catch
+    // any async cleanup the SDK may schedule internally and to get a timeout
+    // hook. On timeout or thrown error we log and move on; the stream fiber
+    // is already interrupted above.
+    // @effect-diagnostics-next-line globalErrorInEffectCatch:off
+    yield* Effect.tryPromise({
+      try: async () => {
+        context.query.close();
+      },
+      catch: (cause) => toError(cause, "Failed to close Claude runtime query."),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: queryCloseTimeout,
+        orElse: () =>
+          emitRuntimeError(
+            context,
+            `Claude runtime close() did not complete within ${Duration.format(Duration.fromInputUnsafe(queryCloseTimeout))}; continuing teardown.`,
+          ),
+      }),
+      Effect.catch((cause) =>
+        emitRuntimeError(context, "Failed to close Claude runtime query.", cause),
+      ),
+    );
 
     const updatedAt = yield* nowIso;
     context.session = {
@@ -2356,8 +2590,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         createdAt: stamp.createdAt,
         threadId: context.session.threadId,
         payload: {
-          reason: "Session stopped",
-          exitKind: "graceful",
+          reason: options?.reason ?? "Session stopped",
+          exitKind: options?.exitKind ?? "graceful",
+          ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}),
         },
         providerRefs: {},
       });
@@ -2403,9 +2638,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
-      const newSessionId =
-        existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
-      const sessionId = existingResumeSessionId ?? newSessionId;
 
       const services = yield* Effect.services();
       const runFork = Effect.runForkWith(services);
@@ -2496,30 +2728,54 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         };
         callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
 
-        // Block until the user provides answers.
-        const answers = yield* Deferred.await(answersDeferred);
+        // Block until the user provides answers. Bounded timeout protects
+        // against a disconnected UI leaving the deferred and the map entry
+        // hanging around forever.
+        const awaitAnswers = Deferred.await(answersDeferred).pipe(
+          Effect.timeoutOrElse({
+            duration: approvalWaitTimeout,
+            orElse: () =>
+              Effect.sync(() => {
+                aborted = true;
+                pendingUserInputs.delete(requestId);
+                return {} as ProviderUserInputAnswers;
+              }),
+          }),
+        );
+        const answers = yield* awaitAnswers;
         pendingUserInputs.delete(requestId);
+        // If the session was interrupted or stopped while we were waiting,
+        // treat this as aborted so the SDK receives a deny instead of empty
+        // answers. Without this check, drainPendingDeferreds would resolve
+        // the deferred and the handler would silently allow the tool.
+        if (context.interrupting || context.stopped) {
+          aborted = true;
+        }
 
         // Emit user-input.resolved so the UI knows the interaction completed.
-        const resolvedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          type: "user-input.resolved",
-          eventId: resolvedStamp.eventId,
-          provider: PROVIDER,
-          createdAt: resolvedStamp.createdAt,
-          threadId: context.session.threadId,
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-          requestId: asRuntimeRequestId(requestId),
-          payload: { answers },
-          providerRefs: nativeProviderRefs(context, {
-            providerItemId: callbackOptions.toolUseID,
-          }),
-          raw: {
-            source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion/resolved",
+        // Skip when drainPendingDeferreds already emitted it during interrupt /
+        // stop so the UI doesn't see two resolved events for one request.
+        if (!context.interrupting && !context.stopped) {
+          const resolvedStamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "user-input.resolved",
+            eventId: resolvedStamp.eventId,
+            provider: PROVIDER,
+            createdAt: resolvedStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            requestId: asRuntimeRequestId(requestId),
             payload: { answers },
-          },
-        });
+            providerRefs: nativeProviderRefs(context, {
+              providerItemId: callbackOptions.toolUseID,
+            }),
+            raw: {
+              source: "claude.sdk.permission",
+              method: "canUseTool/AskUserQuestion/resolved",
+              payload: { answers },
+            },
+          });
+        }
 
         if (aborted) {
           return {
@@ -2645,34 +2901,53 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           once: true,
         });
 
-        const decision = yield* Deferred.await(decisionDeferred);
+        // Bounded wait so a disconnected UI can't leave the deferred pending
+        // forever. On timeout we auto-decline and surface a runtime warning.
+        const decisionWithTimeout = Deferred.await(decisionDeferred).pipe(
+          Effect.timeoutOrElse({
+            duration: approvalWaitTimeout,
+            orElse: () =>
+              Effect.sync(() => {
+                if (pendingApprovals.has(requestId)) {
+                  pendingApprovals.delete(requestId);
+                }
+                return "decline" as ProviderApprovalDecision;
+              }),
+          }),
+        );
+        const decision = yield* decisionWithTimeout;
         pendingApprovals.delete(requestId);
         const resolvedDecision = isSimpleApprovalDecision(decision) ? decision : "decline";
 
-        const resolvedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          type: "request.resolved",
-          eventId: resolvedStamp.eventId,
-          provider: PROVIDER,
-          createdAt: resolvedStamp.createdAt,
-          threadId: context.session.threadId,
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-          requestId: asRuntimeRequestId(requestId),
-          payload: {
-            requestType,
-            decision: resolvedDecision,
-          },
-          providerRefs: nativeProviderRefs(context, {
-            providerItemId: callbackOptions.toolUseID,
-          }),
-          raw: {
-            source: "claude.sdk.permission",
-            method: "canUseTool/decision",
+        // If interrupt / stop drained the deferred, drainPendingDeferreds already
+        // emitted request.resolved. Skip the second emit here to avoid a
+        // duplicate event — but still return a deny result to the SDK.
+        if (!context.interrupting && !context.stopped) {
+          const resolvedStamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "request.resolved",
+            eventId: resolvedStamp.eventId,
+            provider: PROVIDER,
+            createdAt: resolvedStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            requestId: asRuntimeRequestId(requestId),
             payload: {
-              decision,
+              requestType,
+              decision: resolvedDecision,
             },
-          },
-        });
+            providerRefs: nativeProviderRefs(context, {
+              providerItemId: callbackOptions.toolUseID,
+            }),
+            raw: {
+              source: "claude.sdk.permission",
+              method: "canUseTool/decision",
+              payload: {
+                decision,
+              },
+            },
+          });
+        }
 
         if (resolvedDecision === "accept" || resolvedDecision === "acceptForSession") {
           return {
@@ -2752,11 +3027,24 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               },
             }
           : {}),
+        // Do not pin a fresh session to an app-generated resume id before the
+        // SDK confirms a real conversation exists. Prewarmed Claude sessions can
+        // be started before the first user turn, and persisting a provisional id
+        // there causes later restarts to try resuming conversations that never
+        // actually existed.
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
-        ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: process.env,
+        env: {
+          ...process.env,
+          ...(fileCheckpointingEnabled ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1" } : {}),
+        },
+        ...(fileCheckpointingEnabled
+          ? {
+              enableFileCheckpointing: true,
+              extraArgs: { "replay-user-messages": null },
+            }
+          : {}),
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(claudeMcpServers ? { mcpServers: claudeMcpServers } : {}),
       };
@@ -2786,7 +3074,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
           ...(threadId ? { threadId } : {}),
-          ...(sessionId ? { resume: sessionId } : {}),
+          ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           turnCount: resumeState?.turnCount ?? 0,
         },
@@ -2802,7 +3090,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
-        resumeSessionId: sessionId,
+        resumeSessionId: existingResumeSessionId,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
@@ -2813,6 +3101,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        interrupting: false,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
@@ -2983,6 +3272,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
     function* (threadId, _turnId) {
       const context = yield* requireSession(threadId);
+      // Flip the flag BEFORE touching the SDK so late responders see it.
+      context.interrupting = true;
+      yield* drainPendingDeferreds(context, { reason: "cancel" });
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
@@ -3001,8 +3293,28 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     function* (threadId, numTurns) {
       const context = yield* requireSession(threadId);
       const nextLength = Math.max(0, context.turns.length - numTurns);
+      // Capture the checkpoint for the earliest turn we're rolling back to so
+      // we can ask the SDK to restore files to that state. The SDK rewinds
+      // files associated with messages AFTER the checkpointed user message,
+      // which is exactly what we want when trimming those turns.
+      const firstRemovedTurn = context.turns[nextLength];
+      const checkpointUuid = firstRemovedTurn?.checkpointUuid;
       context.turns.splice(nextLength);
       yield* updateResumeCursor(context);
+
+      const rewindFiles = context.query.rewindFiles;
+      if (fileCheckpointingEnabled && rewindFiles && checkpointUuid) {
+        // @effect-diagnostics-next-line globalErrorInEffectCatch:off
+        yield* Effect.tryPromise({
+          try: () => rewindFiles(checkpointUuid),
+          catch: (cause) => toError(cause, "Failed to rewind files for rollback."),
+        }).pipe(
+          Effect.catch((cause) =>
+            emitRuntimeError(context, "File rewind on rollback failed.", cause),
+          ),
+        );
+      }
+
       return yield* snapshotThread(context);
     },
   );
@@ -3010,6 +3322,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
       const context = yield* requireSession(threadId);
+      // If an interrupt or session stop landed after the UI dispatched a
+      // decision, the deferred has already been drained. Treat as a no-op so
+      // a double-emit of request.resolved doesn't fire.
+      if (context.interrupting || context.stopped) {
+        return;
+      }
       const pending = context.pendingApprovals.get(requestId);
       if (!pending) {
         return yield* new ProviderAdapterRequestError({
@@ -3028,6 +3346,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     "respondToUserInput",
   )(function* (threadId, requestId, answers) {
     const context = yield* requireSession(threadId);
+    if (context.interrupting || context.stopped) {
+      return;
+    }
     const pending = context.pendingUserInputs.get(requestId);
     if (!pending) {
       return yield* new ProviderAdapterRequestError({
@@ -3096,6 +3417,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      recovery: {
+        supportsResumeCursor: true,
+        supportsAdoptActiveSession: true,
+      },
+      observability: {
+        emitsStructuredSessionExit: true,
+        emitsRuntimeDiagnostics: true,
+      },
     },
     startSession,
     sendTurn,

@@ -3,6 +3,7 @@ import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 import { CheckIcon } from "lucide-react";
 import { PROVIDER_DISPLAY_NAMES, type ProviderKind, type ServerProvider } from "contracts";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 
@@ -64,6 +65,8 @@ export function ProviderCard({
   const displayName = PROVIDER_DISPLAY_NAMES[kind];
   const description = PROVIDER_DESCRIPTIONS[kind];
   const instructions = PROVIDER_INSTALL_INSTRUCTIONS[kind];
+  const installCommandBlock = instructions?.join("\n") ?? "";
+  const { copyToClipboard } = useCopyToClipboard<void>();
 
   const statusLabel = isReady
     ? "Connected"
@@ -138,9 +141,18 @@ export function ProviderCard({
                 </div>
               ))}
             </div>
-            <Button size="xs" variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-              {isRefreshing ? "Checking..." : "Check again"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void copyToClipboard(installCommandBlock, undefined)}
+              >
+                Copy commands
+              </Button>
+              <Button size="xs" variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+                {isRefreshing ? "Checking..." : "Check again"}
+              </Button>
+            </div>
           </div>
         ) : null}
 

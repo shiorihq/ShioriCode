@@ -4,6 +4,7 @@ import {
   queryOptions,
   type QueryClient,
 } from "@tanstack/react-query";
+import type { GitPullRequestListFilter, GitResolvedPullRequest } from "contracts";
 import { ensureNativeApi } from "../nativeApi";
 
 const GIT_STATUS_STALE_TIME_MS = 5_000;
@@ -11,6 +12,11 @@ const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 const GIT_BRANCHES_PAGE_SIZE = 100;
+const GIT_OPEN_PRS_STALE_TIME_MS = 30_000;
+const GIT_OPEN_PRS_REFETCH_INTERVAL_MS = 120_000;
+const GIT_PR_DIFF_STALE_TIME_MS = 60_000;
+const GIT_PR_SUMMARY_STALE_TIME_MS = 60 * 60_000;
+const GIT_PR_CONVERSATION_STALE_TIME_MS = 60_000;
 
 export const gitQueryKeys = {
   all: ["git"] as const,
@@ -18,6 +24,14 @@ export const gitQueryKeys = {
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
   branchSearch: (cwd: string | null, query: string) =>
     ["git", "branches", cwd, "search", query] as const,
+  openPullRequests: (cwd: string | null, filter: GitPullRequestListFilter) =>
+    ["git", "pull-requests", cwd, filter] as const,
+  pullRequestDiff: (cwd: string | null, number: number | null) =>
+    ["git", "pull-requests", cwd, number, "diff"] as const,
+  pullRequestSummary: (cwd: string | null, number: number | null) =>
+    ["git", "pull-requests", cwd, number, "summary"] as const,
+  pullRequestConversation: (cwd: string | null, number: number | null) =>
+    ["git", "pull-requests", cwd, number, "conversation"] as const,
 };
 
 export const gitMutationKeys = {
@@ -57,6 +71,7 @@ export function gitStatusQueryOptions(cwd: string | null) {
     },
     enabled: cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
+    retry: false,
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
     refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
@@ -89,6 +104,101 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function gitOpenPullRequestsQueryOptions(input: {
+  cwd: string | null;
+  filter: GitPullRequestListFilter;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.openPullRequests(input.cwd, input.filter),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd) throw new Error("Pull request listing is unavailable.");
+      return api.git.listOpenPullRequests({ cwd: input.cwd, filter: input.filter });
+    },
+    enabled: input.cwd !== null,
+    staleTime: GIT_OPEN_PRS_STALE_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_OPEN_PRS_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function gitPullRequestDiffQueryOptions(input: {
+  cwd: string | null;
+  number: number | null;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.pullRequestDiff(input.cwd, input.number),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || input.number === null) {
+        throw new Error("Pull request diff is unavailable.");
+      }
+      return api.git.getPullRequestDiff({ cwd: input.cwd, number: input.number });
+    },
+    enabled: input.cwd !== null && input.number !== null,
+    staleTime: GIT_PR_DIFF_STALE_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export function gitPullRequestSummaryQueryOptions(input: {
+  cwd: string | null;
+  number: number | null;
+  pullRequest?: GitResolvedPullRequest | null;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.pullRequestSummary(input.cwd, input.number),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || input.number === null) {
+        throw new Error("Pull request summary is unavailable.");
+      }
+      return api.git.summarizePullRequest({
+        cwd: input.cwd,
+        number: input.number,
+        ...(input.pullRequest
+          ? {
+              title: input.pullRequest.title,
+              baseBranch: input.pullRequest.baseBranch,
+              headBranch: input.pullRequest.headBranch,
+            }
+          : {}),
+      });
+    },
+    enabled: input.cwd !== null && input.number !== null,
+    staleTime: GIT_PR_SUMMARY_STALE_TIME_MS,
+    gcTime: GIT_PR_SUMMARY_STALE_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export function gitPullRequestConversationQueryOptions(input: {
+  cwd: string | null;
+  number: number | null;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.pullRequestConversation(input.cwd, input.number),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || input.number === null) {
+        throw new Error("Pull request conversation is unavailable.");
+      }
+      return api.git.getPullRequestConversation({ cwd: input.cwd, number: input.number });
+    },
+    enabled: input.cwd !== null && input.number !== null,
+    staleTime: GIT_PR_CONVERSATION_STALE_TIME_MS,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 

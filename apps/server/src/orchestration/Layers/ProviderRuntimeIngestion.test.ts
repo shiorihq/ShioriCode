@@ -92,7 +92,13 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    reconcileSessions: () => Effect.succeed([]),
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+        recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+        observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+      }),
     readUsage: () => unsupported(),
     rollbackConversation: () => unsupported(),
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -631,6 +637,116 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("recovers a running session when Codex reports the thread has gone idle", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-idle-recovery"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-idle-recovery"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-idle-recovery",
+    );
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-thread-idle-idle-recovery"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "idle",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+  });
+
+  it("truncates oversized tool payload snapshots before storing thread activities", async () => {
+    const harness = await createHarness();
+    const oversizedContent = "A".repeat(21_500);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-tool-completed-oversized-read"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-oversized-read"),
+      itemId: asItemId("item-oversized-read"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        title: "Read file",
+        detail: "Read file: AGENTS.md",
+        data: {
+          toolName: "read_file",
+          input: {
+            path: "AGENTS.md",
+          },
+          result: {
+            content: oversizedContent,
+          },
+          item: {
+            result: {
+              content: oversizedContent,
+            },
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-tool-completed-oversized-read",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-completed-oversized-read",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : null;
+    const result =
+      data?.result && typeof data.result === "object"
+        ? (data.result as Record<string, unknown>)
+        : null;
+    const item =
+      data?.item && typeof data.item === "object" ? (data.item as Record<string, unknown>) : null;
+    const itemResult =
+      item?.result && typeof item.result === "object"
+        ? (item.result as Record<string, unknown>)
+        : null;
+
+    const resultContent = typeof result?.content === "string" ? result.content : null;
+    const itemResultContent = typeof itemResult?.content === "string" ? itemResult.content : null;
+
+    expect(resultContent).not.toBeNull();
+    expect(resultContent?.length).toBeLessThan(20_100);
+    expect(resultContent).toContain("[truncated 1500 chars]");
+    expect(itemResultContent).not.toBeNull();
+    expect(itemResultContent?.length).toBeLessThan(20_100);
+    expect(itemResultContent).toContain("[truncated 1500 chars]");
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {
@@ -1382,8 +1498,8 @@ describe("ProviderRuntimeIngestion", () => {
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
   });
 
-  it("buffers assistant deltas by default until completion", async () => {
-    const harness = await createHarness();
+  it("buffers assistant deltas when assistant streaming is disabled", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: false } });
     const now = new Date().toISOString();
 
     harness.emit({
@@ -2077,6 +2193,49 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("suppresses MCP refresh-token runtime warnings from thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-warning-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-warning"),
+      payload: {},
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "running" && entry.session?.activeTurnId === "turn-warning",
+    );
+
+    harness.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-warning-runtime-mcp-refresh"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-warning"),
+      payload: {
+        message:
+          '2026-04-11T18:23:36.330237Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed("Server returned error response: invalid_grant: Invalid refresh token"))',
+      },
+    });
+
+    await harness.drain();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    expect(
+      thread?.activities.some((activity) => activity.id === "evt-warning-runtime-mcp-refresh"),
+    ).toBe(false);
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("turn-warning");
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -2108,6 +2267,12 @@ describe("ProviderRuntimeIngestion", () => {
         status: "in_progress",
         title: "Read file",
         detail: "/tmp/file.ts",
+        data: {
+          toolName: "read_file",
+          input: {
+            path: "/tmp/file.ts",
+          },
+        },
       },
     });
 
@@ -2122,11 +2287,25 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.session?.status).toBe("ready");
-    expect(
-      thread.activities.some(
-        (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
-      ),
-    ).toBe(true);
+    const toolStarted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
+    );
+    const payload =
+      toolStarted?.payload && typeof toolStarted.payload === "object"
+        ? (toolStarted.payload as Record<string, unknown>)
+        : null;
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : null;
+
+    expect(toolStarted).toBeDefined();
+    expect(data).toEqual({
+      toolName: "read_file",
+      input: {
+        path: "/tmp/file.ts",
+      },
+    });
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
@@ -2765,6 +2944,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         streamKind: "reasoning_text",
         delta: "Tracing the event stream.",
+        summaryIndex: 1,
       },
     });
 
@@ -2807,6 +2987,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(started?.summary).toBe("Thinking");
     expect(delta?.kind).toBe("reasoning.delta");
     expect(deltaPayload?.delta).toBe("Tracing the event stream.");
+    expect(deltaPayload?.summaryIndex).toBe(1);
     expect(completed?.kind).toBe("reasoning.completed");
     expect(completed?.summary).toBe("Thought");
   });

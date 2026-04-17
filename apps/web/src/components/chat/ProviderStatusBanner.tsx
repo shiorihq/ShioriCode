@@ -1,7 +1,8 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "contracts";
 import { memo } from "react";
-import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-import { CircleAlertIcon } from "lucide-react";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { CircleAlertIcon, SettingsIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,
@@ -27,6 +28,15 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
           {status.message ?? defaultMessage}
         </AlertDescription>
+        <AlertAction>
+          <Link
+            to="/settings/general"
+            className="inline-flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            <SettingsIcon className="size-3" />
+            Settings
+          </Link>
+        </AlertAction>
       </Alert>
     </div>
   );

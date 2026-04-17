@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { Duration, Effect, Layer, Option, Queue, Ref, Result, Schema, Stream } from "effect";
 import {
   OnboardingError,
@@ -12,6 +14,7 @@ import {
   OrchestrationReplayEventsError,
   type ServerProvider,
   type ServerProviderUsageSnapshot,
+  ServerSettingsError,
   type TerminalEvent,
   WS_METHODS,
   WsRpcGroup,
@@ -37,6 +40,12 @@ import { SubagentDetailQuery } from "./orchestration/Services/SubagentDetailQuer
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ProviderService } from "./provider/Services/ProviderService";
 import type { ClaudeUsageSnapshot, CodexUsageSnapshot } from "./provider/Services/ProviderUsage.ts";
+import {
+  authenticateEffectiveMcpServer,
+  listEffectiveMcpServerRows,
+  removeExternalMcpServer,
+} from "./provider/mcpServers.ts";
+import { listEffectiveSkills, removeEffectiveSkill } from "./provider/skills.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
@@ -103,6 +112,44 @@ function toServerProviderUsageSnapshot(
             }
           : null,
       };
+}
+
+function parseOrigin(value: string | null): URL | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectTrustedWebSocketOrigins(input: {
+  readonly requestUrl: URL;
+  readonly devUrl?: URL;
+}): ReadonlySet<string> {
+  const origins = new Set<string>([input.requestUrl.origin]);
+  if (input.devUrl) {
+    origins.add(input.devUrl.origin);
+  }
+  return origins;
+}
+
+function isTrustedWebSocketOrigin(input: {
+  readonly origin: URL;
+  readonly requestUrl: URL;
+  readonly devUrl?: URL;
+}): boolean {
+  if (input.origin.username || input.origin.password) {
+    return false;
+  }
+  if (input.origin.protocol !== "http:" && input.origin.protocol !== "https:") {
+    return false;
+  }
+
+  return collectTrustedWebSocketOrigins(input).has(input.origin.origin);
 }
 
 const WsRpcLayer = WsRpcGroup.toLayer(
@@ -272,6 +319,97 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               analytics.record("server.settings.updated", summarizeSettingsPatch(patch)),
             ),
           ),
+      [WS_METHODS.serverListMcpServers]: (_input) =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            Effect.tryPromise({
+              try: () =>
+                listEffectiveMcpServerRows({
+                  settings,
+                  cwd: config.cwd,
+                  oauthStorageDir: path.join(config.stateDir, "mcp-oauth"),
+                }),
+              catch: (cause) =>
+                new ServerSettingsError({
+                  settingsPath: config.settingsPath,
+                  detail: "failed to list effective MCP servers",
+                  cause,
+                }),
+            }),
+          ),
+        ),
+      [WS_METHODS.serverAuthenticateMcpServer]: (input) =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            Effect.tryPromise({
+              try: () =>
+                authenticateEffectiveMcpServer({
+                  settings,
+                  target: input,
+                  cwd: config.cwd,
+                  oauthStorageDir: path.join(config.stateDir, "mcp-oauth"),
+                }),
+              catch: (cause) =>
+                new ServerSettingsError({
+                  settingsPath: config.settingsPath,
+                  detail: "failed to authenticate MCP server",
+                  cause,
+                }),
+            }),
+          ),
+          Effect.as({}),
+        ),
+      [WS_METHODS.serverRemoveMcpServer]: (input) =>
+        Effect.gen(function* () {
+          if (input.source === "shiori") {
+            const settings = yield* serverSettings.getSettings;
+            yield* serverSettings.updateSettings({
+              mcpServers: {
+                servers: settings.mcpServers.servers.filter((server) => server.name !== input.name),
+              },
+            });
+            return {};
+          }
+
+          yield* Effect.tryPromise({
+            try: () => removeExternalMcpServer(input),
+            catch: (cause) =>
+              new ServerSettingsError({
+                settingsPath: config.settingsPath,
+                detail: "failed to remove MCP server",
+                cause,
+              }),
+          });
+          return {};
+        }),
+      [WS_METHODS.serverListSkills]: (_input) =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            Effect.tryPromise({
+              try: () =>
+                listEffectiveSkills({
+                  cwd: config.cwd,
+                  codexHomePath: settings.providers.codex.homePath,
+                }),
+              catch: (cause) =>
+                new ServerSettingsError({
+                  settingsPath: config.settingsPath,
+                  detail: "failed to list effective skills",
+                  cause,
+                }),
+            }),
+          ),
+        ),
+      [WS_METHODS.serverRemoveSkill]: (input) =>
+        Effect.tryPromise({
+          try: () => removeEffectiveSkill(input),
+          catch: (cause) =>
+            new ServerSettingsError({
+              settingsPath: config.settingsPath,
+              detail: "failed to remove skill",
+              cause,
+            }),
+        }).pipe(Effect.as({})),
       [WS_METHODS.serverSetShioriAuthToken]: ({ token }) =>
         Effect.gen(function* () {
           yield* Effect.logInfo("shiori account auth token updated", {
@@ -412,6 +550,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.gitResolvePullRequest]: (input) => gitManager.resolvePullRequest(input),
       [WS_METHODS.gitPreparePullRequestThread]: (input) =>
         gitManager.preparePullRequestThread(input),
+      [WS_METHODS.gitListOpenPullRequests]: (input) => gitManager.listOpenPullRequests(input),
+      [WS_METHODS.gitGetPullRequestDiff]: (input) => gitManager.getPullRequestDiff(input),
+      [WS_METHODS.gitSummarizePullRequest]: (input) => gitManager.summarizePullRequest(input),
+      [WS_METHODS.gitGetPullRequestConversation]: (input) =>
+        gitManager.getPullRequestConversation(input),
       [WS_METHODS.gitListBranches]: (input) => git.listBranches(input),
       [WS_METHODS.gitCreateWorktree]: (input) => git.createWorktree(input),
       [WS_METHODS.gitRemoveWorktree]: (input) => git.removeWorktree(input),
@@ -500,14 +643,35 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const config = yield* ServerConfig;
+        const url = HttpServerRequest.toURL(request);
+        if (Option.isNone(url)) {
+          return HttpServerResponse.text("Invalid WebSocket URL", { status: 400 });
+        }
+
         if (config.authToken) {
-          const url = HttpServerRequest.toURL(request);
-          if (Option.isNone(url)) {
-            return HttpServerResponse.text("Invalid WebSocket URL", { status: 400 });
-          }
           const token = url.value.searchParams.get("token");
           if (token !== config.authToken) {
             return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
+          }
+        } else {
+          const rawOrigin = request.headers["origin"] ?? null;
+          const origin = parseOrigin(rawOrigin);
+          if (rawOrigin && !origin) {
+            return HttpServerResponse.text("Invalid WebSocket origin", {
+              status: 403,
+            });
+          }
+          if (
+            origin &&
+            !isTrustedWebSocketOrigin({
+              origin,
+              requestUrl: url.value,
+              ...(config.devUrl ? { devUrl: config.devUrl } : {}),
+            })
+          ) {
+            return HttpServerResponse.text("Cross-origin WebSocket connection rejected", {
+              status: 403,
+            });
           }
         }
         return yield* rpcWebSocketHttpEffect;

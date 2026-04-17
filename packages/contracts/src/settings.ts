@@ -266,8 +266,85 @@ export const McpServersConfig = Schema.Struct({
 });
 export type McpServersConfig = typeof McpServersConfig.Type;
 
+export const EffectiveMcpServerSource = Schema.Literals(["shiori", "codex", "claude"]);
+export type EffectiveMcpServerSource = typeof EffectiveMcpServerSource.Type;
+
+export const EffectiveMcpServerAuthStatus = Schema.Literals([
+  "unknown",
+  "authenticated",
+  "unauthenticated",
+]);
+export type EffectiveMcpServerAuthStatus = typeof EffectiveMcpServerAuthStatus.Type;
+
+export const EffectiveMcpServerAuth = Schema.Struct({
+  status: EffectiveMcpServerAuthStatus,
+  message: Schema.optionalKey(TrimmedString),
+});
+export type EffectiveMcpServerAuth = typeof EffectiveMcpServerAuth.Type;
+
+export const EffectiveMcpServerEntry = Schema.Struct({
+  ...McpServerEntry.fields,
+  source: EffectiveMcpServerSource,
+  sourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  configPath: Schema.optionalKey(TrimmedNonEmptyString),
+  readOnly: Schema.Boolean,
+  auth: EffectiveMcpServerAuth,
+});
+export type EffectiveMcpServerEntry = typeof EffectiveMcpServerEntry.Type;
+
+export const EffectiveMcpServersResult = Schema.Struct({
+  servers: Schema.Array(EffectiveMcpServerEntry),
+  warnings: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type EffectiveMcpServersResult = typeof EffectiveMcpServersResult.Type;
+
+export const EffectiveSkillSource = Schema.Literals(["shiori", "codex", "claude"]);
+export type EffectiveSkillSource = typeof EffectiveSkillSource.Type;
+
+export const EffectiveSkillScope = Schema.Literals(["user", "project"]);
+export type EffectiveSkillScope = typeof EffectiveSkillScope.Type;
+
+export const EffectiveSkillEntry = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+  source: EffectiveSkillSource,
+  scope: EffectiveSkillScope,
+  readOnly: Schema.Boolean,
+});
+export type EffectiveSkillEntry = typeof EffectiveSkillEntry.Type;
+
+export const EffectiveMcpServerRemoveInput = Schema.Struct({
+  source: EffectiveMcpServerSource,
+  name: TrimmedNonEmptyString,
+  sourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  configPath: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type EffectiveMcpServerRemoveInput = typeof EffectiveMcpServerRemoveInput.Type;
+
+export const EffectiveMcpServerAuthInput = Schema.Struct({
+  source: EffectiveMcpServerSource,
+  name: TrimmedNonEmptyString,
+  sourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  configPath: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type EffectiveMcpServerAuthInput = typeof EffectiveMcpServerAuthInput.Type;
+
+export const EffectiveSkillRemoveInput = Schema.Struct({
+  source: EffectiveSkillSource,
+  name: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+});
+export type EffectiveSkillRemoveInput = typeof EffectiveSkillRemoveInput.Type;
+
+export const EffectiveSkillsResult = Schema.Struct({
+  skills: Schema.Array(EffectiveSkillEntry),
+  warnings: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type EffectiveSkillsResult = typeof EffectiveSkillsResult.Type;
+
 export const ServerSettings = Schema.Struct({
-  enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   quitWithoutConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_PERSONALITY),

@@ -197,7 +197,7 @@ export function HostedBillingPanelView(props: HostedBillingPanelViewProps) {
               return (
                 <article
                   key={plan.id}
-                  className={`rounded-2xl border px-4 py-4 ${
+                  className={`flex h-full flex-col rounded-2xl border px-4 py-4 ${
                     plan.highlighted
                       ? "border-primary/40 bg-primary/5"
                       : "border-border/70 bg-background/60"
@@ -213,18 +213,18 @@ export function HostedBillingPanelView(props: HostedBillingPanelViewProps) {
                       ) : null}
                     </div>
                     <p className="text-lg font-semibold text-foreground">{price.amount}</p>
-                    <p className="text-xs text-muted-foreground">{price.detail}</p>
+                    <p className="text-xs text-muted-foreground/60">{price.detail}</p>
                     <p className="text-sm text-muted-foreground">{plan.description}</p>
                   </div>
 
-                  <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+                  <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
                     {plan.features.slice(0, 4).map((feature) => (
                       <li key={feature}>{feature}</li>
                     ))}
                   </ul>
 
                   <Button
-                    className="mt-4 w-full"
+                    className="mt-6 w-full"
                     variant={plan.highlighted ? "default" : "outline"}
                     disabled={upgradeState.disabled || props.pendingAction !== null}
                     onClick={() => props.onCheckout(plan.id)}

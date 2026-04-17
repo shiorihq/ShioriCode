@@ -1,6 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { parseEditDiff } from "./InlineEditDiff";
+import { InlineEditDiff, parseEditDiff } from "./InlineEditDiff";
 
 describe("parseEditDiff", () => {
   it("parses Claude Edit old/new strings even when result is present", () => {
@@ -52,5 +54,26 @@ describe("parseEditDiff", () => {
       { type: "added", content: "  color: red;", oldLineNo: null, newLineNo: 2 },
       { type: "added", content: "}", oldLineNo: null, newLineNo: 3 },
     ]);
+  });
+
+  it("renders the inline diff with an internal scroll region", () => {
+    const parsed = parseEditDiff({
+      toolName: "write_file",
+      input: {
+        path: "apps/web/src/index.css",
+        content: "body {\n  color: red;\n}",
+      },
+      path: "apps/web/src/index.css",
+      bytesWritten: 22,
+    });
+
+    expect(parsed).not.toBeNull();
+
+    const markup = renderToStaticMarkup(createElement(InlineEditDiff, { diff: parsed! }));
+
+    expect(markup).toContain('data-inline-diff="true"');
+    expect(markup).toContain('data-inline-diff-body="true"');
+    expect(markup).toContain("max-h-[min(24rem,55vh)]");
+    expect(markup).toContain("overflow-auto");
   });
 });

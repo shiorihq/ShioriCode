@@ -14,7 +14,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const fakeShioriAdapter: ShioriAdapterShape = {
   provider: "shiori",
-  capabilities: { sessionModelSwitch: "restart-session" },
+  capabilities: {
+    sessionModelSwitch: "restart-session",
+    recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+    observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+  },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
@@ -31,7 +35,11 @@ const fakeShioriAdapter: ShioriAdapterShape = {
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: {
+    sessionModelSwitch: "in-session",
+    recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+    observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+  },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
@@ -49,7 +57,11 @@ const fakeCodexAdapter: CodexAdapterShape = {
 
 const fakeClaudeAdapter: ClaudeAdapterShape = {
   provider: "claudeAgent",
-  capabilities: { sessionModelSwitch: "in-session" },
+  capabilities: {
+    sessionModelSwitch: "in-session",
+    recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+    observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+  },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),

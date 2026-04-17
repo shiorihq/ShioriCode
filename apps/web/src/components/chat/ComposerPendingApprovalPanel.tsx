@@ -26,6 +26,13 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
         ) : null}
       </div>
+      {approval.detail ? (
+        <div className="mt-1.5 rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+          <code className="block max-h-24 overflow-y-auto whitespace-pre-wrap break-all text-xs text-foreground/90">
+            {approval.detail}
+          </code>
+        </div>
+      ) : null}
     </div>
   );
 });

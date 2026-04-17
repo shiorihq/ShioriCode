@@ -93,7 +93,6 @@ export const ChatHeader = memo(function ChatHeader({
                 type="button"
                 className="min-w-0 truncate hover:text-foreground hover:underline"
                 onClick={() => onNavigateToThread(parentThread.threadId)}
-                disabled={parentThread.archivedAt !== null}
                 title={
                   parentThread.archivedAt !== null
                     ? `${parentThread.title} (archived)`
@@ -129,7 +128,6 @@ export const ChatHeader = memo(function ChatHeader({
                   {childThreads.map((thread) => (
                     <MenuItem
                       key={thread.threadId}
-                      disabled={thread.archivedAt !== null}
                       onClick={() => onNavigateToThread(thread.threadId)}
                     >
                       {thread.archivedAt !== null ? `${thread.title} (archived)` : thread.title}
@@ -177,7 +175,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 px-2.5"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
                 aria-label="Toggle diff panel"
@@ -186,6 +184,7 @@ export const ChatHeader = memo(function ChatHeader({
                 disabled={!isGitRepo}
               >
                 <DiffIcon className="size-3" />
+                <span>View diff</span>
               </Toggle>
             }
           />

@@ -34,6 +34,9 @@ describe("ChatHeader", () => {
     );
 
     expect(html).toContain("open-in-picker");
+    expect(html).toContain("View diff");
+    expect(html).not.toContain("Timeline detail level");
+    expect(html).not.toContain("Compact");
     expect(html).not.toContain("Git action options");
     expect(html).not.toContain("Initialize Git");
     expect(html).not.toContain("project-scripts-control");

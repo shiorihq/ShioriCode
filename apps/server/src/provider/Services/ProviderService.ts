@@ -12,6 +12,7 @@
  * @module ProviderService
  */
 import type {
+  OrchestrationThreadResumeState,
   ProviderInterruptTurnInput,
   ProviderKind,
   ProviderRespondToRequestInput,
@@ -30,6 +31,15 @@ import type { Effect, Stream } from "effect";
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ClaudeUsageSnapshot, CodexUsageSnapshot } from "./ProviderUsage.ts";
+
+export interface ProviderSessionReconciliation {
+  readonly threadId: ThreadId;
+  readonly provider: ProviderKind;
+  readonly session: ProviderSession | null;
+  readonly resumeState: OrchestrationThreadResumeState;
+  readonly runtimeMode: ProviderSession["runtimeMode"];
+  readonly lastError: string | null;
+}
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -84,6 +94,17 @@ export interface ProviderServiceShape {
    * Aggregates runtime session lists from all registered adapters.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+
+  /**
+   * Reconcile active provider sessions with persisted runtime bindings.
+   *
+   * Used by orchestration startup/recovery to project a provider-neutral view
+   * of thread runtime recoverability.
+   */
+  readonly reconcileSessions: () => Effect.Effect<
+    ReadonlyArray<ProviderSessionReconciliation>,
+    ProviderServiceError
+  >;
 
   /**
    * Read static capabilities for a provider adapter.

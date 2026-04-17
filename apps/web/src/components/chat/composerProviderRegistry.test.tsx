@@ -40,7 +40,7 @@ const SHIORI_MODELS: ReadonlyArray<ServerProviderModel> = [
     },
   },
   {
-    slug: "anthropic/claude-sonnet-4.5",
+    slug: "anthropic/claude-sonnet-4-5",
     name: "Claude Sonnet 4.5",
     isCustom: false,
     capabilities: {
@@ -270,7 +270,7 @@ describe("getComposerProviderState", () => {
   it("preserves explicit Shiori thinking and reasoning effort", () => {
     const state = getComposerProviderState({
       provider: "shiori",
-      model: "anthropic/claude-sonnet-4.5",
+      model: "anthropic/claude-sonnet-4-5",
       models: SHIORI_MODELS,
       prompt: "",
       modelOptions: {
@@ -294,7 +294,7 @@ describe("getComposerProviderState", () => {
   it("preserves explicit Shiori thinking: false so deepMerge can disable reasoning mode", () => {
     const state = getComposerProviderState({
       provider: "shiori",
-      model: "anthropic/claude-sonnet-4.5",
+      model: "anthropic/claude-sonnet-4-5",
       models: SHIORI_MODELS,
       prompt: "",
       modelOptions: {

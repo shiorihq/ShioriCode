@@ -3,11 +3,13 @@ import { Schema } from "effect";
 
 import {
   GitCreateWorktreeInput,
+  GitListOpenPullRequestsInput,
   GitPreparePullRequestThreadInput,
   GitResolvePullRequestResult,
 } from "./git";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
+const decodeListOpenPullRequestsInput = Schema.decodeUnknownSync(GitListOpenPullRequestsInput);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
@@ -39,6 +41,17 @@ describe("GitPreparePullRequestThreadInput", () => {
   });
 });
 
+describe("GitListOpenPullRequestsInput", () => {
+  it("accepts a pull request filter", () => {
+    const parsed = decodeListOpenPullRequestsInput({
+      cwd: "/repo",
+      filter: "draft",
+    });
+
+    expect(parsed.filter).toBe("draft");
+  });
+});
+
 describe("GitResolvePullRequestResult", () => {
   it("decodes resolved pull request metadata", () => {
     const parsed = decodeResolvePullRequestResult({
@@ -49,10 +62,12 @@ describe("GitResolvePullRequestResult", () => {
         baseBranch: "main",
         headBranch: "feature/pr-threads",
         state: "open",
+        isDraft: true,
       },
     });
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+    expect(parsed.pullRequest.isDraft).toBe(true);
   });
 });

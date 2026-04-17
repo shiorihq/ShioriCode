@@ -111,6 +111,9 @@ function createToolWorkEntry(input: {
   output?: WorkLogEntry["output"];
   itemType?: WorkLogEntry["itemType"];
   command?: string;
+  itemId?: string;
+  running?: boolean;
+  toolTitle?: string;
 }): WorkLogEntry {
   return {
     id: input.id,
@@ -120,8 +123,10 @@ function createToolWorkEntry(input: {
     ...(input.output !== undefined ? { output: input.output } : {}),
     ...(input.itemType ? { itemType: input.itemType } : {}),
     ...(input.command ? { command: input.command } : {}),
+    ...(input.itemId ? { itemId: input.itemId } : {}),
+    ...(input.running ? { running: true } : {}),
     tone: "tool",
-    toolTitle: "exec_command",
+    toolTitle: input.toolTitle ?? "exec_command",
   };
 }
 
@@ -148,6 +153,7 @@ function createBaseTimelineProps(input: {
   expandedWorkGroups?: Record<string, boolean>;
   completionDividerBeforeEntryId?: string | null;
   turnDiffSummaryByAssistantMessageId?: Map<MessageId, TurnDiffSummary>;
+  onToggleWorkGroup?: ComponentProps<typeof MessagesTimeline>["onToggleWorkGroup"];
   onVirtualizerSnapshot?: ComponentProps<typeof MessagesTimeline>["onVirtualizerSnapshot"];
 }): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> {
   return {
@@ -165,7 +171,7 @@ function createBaseTimelineProps(input: {
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: input.turnDiffSummaryByAssistantMessageId ?? new Map(),
     expandedWorkGroups: input.expandedWorkGroups ?? {},
-    onToggleWorkGroup: () => {},
+    onToggleWorkGroup: input.onToggleWorkGroup ?? (() => {}),
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
@@ -829,7 +835,9 @@ describe("MessagesTimeline virtualization harness", () => {
       const showMoreButton = await vi.waitFor(() => {
         const nextButton =
           Array.from(targetRowElement!.querySelectorAll<HTMLButtonElement>("button")).find(
-            (button) => button.textContent?.includes("Show 4 more"),
+            (button) =>
+              typeof button.textContent === "string" &&
+              /^Show \d+ more$/.test(button.textContent.trim()),
           ) ?? null;
         expect(nextButton, 'Unable to find "Show more" button.').toBeTruthy();
         return nextButton!;
@@ -862,6 +870,200 @@ describe("MessagesTimeline virtualization harness", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("collapses an open subagent workgroup from the main summary row", async () => {
+    const props = createBaseTimelineProps({
+      workEntries: [
+        {
+          id: "subagent-root-entry",
+          createdAt: isoAt(12),
+          label: "Subagent task",
+          tone: "tool",
+          itemType: "collab_agent_tool_call",
+          itemId: "subagent-root-item",
+          output: {
+            toolName: "spawn_agent",
+            input: {
+              description: "Inspect the app shell",
+              prompt: "Explore the app and report UI findings",
+              agent_type: "explorer",
+              run_in_background: true,
+            },
+          },
+        },
+        {
+          id: "subagent-child-entry",
+          createdAt: isoAt(13),
+          label: "Read file started",
+          tone: "tool",
+          itemType: "command_execution",
+          toolTitle: "Read file",
+          detail: "apps/web/src/components/chat/MessagesTimeline.tsx",
+          parentItemId: "subagent-root-item",
+          running: true,
+        },
+      ],
+      expandedWorkGroups: {
+        "subagent-root-entry": true,
+      },
+    });
+    const mounted = await mountMessagesTimeline({ props });
+
+    try {
+      const targetRowElement = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLElement>('[data-timeline-row-id="subagent-root-entry"]'),
+        "Unable to locate rendered subagent workgroup row.",
+      );
+      const summaryButton =
+        Array.from(targetRowElement.querySelectorAll<HTMLButtonElement>("button")).find(
+          (button) => !button.hasAttribute("aria-controls"),
+        ) ?? null;
+      expect(summaryButton, "Unable to find subagent workgroup summary button.").toBeTruthy();
+      expect(targetRowElement.innerHTML).toContain('aria-expanded="true"');
+
+      summaryButton!.click();
+      await waitForLayout();
+
+      expect(targetRowElement.innerHTML).toContain('aria-expanded="false"');
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a running workgroup collapsible after streaming updates replace the activity id", async () => {
+    const initialEntry = createToolWorkEntry({
+      id: "single-work-initial",
+      itemId: "tool:item-1",
+      offsetSeconds: 12,
+      label: "Read file completed",
+      toolTitle: "Read file",
+      detail: "src/messages.tsx",
+      itemType: "command_execution",
+    });
+    const streamingEntry = createToolWorkEntry({
+      id: "single-work-streaming",
+      itemId: "tool:item-1",
+      offsetSeconds: 13,
+      label: "Read file started",
+      toolTitle: "Read file",
+      detail: "src/messages.tsx",
+      itemType: "command_execution",
+      running: true,
+    });
+    const initialProps = createBaseTimelineProps({
+      workEntries: [initialEntry],
+    });
+    const mounted = await mountMessagesTimeline({ props: initialProps });
+
+    try {
+      const initialRow = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLElement>(`[data-timeline-row-id="${initialEntry.id}"]`),
+        "Unable to locate initial single-entry work row.",
+      );
+      const initialToggleButton =
+        initialRow.querySelector<HTMLButtonElement>(
+          `button[aria-controls="work-entry-details-${initialEntry.id}"]`,
+        ) ?? null;
+      expect(initialToggleButton, "Unable to find the initial single-entry toggle.").toBeTruthy();
+
+      initialToggleButton!.click();
+      await vi.waitFor(() => {
+        expect(initialToggleButton?.getAttribute("aria-expanded")).toBe("true");
+      });
+
+      const streamingProps = createBaseTimelineProps({
+        workEntries: [streamingEntry],
+      });
+      await mounted.rerender(streamingProps);
+
+      const streamingRow = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLElement>(`[data-timeline-row-id="${streamingEntry.id}"]`),
+        "Unable to locate streaming single-entry work row.",
+      );
+      const streamingToggleButton = await vi.waitFor(() => {
+        const nextButton =
+          streamingRow.querySelector<HTMLButtonElement>(
+            'button[aria-controls="work-group-items-work-item:tool:item-1"]',
+          ) ?? null;
+        expect(nextButton, "Unable to find the streaming workgroup toggle.").toBeTruthy();
+        return nextButton!;
+      });
+      expect(streamingToggleButton.getAttribute("aria-expanded")).toBe("true");
+
+      streamingToggleButton.click();
+
+      await vi.waitFor(() => {
+        expect(streamingToggleButton.getAttribute("aria-expanded")).toBe("false");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets an expanded streaming subagent group collapse from the summary header", async () => {
+    const toggles: Array<{ groupId: string; currentlyExpanded: boolean }> = [];
+    const props = createBaseTimelineProps({
+      workEntries: [
+        {
+          id: "subagent-parent",
+          createdAt: isoAt(10),
+          label: "Subagent task",
+          detail: 'Agent: {"description":"Explore the app","subagent_type":"explore"}',
+          tone: "tool",
+          itemId: "agent-tool-1",
+          itemType: "collab_agent_tool_call",
+        },
+        {
+          id: "subagent-child-running",
+          createdAt: isoAt(11),
+          label: "Read file started",
+          tone: "tool",
+          parentItemId: "agent-tool-1",
+          itemType: "command_execution",
+          toolTitle: "Read file",
+          detail: "apps/web/src/components/chat/MessagesTimeline.tsx",
+          running: true,
+        },
+      ],
+      expandedWorkGroups: {
+        "subagent-parent": true,
+      },
+      onToggleWorkGroup: (groupId, currentlyExpanded) => {
+        toggles.push({ groupId, currentlyExpanded });
+      },
+    });
+    const mounted = await mountMessagesTimeline({ props });
+
+    try {
+      const targetRowElement = await waitForElement(
+        () => mounted.host.querySelector<HTMLElement>('[data-timeline-row-id="subagent-parent"]'),
+        "Unable to locate subagent work row.",
+      );
+      const summaryButton =
+        targetRowElement.querySelectorAll<HTMLButtonElement>("button").item(0) ?? null;
+      const chevronButton =
+        Array.from(targetRowElement.querySelectorAll<HTMLButtonElement>("button")).find(
+          (button) =>
+            button.getAttribute("aria-controls")?.startsWith("work-group-items-") === true,
+        ) ?? null;
+
+      expect(summaryButton, "Unable to find subagent summary button.").toBeTruthy();
+      expect(chevronButton, "Unable to find subagent collapse button.").toBeTruthy();
+      expect(chevronButton?.getAttribute("aria-expanded")).toBe("true");
+
+      summaryButton!.click();
+
+      await vi.waitFor(() => {
+        expect(chevronButton?.getAttribute("aria-expanded")).toBe("false");
+      });
+      expect(toggles).toEqual([{ groupId: "work-item:agent-tool-1", currentlyExpanded: true }]);
     } finally {
       await mounted.cleanup();
     }
@@ -1158,6 +1360,92 @@ describe("MessagesTimeline virtualization harness", () => {
           );
         },
         { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps current-turn work rows visible when a completed turn moves them into virtualization", async () => {
+    const historicalMessages = createFillerMessages({
+      prefix: "active-turn-transition-history",
+      startOffsetSeconds: 0,
+      pairCount: 60,
+    });
+    const currentTurnUserMessage = createMessage({
+      id: "active-turn-transition-user",
+      role: "user",
+      text: "Review the recent changes and suggest improvements.",
+      offsetSeconds: 500,
+    });
+    const currentTurnWorkEntries = Array.from({ length: 6 }, (_, index) =>
+      createToolWorkEntry({
+        id: `active-turn-transition-work-${index + 1}`,
+        itemId: `active-turn-transition-item-${index + 1}`,
+        offsetSeconds: 501 + index,
+        label: "Read file started",
+        toolTitle: "Read file",
+        detail: `src/file-${index + 1}.ts`,
+        itemType: "command_execution",
+        running: true,
+      }),
+    );
+    const completedTurnWorkEntries = currentTurnWorkEntries.map((entry) => ({
+      ...entry,
+      label: "Read file completed",
+      running: false,
+    }));
+    const currentTurnAssistantMessage = createMessage({
+      id: "active-turn-transition-assistant",
+      role: "assistant",
+      text: "Findings\n\n- One\n- Two",
+      offsetSeconds: 510,
+    });
+    const liveProps: Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> = {
+      ...createBaseTimelineProps({
+        messages: [...historicalMessages, currentTurnUserMessage, currentTurnAssistantMessage],
+        workEntries: currentTurnWorkEntries,
+      }),
+      isWorking: true,
+      activeTurnInProgress: true,
+      activeTurnStartedAt: currentTurnUserMessage.createdAt,
+    };
+    const mounted = await mountMessagesTimeline({
+      props: liveProps,
+      viewport: { width: 960, height: 1400 },
+    });
+
+    try {
+      const scrollContainer = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLDivElement>(
+            '[data-testid="messages-timeline-scroll-container"]',
+          ),
+        "Unable to find MessagesTimeline scroll container.",
+      );
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+
+      const targetRowId = currentTurnWorkEntries[0]!.id;
+      await waitForElement(
+        () => mounted.host.querySelector<HTMLElement>(`[data-timeline-row-id="${targetRowId}"]`),
+        "Expected current-turn work row to be visible while the turn is active.",
+      );
+
+      await mounted.rerender({
+        ...createBaseTimelineProps({
+          messages: [...historicalMessages, currentTurnUserMessage, currentTurnAssistantMessage],
+          workEntries: completedTurnWorkEntries,
+        }),
+        isWorking: false,
+        activeTurnInProgress: false,
+        activeTurnStartedAt: currentTurnUserMessage.createdAt,
+      });
+
+      await waitForElement(
+        () => mounted.host.querySelector<HTMLElement>(`[data-timeline-row-id="${targetRowId}"]`),
+        "Expected current-turn work row to remain visible after completion settles.",
       );
     } finally {
       await mounted.cleanup();

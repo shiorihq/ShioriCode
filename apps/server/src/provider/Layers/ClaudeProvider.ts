@@ -12,6 +12,7 @@ import { decodeJsonResult } from "shared/schemaJson";
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  buildPendingServerProvider,
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
@@ -29,6 +30,27 @@ import { ServerSettingsError } from "contracts";
 
 const PROVIDER = "claudeAgent" as const;
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-opus-4-7",
+    name: "Opus 4.7",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "max", label: "Max" },
+        { value: "ultrathink", label: "Ultrathink" },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: "200k", label: "200k", isDefault: true },
+        { value: "1m", label: "1M" },
+      ],
+      promptInjectedEffortLevels: ["ultrathink"],
+    } satisfies ModelCapabilities,
+  },
   {
     slug: "claude-opus-4-6",
     name: "Opus 4.6",
@@ -95,6 +117,30 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
       promptInjectedEffortLevels: [],
     }
   );
+}
+
+function buildPendingClaudeProviderStatus(claudeSettings: ClaudeSettings): ServerProvider {
+  const checkedAt = new Date().toISOString();
+  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, claudeSettings.customModels);
+
+  if (!claudeSettings.enabled) {
+    return buildPendingServerProvider({
+      provider: PROVIDER,
+      enabled: false,
+      installed: false,
+      checkedAt,
+      models,
+      message: "Claude is disabled in ShioriCode settings.",
+    });
+  }
+
+  return buildPendingServerProvider({
+    provider: PROVIDER,
+    enabled: true,
+    checkedAt,
+    models,
+    message: "Checking Claude CLI availability...",
+  });
 }
 
 export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
@@ -645,6 +691,7 @@ export const ClaudeProviderLive = Layer.effect(
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       checkProvider,
+      buildInitialSnapshot: buildPendingClaudeProviderStatus,
     });
   }),
 );

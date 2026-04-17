@@ -12,6 +12,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
+  readonly buildInitialSnapshot?: (settings: Settings) => ServerProvider;
   readonly refreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
   const refreshSemaphore = yield* Semaphore.make(1);
@@ -20,7 +21,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     PubSub.shutdown,
   );
   const initialSettings = yield* input.getSettings;
-  const initialSnapshot = yield* input.checkProvider;
+  const initialSnapshot = input.buildInitialSnapshot
+    ? input.buildInitialSnapshot(initialSettings)
+    : yield* input.checkProvider;
   const snapshotRef = yield* Ref.make(initialSnapshot);
   const settingsRef = yield* Ref.make(initialSettings);
 
@@ -42,7 +45,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return nextSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+    Effect.gen(function* () {
+      const forceRefresh = options?.forceRefresh === true;
+      if (!forceRefresh) {
+        const previousSettings = yield* Ref.get(settingsRef);
+        if (!input.haveSettingsChanged(previousSettings, nextSettings)) {
+          yield* Ref.set(settingsRef, nextSettings);
+          return yield* Ref.get(snapshotRef);
+        }
+      }
+
+      return yield* refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+    });
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
@@ -59,6 +73,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
+
+  if (input.buildInitialSnapshot) {
+    yield* refreshSnapshot().pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+  }
 
   return {
     getSnapshot: input.getSettings.pipe(

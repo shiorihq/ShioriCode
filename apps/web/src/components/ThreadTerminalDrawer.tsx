@@ -60,8 +60,21 @@ function writeTerminalSnapshot(terminal: Terminal, snapshot: TerminalSessionSnap
 export function selectTerminalEventEntriesAfterSnapshot(
   entries: ReadonlyArray<{ id: number; event: TerminalEvent }>,
   snapshotUpdatedAt: string,
+  lastBufferedEventIdBeforeOpen = -1,
 ): ReadonlyArray<{ id: number; event: TerminalEvent }> {
-  return entries.filter((entry) => entry.event.createdAt > snapshotUpdatedAt);
+  if (lastBufferedEventIdBeforeOpen >= 0) {
+    return entries.filter((entry) => entry.id > lastBufferedEventIdBeforeOpen);
+  }
+
+  return entries.filter((entry) => {
+    if (entry.event.createdAt > snapshotUpdatedAt) {
+      return true;
+    }
+    if (entry.event.createdAt < snapshotUpdatedAt) {
+      return false;
+    }
+    return entry.id > lastBufferedEventIdBeforeOpen;
+  });
 }
 
 export function selectPendingTerminalEventEntries(
@@ -71,15 +84,17 @@ export function selectPendingTerminalEventEntries(
   return entries.filter((entry) => entry.id > lastAppliedTerminalEventId);
 }
 
+export function runtimeEnvSignature(runtimeEnv: Record<string, string> | undefined): string {
+  if (!runtimeEnv) return "";
+  const entries = Object.entries(runtimeEnv);
+  if (entries.length === 0) return "";
+  return JSON.stringify(entries.toSorted(([left], [right]) => left.localeCompare(right)));
+}
+
 function terminalThemeFromApp(): ITheme {
-  const terminalColors = getDocumentTerminalThemeColors();
-  const bodyStyles = getComputedStyle(document.body);
-  const { background, foreground, ...restColors } = terminalColors;
-  return {
-    background: bodyStyles.backgroundColor || background,
-    foreground: bodyStyles.color || foreground,
-    ...restColors,
-  };
+  // Terminal colors must come from the dedicated terminal theme palette.
+  // Inheriting body text/background can make terminal output unreadable.
+  return getDocumentTerminalThemeColors();
 }
 
 function getTerminalSelectionRect(mountElement: HTMLElement): DOMRect | null {
@@ -153,6 +168,18 @@ export function shouldHandleTerminalSelectionMouseUp(
   return selectionGestureActive && button === 0;
 }
 
+export function terminalSubmitInputForEvent(
+  event: Pick<KeyboardEvent, "type" | "key" | "code" | "isComposing">,
+): string | null {
+  if (event.type !== "keydown" || event.isComposing) {
+    return null;
+  }
+  if (event.key === "Enter" || event.code === "NumpadEnter") {
+    return "\r";
+  }
+  return null;
+}
+
 interface TerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
@@ -191,6 +218,7 @@ function TerminalViewport({
   const selectionActionTimerRef = useRef<number | null>(null);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
+  const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -310,6 +338,14 @@ function TerminalViewport({
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const submitInput = terminalSubmitInputForEvent(event);
+      if (submitInput !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput(submitInput, "Failed to submit terminal command");
+        return false;
+      }
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -538,6 +574,12 @@ function TerminalViewport({
         const activeTerminal = terminalRef.current;
         const activeFitAddon = fitAddonRef.current;
         if (!activeTerminal || !activeFitAddon) return;
+        const lastBufferedEventIdBeforeOpen =
+          selectTerminalEventEntries(
+            useTerminalStateStore.getState().terminalEventEntriesByKey,
+            threadId,
+            terminalId,
+          ).at(-1)?.id ?? 0;
         activeFitAddon.fit();
         const snapshot = await api.terminal.open({
           threadId,
@@ -557,6 +599,7 @@ function TerminalViewport({
         const replayEntries = selectTerminalEventEntriesAfterSnapshot(
           bufferedEntries,
           snapshot.updatedAt,
+          lastBufferedEventIdBeforeOpen,
         );
         for (const entry of replayEntries) {
           applyTerminalEvent(entry.event);
@@ -620,7 +663,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, runtimeEnvKey, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;

@@ -66,6 +66,7 @@ class StatusUpstreamRefreshCacheKey extends Data.Class<{
 
 interface ExecuteGitOptions {
   stdin?: string | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
   timeoutMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorMessage?: string | undefined;
@@ -727,6 +728,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       cwd,
       args,
       ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
@@ -859,6 +861,10 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       fetchCwd,
       ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
       {
+        env: {
+          GIT_TERMINAL_PROMPT: "0",
+          GCM_INTERACTIVE: "never",
+        },
         allowNonZeroExit: true,
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
@@ -1134,140 +1140,144 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     return branchLastCommit;
   });
 
-  const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
-    yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
+  const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(
+    function* (cwd, options) {
+      if (options?.refreshUpstream !== false) {
+        yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
+      }
 
-    const statusResult = yield* executeGit(
-      "GitCore.statusDetails.status",
-      cwd,
-      ["status", "--porcelain=2", "--branch"],
-      {
-        allowNonZeroExit: true,
-      },
-    );
-
-    if (statusResult.code !== 0) {
-      const stderr = statusResult.stderr.trim();
-      return yield* createGitCommandError(
+      const statusResult = yield* executeGit(
         "GitCore.statusDetails.status",
         cwd,
         ["status", "--porcelain=2", "--branch"],
-        stderr || "git status failed",
+        {
+          allowNonZeroExit: true,
+        },
       );
-    }
 
-    const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasOriginRemote] =
-      yield* Effect.all(
-        [
-          runGitStdout("GitCore.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
-          runGitStdout("GitCore.statusDetails.stagedNumstat", cwd, [
-            "diff",
-            "--cached",
-            "--numstat",
-          ]),
-          executeGit(
-            "GitCore.statusDetails.defaultRef",
-            cwd,
-            ["symbolic-ref", "refs/remotes/origin/HEAD"],
-            {
-              allowNonZeroExit: true,
-            },
-          ),
-          originRemoteExists(cwd).pipe(Effect.catch(() => Effect.succeed(false))),
-        ],
-        { concurrency: "unbounded" },
-      );
-    const statusStdout = statusResult.stdout;
-    const defaultBranch =
-      defaultRefResult.code === 0
-        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
-        : null;
-
-    let branch: string | null = null;
-    let upstreamRef: string | null = null;
-    let aheadCount = 0;
-    let behindCount = 0;
-    let hasWorkingTreeChanges = false;
-    const changedFilesWithoutNumstat = new Set<string>();
-
-    for (const line of statusStdout.split(/\r?\n/g)) {
-      if (line.startsWith("# branch.head ")) {
-        const value = line.slice("# branch.head ".length).trim();
-        branch = value.startsWith("(") ? null : value;
-        continue;
+      if (statusResult.code !== 0) {
+        const stderr = statusResult.stderr.trim();
+        return yield* createGitCommandError(
+          "GitCore.statusDetails.status",
+          cwd,
+          ["status", "--porcelain=2", "--branch"],
+          stderr || "git status failed",
+        );
       }
-      if (line.startsWith("# branch.upstream ")) {
-        const value = line.slice("# branch.upstream ".length).trim();
-        upstreamRef = value.length > 0 ? value : null;
-        continue;
+
+      const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasOriginRemote] =
+        yield* Effect.all(
+          [
+            runGitStdout("GitCore.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
+            runGitStdout("GitCore.statusDetails.stagedNumstat", cwd, [
+              "diff",
+              "--cached",
+              "--numstat",
+            ]),
+            executeGit(
+              "GitCore.statusDetails.defaultRef",
+              cwd,
+              ["symbolic-ref", "refs/remotes/origin/HEAD"],
+              {
+                allowNonZeroExit: true,
+              },
+            ),
+            originRemoteExists(cwd).pipe(Effect.catch(() => Effect.succeed(false))),
+          ],
+          { concurrency: "unbounded" },
+        );
+      const statusStdout = statusResult.stdout;
+      const defaultBranch =
+        defaultRefResult.code === 0
+          ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
+          : null;
+
+      let branch: string | null = null;
+      let upstreamRef: string | null = null;
+      let aheadCount = 0;
+      let behindCount = 0;
+      let hasWorkingTreeChanges = false;
+      const changedFilesWithoutNumstat = new Set<string>();
+
+      for (const line of statusStdout.split(/\r?\n/g)) {
+        if (line.startsWith("# branch.head ")) {
+          const value = line.slice("# branch.head ".length).trim();
+          branch = value.startsWith("(") ? null : value;
+          continue;
+        }
+        if (line.startsWith("# branch.upstream ")) {
+          const value = line.slice("# branch.upstream ".length).trim();
+          upstreamRef = value.length > 0 ? value : null;
+          continue;
+        }
+        if (line.startsWith("# branch.ab ")) {
+          const value = line.slice("# branch.ab ".length).trim();
+          const parsed = parseBranchAb(value);
+          aheadCount = parsed.ahead;
+          behindCount = parsed.behind;
+          continue;
+        }
+        if (line.trim().length > 0 && !line.startsWith("#")) {
+          hasWorkingTreeChanges = true;
+          const pathValue = parsePorcelainPath(line);
+          if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        }
       }
-      if (line.startsWith("# branch.ab ")) {
-        const value = line.slice("# branch.ab ".length).trim();
-        const parsed = parseBranchAb(value);
-        aheadCount = parsed.ahead;
-        behindCount = parsed.behind;
-        continue;
+
+      if (!upstreamRef && branch) {
+        aheadCount = yield* computeAheadCountAgainstBase(cwd, branch).pipe(
+          Effect.catch(() => Effect.succeed(0)),
+        );
+        behindCount = 0;
       }
-      if (line.trim().length > 0 && !line.startsWith("#")) {
-        hasWorkingTreeChanges = true;
-        const pathValue = parsePorcelainPath(line);
-        if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+
+      const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
+      const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
+      const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
+      for (const entry of [...stagedEntries, ...unstagedEntries]) {
+        const existing = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
+        existing.insertions += entry.insertions;
+        existing.deletions += entry.deletions;
+        fileStatMap.set(entry.path, existing);
       }
-    }
 
-    if (!upstreamRef && branch) {
-      aheadCount = yield* computeAheadCountAgainstBase(cwd, branch).pipe(
-        Effect.catch(() => Effect.succeed(0)),
-      );
-      behindCount = 0;
-    }
+      let insertions = 0;
+      let deletions = 0;
+      const files = Array.from(fileStatMap.entries())
+        .map(([filePath, stat]) => {
+          insertions += stat.insertions;
+          deletions += stat.deletions;
+          return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+        })
+        .toSorted((a, b) => a.path.localeCompare(b.path));
 
-    const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
-    const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
-    const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
-    for (const entry of [...stagedEntries, ...unstagedEntries]) {
-      const existing = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
-      existing.insertions += entry.insertions;
-      existing.deletions += entry.deletions;
-      fileStatMap.set(entry.path, existing);
-    }
+      for (const filePath of changedFilesWithoutNumstat) {
+        if (fileStatMap.has(filePath)) continue;
+        files.push({ path: filePath, insertions: 0, deletions: 0 });
+      }
+      files.sort((a, b) => a.path.localeCompare(b.path));
 
-    let insertions = 0;
-    let deletions = 0;
-    const files = Array.from(fileStatMap.entries())
-      .map(([filePath, stat]) => {
-        insertions += stat.insertions;
-        deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
-      })
-      .toSorted((a, b) => a.path.localeCompare(b.path));
-
-    for (const filePath of changedFilesWithoutNumstat) {
-      if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
-    }
-    files.sort((a, b) => a.path.localeCompare(b.path));
-
-    return {
-      isRepo: true,
-      hasOriginRemote,
-      isDefaultBranch:
-        branch !== null &&
-        (branch === defaultBranch ||
-          (defaultBranch === null && (branch === "main" || branch === "master"))),
-      branch,
-      upstreamRef,
-      hasWorkingTreeChanges,
-      workingTree: {
-        files,
-        insertions,
-        deletions,
-      },
-      hasUpstream: upstreamRef !== null,
-      aheadCount,
-      behindCount,
-    };
-  });
+      return {
+        isRepo: true,
+        hasOriginRemote,
+        isDefaultBranch:
+          branch !== null &&
+          (branch === defaultBranch ||
+            (defaultBranch === null && (branch === "main" || branch === "master"))),
+        branch,
+        upstreamRef,
+        hasWorkingTreeChanges,
+        workingTree: {
+          files,
+          insertions,
+          deletions,
+        },
+        hasUpstream: upstreamRef !== null,
+        aheadCount,
+        behindCount,
+      };
+    },
+  );
 
   const status: GitCoreShape["status"] = (input) =>
     statusDetails(input.cwd).pipe(

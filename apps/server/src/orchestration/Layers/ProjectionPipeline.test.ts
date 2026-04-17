@@ -4,13 +4,14 @@ import {
   CorrelationId,
   EventId,
   MessageId,
+  type OrchestrationEvent,
   ProjectId,
   ThreadId,
   TurnId,
 } from "contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Ref, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -33,6 +34,31 @@ import { ServerConfig } from "../../config.ts";
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
     Layer.provideMerge(OrchestrationEventStoreLive),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const makeCountingProjectionPipelineTestLayer = (
+  prefix: string,
+  events: ReadonlyArray<OrchestrationEvent>,
+  readCounter: Ref.Ref<number>,
+) =>
+  OrchestrationProjectionPipelineLive.pipe(
+    Layer.provideMerge(
+      Layer.succeed(OrchestrationEventStore, {
+        append: () => Effect.die("append is not supported in counting projection tests"),
+        readFromSequence: (sequenceExclusive: number) =>
+          Stream.unwrap(
+            Ref.update(readCounter, (count) => count + 1).pipe(
+              Effect.as(
+                Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive)),
+              ),
+            ),
+          ),
+        readAll: () => Stream.fromIterable(events),
+      }),
+    ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
@@ -167,6 +193,65 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         assert.equal(row.lastAppliedSequence, 3);
       }
     }),
+  );
+});
+
+it("bootstraps from a shared replay stream instead of scanning once per projector", async () => {
+  const readCounter = await Effect.runPromise(Ref.make(0));
+  const now = new Date().toISOString();
+  const testLayer = makeCountingProjectionPipelineTestLayer(
+    "t3-projection-pipeline-counting-bootstrap-",
+    [
+      {
+        sequence: 1,
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-counting-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.makeUnsafe("project-counting"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-counting-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-counting-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.makeUnsafe("project-counting"),
+          title: "Counting Project",
+          workspaceRoot: "/tmp/project-counting",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+    readCounter,
+  );
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* projectionPipeline.bootstrap;
+
+      const readCount = yield* Ref.get(readCounter);
+      assert.equal(readCount, 1);
+
+      const projectorRows = yield* sql<{
+        readonly projector: string;
+        readonly lastAppliedSequence: number;
+      }>`
+        SELECT
+          projector,
+          last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
+        ORDER BY projector ASC
+      `;
+      assert.equal(projectorRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      for (const row of projectorRows) {
+        assert.equal(row.lastAppliedSequence, 1);
+      }
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
