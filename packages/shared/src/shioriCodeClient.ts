@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 import {
   CommandId,
@@ -140,10 +141,27 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+export function resolveBundledBackendEntry(moduleUrl: string): string | null {
+  const entryPath = path.join(path.dirname(fileURLToPath(moduleUrl)), "backend", "bin.mjs");
+  return fs.existsSync(entryPath) ? entryPath : null;
+}
+
 function resolveBackendEntry(): string {
+  const bundledEntry = resolveBundledBackendEntry(import.meta.url);
+  if (bundledEntry) {
+    return bundledEntry;
+  }
+
   const require = createRequire(import.meta.url);
-  const packageJsonPath = require.resolve("shioricode/package.json");
-  return path.join(path.dirname(packageJsonPath), "dist", "bin.mjs");
+  try {
+    const packageJsonPath = require.resolve("shioricode/package.json");
+    return path.join(path.dirname(packageJsonPath), "dist", "bin.mjs");
+  } catch (error) {
+    throw new Error(
+      "Could not resolve the Shiori backend. Reinstall shiori-cli or install the shioricode package alongside it.",
+      { cause: error },
+    );
+  }
 }
 
 async function waitForBackend(baseDir: string, timeoutMs = 15_000): Promise<WsRpcClient | null> {

@@ -445,7 +445,7 @@ function MessagesTimelineView({
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
                   "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-                  "cursor-pointer hover:text-foreground focus-visible:text-foreground",
+                  "cursor-pointer hover:text-foreground/70 focus-visible:text-foreground",
                 )}
                 onClick={toggleCurrentGroup}
               >
@@ -2274,7 +2274,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
         className={cn(
           CHAT_THREAD_BODY_CLASS,
           "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-          "cursor-pointer hover:text-foreground focus-visible:text-foreground",
+          "cursor-pointer hover:text-foreground/70 focus-visible:text-foreground",
         )}
         onClick={() => {
           onToggleGroup();

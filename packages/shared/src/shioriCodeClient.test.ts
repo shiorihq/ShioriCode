@@ -1,11 +1,41 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectId, ThreadId } from "contracts";
 
-import { resolveCliBaseDir, resolveStartupThreadSelection } from "./shioriCodeClient";
+import {
+  resolveBundledBackendEntry,
+  resolveCliBaseDir,
+  resolveStartupThreadSelection,
+} from "./shioriCodeClient";
 
 describe("resolveCliBaseDir", () => {
   it("expands explicit home-relative paths", () => {
     expect(resolveCliBaseDir("~/demo")).toContain("/demo");
+  });
+});
+
+describe("resolveBundledBackendEntry", () => {
+  it("returns the colocated backend entry when present", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shioricode-client-"));
+    const entryPath = path.join(tempDir, "bin.mjs");
+    const bundledBackendEntry = path.join(tempDir, "backend", "bin.mjs");
+
+    fs.mkdirSync(path.dirname(bundledBackendEntry), { recursive: true });
+    fs.writeFileSync(entryPath, "");
+    fs.writeFileSync(bundledBackendEntry, "");
+
+    try {
+      expect(resolveBundledBackendEntry(pathToFileURL(entryPath).href)).toBe(bundledBackendEntry);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when no bundled backend is present", () => {
+    expect(resolveBundledBackendEntry(import.meta.url)).toBeNull();
   });
 });
 
