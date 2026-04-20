@@ -19,6 +19,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
+  TEXT_GENERATION_PROVIDER_KINDS,
 } from "contracts";
 import {
   Cache,
@@ -92,7 +93,7 @@ export class ServerSettingsService extends ServiceMap.Service<
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["shiori", "codex", "claudeAgent"];
+const PROVIDER_ORDER: readonly ProviderKind[] = ["shiori", "kimiCode", "codex", "claudeAgent"];
 const DEV_SHIORI_API_BASE_URL = "http://127.0.0.1:3000";
 
 function resolveShioriApiBaseUrl(settings: ServerSettings): ServerSettings {
@@ -126,12 +127,16 @@ function resolveModelSelectionProvider(
   settings: ServerSettings,
   selection: ModelSelection,
   getDefaultModel: (provider: ProviderKind) => string,
+  allowedProviders: readonly ProviderKind[] = PROVIDER_ORDER,
 ): ModelSelection {
-  if (settings.providers[selection.provider].enabled) {
+  if (
+    allowedProviders.includes(selection.provider) &&
+    settings.providers[selection.provider].enabled
+  ) {
     return selection;
   }
 
-  const fallback = PROVIDER_ORDER.find((p) => settings.providers[p].enabled);
+  const fallback = allowedProviders.find((provider) => settings.providers[provider].enabled);
   if (!fallback) {
     // No providers enabled — return as-is; callers will report the error.
     return selection;
@@ -157,6 +162,7 @@ function resolveEffectiveServerSettings(settings: ServerSettings): ServerSetting
       nextSettings,
       nextSettings.textGenerationModelSelection,
       (provider) => DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider],
+      TEXT_GENERATION_PROVIDER_KINDS,
     ),
   };
 }

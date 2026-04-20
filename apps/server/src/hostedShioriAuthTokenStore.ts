@@ -1,6 +1,8 @@
 import { Cause, Effect, FileSystem, Layer, Path, PubSub, Ref, ServiceMap, Stream } from "effect";
+import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "./config";
+import { writeFileStringAtomically } from "./persistence/writeFileStringAtomically";
 
 export interface HostedShioriAuthTokenStoreShape {
   readonly getToken: Effect.Effect<string | null>;
@@ -35,10 +37,11 @@ export const HostedShioriAuthTokenStoreLive = Layer.effect(
   HostedShioriAuthTokenStore,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
+    const pathService = yield* Path.Path;
     const { stateDir } = yield* ServerConfig;
     const tokenPath = getHostedShioriAuthTokenPath(stateDir);
     const changes = yield* PubSub.unbounded<string | null>();
+    const persistSemaphore = yield* Semaphore.make(1);
 
     const readPersistedToken = Effect.gen(function* () {
       const exists = yield* fs.exists(tokenPath).pipe(Effect.orElseSucceed(() => false));
@@ -59,49 +62,44 @@ export const HostedShioriAuthTokenStoreLive = Layer.effect(
 
     const tokenRef = yield* Ref.make<string | null>(yield* readPersistedToken);
 
-    const chmodIfPossible = (targetPath: string) =>
-      fs
-        .chmod(targetPath, HostedShioriAuthTokenFileMode)
-        .pipe(Effect.orElseSucceed(() => undefined));
-
     const persistToken = (token: string | null) =>
       Effect.gen(function* () {
-        yield* fs.makeDirectory(path.dirname(tokenPath), { recursive: true });
-
         if (token === null) {
           yield* fs.remove(tokenPath, { force: true });
           return;
         }
 
-        const tempPath = `${tokenPath}.${process.pid}.${Date.now()}.tmp`;
-        yield* fs.writeFileString(tempPath, token);
-        yield* chmodIfPossible(tempPath);
-        yield* fs.rename(tempPath, tokenPath);
-        yield* chmodIfPossible(tokenPath);
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
+        yield* writeFileStringAtomically(tokenPath, token, {
+          mode: HostedShioriAuthTokenFileMode,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, pathService),
+        );
       });
 
     return {
       getToken: Ref.get(tokenRef),
       setToken: (token) =>
-        Effect.gen(function* () {
-          const nextToken = normalizeToken(token);
-          const current = yield* Ref.get(tokenRef);
-          if (current === nextToken) {
-            return;
-          }
+        persistSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const nextToken = normalizeToken(token);
+            const current = yield* Ref.get(tokenRef);
+            if (current === nextToken) {
+              return;
+            }
 
-          const persistExit = yield* Effect.exit(persistToken(nextToken));
-          if (persistExit._tag === "Failure") {
-            yield* Effect.logWarning("failed to persist hosted shiori auth token", {
-              path: tokenPath,
-              cause: Cause.pretty(persistExit.cause),
-            });
-            return;
-          }
-          yield* Ref.set(tokenRef, nextToken);
-          yield* PubSub.publish(changes, nextToken);
-        }),
+            const persistExit = yield* Effect.exit(persistToken(nextToken));
+            if (persistExit._tag === "Failure") {
+              yield* Effect.logWarning("failed to persist hosted shiori auth token", {
+                path: tokenPath,
+                cause: Cause.pretty(persistExit.cause),
+              });
+              return;
+            }
+            yield* Ref.set(tokenRef, nextToken);
+            yield* PubSub.publish(changes, nextToken);
+          }),
+        ),
       streamChanges: Stream.fromPubSub(changes),
     } satisfies HostedShioriAuthTokenStoreShape;
   }),

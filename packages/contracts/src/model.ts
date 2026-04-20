@@ -25,6 +25,11 @@ export const ShioriModelOptions = Schema.Struct({
 });
 export type ShioriModelOptions = typeof ShioriModelOptions.Type;
 
+export const KimiCodeModelOptions = Schema.Struct({
+  thinking: Schema.optional(Schema.Boolean),
+});
+export type KimiCodeModelOptions = typeof KimiCodeModelOptions.Type;
+
 export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
   effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
@@ -35,6 +40,7 @@ export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 
 export const ProviderModelOptions = Schema.Struct({
   shiori: Schema.optional(ShioriModelOptions),
+  kimiCode: Schema.optional(KimiCodeModelOptions),
   codex: Schema.optional(CodexModelOptions),
   claudeAgent: Schema.optional(ClaudeModelOptions),
 });
@@ -65,6 +71,7 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   shiori: "openai/gpt-5.4",
+  kimiCode: "kimi-code/kimi-for-coding",
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
 };
@@ -74,9 +81,16 @@ export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 /** Per-provider text generation model defaults. */
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   shiori: "openai/gpt-5.4-mini",
+  kimiCode: "kimi-code/kimi-for-coding",
   codex: "gpt-5.4-mini",
   claudeAgent: "claude-haiku-4-5",
 };
+
+export const TEXT_GENERATION_PROVIDER_KINDS = [
+  "codex",
+  "claudeAgent",
+] as const satisfies readonly ProviderKind[];
+export type TextGenerationProviderKind = (typeof TEXT_GENERATION_PROVIDER_KINDS)[number];
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   shiori: {
@@ -94,6 +108,14 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "qwen-3.5-plus": "qwen/qwen3.5-plus-02-15",
     "qwen3.5-plus-thinking": "qwen/qwen3.5-plus-02-15",
     "qwen-3.5-plus-thinking": "qwen/qwen3.5-plus-02-15",
+  },
+  kimiCode: {
+    kimi: "kimi-code/kimi-for-coding",
+    "kimi-code": "kimi-code/kimi-for-coding",
+    "kimi-k2.6": "kimi-code/kimi-for-coding",
+    "kimi-for-coding": "kimi-code/kimi-for-coding",
+    "kimi-code/kimi-for-coding": "kimi-code/kimi-for-coding",
+    latest: "kimi-code/kimi-for-coding",
   },
   codex: {
     "5.4": "gpt-5.4",
@@ -124,6 +146,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   shiori: "Shiori",
+  kimiCode: "Kimi Code",
   codex: "Codex",
   claudeAgent: "Claude",
 };

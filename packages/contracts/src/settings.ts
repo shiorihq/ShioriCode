@@ -7,6 +7,7 @@ import {
   CodexModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  KimiCodeModelOptions,
   ShioriModelOptions,
 } from "./model";
 import { OnboardingProgress, OnboardingStepId } from "./onboarding";
@@ -233,6 +234,14 @@ export const ShioriSettings = Schema.Struct({
 });
 export type ShioriSettings = typeof ShioriSettings.Type;
 
+export const KimiCodeSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("kimi"),
+  shareDir: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type KimiCodeSettings = typeof KimiCodeSettings.Type;
+
 export const ClaudeSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   binaryPath: makeBinaryPathSetting("claude"),
@@ -374,6 +383,7 @@ export const ServerSettings = Schema.Struct({
   // Provider specific settings
   providers: Schema.Struct({
     shiori: ShioriSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    kimiCode: KimiCodeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   }).pipe(Schema.withDecodingDefault(() => ({}))),
@@ -410,6 +420,10 @@ const CodexModelOptionsPatch = Schema.Struct({
   fastMode: Schema.optionalKey(CodexModelOptions.fields.fastMode),
 });
 
+const KimiCodeModelOptionsPatch = Schema.Struct({
+  thinking: Schema.optionalKey(KimiCodeModelOptions.fields.thinking),
+});
+
 const ClaudeModelOptionsPatch = Schema.Struct({
   thinking: Schema.optionalKey(ClaudeModelOptions.fields.thinking),
   effort: Schema.optionalKey(ClaudeModelOptions.fields.effort),
@@ -422,6 +436,11 @@ const ModelSelectionPatch = Schema.Union([
     provider: Schema.optionalKey(Schema.Literal("shiori")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(ShioriModelOptions),
+  }),
+  Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("kimiCode")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(KimiCodeModelOptionsPatch),
   }),
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("codex")),
@@ -438,6 +457,13 @@ const ModelSelectionPatch = Schema.Union([
 const ShioriSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   apiBaseUrl: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const KimiCodeSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(Schema.String),
+  shareDir: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
@@ -476,6 +502,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
       shiori: Schema.optionalKey(ShioriSettingsPatch),
+      kimiCode: Schema.optionalKey(KimiCodeSettingsPatch),
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
     }),

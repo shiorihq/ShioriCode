@@ -17,7 +17,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { ClaudeAI, CursorIcon, Icon, OpenAI, ShioriIcon } from "../Icons";
+import { ClaudeAI, CursorIcon, Icon, KimiIcon, OpenAI, ShioriIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import {
   getProviderPickerState,
@@ -36,6 +36,7 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   shiori: ShioriIcon,
+  kimiCode: KimiIcon,
   codex: OpenAI,
   claudeAgent: ClaudeAI,
   cursor: CursorIcon,
@@ -49,6 +50,16 @@ const FastModeBoltIcon: Icon = (props) => (
 
 export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 
+function displayModelOptionLabel(
+  provider: ProviderKind,
+  option: { slug: string; name: string },
+): string {
+  if (provider === "kimiCode" && option.slug === "kimi-code/kimi-for-coding") {
+    return "Kimi K2.6";
+  }
+  return option.name;
+}
+
 function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
   fallbackClassName: string,
@@ -57,7 +68,7 @@ function providerIconClassName(
 }
 
 function shouldShowLockedProviderModelSearch(provider: ProviderKind): boolean {
-  return provider === "shiori";
+  return provider === "shiori" || provider === "kimiCode";
 }
 
 function LockedProviderModelList(props: {
@@ -108,7 +119,7 @@ function LockedProviderModelList(props: {
               value={modelOption.slug}
               onClick={props.onClose}
             >
-              {modelOption.name}
+              {displayModelOptionLabel(props.lockedProvider, modelOption)}
             </MenuRadioItem>
           ))}
           {filteredModels.length === 0 && (
@@ -141,8 +152,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
-  const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+  const selectedModelLabel = (() => {
+    const selectedOption = selectedProviderOptions.find((option) => option.slug === props.model);
+    return selectedOption ? displayModelOptionLabel(activeProvider, selectedOption) : props.model;
+  })();
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const fastModeActive = useMemo(() => {
     if (!props.providers || !props.modelOptions || !("fastMode" in props.modelOptions)) {
@@ -310,7 +323,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                             value={modelOption.slug}
                             onClick={() => setIsMenuOpen(false)}
                           >
-                            {modelOption.name}
+                            {displayModelOptionLabel(option.value, modelOption)}
                           </MenuRadioItem>
                         ))}
                       </MenuRadioGroup>

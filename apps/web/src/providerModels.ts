@@ -16,6 +16,17 @@ const EMPTY_CAPABILITIES: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
+function fallbackModelDisplayName(
+  provider: ProviderKind,
+  model: string | null | undefined,
+): string | null {
+  const slug = normalizeModelSlug(model, provider);
+  if (provider === "kimiCode" && slug === "kimi-code/kimi-for-coding") {
+    return "Kimi K2.6";
+  }
+  return slug;
+}
+
 function findProviderModel(
   models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
@@ -151,7 +162,7 @@ export function getProviderModelDisplayName(
 ): string {
   return (
     findProviderModel(models, model, provider)?.name ??
-    normalizeModelSlug(model, provider) ??
+    fallbackModelDisplayName(provider, model) ??
     model ??
     DEFAULT_MODEL_BY_PROVIDER[provider]
   );

@@ -1775,6 +1775,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const modelOptionsByProvider = useMemo(
     () => ({
       shiori: providerStatuses.find((provider) => provider.provider === "shiori")?.models ?? [],
+      kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
       codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
       claudeAgent:
         providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],

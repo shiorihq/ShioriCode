@@ -3,6 +3,7 @@ import {
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
   DEFAULT_MODEL_BY_PROVIDER,
+  type KimiCodeModelOptions,
   type ShioriReasoningEffort,
   ModelSelection,
   ProjectId,
@@ -410,7 +411,9 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "shiori" || value === "codex" || value === "claudeAgent" ? value : null;
+  return value === "shiori" || value === "kimiCode" || value === "codex" || value === "claudeAgent"
+    ? value
+    : null;
 }
 
 function normalizeProviderModelOptions(
@@ -430,6 +433,10 @@ function normalizeProviderModelOptions(
   const shioriCandidate =
     candidate?.shiori && typeof candidate.shiori === "object"
       ? (candidate.shiori as Record<string, unknown>)
+      : null;
+  const kimiCodeCandidate =
+    candidate?.kimiCode && typeof candidate.kimiCode === "object"
+      ? (candidate.kimiCode as Record<string, unknown>)
       : null;
 
   const codexReasoningEffort: CodexReasoningEffort | undefined =
@@ -521,11 +528,21 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  if (!shiori && !codex && !claude) {
+  const kimiCodeThinking =
+    kimiCodeCandidate?.thinking === true
+      ? true
+      : kimiCodeCandidate?.thinking === false
+        ? false
+        : undefined;
+  const kimiCode: KimiCodeModelOptions | undefined =
+    kimiCodeThinking !== undefined ? { thinking: kimiCodeThinking } : undefined;
+
+  if (!shiori && !kimiCode && !codex && !claude) {
     return null;
   }
   return {
     ...(shiori ? { shiori } : {}),
+    ...(kimiCode ? { kimiCode } : {}),
     ...(codex ? { codex } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
   };
@@ -563,7 +580,9 @@ function normalizeModelSelection(
       ? modelOptions?.codex
       : provider === "claudeAgent"
         ? modelOptions?.claudeAgent
-        : modelOptions?.shiori;
+        : provider === "kimiCode"
+          ? modelOptions?.kimiCode
+          : modelOptions?.shiori;
   return buildProviderModelSelection(provider, model, options);
 }
 
@@ -621,7 +640,7 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["shiori", "codex", "claudeAgent"] as const) {
+    for (const provider of ["shiori", "kimiCode", "codex", "claudeAgent"] as const) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
         result[provider] = buildProviderModelSelection(
@@ -1702,7 +1721,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const base = existing ?? createEmptyThreadDraft();
           const nextMap = { ...base.modelSelectionByProvider };
-          for (const provider of ["shiori", "codex", "claudeAgent"] as const) {
+          for (const provider of ["shiori", "kimiCode", "codex", "claudeAgent"] as const) {
             // Only touch providers explicitly present in the input
             if (!normalizedOpts || !(provider in normalizedOpts)) continue;
             const opts = normalizedOpts[provider];

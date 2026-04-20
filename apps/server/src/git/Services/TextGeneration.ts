@@ -8,12 +8,12 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
-import type { ChatAttachment, ModelSelection } from "contracts";
+import type { ChatAttachment, ModelSelection, TextGenerationProviderKind } from "contracts";
 
 import type { TextGenerationError } from "contracts";
 
 /** Providers that support git text generation (commit messages, PR content, branch names). */
-export type TextGenerationProvider = "shiori" | "codex" | "claudeAgent";
+export type TextGenerationProvider = TextGenerationProviderKind;
 
 export interface CommitMessageGenerationInput {
   cwd: string;

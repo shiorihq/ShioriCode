@@ -6,6 +6,7 @@ import { Effect, Layer, Stream } from "effect";
 
 import { ClaudeAdapter, ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { KimiCodeAdapter, KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
 import { ShioriAdapter, ShioriAdapterShape } from "../Services/ShioriAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
@@ -55,6 +56,27 @@ const fakeCodexAdapter: CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeKimiCodeAdapter: KimiCodeAdapterShape = {
+  provider: "kimiCode",
+  capabilities: {
+    sessionModelSwitch: "restart-session",
+    recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
+    observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
+  },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const fakeClaudeAdapter: ClaudeAdapterShape = {
   provider: "claudeAgent",
   capabilities: {
@@ -83,6 +105,7 @@ const layer = it.layer(
       ProviderAdapterRegistryLive,
       Layer.mergeAll(
         Layer.succeed(ShioriAdapter, fakeShioriAdapter),
+        Layer.succeed(KimiCodeAdapter, fakeKimiCodeAdapter),
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
       ),
@@ -96,14 +119,16 @@ layer("ProviderAdapterRegistryLive", (it) => {
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
       const shiori = yield* registry.getByProvider("shiori");
+      const kimiCode = yield* registry.getByProvider("kimiCode");
       const codex = yield* registry.getByProvider("codex");
       const claude = yield* registry.getByProvider("claudeAgent");
       assert.equal(shiori, fakeShioriAdapter);
+      assert.equal(kimiCode, fakeKimiCodeAdapter);
       assert.equal(codex, fakeCodexAdapter);
       assert.equal(claude, fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["shiori", "codex", "claudeAgent"]);
+      assert.deepEqual(providers, ["shiori", "kimiCode", "codex", "claudeAgent"]);
     }),
   );
 

@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type KimiCodeModelOptions,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
@@ -113,6 +114,16 @@ export function normalizeShioriModelOptionsWithCapabilities(
       ? { reasoningEffort: reasoningEffort as ShioriModelOptions["reasoningEffort"] }
       : {}),
   };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeKimiCodeModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: KimiCodeModelOptions | null | undefined,
+): KimiCodeModelOptions | undefined {
+  const thinking = caps.supportsThinkingToggle ? (modelOptions?.thinking ?? false) : undefined;
+  const nextOptions =
+    thinking !== undefined ? ({ thinking } as KimiCodeModelOptions) : ({} as KimiCodeModelOptions);
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
@@ -233,6 +244,7 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
           return modelSelection.model;
       }
     }
+    case "kimiCode":
     case "shiori":
     default: {
       return modelSelection.model;

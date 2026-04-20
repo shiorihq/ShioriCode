@@ -2,6 +2,7 @@ import {
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
+  type KimiCodeModelOptions,
   type ShioriModelOptions,
   type ThreadId,
   type ClaudeModelOptions,
@@ -14,6 +15,7 @@ import { EffortPicker, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
 
@@ -84,9 +86,17 @@ function getProviderStateFromCapabilities(
   const normalizedOptions =
     provider === "shiori"
       ? normalizeShioriModelOptionsWithCapabilities(caps, providerOptions as ShioriModelOptions)
-      : provider === "codex"
-        ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions)
-        : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions as ClaudeModelOptions);
+      : provider === "kimiCode"
+        ? normalizeKimiCodeModelOptionsWithCapabilities(
+            caps,
+            providerOptions as KimiCodeModelOptions,
+          )
+        : provider === "codex"
+          ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions)
+          : normalizeClaudeModelOptionsWithCapabilities(
+              caps,
+              providerOptions as ClaudeModelOptions,
+            );
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -155,6 +165,49 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
       hasAuxiliaryTraitControls(models, model, "shiori") ? (
         <TraitsPicker
           provider="shiori"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode={false}
+        />
+      ) : null,
+  },
+  kimiCode: {
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasAuxiliaryTraitControls(models, model, "kimiCode") ? (
+        <TraitsMenuContent
+          provider="kimiCode"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode={false}
+        />
+      ) : null,
+    renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasEffortControls(models, model, "kimiCode") ? (
+        <EffortPicker
+          provider="kimiCode"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+        />
+      ) : null,
+    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasAuxiliaryTraitControls(models, model, "kimiCode") ? (
+        <TraitsPicker
+          provider="kimiCode"
           models={models}
           threadId={threadId}
           model={model}

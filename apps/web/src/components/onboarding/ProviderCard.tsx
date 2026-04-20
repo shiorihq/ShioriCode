@@ -20,11 +20,13 @@ const STATUS_DOT_STYLES: Record<ServerProvider["status"], string> = {
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderKind, string> = {
   shiori: "Shiori hosted API",
+  kimiCode: "Kimi Code CLI",
   codex: "OpenAI Codex CLI",
   claudeAgent: "Anthropic Claude Code CLI",
 };
 
 const PROVIDER_INSTALL_INSTRUCTIONS: Partial<Record<ProviderKind, readonly string[]>> = {
+  kimiCode: ["curl -LsSf https://code.kimi.com/install.sh | bash", "kimi login"],
   codex: ["npm install -g @openai/codex", "codex login"],
   claudeAgent: ["npm install -g @anthropic-ai/claude-code", "claude auth login"],
 };

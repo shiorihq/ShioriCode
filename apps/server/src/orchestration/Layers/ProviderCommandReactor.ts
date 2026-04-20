@@ -7,6 +7,7 @@ import {
   type OrchestrationThreadResumeState,
   PROVIDER_DISPLAY_NAMES,
   ProviderKind,
+  TEXT_GENERATION_PROVIDER_KINDS,
   type OrchestrationSession,
   type ServerProvider,
   ThreadId,
@@ -92,7 +93,9 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "shioricode";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 const DEFAULT_THREAD_TITLE = "New Thread";
-const THREAD_METADATA_TEXT_GENERATION_PROVIDERS = new Set<ProviderKind>(["codex", "claudeAgent"]);
+const THREAD_METADATA_TEXT_GENERATION_PROVIDERS = new Set<ProviderKind>(
+  TEXT_GENERATION_PROVIDER_KINDS,
+);
 
 function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
   const trimmedCurrentTitle = currentTitle.trim();

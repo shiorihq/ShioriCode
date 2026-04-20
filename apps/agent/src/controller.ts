@@ -35,6 +35,7 @@ import {
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
 import type { WsRpcClient } from "shared/wsRpc";
@@ -147,6 +148,16 @@ function normalizeSelectionWithCapabilities(
     case "shiori": {
       const options = selection.options
         ? normalizeShioriModelOptionsWithCapabilities(caps, selection.options)
+        : undefined;
+      return {
+        provider: selection.provider,
+        model: selection.model,
+        ...(options ? { options } : {}),
+      };
+    }
+    case "kimiCode": {
+      const options = selection.options
+        ? normalizeKimiCodeModelOptionsWithCapabilities(caps, selection.options)
         : undefined;
       return {
         provider: selection.provider,

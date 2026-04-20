@@ -24,6 +24,7 @@ const RuntimeEventRawSource = Schema.Literals([
   "claude.sdk.message",
   "claude.sdk.permission",
   "codex.sdk.thread-event",
+  "kimi.sdk.wire",
   "shiori.hosted",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;

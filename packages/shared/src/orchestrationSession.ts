@@ -35,6 +35,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "shiori", label: "Shiori", available: true },
+  { value: "kimiCode", label: "Kimi", available: true },
   { value: "codex", label: "Codex", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
   { value: "cursor", label: "Cursor", available: false },

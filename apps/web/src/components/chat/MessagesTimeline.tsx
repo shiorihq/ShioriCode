@@ -1042,83 +1042,120 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const USER_MESSAGE_COLLAPSED_LINE_THRESHOLD = 10;
+
+function countTextLines(text: string): number {
+  return Math.max(1, text.split(/\r?\n/g).length);
+}
+
+function truncateToLines(text: string, maxLines: number): string {
+  const lines = text.split(/\r?\n/g);
+  if (lines.length <= maxLines) return text;
+  return lines.slice(0, maxLines).join("\n");
+}
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
 }) {
-  if (props.terminalContexts.length > 0) {
-    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
-      props.text,
-      props.terminalContexts,
-    );
-    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
-    const inlineNodes: ReactNode[] = [];
+  const [isExpanded, setIsExpanded] = useState(false);
+  const lineCount = countTextLines(props.text);
+  const shouldCollapse = lineCount > USER_MESSAGE_COLLAPSED_LINE_THRESHOLD;
+  const displayText =
+    shouldCollapse && !isExpanded
+      ? truncateToLines(props.text, USER_MESSAGE_COLLAPSED_LINE_THRESHOLD)
+      : props.text;
 
-    if (hasEmbeddedInlineLabels) {
-      let cursor = 0;
+  const renderBody = (text: string) => {
+    if (props.terminalContexts.length > 0) {
+      const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
+        text,
+        props.terminalContexts,
+      );
+      const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+      const inlineNodes: ReactNode[] = [];
 
-      for (const context of props.terminalContexts) {
-        const label = formatInlineTerminalContextLabel(context.header);
-        const matchIndex = props.text.indexOf(label, cursor);
-        if (matchIndex === -1) {
-          inlineNodes.length = 0;
-          break;
-        }
-        if (matchIndex > cursor) {
+      if (hasEmbeddedInlineLabels) {
+        let cursor = 0;
+
+        for (const context of props.terminalContexts) {
+          const label = formatInlineTerminalContextLabel(context.header);
+          const matchIndex = text.indexOf(label, cursor);
+          if (matchIndex === -1) {
+            inlineNodes.length = 0;
+            break;
+          }
+          if (matchIndex > cursor) {
+            inlineNodes.push(
+              <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
+                {text.slice(cursor, matchIndex)}
+              </span>,
+            );
+          }
           inlineNodes.push(
-            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {props.text.slice(cursor, matchIndex)}
-            </span>,
+            <UserMessageTerminalContextInlineLabel
+              key={`user-terminal-context-inline:${context.header}`}
+              context={context}
+            />,
+          );
+          cursor = matchIndex + label.length;
+        }
+
+        if (inlineNodes.length > 0) {
+          if (cursor < text.length) {
+            inlineNodes.push(
+              <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
+                {text.slice(cursor)}
+              </span>,
+            );
+          }
+
+          return (
+            <div
+              className={cn(
+                CHAT_THREAD_BODY_CLASS,
+                "wrap-break-word whitespace-pre-wrap text-foreground",
+              )}
+            >
+              {inlineNodes}
+            </div>
           );
         }
+      }
+
+      for (const context of props.terminalContexts) {
         inlineNodes.push(
           <UserMessageTerminalContextInlineLabel
             key={`user-terminal-context-inline:${context.header}`}
             context={context}
           />,
         );
-        cursor = matchIndex + label.length;
-      }
-
-      if (inlineNodes.length > 0) {
-        if (cursor < props.text.length) {
-          inlineNodes.push(
-            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              {props.text.slice(cursor)}
-            </span>,
-          );
-        }
-
-        return (
-          <div
-            className={cn(
-              CHAT_THREAD_BODY_CLASS,
-              "wrap-break-word whitespace-pre-wrap text-foreground",
-            )}
-          >
-            {inlineNodes}
-          </div>
+        inlineNodes.push(
+          <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
+            {" "}
+          </span>,
         );
       }
+
+      if (text.length > 0) {
+        inlineNodes.push(<span key="user-message-terminal-context-inline-text">{text}</span>);
+      } else if (inlinePrefix.length === 0) {
+        return null;
+      }
+
+      return (
+        <div
+          className={cn(
+            CHAT_THREAD_BODY_CLASS,
+            "wrap-break-word whitespace-pre-wrap text-foreground",
+          )}
+        >
+          {inlineNodes}
+        </div>
+      );
     }
 
-    for (const context of props.terminalContexts) {
-      inlineNodes.push(
-        <UserMessageTerminalContextInlineLabel
-          key={`user-terminal-context-inline:${context.header}`}
-          context={context}
-        />,
-      );
-      inlineNodes.push(
-        <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
-          {" "}
-        </span>,
-      );
-    }
-
-    if (props.text.length > 0) {
-      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
-    } else if (inlinePrefix.length === 0) {
+    if (text.length === 0) {
       return null;
     }
 
@@ -1126,24 +1163,27 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       <div
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "wrap-break-word whitespace-pre-wrap text-foreground",
+          "whitespace-pre-wrap wrap-break-word text-foreground",
         )}
       >
-        {inlineNodes}
+        {text}
       </div>
     );
-  }
-
-  if (props.text.length === 0) {
-    return null;
-  }
+  };
 
   return (
-    <div
-      className={cn(CHAT_THREAD_BODY_CLASS, "whitespace-pre-wrap wrap-break-word text-foreground")}
-    >
-      {props.text}
-    </div>
+    <>
+      {renderBody(displayText)}
+      {shouldCollapse && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="mt-1 text-xs font-medium text-muted-foreground/80 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+        >
+          {isExpanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </>
   );
 });
 

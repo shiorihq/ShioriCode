@@ -1,5 +1,10 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
-import { ClaudeModelOptions, CodexModelOptions, ShioriModelOptions } from "./model";
+import {
+  ClaudeModelOptions,
+  CodexModelOptions,
+  KimiCodeModelOptions,
+  ShioriModelOptions,
+} from "./model";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -24,7 +29,7 @@ export const ORCHESTRATION_WS_METHODS = {
   replayEvents: "orchestration.replayEvents",
 } as const;
 
-export const ProviderKind = Schema.Literals(["shiori", "codex", "claudeAgent"]);
+export const ProviderKind = Schema.Literals(["shiori", "kimiCode", "codex", "claudeAgent"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -49,6 +54,13 @@ export const ShioriModelSelection = Schema.Struct({
 });
 export type ShioriModelSelection = typeof ShioriModelSelection.Type;
 
+export const KimiCodeModelSelection = Schema.Struct({
+  provider: Schema.Literal("kimiCode"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(KimiCodeModelOptions),
+});
+export type KimiCodeModelSelection = typeof KimiCodeModelSelection.Type;
+
 export const CodexModelSelection = Schema.Struct({
   provider: Schema.Literal("codex"),
   model: TrimmedNonEmptyString,
@@ -65,6 +77,7 @@ export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
 export const ModelSelection = Schema.Union([
   ShioriModelSelection,
+  KimiCodeModelSelection,
   CodexModelSelection,
   ClaudeModelSelection,
 ]);

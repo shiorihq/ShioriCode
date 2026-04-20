@@ -8,23 +8,35 @@ import { Effect, Equal, Layer, PubSub, Ref, Stream } from "effect";
 
 import { ClaudeProviderLive } from "./ClaudeProvider";
 import { CodexProviderLive } from "./CodexProvider";
+import { KimiCodeProviderLive } from "./KimiCodeProvider";
 import { ShioriProviderLive } from "./ShioriProvider";
 import type { ClaudeProviderShape } from "../Services/ClaudeProvider";
 import { ClaudeProvider } from "../Services/ClaudeProvider";
 import type { CodexProviderShape } from "../Services/CodexProvider";
 import { CodexProvider } from "../Services/CodexProvider";
+import type { KimiCodeProviderShape } from "../Services/KimiCodeProvider";
+import { KimiCodeProvider } from "../Services/KimiCodeProvider";
 import type { ShioriProviderShape } from "../Services/ShioriProvider";
 import { ShioriProvider } from "../Services/ShioriProvider";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
 
 const loadProviders = (
   shioriProvider: ShioriProviderShape,
+  kimiCodeProvider: KimiCodeProviderShape,
   codexProvider: CodexProviderShape,
   claudeProvider: ClaudeProviderShape,
-): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider]> =>
-  Effect.all([shioriProvider.getSnapshot, codexProvider.getSnapshot, claudeProvider.getSnapshot], {
-    concurrency: "unbounded",
-  });
+): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider, ServerProvider]> =>
+  Effect.all(
+    [
+      shioriProvider.getSnapshot,
+      kimiCodeProvider.getSnapshot,
+      codexProvider.getSnapshot,
+      claudeProvider.getSnapshot,
+    ],
+    {
+      concurrency: "unbounded",
+    },
+  );
 
 export const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
@@ -35,6 +47,7 @@ export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,
   Effect.gen(function* () {
     const shioriProvider = yield* ShioriProvider;
+    const kimiCodeProvider = yield* KimiCodeProvider;
     const codexProvider = yield* CodexProvider;
     const claudeProvider = yield* ClaudeProvider;
     const changesPubSub = yield* Effect.acquireRelease(
@@ -42,14 +55,19 @@ export const ProviderRegistryLive = Layer.effect(
       PubSub.shutdown,
     );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      yield* loadProviders(shioriProvider, codexProvider, claudeProvider),
+      yield* loadProviders(shioriProvider, kimiCodeProvider, codexProvider, claudeProvider),
     );
 
     const syncProviders = Effect.fn("syncProviders")(function* (options?: {
       readonly publish?: boolean;
     }) {
       const previousProviders = yield* Ref.get(providersRef);
-      const providers = yield* loadProviders(shioriProvider, codexProvider, claudeProvider);
+      const providers = yield* loadProviders(
+        shioriProvider,
+        kimiCodeProvider,
+        codexProvider,
+        claudeProvider,
+      );
       yield* Ref.set(providersRef, providers);
 
       if (options?.publish !== false && haveProvidersChanged(previousProviders, providers)) {
@@ -60,6 +78,9 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     yield* Stream.runForEach(shioriProvider.streamChanges, () => syncProviders()).pipe(
+      Effect.forkScoped,
+    );
+    yield* Stream.runForEach(kimiCodeProvider.streamChanges, () => syncProviders()).pipe(
       Effect.forkScoped,
     );
     yield* Stream.runForEach(codexProvider.streamChanges, () => syncProviders()).pipe(
@@ -74,6 +95,9 @@ export const ProviderRegistryLive = Layer.effect(
         case "shiori":
           yield* shioriProvider.refresh;
           break;
+        case "kimiCode":
+          yield* kimiCodeProvider.refresh;
+          break;
         case "codex":
           yield* codexProvider.refresh;
           break;
@@ -82,7 +106,12 @@ export const ProviderRegistryLive = Layer.effect(
           break;
         default:
           yield* Effect.all(
-            [shioriProvider.refresh, codexProvider.refresh, claudeProvider.refresh],
+            [
+              shioriProvider.refresh,
+              kimiCodeProvider.refresh,
+              codexProvider.refresh,
+              claudeProvider.refresh,
+            ],
             {
               concurrency: "unbounded",
             },
@@ -109,6 +138,7 @@ export const ProviderRegistryLive = Layer.effect(
   }),
 ).pipe(
   Layer.provideMerge(ShioriProviderLive),
+  Layer.provideMerge(KimiCodeProviderLive),
   Layer.provideMerge(CodexProviderLive),
   Layer.provideMerge(ClaudeProviderLive),
 );

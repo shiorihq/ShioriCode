@@ -93,6 +93,7 @@ function createBaseServerConfig(): ServerConfig {
       mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },
+        kimiCode: { enabled: true, binaryPath: "kimi", shareDir: "", customModels: [] },
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
       },

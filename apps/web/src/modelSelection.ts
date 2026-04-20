@@ -24,6 +24,7 @@ export type ProviderCustomModelConfig = {
   description: string;
   placeholder: string;
   example: string;
+  supportsCustomModels?: boolean;
 };
 
 export interface AppModelOption {
@@ -39,6 +40,14 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Shiori model slugs for the picker and `/model` command.",
     placeholder: "your-shiori-model-slug",
     example: "anthropic/claude-sonnet-4-5",
+  },
+  kimiCode: {
+    provider: "kimiCode",
+    title: "Kimi Code",
+    description: "Kimi Code is currently pinned to a single built-in model.",
+    placeholder: "kimi-code/kimi-for-coding",
+    example: "kimi-code/kimi-for-coding",
+    supportsCustomModels: false,
   },
   codex: {
     provider: "codex",
@@ -56,7 +65,9 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
   },
 };
 
-export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
+export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG).filter(
+  (providerConfig) => providerConfig.supportsCustomModels !== false,
+);
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
@@ -108,34 +119,36 @@ export function getAppModelOptions(
       .map((model) => model.slug),
   );
 
-  const customModels = settings.providers[provider].customModels;
-  for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs, provider)) {
-    if (seen.has(slug)) {
-      continue;
+  if (provider !== "kimiCode") {
+    const customModels = settings.providers[provider].customModels;
+    for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs, provider)) {
+      if (seen.has(slug)) {
+        continue;
+      }
+
+      seen.add(slug);
+      options.push({
+        slug,
+        name: slug,
+        isCustom: true,
+      });
     }
 
-    seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
-  }
-
-  const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
-  const selectedModelMatchesExistingName =
-    typeof trimmedSelectedModel === "string" &&
-    options.some((option) => option.name.toLowerCase() === trimmedSelectedModel);
-  if (
-    normalizedSelectedModel &&
-    !seen.has(normalizedSelectedModel) &&
-    !selectedModelMatchesExistingName
-  ) {
-    options.push({
-      slug: normalizedSelectedModel,
-      name: normalizedSelectedModel,
-      isCustom: true,
-    });
+    const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
+    const selectedModelMatchesExistingName =
+      typeof trimmedSelectedModel === "string" &&
+      options.some((option) => option.name.toLowerCase() === trimmedSelectedModel);
+    if (
+      normalizedSelectedModel &&
+      !seen.has(normalizedSelectedModel) &&
+      !selectedModelMatchesExistingName
+    ) {
+      options.push({
+        slug: normalizedSelectedModel,
+        name: normalizedSelectedModel,
+        isCustom: true,
+      });
+    }
   }
 
   return options;
@@ -165,6 +178,10 @@ export function buildProviderModelSelection(
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["shiori"]> }
         : { provider, model };
+    case "kimiCode":
+      return options !== undefined
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["kimiCode"]> }
+        : { provider, model };
     case "codex":
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["codex"]> }
@@ -192,6 +209,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "shiori",
       selectedProvider === "shiori" ? selectedModel : undefined,
+    ),
+    kimiCode: getAppModelOptions(
+      settings,
+      providers,
+      "kimiCode",
+      selectedProvider === "kimiCode" ? selectedModel : undefined,
     ),
     codex: getAppModelOptions(
       settings,

@@ -758,6 +758,13 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.shiori.apiBaseUrl ||
       settings.providers.shiori.customModels.length > 0,
     ),
+    kimiCode: Boolean(
+      settings.providers.kimiCode.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.kimiCode.binaryPath ||
+      settings.providers.kimiCode.shareDir !==
+        DEFAULT_UNIFIED_SETTINGS.providers.kimiCode.shareDir ||
+      settings.providers.kimiCode.customModels.length > 0,
+    ),
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||

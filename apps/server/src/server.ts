@@ -15,6 +15,7 @@ import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { ShioriAdapterLive } from "./provider/Layers/ShioriAdapter";
+import { KimiCodeAdapterLive } from "./provider/Layers/KimiCodeAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
@@ -142,6 +143,7 @@ const ProviderLayerLive = Layer.unwrap(
       Layer.provide(ProviderSessionRuntimeRepositoryLive),
     );
     const shioriAdapterLayer = ShioriAdapterLive.pipe(Layer.provide(providerSessionDirectoryLayer));
+    const kimiCodeAdapterLayer = KimiCodeAdapterLive;
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
@@ -150,6 +152,7 @@ const ProviderLayerLive = Layer.unwrap(
     );
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(shioriAdapterLayer),
+      Layer.provide(kimiCodeAdapterLayer),
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
