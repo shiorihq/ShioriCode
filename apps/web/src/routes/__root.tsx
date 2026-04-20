@@ -317,9 +317,13 @@ function OnboardingGate({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
 
-    void ensureNativeApi()
-      .onboarding.getState()
+    void api.onboarding
+      .getState()
       .then((state) => {
         if (cancelled) {
           return;

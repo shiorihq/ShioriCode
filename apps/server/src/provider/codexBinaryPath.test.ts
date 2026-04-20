@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 describe("codexBinaryPath", () => {
   it("prefers the Codex app bundled binary when the default PATH binary is older", async () => {
     vi.resetModules();
+    const originalPlatform = process.platform;
     const accessSync = vi.fn((path: string) => {
       if (path !== "/Applications/Codex.app/Contents/Resources/codex") {
         throw new Error("missing");
@@ -26,15 +27,27 @@ describe("codexBinaryPath", () => {
     }));
     vi.doMock("node:child_process", () => ({ spawnSync }));
 
-    const { resolvePreferredCodexBinaryPath, supportsCodexReasoningSummary } =
-      await import("./codexBinaryPath");
+    Object.defineProperty(process, "platform", {
+      value: "darwin",
+      configurable: true,
+    });
 
-    expect(resolvePreferredCodexBinaryPath("codex")).toBe(
-      "/Applications/Codex.app/Contents/Resources/codex",
-    );
-    expect(supportsCodexReasoningSummary("/Applications/Codex.app/Contents/Resources/codex")).toBe(
-      true,
-    );
+    try {
+      const { resolvePreferredCodexBinaryPath, supportsCodexReasoningSummary } =
+        await import("./codexBinaryPath");
+
+      expect(resolvePreferredCodexBinaryPath("codex")).toBe(
+        "/Applications/Codex.app/Contents/Resources/codex",
+      );
+      expect(
+        supportsCodexReasoningSummary("/Applications/Codex.app/Contents/Resources/codex"),
+      ).toBe(true);
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("keeps an explicit custom binary path", async () => {

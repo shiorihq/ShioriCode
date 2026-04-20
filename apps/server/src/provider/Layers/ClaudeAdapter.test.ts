@@ -599,6 +599,7 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness({
       serverSettings: {
         assistantPersonality: "pragmatic",
+        generateMemories: false,
       },
     });
     return Effect.gen(function* () {

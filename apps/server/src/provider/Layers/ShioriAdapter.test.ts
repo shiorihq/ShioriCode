@@ -3882,6 +3882,7 @@ describe("hosted tools", () => {
       platform: "darwin",
       arch: "arm64",
       timeZone: "Europe/Zurich",
+      generateMemories: false,
     });
 
     assert.equal(rules.length, 2);

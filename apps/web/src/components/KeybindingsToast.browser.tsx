@@ -20,7 +20,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
-import { __resetNativeApiForTests } from "../nativeApi";
+import { __resetNativeApiForTests, setNativeApiWebConnectGate } from "../nativeApi";
+import { resetServerStateForTests } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
@@ -213,6 +214,25 @@ function resolveWsRpc(tag: string): unknown {
   if (tag === WS_METHODS.projectsSearchEntries) {
     return { entries: [], truncated: false };
   }
+  if (tag === WS_METHODS.shellOpenInEditor) {
+    return null;
+  }
+  if (tag === WS_METHODS.terminalOpen) {
+    return {
+      threadId: THREAD_ID,
+      terminalId: "default",
+      cwd: "/repo/project",
+      status: "running",
+      pid: 123,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: NOW_ISO,
+    };
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return { sequence: fixture.snapshot.snapshotSequence + 1 };
+  }
   return {};
 }
 
@@ -349,6 +369,8 @@ describe("Keybindings update toast", () => {
       },
     });
     __resetNativeApiForTests();
+    setNativeApiWebConnectGate(true);
+    resetServerStateForTests();
     localStorage.clear();
     document.body.innerHTML = "";
     useComposerDraftStore.setState({

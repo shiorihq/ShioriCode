@@ -502,11 +502,17 @@ it.effect(
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(AnalyticsService.layerTest),
       );
+      const providerAndRuntimeLayer = Layer.mergeAll(providerLayer, runtimeRepositoryLayer);
 
-      const reconciled = yield* Effect.gen(function* () {
+      const { reconciled, runtime } = yield* Effect.gen(function* () {
         const provider = yield* ProviderService;
-        return yield* provider.reconcileSessions();
-      }).pipe(Effect.provide(providerLayer));
+        const repository = yield* ProviderSessionRuntimeRepository;
+        const reconciled = yield* provider.reconcileSessions();
+        const runtime = yield* repository.getByThreadId({
+          threadId: asThreadId("thread-missing-resume"),
+        });
+        return { reconciled, runtime };
+      }).pipe(Effect.provide(providerAndRuntimeLayer));
 
       assert.equal(codex.startSession.mock.calls.length, 0);
       assert.deepEqual(reconciled, [
@@ -521,10 +527,6 @@ it.effect(
         },
       ]);
 
-      const runtime = yield* Effect.gen(function* () {
-        const repository = yield* ProviderSessionRuntimeRepository;
-        return yield* repository.getByThreadId({ threadId: asThreadId("thread-missing-resume") });
-      }).pipe(Effect.provide(runtimeRepositoryLayer));
       assert.equal(Option.isSome(runtime), true);
       if (Option.isSome(runtime)) {
         assert.equal(runtime.value.status, "error");

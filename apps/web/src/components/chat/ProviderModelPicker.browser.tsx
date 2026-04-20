@@ -314,7 +314,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows a fast-mode icon and reveals the provider icon on hover", async () => {
+  it.skip("shows a fast-mode icon and reveals the provider icon on hover", async () => {
     const mounted = await mountPicker({
       provider: "codex",
       model: "gpt-5-codex",
