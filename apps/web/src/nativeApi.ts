@@ -31,6 +31,15 @@ export function readNativeApi(): NativeApi | undefined {
     return cachedApi;
   }
 
+  // In the packaged desktop app the Electron preload bridge is available
+  // immediately, so the WS-backed native API should also be available
+  // immediately. The auth gate only matters for the pure web build, where
+  // opening the socket before auth would cause noisy 403 handshakes.
+  if (window.desktopBridge) {
+    cachedApi = createWsNativeApi();
+    return cachedApi;
+  }
+
   if (!webConnectGateOpen) return undefined;
 
   cachedApi = createWsNativeApi();
