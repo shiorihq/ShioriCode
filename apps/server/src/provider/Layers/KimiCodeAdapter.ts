@@ -66,6 +66,38 @@ type KimiResumeCursor = {
   readonly sessionId: string;
 };
 
+type KimiQuestionOption = {
+  readonly label: string;
+  readonly description?: string;
+};
+
+type KimiQuestion = {
+  readonly header?: string;
+  readonly question: string;
+  readonly options: ReadonlyArray<KimiQuestionOption>;
+  readonly multi_select?: boolean;
+};
+
+type KimiTextContentPart = {
+  readonly type: "text";
+  readonly text: string;
+};
+
+type KimiThinkContentPart = {
+  readonly type: "think";
+  readonly think: string;
+};
+
+type KimiTodoItem = {
+  readonly title: string;
+  readonly status: "pending" | "in_progress" | "done";
+};
+
+type KimiTodoBlock = {
+  readonly type: "todo";
+  readonly items: ReadonlyArray<KimiTodoItem>;
+};
+
 type PendingApproval = {
   readonly requestId: string;
   readonly requestType: Extract<
@@ -345,16 +377,61 @@ function mapRequestKindToCanonical(
 }
 
 function buildQuestionItems(payload: QuestionRequest): ReadonlyArray<UserInputQuestion> {
-  return payload.questions.map((question, index) => ({
-    id: `${payload.id}:${index + 1}`,
-    header: trimOrUndefined(question.header) ?? `Q${index + 1}`,
-    question: question.question,
-    options: question.options.map((option) => ({
-      label: option.label,
-      description: trimOrUndefined(option.description) ?? option.label,
-    })),
-    ...(question.multi_select ? { multiSelect: true } : {}),
-  }));
+  const questions = payload.questions as ReadonlyArray<KimiQuestion>;
+  return questions.map((question, index) => {
+    const baseQuestion = {
+      id: `${payload.id}:${index + 1}`,
+      header: trimOrUndefined(question.header) ?? `Q${index + 1}`,
+      question: question.question,
+      options: question.options.map((option) => ({
+        label: option.label,
+        description: trimOrUndefined(option.description) ?? option.label,
+      })),
+    };
+    if (question.multi_select) {
+      return {
+        id: baseQuestion.id,
+        header: baseQuestion.header,
+        question: baseQuestion.question,
+        options: baseQuestion.options,
+        multiSelect: true,
+      };
+    }
+    return baseQuestion;
+  });
+}
+
+function isKimiTodoBlock(block: unknown): block is KimiTodoBlock {
+  return (
+    typeof block === "object" &&
+    block !== null &&
+    "type" in block &&
+    block.type === "todo" &&
+    "items" in block &&
+    Array.isArray(block.items)
+  );
+}
+
+function isTextContentPart(part: unknown): part is KimiTextContentPart {
+  return (
+    typeof part === "object" &&
+    part !== null &&
+    "type" in part &&
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string"
+  );
+}
+
+function isThinkContentPart(part: unknown): part is KimiThinkContentPart {
+  return (
+    typeof part === "object" &&
+    part !== null &&
+    "type" in part &&
+    part.type === "think" &&
+    "think" in part &&
+    typeof part.think === "string"
+  );
 }
 
 function rawEvent(messageType: string, payload: unknown): NonNullable<ProviderRuntimeEvent["raw"]> {
@@ -1055,8 +1132,8 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       trimOrUndefined(input.payload.return_value.message) ??
       trimOrUndefined(summarizeProviderToolInvocation(toolName, parsedArguments) ?? undefined);
 
-    const todoBlock = input.payload.return_value.display.find((block) => block.type === "todo");
-    if (todoBlock && "items" in todoBlock) {
+    const todoBlock = input.payload.return_value.display.find(isKimiTodoBlock);
+    if (todoBlock) {
       yield* publish({
         type: "turn.plan.updated",
         eventId: nextEventId(),
@@ -1068,7 +1145,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           ...(trimOrUndefined(input.payload.return_value.message)
             ? { explanation: trimOrUndefined(input.payload.return_value.message) }
             : {}),
-          plan: todoBlock.items.map((item) => ({
+          plan: todoBlock.items.map((item: KimiTodoItem) => ({
             step: item.title,
             status:
               item.status === "in_progress"
@@ -1265,59 +1342,61 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
   const handleContentPart = Effect.fn("handleContentPart")(function* (input: {
     readonly context: KimiSessionContext;
     readonly turn: ActiveTurnState;
-    readonly payload: Extract<StreamEvent, { type: "ContentPart" }>["payload"];
+    readonly payload: ContentPart;
     readonly parentToolCallId?: string;
   }) {
     if (input.parentToolCallId) {
       return;
     }
 
-    switch (input.payload.type) {
-      case "think":
-        yield* emitReasoningStarted(input.context, input.turn);
-        yield* publish({
-          type: "content.delta",
-          eventId: nextEventId(),
-          provider: PROVIDER,
-          threadId: input.context.session.threadId,
-          createdAt: nowIso(),
-          turnId: input.turn.turnId,
-          itemId: RuntimeItemId.makeUnsafe(input.turn.reasoningItemId),
-          payload: {
-            streamKind: "reasoning_text",
-            delta: input.payload.think,
-          },
-          providerRefs: {
-            providerItemId: ProviderItemId.makeUnsafe(input.turn.reasoningItemId),
-          },
-          raw: rawEvent("ContentPart", input.payload),
-        });
-        break;
-      case "text":
-        yield* emitReasoningCompleted(input.context, input.turn);
-        yield* emitAssistantStarted(input.context, input.turn);
-        input.turn.assistantTextSeen = true;
-        yield* publish({
-          type: "content.delta",
-          eventId: nextEventId(),
-          provider: PROVIDER,
-          threadId: input.context.session.threadId,
-          createdAt: nowIso(),
-          turnId: input.turn.turnId,
-          itemId: RuntimeItemId.makeUnsafe(input.turn.assistantItemId),
-          payload: {
-            streamKind: "assistant_text",
-            delta: input.payload.text,
-          },
-          providerRefs: {
-            providerItemId: ProviderItemId.makeUnsafe(input.turn.assistantItemId),
-          },
-          raw: rawEvent("ContentPart", input.payload),
-        });
-        break;
-      default:
-        break;
+    const payload = input.payload;
+
+    if (isThinkContentPart(payload)) {
+      yield* emitReasoningStarted(input.context, input.turn);
+      yield* publish({
+        type: "content.delta",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: input.context.session.threadId,
+        createdAt: nowIso(),
+        turnId: input.turn.turnId,
+        itemId: RuntimeItemId.makeUnsafe(input.turn.reasoningItemId),
+        payload: {
+          streamKind: "reasoning_text",
+          delta: payload.think,
+        },
+        providerRefs: {
+          providerItemId: ProviderItemId.makeUnsafe(input.turn.reasoningItemId),
+        },
+        raw: rawEvent("ContentPart", payload),
+      });
+      return;
     }
+
+    if (!isTextContentPart(payload)) {
+      return;
+    }
+
+    yield* emitReasoningCompleted(input.context, input.turn);
+    yield* emitAssistantStarted(input.context, input.turn);
+    input.turn.assistantTextSeen = true;
+    yield* publish({
+      type: "content.delta",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: input.context.session.threadId,
+      createdAt: nowIso(),
+      turnId: input.turn.turnId,
+      itemId: RuntimeItemId.makeUnsafe(input.turn.assistantItemId),
+      payload: {
+        streamKind: "assistant_text",
+        delta: payload.text,
+      },
+      providerRefs: {
+        providerItemId: ProviderItemId.makeUnsafe(input.turn.assistantItemId),
+      },
+      raw: rawEvent("ContentPart", payload),
+    });
   });
 
   const handleStreamEvent: (input: {
@@ -1813,8 +1892,9 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       },
     });
 
+    const firstPart = parts[0];
     const promptContent: string | ContentPart[] =
-      parts.length === 1 && parts[0]?.type === "text" ? parts[0].text : parts;
+      parts.length === 1 && isTextContentPart(firstPart) ? firstPart.text : parts;
 
     const stream = yield* Effect.try({
       try: () => context.client.sendPrompt(promptContent),

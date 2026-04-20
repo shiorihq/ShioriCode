@@ -2342,14 +2342,21 @@ describe("deriveActiveWorkStartedAt", () => {
 
 describe("PROVIDER_OPTIONS", () => {
   it("advertises Claude as available while keeping Cursor as a placeholder", () => {
+    const kimi = PROVIDER_OPTIONS.find((option) => option.value === "kimiCode");
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "shiori", label: "Shiori", available: true },
+      { value: "kimiCode", label: "Kimi", available: true },
       { value: "codex", label: "Codex", available: true },
       { value: "claudeAgent", label: "Claude", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
+    expect(kimi).toEqual({
+      value: "kimiCode",
+      label: "Kimi",
+      available: true,
+    });
     expect(claude).toEqual({
       value: "claudeAgent",
       label: "Claude",
