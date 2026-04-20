@@ -1,7 +1,9 @@
 import path from "node:path";
 
+import { ConvexHttpClient } from "convex/browser";
 import { Duration, Effect, Layer, Option, Queue, Ref, Result, Schema, Stream } from "effect";
 import {
+  HostedAuthError,
   OnboardingError,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
@@ -12,6 +14,8 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  type HostedPasswordAuthInput,
+  type HostedPasswordAuthResult,
   type ServerProvider,
   type ServerProviderUsageSnapshot,
   ServerSettingsError,
@@ -27,6 +31,7 @@ import {
   resetOnboardingProgress,
   resolveOnboardingState,
 } from "shared/onboarding";
+import { resolveHostedShioriConvexUrl } from "shared/hostedShioriConvex";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
@@ -150,6 +155,34 @@ function isTrustedWebSocketOrigin(input: {
   }
 
   return collectTrustedWebSocketOrigins(input).has(input.origin.origin);
+}
+
+type ConvexPasswordAuthResponse =
+  | {
+      redirect: string;
+      verifier?: string;
+      tokens?: undefined;
+    }
+  | {
+      redirect?: undefined;
+      verifier?: undefined;
+      tokens?: { token: string; refreshToken: string } | null;
+    };
+
+const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
+  process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
+);
+
+function toHostedAuthMessage(cause: unknown, fallback: string): string {
+  if (cause instanceof Error && cause.message.trim().length > 0) {
+    return cause.message;
+  }
+
+  if (typeof cause === "string" && cause.trim().length > 0) {
+    return cause.trim();
+  }
+
+  return fallback;
 }
 
 const WsRpcLayer = WsRpcGroup.toLayer(
@@ -429,6 +462,71 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.serverCreateHostedBillingCheckout]: (input) =>
         hostedBilling.createCheckout(input),
       [WS_METHODS.serverCreateHostedBillingPortal]: (input) => hostedBilling.createPortal(input),
+      [WS_METHODS.serverHostedPasswordAuth]: (input) =>
+        Effect.logInfo("hosted password auth requested", {
+          flow: input.flow,
+          hasEmail: typeof input.email === "string" && input.email.length > 0,
+          hasPassword: typeof input.password === "string" && input.password.length > 0,
+          hasCode: typeof input.code === "string" && input.code.length > 0,
+          hasNewPassword: typeof input.newPassword === "string" && input.newPassword.length > 0,
+        }).pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () =>
+                (
+                  new ConvexHttpClient(hostedShioriConvexUrl) as unknown as {
+                    action: (
+                      name: string,
+                      args: Record<string, unknown>,
+                    ) => Promise<ConvexPasswordAuthResponse>;
+                  }
+                ).action("auth:signIn", {
+                  provider: "password",
+                  params: input satisfies HostedPasswordAuthInput,
+                }),
+              catch: (cause) =>
+                new HostedAuthError({
+                  code: "requestFailed",
+                  message: toHostedAuthMessage(cause, "Hosted password authentication failed."),
+                  cause,
+                }),
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(15),
+                orElse: () =>
+                  Effect.fail(
+                    new HostedAuthError({
+                      code: "unavailable",
+                      message: "Hosted password authentication timed out.",
+                    }),
+                  ),
+              }),
+              Effect.flatMap((result) => {
+                const tokens = result.tokens ?? null;
+                const persistToken =
+                  tokens?.token !== undefined
+                    ? hostedShioriAuthTokenStore.setToken(tokens.token)
+                    : Effect.void;
+
+                return persistToken.pipe(
+                  Effect.as({
+                    signingIn: tokens !== null,
+                    token: tokens?.token ?? null,
+                    refreshToken: tokens?.refreshToken ?? null,
+                  } satisfies HostedPasswordAuthResult),
+                );
+              }),
+              Effect.tap((result) =>
+                Effect.logInfo("hosted password auth completed", {
+                  flow: input.flow,
+                  signingIn: result.signingIn,
+                  hasToken: result.token !== null,
+                  hasRefreshToken: result.refreshToken !== null,
+                }),
+              ),
+            ),
+          ),
+        ),
       [WS_METHODS.onboardingGetState]: (_input) =>
         serverSettings.getSettings.pipe(
           Effect.map((settings) => resolveOnboardingState(settings.onboarding)),

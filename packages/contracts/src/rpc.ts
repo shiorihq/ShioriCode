@@ -72,8 +72,11 @@ import {
   HostedBillingCheckoutInput,
   HostedBillingCheckoutResult,
   HostedBillingError,
+  HostedAuthError,
   HostedBillingPortalInput,
   HostedBillingPortalResult,
+  HostedPasswordAuthInput,
+  HostedPasswordAuthResult,
   HostedBillingSnapshot,
   ServerLifecycleStreamEvent,
   ServerProviderUsageSnapshot,
@@ -144,6 +147,7 @@ export const WS_METHODS = {
   serverGetHostedBillingSnapshot: "server.getHostedBillingSnapshot",
   serverCreateHostedBillingCheckout: "server.createHostedBillingCheckout",
   serverCreateHostedBillingPortal: "server.createHostedBillingPortal",
+  serverHostedPasswordAuth: "server.hostedPasswordAuth",
 
   // Onboarding
   onboardingGetState: "onboarding.getState",
@@ -256,6 +260,12 @@ export const WsServerCreateHostedBillingPortalRpc = Rpc.make(
     error: HostedBillingError,
   },
 );
+
+export const WsServerHostedPasswordAuthRpc = Rpc.make(WS_METHODS.serverHostedPasswordAuth, {
+  payload: HostedPasswordAuthInput,
+  success: HostedPasswordAuthResult,
+  error: HostedAuthError,
+});
 
 export const WsOnboardingGetStateRpc = Rpc.make(WS_METHODS.onboardingGetState, {
   payload: Schema.Struct({}),
@@ -500,6 +510,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetHostedBillingSnapshotRpc,
   WsServerCreateHostedBillingCheckoutRpc,
   WsServerCreateHostedBillingPortalRpc,
+  WsServerHostedPasswordAuthRpc,
   WsOnboardingGetStateRpc,
   WsOnboardingCompleteStepRpc,
   WsOnboardingResetRpc,

@@ -1334,6 +1334,17 @@ export function deriveTimelineEntries(
   );
 }
 
+function timelineEntrySortTimestamp(entry: TimelineEntry): string {
+  if (entry.kind === "message" && entry.message.role === "assistant") {
+    // Use completion time when available so providers that begin streaming
+    // assistant text before the turn's trailing tool activity settles still
+    // keep that activity above the final answer in the completed timeline.
+    return entry.message.completedAt ?? entry.message.createdAt;
+  }
+
+  return entry.createdAt;
+}
+
 function timelineEntryOrderRank(entry: TimelineEntry): number {
   if (entry.kind === "message") {
     switch (entry.message.role) {
@@ -1359,6 +1370,13 @@ function timelineEntryOrderRank(entry: TimelineEntry): number {
 }
 
 function compareTimelineEntryOrder(left: TimelineEntry, right: TimelineEntry): number {
+  const sortTimestampComparison = timelineEntrySortTimestamp(left).localeCompare(
+    timelineEntrySortTimestamp(right),
+  );
+  if (sortTimestampComparison !== 0) {
+    return sortTimestampComparison;
+  }
+
   const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
   if (createdAtComparison !== 0) {
     return createdAtComparison;

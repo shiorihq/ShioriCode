@@ -64,6 +64,8 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   },
 };
 
+const MAC_ICON_PAD_SIZE = 1300;
+
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
@@ -342,6 +344,7 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
     const tmpRoot = yield* fs.makeTempDirectoryScoped({
       prefix: "shioricode-icon-build-",
     });
+    const paddedIconPath = path.join(tmpRoot, "icon-padded.png");
 
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
@@ -349,10 +352,16 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
     yield* runCommand(
       ChildProcess.make({
         ...commandOutputOptions(verbose),
-      })`sips -z 512 512 ${iconSource} --out ${iconPngPath}`,
+      })`sips --padToHeightWidth ${String(MAC_ICON_PAD_SIZE)} ${String(MAC_ICON_PAD_SIZE)} ${iconSource} --out ${paddedIconPath}`,
     );
 
-    yield* generateMacIconSet(iconSource, iconIcnsPath, tmpRoot, path, verbose);
+    yield* runCommand(
+      ChildProcess.make({
+        ...commandOutputOptions(verbose),
+      })`sips -z 512 512 ${paddedIconPath} --out ${iconPngPath}`,
+    );
+
+    yield* generateMacIconSet(paddedIconPath, iconIcnsPath, tmpRoot, path, verbose);
   });
 }
 

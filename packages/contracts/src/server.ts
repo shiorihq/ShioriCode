@@ -278,6 +278,31 @@ export const HostedBillingPortalResult = Schema.Struct({
 });
 export type HostedBillingPortalResult = typeof HostedBillingPortalResult.Type;
 
+export const HostedPasswordAuthFlow = Schema.Literals([
+  "signIn",
+  "signUp",
+  "email-verification",
+  "reset",
+  "reset-verification",
+]);
+export type HostedPasswordAuthFlow = typeof HostedPasswordAuthFlow.Type;
+
+export const HostedPasswordAuthInput = Schema.Struct({
+  flow: HostedPasswordAuthFlow,
+  email: Schema.optional(TrimmedNonEmptyString),
+  password: Schema.optional(TrimmedNonEmptyString),
+  code: Schema.optional(TrimmedNonEmptyString),
+  newPassword: Schema.optional(TrimmedNonEmptyString),
+});
+export type HostedPasswordAuthInput = typeof HostedPasswordAuthInput.Type;
+
+export const HostedPasswordAuthResult = Schema.Struct({
+  signingIn: Schema.Boolean,
+  token: Schema.NullOr(TrimmedNonEmptyString),
+  refreshToken: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type HostedPasswordAuthResult = typeof HostedPasswordAuthResult.Type;
+
 export const HostedBillingErrorCode = Schema.Literals([
   "configuration",
   "authentication",
@@ -296,3 +321,18 @@ export class HostedBillingError extends Schema.TaggedErrorClass<HostedBillingErr
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+export const HostedAuthErrorCode = Schema.Literals([
+  "configuration",
+  "authentication",
+  "unavailable",
+  "requestFailed",
+]);
+export type HostedAuthErrorCode = typeof HostedAuthErrorCode.Type;
+
+export class HostedAuthError extends Schema.TaggedErrorClass<HostedAuthError>()("HostedAuthError", {
+  code: HostedAuthErrorCode,
+  message: TrimmedNonEmptyString,
+  status: Schema.optional(NonNegativeInt),
+  cause: Schema.optional(Schema.Defect),
+}) {}

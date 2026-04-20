@@ -1,13 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  ArrowRightIcon,
-  CheckCircle2Icon,
-  LoaderCircleIcon,
-  SparklesIcon,
-  XCircleIcon,
-} from "lucide-react";
+import { ArrowRightIcon, CheckCircle2Icon, LoaderCircleIcon, XCircleIcon } from "lucide-react";
 
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
+import { AppLogoMark } from "../components/AppLogoMark";
 import { Button } from "../components/ui/button";
 import { resolveWelcomeViewModel, type WelcomeRequestedStatus } from "./-welcomeState";
 
@@ -39,7 +34,7 @@ function WelcomeRouteView() {
         <div className="grid gap-0 md:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-8 px-8 py-10 sm:px-10 sm:py-12">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-foreground px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-background">
-              <SparklesIcon className="size-3.5" />
+              <AppLogoMark className="size-4" />
               ShioriCode
             </div>
 

@@ -592,6 +592,62 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&quot;subagent_type&quot;");
   });
 
+  it("renders a copy button for generic tool calls that fall back to raw JSON output", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-generic-json-tool",
+            kind: "work",
+            createdAt: "2026-04-21T00:20:02.000Z",
+            entry: {
+              id: "work-generic-json-tool",
+              createdAt: "2026-04-21T00:20:02.000Z",
+              label: "Tool call StrReplaceFile",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              output: {
+                toolName: "StrReplaceFile",
+                input: {
+                  path: "scripts/build-desktop-artifact.ts",
+                  edit: {
+                    old: "const MAC_ICON_PAD_SIZE = 1480;",
+                    new: "const MAC_ICON_PAD_SIZE = 1320;",
+                  },
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-generic-json-tool": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Copy JSON output");
+    expect(markup).toContain("&quot;toolName&quot;: &quot;StrReplaceFile&quot;");
+    expect(markup).toContain("&quot;path&quot;: &quot;scripts/build-desktop-artifact.ts&quot;");
+  });
+
   it("renders Codex webSearch items as a non-expandable minimal entry", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

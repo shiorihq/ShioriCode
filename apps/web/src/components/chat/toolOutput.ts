@@ -1,6 +1,7 @@
 interface ToolOutputSummary {
   text: string | null;
   lineCount: number;
+  format: "text" | "json";
 }
 
 const objectSummaryCache = new WeakMap<object, ToolOutputSummary>();
@@ -50,6 +51,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text: nestedContent,
       lineCount: countTextLines(nestedContent),
+      format: "text",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -69,6 +71,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text,
       lineCount: countTextLines(text),
+      format: "text",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -81,6 +84,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text,
       lineCount: countTextLines(text),
+      format: "text",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -90,6 +94,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text: `Wrote ${record.bytesWritten} bytes to ${record.path}`,
       lineCount: 1,
+      format: "text",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -100,6 +105,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text: typeof text === "string" ? text : null,
       lineCount: typeof text === "string" ? countTextLines(text) : 1,
+      format: "json",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -107,6 +113,7 @@ function buildObjectSummary(output: object): ToolOutputSummary {
     const summary = {
       text: null,
       lineCount: 1,
+      format: "text",
     } satisfies ToolOutputSummary;
     objectSummaryCache.set(output, summary);
     return summary;
@@ -115,13 +122,14 @@ function buildObjectSummary(output: object): ToolOutputSummary {
 
 export function summarizeToolOutput(output: unknown): ToolOutputSummary {
   if (output == null) {
-    return { text: null, lineCount: 0 };
+    return { text: null, lineCount: 0, format: "text" };
   }
 
   if (typeof output === "string") {
     return {
       text: output || null,
       lineCount: output.length > 0 ? countTextLines(output) : 0,
+      format: "text",
     };
   }
 
@@ -134,11 +142,13 @@ export function summarizeToolOutput(output: unknown): ToolOutputSummary {
     return {
       text: typeof text === "string" ? text : null,
       lineCount: typeof text === "string" ? countTextLines(text) : 1,
+      format: "json",
     };
   } catch {
     return {
       text: null,
       lineCount: 1,
+      format: "text",
     };
   }
 }

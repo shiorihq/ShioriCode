@@ -142,6 +142,7 @@ import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
 import type { Project } from "../types";
 import { normalizeProjectTitle } from "shared/String";
+import { ShioriWordmark } from "./ShioriWordmark";
 
 const THREAD_PREVIEW_LIMIT = 10;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -693,15 +694,6 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         <SidebarBackgroundSubagentRowsView threadId={thread.id} rows={subagentRows} />
       ) : null}
     </>
-  );
-}
-
-function ShioriWordmark() {
-  return (
-    <span className="flex shrink-0 items-baseline gap-0.5">
-      <span className="font-sans text-sm font-normal tracking-tight text-foreground">Shiori</span>
-      <span className="font-mono text-sm font-bold italic text-primary">Code</span>
-    </span>
   );
 }
 

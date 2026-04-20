@@ -7,7 +7,7 @@
 
 ## Project Snapshot
 
-ShioriCode is a minimal web GUI for using coding agents like Codex and Claude.
+ShioriCode is a minimal web GUI for using coding agents like Codex, Claude, and Kimi.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 

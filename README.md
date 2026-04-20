@@ -1,15 +1,16 @@
 # ShioriCode
 
-ShioriCode is a minimal web GUI for coding agents (currently Shiori, Codex, and Claude).
+ShioriCode is a minimal web GUI for coding agents (currently Shiori, Codex, Claude, and Kimi).
 
 ## Installation
 
 > [!WARNING]
-> ShioriCode currently supports Shiori, Codex, and Claude.
+> ShioriCode currently supports Shiori, Codex, Claude, and Kimi.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
 > - Claude: install Claude Code and run `claude auth login`
+> - Kimi: install the Kimi Code CLI (`kimi`) and run `kimi login`
 
 ## Convex setup
 

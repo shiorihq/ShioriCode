@@ -1535,6 +1535,43 @@ describe("deriveTimelineEntries", () => {
     ]);
   });
 
+  it("keeps late work activity above a completed assistant message", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("user-1"),
+          role: "user",
+          text: "Investigate the layout bug.",
+          createdAt: "2026-04-21T00:18:00.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-1"),
+          role: "assistant",
+          text: "I found the issue and fixed it.",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-04-21T00:18:05.000Z",
+          completedAt: "2026-04-21T00:18:20.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+      [
+        {
+          id: "work-edit-1",
+          createdAt: "2026-04-21T00:18:12.000Z",
+          label: "Edit file",
+          tone: "tool",
+          itemType: "file_change",
+          detail: "apps/web/src/components/chat/MessagesTimeline.tsx",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual(["user-1", "work-edit-1", "assistant-1"]);
+  });
+
   it("anchors the completion divider to latestTurn.assistantMessageId before timestamp fallback", () => {
     const entries = deriveTimelineEntries(
       [

@@ -56,6 +56,10 @@
       "types": "./src/orchestrationClientProjection.ts",
       "import": "./src/orchestrationClientProjection.ts"
     },
+    "./hostedShioriConvex": {
+      "types": "./src/hostedShioriConvex.ts",
+      "import": "./src/hostedShioriConvex.ts"
+    },
     "./fontFamily": {
       "types": "./src/fontFamily.ts",
       "import": "./src/fontFamily.ts"

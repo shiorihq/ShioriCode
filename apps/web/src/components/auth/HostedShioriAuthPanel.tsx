@@ -6,8 +6,13 @@ import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSettings } from "../../hooks/useSettings";
 import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/personalDetails";
+import { isElectron } from "../../env";
 
-import { toHostedShioriAuthErrorMessage, withHostedShioriRedirect } from "./hostedShioriAuth";
+import {
+  signInWithHostedPasswordDesktop,
+  toHostedShioriAuthErrorMessage,
+  withHostedShioriRedirect,
+} from "./hostedShioriAuth";
 
 export type PasswordStage = "signIn" | "signUp" | "verifyEmail" | "forgot" | "reset";
 type OAuthProvider = "github" | "google" | "apple";
@@ -215,16 +220,22 @@ export function HostedShioriAuthPanel(props?: {
 
     void runAsync(`password:${stage}`, async () => {
       if (stage === "signIn" || stage === "signUp") {
-        const result = await signIn("password", {
-          ...withHostedShioriRedirect(
-            {
+        const result = isElectron
+          ? await signInWithHostedPasswordDesktop({
               email,
               password,
               flow: stage,
-            },
-            typeof window === "undefined" ? undefined : window.location.href,
-          ),
-        });
+            })
+          : await signIn("password", {
+              ...withHostedShioriRedirect(
+                {
+                  email,
+                  password,
+                  flow: stage,
+                },
+                typeof window === "undefined" ? undefined : window.location.href,
+              ),
+            });
         if (!result?.signingIn) {
           setVerificationEmail(email);
           setVerificationPassword(password);
@@ -236,24 +247,40 @@ export function HostedShioriAuthPanel(props?: {
       }
 
       if (stage === "verifyEmail") {
-        await signIn("password", {
-          ...withHostedShioriRedirect(
-            {
+        const result = isElectron
+          ? await signInWithHostedPasswordDesktop({
               email: verificationEmail,
               code,
               flow: "email-verification",
-            },
-            typeof window === "undefined" ? undefined : window.location.href,
-          ),
-        });
+            })
+          : await signIn("password", {
+              ...withHostedShioriRedirect(
+                {
+                  email: verificationEmail,
+                  code,
+                  flow: "email-verification",
+                },
+                typeof window === "undefined" ? undefined : window.location.href,
+              ),
+            });
+        if (!result?.signingIn) {
+          throw new Error("Invalid or expired verification code. Please try again.");
+        }
         return;
       }
 
       if (stage === "forgot") {
-        await signIn("password", {
-          email,
-          flow: "reset",
-        });
+        if (isElectron) {
+          await signInWithHostedPasswordDesktop({
+            email,
+            flow: "reset",
+          });
+        } else {
+          await signIn("password", {
+            email,
+            flow: "reset",
+          });
+        }
         setResetEmail(email);
         setCode("");
         setNewPassword("");
@@ -262,12 +289,21 @@ export function HostedShioriAuthPanel(props?: {
         return;
       }
 
-      await signIn("password", {
-        email: resetEmail,
-        code,
-        newPassword,
-        flow: "reset-verification",
-      });
+      if (isElectron) {
+        await signInWithHostedPasswordDesktop({
+          email: resetEmail,
+          code,
+          newPassword,
+          flow: "reset-verification",
+        });
+      } else {
+        await signIn("password", {
+          email: resetEmail,
+          code,
+          newPassword,
+          flow: "reset-verification",
+        });
+      }
       setPassword("");
       setNewPassword("");
       setCode("");
@@ -292,16 +328,22 @@ export function HostedShioriAuthPanel(props?: {
 
   const handleResendVerification = useCallback(() => {
     void runAsync("password:resend-verification", async () => {
-      const result = await signIn("password", {
-        ...withHostedShioriRedirect(
-          {
+      const result = isElectron
+        ? await signInWithHostedPasswordDesktop({
             email: verificationEmail,
             password: verificationPassword,
             flow: "signIn",
-          },
-          typeof window === "undefined" ? undefined : window.location.href,
-        ),
-      });
+          })
+        : await signIn("password", {
+            ...withHostedShioriRedirect(
+              {
+                email: verificationEmail,
+                password: verificationPassword,
+                flow: "signIn",
+              },
+              typeof window === "undefined" ? undefined : window.location.href,
+            ),
+          });
       if (!result?.signingIn) {
         setNotice("Verification code resent.");
       }

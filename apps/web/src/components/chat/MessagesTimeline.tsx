@@ -1845,6 +1845,14 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
     commandExecutionSummary || todoList || planProposalMarkdown || hasStructuredWorkflowCard
       ? null
       : stripLeadingRootLine(outputSummary.text, detail ?? null);
+  const showsRawJsonOutput =
+    !commandExecutionSummary &&
+    !todoList &&
+    !planProposalMarkdown &&
+    !hasStructuredWorkflowCard &&
+    outputSummary.format === "json" &&
+    typeof outputText === "string" &&
+    outputText.length > 0;
   const [isOutputExpanded, setIsOutputExpanded] = useState(false);
   const expandedContentId = `work-entry-details-${workEntry.id}`;
 
@@ -2110,6 +2118,11 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           {/* Fallback: raw text output */}
           {!parsedDiff && !toolErrorText && outputText && (
             <div className="mt-0.5 pl-4">
+              {showsRawJsonOutput && (
+                <div className="mb-1 flex justify-end">
+                  <MessageCopyButton text={outputText} title="Copy JSON output" />
+                </div>
+              )}
               <div className="relative">
                 <pre
                   className={cn(

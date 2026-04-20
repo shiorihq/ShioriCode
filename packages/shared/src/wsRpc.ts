@@ -207,6 +207,7 @@ export interface WsRpcClient {
     readonly createHostedBillingPortal: RpcUnaryMethod<
       typeof WS_METHODS.serverCreateHostedBillingPortal
     >;
+    readonly hostedPasswordAuth: RpcUnaryMethod<typeof WS_METHODS.serverHostedPasswordAuth>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
   };
@@ -315,6 +316,8 @@ export function createWsRpcClient(options: {
         transport.request((client) => client[WS_METHODS.serverCreateHostedBillingCheckout](input)),
       createHostedBillingPortal: (input) =>
         transport.request((client) => client[WS_METHODS.serverCreateHostedBillingPortal](input)),
+      hostedPasswordAuth: (input) =>
+        transport.request((client) => client[WS_METHODS.serverHostedPasswordAuth](input)),
       subscribeConfig: (listener) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener),
       subscribeLifecycle: (listener) =>

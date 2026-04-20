@@ -1,3 +1,8 @@
+import type { HostedPasswordAuthInput } from "contracts";
+
+import { convexDeploymentUrl, convexStorageKey } from "../../convex/config";
+import { ensureNativeApi } from "../../nativeApi";
+
 function extractErrorMessage(error: unknown): string | null {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -85,4 +90,37 @@ export function withHostedShioriRedirect<T extends Record<string, string>>(
 ): T | (T & { redirectTo: string }) {
   const redirectTo = resolveHostedShioriRedirectTarget(currentLocationHref);
   return redirectTo ? { ...params, redirectTo } : params;
+}
+
+const JWT_STORAGE_KEY = "__convexAuthJWT";
+const REFRESH_TOKEN_STORAGE_KEY = "__convexAuthRefreshToken";
+
+function writeConvexAuthTokens(tokens: { token: string; refreshToken: string }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(convexStorageKey(JWT_STORAGE_KEY, convexDeploymentUrl), tokens.token);
+  window.localStorage.setItem(
+    convexStorageKey(REFRESH_TOKEN_STORAGE_KEY, convexDeploymentUrl),
+    tokens.refreshToken,
+  );
+}
+
+export async function signInWithHostedPasswordDesktop(
+  params: HostedPasswordAuthInput,
+): Promise<{ signingIn: boolean }> {
+  const api = ensureNativeApi();
+  const result = await api.server.hostedPasswordAuth(params);
+
+  if (!result.signingIn || !result.token || !result.refreshToken) {
+    return { signingIn: false };
+  }
+
+  writeConvexAuthTokens({
+    token: result.token,
+    refreshToken: result.refreshToken,
+  });
+  await api.server.setShioriAuthToken(result.token);
+  window.location.reload();
+  return { signingIn: true };
 }
