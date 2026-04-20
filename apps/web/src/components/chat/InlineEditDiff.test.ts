@@ -56,6 +56,49 @@ describe("parseEditDiff", () => {
     ]);
   });
 
+  it("parses edit tool payloads using input.patch when completion output has no inline diff", () => {
+    const parsed = parseEditDiff({
+      toolName: "edit",
+      input: {
+        patch: [
+          "--- a/apps/web/src/index.css",
+          "+++ b/apps/web/src/index.css",
+          "@@ -1 +1 @@",
+          "-body { color: blue; }",
+          "+body { color: red; }",
+        ].join("\n"),
+      },
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.filePath).toBe("apps/web/src/index.css");
+    expect(parsed?.additions).toBe(1);
+    expect(parsed?.deletions).toBe(1);
+    expect(parsed?.lines).toEqual([
+      { type: "removed", content: "body { color: blue; }", oldLineNo: 1, newLineNo: null },
+      { type: "added", content: "body { color: red; }", oldLineNo: null, newLineNo: 1 },
+    ]);
+  });
+
+  it("parses bytes-only file changes using input.content even when the write tool name is missing", () => {
+    const parsed = parseEditDiff({
+      input: {
+        path: "apps/web/src/index.css",
+        content: "body {\n  color: red;\n}",
+      },
+      path: "apps/web/src/index.css",
+      bytesWritten: 22,
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.filePath).toBe("apps/web/src/index.css");
+    expect(parsed?.additions).toBe(3);
+    expect(parsed?.deletions).toBe(1);
+  });
+
   it("renders the inline diff with an internal scroll region", () => {
     const parsed = parseEditDiff({
       toolName: "write_file",

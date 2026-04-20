@@ -168,6 +168,9 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         [
           "exec",
           "--ephemeral",
+          // These helpers operate on prompt input we already assembled server-side,
+          // so they should not fail just because the target workspace is untrusted.
+          "--skip-git-repo-check",
           "-s",
           "read-only",
           "--model",

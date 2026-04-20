@@ -510,6 +510,12 @@ const make = Effect.gen(function* () {
     readonly turnCount: number;
     readonly status: "ready" | "missing" | "error";
     readonly assistantMessageId: MessageId | undefined;
+    readonly preferredFiles?: ReadonlyArray<{
+      readonly path: string;
+      readonly kind: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
     readonly createdAt: string;
   }) {
     const fromTurnCount = Math.max(0, input.turnCount - 1);
@@ -537,7 +543,7 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.invalidate(input.cwd);
 
-    const files = yield* checkpointStore
+    const derivedFiles = yield* checkpointStore
       .diffCheckpoints({
         cwd: input.cwd,
         fromCheckpointRef,
@@ -570,6 +576,8 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as([])),
         ),
       );
+    const files =
+      input.preferredFiles && input.preferredFiles.length > 0 ? input.preferredFiles : derivedFiles;
 
     const assistantMessageId =
       input.assistantMessageId ??
@@ -690,6 +698,7 @@ const make = Effect.gen(function* () {
       turnCount: nextTurnCount,
       status: checkpointStatusFromRuntime(event.payload.state),
       assistantMessageId: undefined,
+      ...(existingPlaceholder?.files ? { preferredFiles: existingPlaceholder.files } : {}),
       createdAt: event.createdAt,
     });
   });
@@ -752,6 +761,7 @@ const make = Effect.gen(function* () {
       turnCount: checkpointTurnCount,
       status: "ready",
       assistantMessageId: event.payload.assistantMessageId ?? undefined,
+      ...(event.payload.files.length > 0 ? { preferredFiles: event.payload.files } : {}),
       createdAt: event.payload.completedAt,
     });
   });

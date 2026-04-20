@@ -252,6 +252,24 @@ function diffFromUnifiedPatch(patch: string): DiffLine[] {
   return lines;
 }
 
+function filePathFromUnifiedPatch(patch: string): string | null {
+  for (const raw of patch.split("\n")) {
+    if (raw.startsWith("+++ b/") || raw.startsWith("--- a/")) {
+      const candidate = raw.slice(6).trim();
+      if (candidate.length > 0 && candidate !== "/dev/null") {
+        return candidate;
+      }
+    }
+    if (raw.startsWith("rename to ") || raw.startsWith("rename from ")) {
+      const candidate = raw.replace(/^rename (?:to|from) /u, "").trim();
+      if (candidate.length > 0 && candidate !== "/dev/null") {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 /** Parse structuredPatch array (Claude SDK format) into DiffLines. */
 function diffFromStructuredPatch(
   patches: Array<{
@@ -350,6 +368,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   const top = asRecord(output);
   const data = resolveInnerData(output);
   if (!data) return storeParsedDiff(null);
+  const input = asRecord(data.input);
   const topInput = asRecord(top?.input);
   const topToolName = asString(top?.toolName) ?? null;
 
@@ -360,7 +379,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     asString(data.relativePath) ??
     asString(data.filename) ??
     asString(topInput?.file_path) ??
-    asString((asRecord(data.input) ?? {}).file_path) ??
+    asString(input?.file_path) ??
     detail ??
     null;
 
@@ -387,12 +406,20 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (topPatch) {
     const lines = diffFromUnifiedPatch(topPatch);
     if (lines.length > 0) {
-      return storeParsedDiff(buildResult(filePath, lines));
+      return storeParsedDiff(buildResult(filePath ?? filePathFromUnifiedPatch(topPatch), lines));
     }
   }
 
-  // Strategy 4: old_string / new_string from input (Claude Edit tool)
-  const input = asRecord(data.input);
+  // Strategy 4: patch string captured in tool input (Shiori/Codex patch-style edit tools)
+  const inputPatch = asString(input?.patch) ?? asString(topInput?.patch);
+  if (inputPatch) {
+    const lines = diffFromUnifiedPatch(inputPatch);
+    if (lines.length > 0) {
+      return storeParsedDiff(buildResult(filePath ?? filePathFromUnifiedPatch(inputPatch), lines));
+    }
+  }
+
+  // Strategy 5: old_string / new_string from input (Claude Edit tool)
   const oldString =
     asString(input?.old_string) ??
     asString(topInput?.old_string) ??
@@ -410,20 +437,19 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     }
   }
 
-  // Strategy 5: Claude Write tool — show the attempted file contents as a full write diff.
+  // Strategy 6: bytes-only file writes — show the attempted file contents as a full write diff
+  // whenever the input content survived lifecycle collapsing, even if the tool name is absent.
   const isWriteTool =
     topToolName !== null && WRITE_TOOL_NAME_ALIASES.has(normalizeToolName(topToolName));
-  const writeContent = isWriteTool
-    ? (asString(topInput?.content) ?? asString((asRecord(data.input) ?? {}).content))
-    : null;
-  if (writeContent != null) {
+  const writeContent = asString(topInput?.content) ?? asString(input?.content);
+  if (writeContent != null && (isWriteTool || filePath !== null)) {
     const lines = diffFromOldNew("", writeContent);
     if (lines.length > 0) {
       return storeParsedDiff(buildResult(filePath, lines));
     }
   }
 
-  // Strategy 6: Codex fileChange format — item.changes[] with unified diffs
+  // Strategy 7: Codex fileChange format — item.changes[] with unified diffs
   const item = asRecord(data.item);
   if (item && Array.isArray(item.changes)) {
     for (const change of item.changes) {

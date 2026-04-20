@@ -43,6 +43,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const host = document.createElement("div");
   document.body.append(host);
   const onPromptChange = vi.fn();
+  const onRuntimeModeChange = vi.fn();
   const providerOptions = props?.modelSelection?.options;
   const models =
     provider === "claudeAgent"
@@ -134,7 +135,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       runtimeMode="approval-required"
       traitsMenuContent={traitsMenuContent}
       onTogglePlanSidebar={vi.fn()}
-      onToggleRuntimeMode={vi.fn()}
+      onRuntimeModeChange={onRuntimeModeChange}
     />,
     { container: host },
   );
@@ -147,6 +148,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   return {
     [Symbol.asyncDispose]: cleanup,
     cleanup,
+    onRuntimeModeChange,
   };
 }
 
@@ -203,6 +205,32 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).toContain("Thinking");
       expect(text).toContain("On (default)");
       expect(text).toContain("Off");
+      expect(text).toContain("Access");
+      expect(text).toContain("Supervised");
+      expect(text).toContain("Full access");
     });
+  });
+
+  it("lets compact overflow switch access mode when other controls are available", async () => {
+    await using mounted = await mountMenu({
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+        options: { thinking: true },
+      },
+    });
+
+    await page.getByLabelText("More composer controls").click();
+    await page.getByRole("menuitemradio", { name: "Full access" }).click();
+
+    expect(mounted.onRuntimeModeChange).toHaveBeenCalledWith("full-access");
+  });
+
+  it("does not render an overflow trigger when no compact-only controls are available", async () => {
+    await using _ = await mountMenu({
+      modelSelection: { provider: "codex", model: DEFAULT_MODEL_BY_PROVIDER.codex },
+    });
+
+    await expect.element(page.getByLabelText("More composer controls")).not.toBeInTheDocument();
   });
 });

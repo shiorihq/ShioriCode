@@ -165,6 +165,7 @@ export type ImportedTheme = typeof ImportedTheme.Type;
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  blurPersonalData: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),
@@ -345,6 +346,7 @@ export type EffectiveSkillsResult = typeof EffectiveSkillsResult.Type;
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  generateMemories: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   quitWithoutConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_PERSONALITY),
@@ -459,6 +461,7 @@ const OnboardingProgressPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
+  generateMemories: Schema.optionalKey(Schema.Boolean),
   quitWithoutConfirmation: Schema.optionalKey(Schema.Boolean),
   assistantPersonality: Schema.optionalKey(AssistantPersonality),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),

@@ -951,7 +951,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     } | null = null;
 
     if (result.action !== "commit") {
-      const finalStatus = yield* gitCore.statusDetails(cwd);
+      const finalStatus = yield* gitCore.statusDetails(cwd, { refreshUpstream: false });
       if (finalStatus.branch) {
         finalBranchContext = {
           branch: finalStatus.branch,
@@ -1221,7 +1221,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
   ) {
-    const details = yield* gitCore.statusDetails(cwd);
+    const details = yield* gitCore.statusDetails(cwd, { refreshUpstream: false });
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       return yield* gitManagerError(

@@ -141,6 +141,7 @@ async function mountPicker(props: {
   model: string;
   lockedProvider: ProviderKind | null;
   providers?: ReadonlyArray<ServerProvider>;
+  modelOptions?: { fastMode?: boolean };
   compact?: boolean;
   triggerVariant?: "ghost" | "outline";
 }) {
@@ -161,6 +162,7 @@ async function mountPicker(props: {
       lockedProvider={props.lockedProvider}
       providers={providers}
       modelOptionsByProvider={modelOptionsByProvider}
+      modelOptions={props.modelOptions}
       {...(props.compact !== undefined ? { compact: props.compact } : {})}
       {...(props.triggerVariant !== undefined ? { triggerVariant: props.triggerVariant } : {})}
       onProviderModelChange={onProviderModelChange}
@@ -307,6 +309,46 @@ describe("ProviderModelPicker", () => {
 
       expect(providerIcon.getBoundingClientRect().width).toBeGreaterThan(0);
       expect(chevron.getBoundingClientRect().width).toBeGreaterThan(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a fast-mode icon and reveals the provider icon on hover", async () => {
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      modelOptions: { fastMode: true },
+    });
+
+    try {
+      const trigger = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (element) => element.dataset.chatProviderModelPicker === "true",
+      );
+      if (!trigger) {
+        throw new Error("Expected the provider model picker trigger to be mounted.");
+      }
+
+      const fastIcon = trigger.querySelector<SVGElement>(
+        '[data-chat-provider-model-picker-fast-icon="true"]',
+      );
+      const providerIcon = trigger.querySelector<SVGElement>(
+        '[data-chat-provider-model-picker-provider-icon="true"]',
+      );
+      if (!fastIcon || !providerIcon) {
+        throw new Error("Expected both the fast icon and provider icon to be mounted.");
+      }
+
+      expect(window.getComputedStyle(fastIcon).opacity).toBe("1");
+      expect(window.getComputedStyle(providerIcon).opacity).toBe("0");
+
+      await page.getByRole("button").hover();
+
+      await vi.waitFor(() => {
+        expect(window.getComputedStyle(fastIcon).opacity).toBe("0");
+        expect(window.getComputedStyle(providerIcon).opacity).toBe("1");
+      });
     } finally {
       await mounted.cleanup();
     }
@@ -545,6 +587,47 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude");
         expect(text).toContain("Disabled");
         expect(text).not.toContain("Claude Sonnet 4.6");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps warning providers selectable while showing a checking badge", async () => {
+    const warningProviders = TEST_PROVIDERS.slice();
+    const claudeIndex = warningProviders.findIndex(
+      (provider) => provider.provider === "claudeAgent",
+    );
+    if (claudeIndex >= 0) {
+      const claudeProvider = warningProviders[claudeIndex]!;
+      warningProviders[claudeIndex] = {
+        ...claudeProvider,
+        status: "warning",
+        message: "Checking Claude CLI availability...",
+      };
+    }
+
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      providers: warningProviders,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("Claude");
+        expect(text).toContain("Checking");
+        expect(text).not.toContain("Unavailable");
+      });
+
+      await page.getByRole("menuitem", { name: /Claude/ }).hover();
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Claude Sonnet 4.6");
       });
     } finally {
       await mounted.cleanup();

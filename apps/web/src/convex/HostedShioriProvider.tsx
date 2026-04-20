@@ -18,7 +18,7 @@ import {
   hostedSubscriptionPlanLabel,
   normalizeHostedSubscriptionPlanId,
 } from "./hostedSubscriptionPlan";
-import { readNativeApi } from "../nativeApi";
+import { readNativeApi, setNativeApiWebConnectGate } from "../nativeApi";
 
 function normalizeHostedShioriAuthToken(token: string | null): string | null {
   const trimmed = token?.trim() ?? "";
@@ -87,6 +87,10 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   const { signIn, signOut } = useAuthActions();
 
   useEffect(() => {
+    setNativeApiWebConnectGate(isAuthenticated);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
     const api = readNativeApi();
     if (!api) {
       console.info("[shiori-auth] native api unavailable during token sync", {
@@ -99,7 +103,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       token: describeHostedShioriAuthToken(normalizedAuthToken),
     });
     void api.server.setShioriAuthToken(normalizedAuthToken);
-  }, [normalizedAuthToken]);
+  }, [isAuthenticated, normalizedAuthToken]);
 
   const value = useMemo(
     () => ({

@@ -459,6 +459,102 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
 );
 
 it.effect(
+  "ProviderServiceLive marks persisted sessions without resume state unrecoverable on startup",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-no-resume-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+
+      const codex = makeFakeCodexAdapter();
+      const registry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "codex"
+            ? Effect.succeed(codex.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["codex"]),
+      };
+
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        yield* directory.upsert({
+          provider: "codex",
+          threadId: ThreadId.makeUnsafe("thread-missing-resume"),
+          runtimeMode: "full-access",
+          status: "running",
+          resumeCursor: null,
+          runtimePayload: {
+            cwd: "/tmp/project-missing-resume",
+          },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      const reconciled = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.reconcileSessions();
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.equal(codex.startSession.mock.calls.length, 0);
+      assert.deepEqual(reconciled, [
+        {
+          threadId: asThreadId("thread-missing-resume"),
+          provider: "codex",
+          session: null,
+          resumeState: "unrecoverable",
+          runtimeMode: "full-access",
+          lastError:
+            "Provider validation failed in ProviderService.reconcileSessions: Cannot recover thread 'thread-missing-resume' because no provider resume state is persisted.",
+        },
+      ]);
+
+      const runtime = yield* Effect.gen(function* () {
+        const repository = yield* ProviderSessionRuntimeRepository;
+        return yield* repository.getByThreadId({ threadId: asThreadId("thread-missing-resume") });
+      }).pipe(Effect.provide(runtimeRepositoryLayer));
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.status, "error");
+        assert.equal(runtime.value.resumeCursor, null);
+        assert.equal(runtime.value.runtimeMode, "full-access");
+        const payload = runtime.value.runtimePayload;
+        assert.equal(
+          payload !== null && typeof payload === "object" && !Array.isArray(payload),
+          true,
+        );
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            cwd?: string;
+            lastError?: string;
+            lastRuntimeEvent?: string;
+          };
+          assert.equal(runtimePayload.cwd, "/tmp/project-missing-resume");
+          assert.equal(
+            runtimePayload.lastError,
+            "Provider validation failed in ProviderService.reconcileSessions: Cannot recover thread 'thread-missing-resume' because no provider resume state is persisted.",
+          );
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.session.reconcile.failed");
+        }
+      }
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
   "ProviderServiceLive restores rollback routing after restart using persisted thread mapping",
   () =>
     Effect.gen(function* () {
@@ -688,6 +784,62 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
     }),
+  );
+
+  it.effect(
+    "does not auto-reuse a persisted resume cursor when starting with a different model selection",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const threadId = asThreadId("thread-model-switch-no-resume");
+
+        const initial = yield* provider.startSession(threadId, {
+          provider: "codex",
+          threadId,
+          cwd: "/tmp/project",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.3-codex",
+          },
+          runtimeMode: "full-access",
+        });
+
+        assert.deepEqual(initial.resumeCursor, { opaque: "resume-thread-model-switch-no-resume" });
+
+        routing.codex.startSession.mockClear();
+
+        yield* provider.startSession(threadId, {
+          provider: "codex",
+          threadId,
+          cwd: "/tmp/project",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.3-codex-spark",
+          },
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(routing.codex.startSession.mock.calls.length, 1);
+        const restartedInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.equal(typeof restartedInput === "object" && restartedInput !== null, true);
+        if (restartedInput && typeof restartedInput === "object") {
+          const startPayload = restartedInput as {
+            provider?: string;
+            cwd?: string;
+            modelSelection?: unknown;
+            resumeCursor?: unknown;
+            threadId?: string;
+          };
+          assert.equal(startPayload.provider, "codex");
+          assert.equal(startPayload.cwd, "/tmp/project");
+          assert.equal(startPayload.threadId, threadId);
+          assert.deepEqual(startPayload.modelSelection, {
+            provider: "codex",
+            model: "gpt-5.3-codex-spark",
+          });
+          assert.equal("resumeCursor" in startPayload, false);
+        }
+      }),
   );
 
   it.effect("rejects structured approval decisions for non-codex providers", () =>

@@ -16,7 +16,12 @@ import {
 } from "@ai-sdk/mcp";
 import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import open from "open";
-import { parse as parseToml, type TomlTable, type TomlValue } from "smol-toml";
+import {
+  parse as parseToml,
+  stringify as stringifyToml,
+  type TomlTable,
+  type TomlValue,
+} from "smol-toml";
 import type {
   EffectiveMcpServerAuth,
   EffectiveMcpServerAuthInput,
@@ -358,6 +363,45 @@ function mergeMcpServers(servers: ReadonlyArray<McpServerEntry>): McpServerEntry
   return [...byName.values()];
 }
 
+function sortStringRecord(
+  value: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function equivalentMcpServerSignature(server: McpServerEntry): string {
+  return JSON.stringify({
+    transport: server.transport,
+    ...(server.url ? { url: server.url } : {}),
+    ...(server.command ? { command: server.command } : {}),
+    ...(server.args ? { args: [...server.args] } : {}),
+    ...(server.env ? { env: sortStringRecord(server.env) } : {}),
+    ...(server.headers ? { headers: sortStringRecord(server.headers) } : {}),
+  });
+}
+
+function dedupeEquivalentMcpServers(servers: ReadonlyArray<McpServerEntry>): McpServerEntry[] {
+  const deduped: McpServerEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const server of servers) {
+    const signature = equivalentMcpServerSignature(server);
+    if (seen.has(signature)) {
+      continue;
+    }
+    seen.add(signature);
+    deduped.push(server);
+  }
+
+  return deduped;
+}
+
 export async function loadEffectiveMcpServersForProvider(input: {
   readonly provider: ProviderKind;
   readonly settings: ServerSettings;
@@ -384,7 +428,7 @@ export async function loadEffectiveMcpServersForProvider(input: {
     ...claude.servers,
   ]);
   return {
-    servers: filterMcpServersForProvider(input.provider, servers),
+    servers: dedupeEquivalentMcpServers(filterMcpServersForProvider(input.provider, servers)),
     warnings: [...codex.warnings, ...claude.warnings],
   };
 }
@@ -1422,6 +1466,103 @@ export function buildCodexManagedMcpConfigFragment(
   return lines.length > 1 ? `${lines.join("\n")}\n` : null;
 }
 
+function sanitizeCodexAppServerProfile(profile: TomlTable): TomlTable {
+  const sanitized: TomlTable = { ...profile };
+  const features = { ...readTomlTable(profile.features) };
+  const analytics = readTomlTable(profile.analytics) ?? {};
+  const apps = readTomlTable(profile.apps);
+  const defaultAppSettings = readTomlTable(apps?._default);
+
+  delete features.connectors;
+
+  sanitized.features = {
+    ...features,
+    apps: false,
+    plugins: false,
+  };
+  sanitized.analytics = {
+    ...analytics,
+    enabled: false,
+  };
+  sanitized.include_apps_instructions = false;
+  sanitized.apps = {
+    _default: {
+      ...defaultAppSettings,
+      enabled: false,
+    },
+  };
+
+  return sanitized;
+}
+
+export function buildCodexLeanAppServerConfig(input: {
+  readonly baseConfig: string;
+  readonly servers: ReadonlyArray<McpServerEntry>;
+}): string {
+  const parsed = input.baseConfig.trim().length > 0 ? parseToml(input.baseConfig) : {};
+  const config: TomlTable = { ...(parsed as TomlTable) };
+
+  delete config.plugins;
+  delete config.marketplaces;
+  delete config.mcp_servers;
+  delete config.mcpServers;
+
+  const features = { ...readTomlTable(config.features) };
+  const analytics = readTomlTable(config.analytics) ?? {};
+  const feedback = readTomlTable(config.feedback) ?? {};
+  const history = readTomlTable(config.history) ?? {};
+  const apps = readTomlTable(config.apps);
+  const defaultAppSettings = readTomlTable(apps?._default);
+  const profiles = readTomlTable(config.profiles);
+
+  delete features.connectors;
+
+  config.features = {
+    ...features,
+    apps: false,
+    plugins: false,
+  };
+  config.analytics = {
+    ...analytics,
+    enabled: false,
+  };
+  config.feedback = {
+    ...feedback,
+    enabled: false,
+  };
+  config.history = {
+    ...history,
+    persistence: "none",
+  };
+  config.include_apps_instructions = false;
+  config.apps = {
+    _default: {
+      ...defaultAppSettings,
+      enabled: false,
+    },
+  };
+
+  if (profiles) {
+    config.profiles = Object.fromEntries(
+      Object.entries(profiles).flatMap(([profileName, profileValue]) => {
+        const profileTable = readTomlTable(profileValue);
+        return profileTable ? [[profileName, sanitizeCodexAppServerProfile(profileTable)]] : [];
+      }),
+    );
+  }
+
+  const managedFragment = buildCodexManagedMcpConfigFragment(input.servers);
+  if (managedFragment) {
+    const managedConfig = parseToml(managedFragment);
+    const managedServers = readTomlTable(managedConfig.mcp_servers ?? managedConfig.mcpServers);
+    if (managedServers) {
+      config.mcp_servers = managedServers;
+    }
+  }
+
+  return stringifyToml(config);
+}
+
 function resolveCodexHomePath(homePath?: string): string {
   return homePath?.trim() ? homePath.trim() : path.join(homedir(), ".codex");
 }
@@ -1457,8 +1598,7 @@ export async function prepareCodexHomeWithManagedMcpServers(input: {
   readonly homePath?: string;
   readonly servers: ReadonlyArray<McpServerEntry>;
 }): Promise<{ homePath: string; cleanup: () => Promise<void> } | null> {
-  const managedFragment = buildCodexManagedMcpConfigFragment(input.servers);
-  if (!managedFragment) {
+  if (input.servers.length === 0) {
     return null;
   }
 
@@ -1475,10 +1615,10 @@ export async function prepareCodexHomeWithManagedMcpServers(input: {
   await maybeMirrorDirectory(path.join(sourceHome, "skills"), path.join(targetHome, "skills"));
 
   const baseConfig = await readFile(path.join(sourceHome, "config.toml"), "utf8").catch(() => "");
-  const mergedConfig =
-    baseConfig.trim().length > 0
-      ? `${baseConfig.trimEnd()}\n\n${managedFragment}`
-      : managedFragment;
+  const mergedConfig = buildCodexLeanAppServerConfig({
+    baseConfig,
+    servers: input.servers,
+  });
   await writeFile(path.join(targetHome, "config.toml"), mergedConfig, "utf8");
 
   return {

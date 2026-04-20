@@ -6,14 +6,21 @@ import { useCallback } from "react";
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "./useHandleNewThread";
-import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
-import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
+import {
+  gitCreateWorktreeMutationOptions,
+  gitRemoveWorktreeMutationOptions,
+} from "../lib/gitReactQuery";
+import { newCommandId, newMessageId, newThreadId, randomUUID } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
+
+function buildTemporaryWorktreeBranchName(): string {
+  return `shioricode/${randomUUID().replaceAll("-", "").slice(0, 8).toLowerCase()}`;
+}
 
 export function useThreadActions() {
   const appSettings = useSettings();
@@ -29,6 +36,7 @@ export function useThreadActions() {
   const navigate = useNavigate();
   const { handleNewThread } = useHandleNewThread();
   const queryClient = useQueryClient();
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
 
   const archiveThread = useCallback(
@@ -65,19 +73,30 @@ export function useThreadActions() {
   }, []);
 
   const branchThread = useCallback(
-    async (threadId: ThreadId) => {
+    async (
+      threadId: ThreadId,
+      options?: {
+        mode?: "local" | "worktree";
+      },
+    ) => {
       const api = readNativeApi();
       if (!api) return;
-      const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
+      const { projects, threads } = useStore.getState();
+      const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) {
         throw new Error("Only saved server threads can be branched.");
       }
       if (thread.archivedAt !== null) {
         throw new Error("Archived threads cannot be branched.");
       }
+      const threadProject = projects.find((project) => project.id === thread.projectId);
+      if (!threadProject) {
+        throw new Error("Could not resolve the thread project.");
+      }
 
       const nextThreadId = newThreadId();
       const createdAt = new Date().toISOString();
+      const mode = options?.mode ?? "local";
       const seedMessages = thread.messages.map((message) => ({
         messageId: newMessageId(),
         role: message.role,
@@ -96,6 +115,26 @@ export function useThreadActions() {
         createdAt: message.createdAt,
         updatedAt: message.completedAt ?? message.createdAt,
       }));
+      let nextBranch = thread.branch;
+      let nextWorktreePath: string | null = null;
+
+      if (mode === "worktree") {
+        const branchStatus = await api.git.status({
+          cwd: thread.worktreePath ?? threadProject.cwd,
+        });
+        const baseBranch = thread.branch ?? branchStatus.branch ?? null;
+        if (!baseBranch) {
+          throw new Error("Select a branch before forking into a new worktree.");
+        }
+        const result = await createWorktreeMutation.mutateAsync({
+          cwd: threadProject.cwd,
+          branch: baseBranch,
+          newBranch: buildTemporaryWorktreeBranchName(),
+        });
+        nextBranch = result.worktree.branch;
+        nextWorktreePath = result.worktree.path;
+      }
+
       await api.orchestration.dispatchCommand({
         type: "thread.create",
         commandId: newCommandId(),
@@ -108,8 +147,8 @@ export function useThreadActions() {
         parentThreadId: thread.id,
         branchSourceTurnId: thread.latestTurn?.turnId ?? null,
         seedMessages,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
+        branch: nextBranch,
+        worktreePath: nextWorktreePath,
         tag: thread.tag,
         createdAt,
       });
@@ -119,7 +158,7 @@ export function useThreadActions() {
         params: { threadId: nextThreadId },
       });
     },
-    [navigate],
+    [createWorktreeMutation, navigate],
   );
 
   const deleteThread = useCallback(

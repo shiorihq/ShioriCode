@@ -16,8 +16,6 @@ import {
   normalizeProviderToolName,
 } from "shared/providerTool";
 
-export const MAX_VISIBLE_WORK_LOG_ENTRIES = 5;
-
 export type WorkEntryDisplayKind = "read" | "list" | "search" | "edit" | "command" | "other";
 
 export interface FormattedWorkEntry {
@@ -336,7 +334,7 @@ function classifyFileChangeOperation(entry: WorkLogEntry): FileChangeOperation |
   return null;
 }
 
-function isFileChangeWorkEntry(entry: WorkLogEntry): boolean {
+export function isFileChangeWorkEntry(entry: WorkLogEntry): boolean {
   return classifyFileChangeOperation(entry) !== null;
 }
 
@@ -379,6 +377,10 @@ function classifyToolName(toolName: string | null): WorkEntryDisplayKind | null 
     return "search";
   }
   return null;
+}
+
+function isTodoWriteToolName(toolName: string | null): boolean {
+  return toolName === "todo write" || toolName === "todowrite";
 }
 
 function isEmptyStructuredToolDetail(detail: string | null | undefined): boolean {
@@ -508,8 +510,20 @@ function extractResultContentText(result: Record<string, unknown> | null): strin
 
 export interface SkillWorkflowCard {
   skillName: string | null;
+  skillPath: string | null;
+  skillMarkdown: string | null;
   toolUseId: string | null;
   resultText: string | null;
+}
+
+function extractResultRecord(
+  result: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!result) {
+    return null;
+  }
+
+  return asRecord(result.content) ?? result;
 }
 
 export function extractSkillWorkflowCard(entry: WorkLogEntry): SkillWorkflowCard | null {
@@ -519,8 +533,14 @@ export function extractSkillWorkflowCard(entry: WorkLogEntry): SkillWorkflowCard
   }
   const input = getEntryToolInput(entry);
   const result = asRecord(extractStructuredProviderToolData(entry.output)?.result);
+  const payload = extractResultRecord(result);
   return {
-    skillName: formatSkillToolDetail(input),
+    skillName:
+      formatSkillToolDetail(input) ??
+      asTrimmedString(payload?.skill) ??
+      asTrimmedString(payload?.name),
+    skillPath: asTrimmedString(payload?.path),
+    skillMarkdown: asTrimmedString(payload?.content),
     toolUseId: extractToolUseId(result),
     resultText: extractResultContentText(result),
   };
@@ -602,6 +622,29 @@ function formatPlanToolDetail(input: Record<string, unknown> | null): string | n
     return `${stepCount} steps`;
   }
   return null;
+}
+
+function formatTodoWriteSummary(input: Record<string, unknown> | null): string | null {
+  if (!input) {
+    return null;
+  }
+
+  const todos = Array.isArray(input.todos) ? input.todos : null;
+  const todoCount =
+    todos?.filter((entry) => {
+      const record = asRecord(entry);
+      return (
+        asTrimmedString(record?.content) ??
+        asTrimmedString(record?.activeForm) ??
+        asTrimmedString(record?.text)
+      );
+    }).length ?? 0;
+
+  if (todoCount <= 0) {
+    return "todo list";
+  }
+
+  return `todo list (${todoCount} ${todoCount === 1 ? "task" : "tasks"})`;
 }
 
 function formatAgentTargetDetail(input: Record<string, unknown> | null): string | null {
@@ -869,6 +912,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   const skillToolDetail = formatSkillToolDetail(providerToolInput);
   const userInputToolDetail = formatUserInputToolDetail(providerToolInput);
   const planToolDetail = formatPlanToolDetail(providerToolInput);
+  const todoWriteSummary = formatTodoWriteSummary(providerToolInput);
   const agentTargetDetail = formatAgentTargetDetail(providerToolInput);
 
   if (isRuntimeDiagnosticWorkEntry(entry)) {
@@ -924,7 +968,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   if (providerToolName === "skill") {
     return {
       kind: "other",
-      action: running ? "Launching skill" : "Launched skill",
+      action: running ? "Using Skill" : "Used Skill",
       detail: skillToolDetail ?? explicitDetail,
       monospace: false,
       dedupeKey: null,
@@ -946,6 +990,16 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
       kind: "other",
       action: running ? "Updating plan" : "Updated plan",
       detail: planToolDetail ?? explicitDetail,
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
+  if (providerToolName === "todo write" || providerToolName === "todowrite") {
+    return {
+      kind: "other",
+      action: running ? "Updating" : "Updated",
+      detail: todoWriteSummary,
       monospace: false,
       dedupeKey: null,
     };
@@ -1171,6 +1225,8 @@ export function buildWorkGroupSummary(
   let listCount = 0;
   let commandCount = 0;
   let genericToolCallCount = 0;
+  let todoWriteCount = 0;
+  const todoWriteDetails: string[] = [];
   let webSearchCount = 0;
 
   for (const entry of getDisplayedWorkEntries(entries)) {
@@ -1180,6 +1236,7 @@ export function buildWorkGroupSummary(
     }
 
     const formattedEntry = formatWorkEntry(entry);
+    const toolName = getEntryToolName(entry);
     const fileChangeOperation = classifyFileChangeOperation(entry);
     if (fileChangeOperation) {
       if (formattedEntry.detail) {
@@ -1220,6 +1277,14 @@ export function buildWorkGroupSummary(
         listCount += 1;
         continue;
       }
+    }
+
+    if (isTodoWriteToolName(toolName)) {
+      todoWriteCount += 1;
+      if (formattedEntry.detail) {
+        todoWriteDetails.push(formattedEntry.detail);
+      }
+      continue;
     }
 
     if (entry.requestKind === "command" || entry.itemType === "command_execution") {
@@ -1293,6 +1358,15 @@ export function buildWorkGroupSummary(
   });
   if (toolCallSegment) {
     summarySegments.push(toolCallSegment);
+  }
+
+  if (todoWriteCount > 0) {
+    const todoLabel =
+      todoWriteCount === 1 ? (todoWriteDetails[0] ?? "todo list") : `${todoWriteCount} todo lists`;
+    summarySegments.push({
+      leading: `${isInProgress ? "Updating" : "Updated"} ${todoLabel}`,
+      trailing: `${isInProgress ? "updating" : "updated"} ${todoLabel}`,
+    });
   }
 
   const webSearchSegment = workGroupTextSegment({
@@ -1582,7 +1656,7 @@ function deriveNestedWorkRows(
   const hasNestedChildren = (entry: WorkLogEntry): boolean =>
     typeof entry.itemId === "string" && (childrenByParentItemId.get(entry.itemId)?.length ?? 0) > 0;
 
-  const mixedToolActivityGroupKey = (entry: WorkLogEntry): string | null => {
+  const contiguousTopLevelToolGroupKey = (entry: WorkLogEntry): "edit" | "tool" | null => {
     if (
       entry.tone !== "tool" ||
       entry.itemType === "collab_agent_tool_call" ||
@@ -1590,13 +1664,13 @@ function deriveNestedWorkRows(
     ) {
       return null;
     }
-    return deriveWorkEntryGroupKey(entry);
+    return isFileChangeWorkEntry(entry) ? "edit" : "tool";
   };
 
   for (let index = 0; index < topLevelEntries.length; index += 1) {
     const entry = topLevelEntries[index]!;
     const groupedEntries = [entry];
-    const groupKey = mixedToolActivityGroupKey(entry);
+    const groupKey = contiguousTopLevelToolGroupKey(entry);
 
     let cursor = index + 1;
     if (groupKey !== null) {
@@ -1605,7 +1679,7 @@ function deriveNestedWorkRows(
         if (!nextEntry) {
           break;
         }
-        if (mixedToolActivityGroupKey(nextEntry) !== groupKey) {
+        if (contiguousTopLevelToolGroupKey(nextEntry) !== groupKey) {
           break;
         }
         groupedEntries.push(nextEntry);
@@ -1741,7 +1815,7 @@ function estimateWorkRowHeight(
         return 16 + 26;
       }
       const visibleItems = row.inlineEntries ?? [{ kind: "work" as const, id: entry.id, entry }];
-      return 16 + 26 + estimateGroupedInlineItemsHeight(visibleItems);
+      return 16 + 26 + Math.min(estimateGroupedInlineItemsHeight(visibleItems), 192) + 8;
     }
 
     if (!entry.running) {
@@ -1755,14 +1829,13 @@ function estimateWorkRowHeight(
   }
 
   const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
-  const visibleEntries = isExpanded ? displayedEntries.slice(0, MAX_VISIBLE_WORK_LOG_ENTRIES) : [];
-  const showMoreToggleHeight = isExpanded && entryCount > MAX_VISIBLE_WORK_LOG_ENTRIES ? 24 : 0;
+  const visibleEntries = isExpanded ? displayedEntries : [];
   const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
     return total + estimateGroupedWorkListEntryHeight(entry);
   }, 0);
   const reasoningHeight =
     isExpanded && row.inlineEntries ? inlineReasoningHeight(row.inlineEntries) : 0;
-  return 16 + 26 + visibleEntriesHeight + reasoningHeight + showMoreToggleHeight;
+  return 16 + 26 + Math.min(visibleEntriesHeight + reasoningHeight, 192) + 8;
 }
 
 function estimateOutputLineCount(output: unknown): number {

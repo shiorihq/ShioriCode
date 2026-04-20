@@ -26,6 +26,7 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      value?: string;
       label: string;
       description: string;
     }

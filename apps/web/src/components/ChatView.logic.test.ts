@@ -1,4 +1,4 @@
-import { EventId, ProjectId, ThreadId, TurnId } from "contracts";
+import { EventId, ProjectId, type ServerProvider, ThreadId, TurnId } from "contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../store";
 
@@ -7,10 +7,25 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  getVisibleChatProviderStatus,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  waitForServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+
+const makeProviderStatus = (overrides?: Partial<ServerProvider>): ServerProvider => ({
+  provider: "claudeAgent",
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "error",
+  auth: { status: "unknown" },
+  checkedAt: "2026-04-19T12:00:00.000Z",
+  message: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+  models: [],
+  ...overrides,
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -74,6 +89,45 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("getVisibleChatProviderStatus", () => {
+  it("hides transient provider probe timeout errors in chat", () => {
+    expect(getVisibleChatProviderStatus(makeProviderStatus())).toBeNull();
+  });
+
+  it("hides transient provider probe timeout warnings in chat", () => {
+    expect(
+      getVisibleChatProviderStatus(
+        makeProviderStatus({
+          status: "warning",
+          message:
+            "Could not verify Claude authentication status. Timed out while running command.",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("hides background provider availability checks in chat", () => {
+    expect(
+      getVisibleChatProviderStatus(
+        makeProviderStatus({
+          provider: "codex",
+          status: "warning",
+          message: "Checking Codex CLI availability...",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps non-timeout provider errors visible in chat", () => {
+    const status = makeProviderStatus({
+      installed: false,
+      message: "Claude Agent CLI (`claude`) is not installed or not on PATH.",
+    });
+
+    expect(getVisibleChatProviderStatus(status)).toEqual(status);
   });
 });
 
@@ -314,6 +368,50 @@ describe("waitForStartedServerThread", () => {
     }));
     const promise = waitForStartedServerThread(threadId, 500);
 
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(promise).resolves.toBe(false);
+  });
+});
+
+describe("waitForServerThread", () => {
+  it("resolves immediately when the server thread already exists", async () => {
+    const threadId = ThreadId.makeUnsafe("thread-existing");
+    useStore.setState((state) => ({
+      ...state,
+      threads: [makeThread({ id: threadId })],
+    }));
+
+    await expect(waitForServerThread(threadId)).resolves.toBe(true);
+  });
+
+  it("waits for the server thread to arrive via subscription updates", async () => {
+    const threadId = ThreadId.makeUnsafe("thread-created-later");
+    useStore.setState((state) => ({
+      ...state,
+      threads: [],
+    }));
+
+    const promise = waitForServerThread(threadId, 500);
+
+    useStore.setState((state) => ({
+      ...state,
+      threads: [makeThread({ id: threadId })],
+    }));
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it("returns false after the timeout when the server thread never arrives", async () => {
+    vi.useFakeTimers();
+
+    const threadId = ThreadId.makeUnsafe("thread-never-created");
+    useStore.setState((state) => ({
+      ...state,
+      threads: [],
+    }));
+
+    const promise = waitForServerThread(threadId, 500);
     await vi.advanceTimersByTimeAsync(500);
 
     await expect(promise).resolves.toBe(false);

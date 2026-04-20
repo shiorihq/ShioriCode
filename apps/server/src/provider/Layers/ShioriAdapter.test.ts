@@ -2281,7 +2281,7 @@ describe("ShioriAdapterLive session state", () => {
     );
   });
 
-  it("emits apply_patch approval on apply_patch resolution", async () => {
+  it("emits file_change approval on edit resolution", async () => {
     let callCount = 0;
     const fetchMock = vi.fn(async () => {
       callCount += 1;
@@ -2289,8 +2289,8 @@ describe("ShioriAdapterLive session state", () => {
         return responseFromChunks([
           {
             type: "tool-input-available",
-            toolCallId: "tool-apply-patch-1",
-            toolName: "apply_patch",
+            toolCallId: "tool-edit-1",
+            toolName: "edit",
             input: {
               patch: "*** Begin Patch\n*** Update File: notes.txt\n@@\n-old\n+new\n*** End Patch\n",
             },
@@ -2315,7 +2315,7 @@ describe("ShioriAdapterLive session state", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const adapter = yield* ShioriAdapter;
-          const threadId = asThreadId("thread-shiori-apply-patch");
+          const threadId = asThreadId("thread-shiori-edit");
 
           yield* adapter.startSession({
             provider: "shiori",
@@ -2350,14 +2350,14 @@ describe("ShioriAdapterLive session state", () => {
 
           yield* adapter.sendTurn({
             threadId,
-            input: "Apply the patch after approval.",
+            input: "Edit the file after approval.",
           });
 
           const approval = yield* Fiber.join(approvalFiber);
           assert.equal(approval._tag, "Some");
           assert.equal(approval.value.type, "request.opened");
           assert.ok(approval.value.requestId);
-          assert.equal(approval.value.payload.requestType, "apply_patch_approval");
+          assert.equal(approval.value.payload.requestType, "file_change_approval");
 
           yield* adapter.respondToRequest(threadId, approval.value.requestId, "accept");
 
@@ -2365,7 +2365,7 @@ describe("ShioriAdapterLive session state", () => {
           assert.equal(resolved._tag, "Some");
           if (resolved._tag === "Some") {
             assert.equal(resolved.value.type, "request.resolved");
-            assert.equal(resolved.value.payload.requestType, "apply_patch_approval");
+            assert.equal(resolved.value.payload.requestType, "file_change_approval");
           }
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
       ),
@@ -3946,6 +3946,33 @@ describe("hosted tools", () => {
     });
   });
 
+  it("registers edit as a file-change tool", () => {
+    const tools = buildHostedToolDescriptors({
+      allowedRequestKinds: new Set(),
+      session: {
+        runtimeMode: "approval-required",
+      } satisfies Pick<ProviderSession, "runtimeMode">,
+    });
+
+    const descriptor = tools.find((tool) => tool.name === "edit");
+    assert.ok(descriptor);
+    assert.equal(descriptor.title, "Edit files");
+    assert.equal(toolRequestKind("edit"), "file-change");
+    assert.deepStrictEqual(descriptor.inputSchema, {
+      type: "object",
+      properties: {
+        patch: {
+          type: "string",
+          description: "Unified diff patch text.",
+        },
+      },
+      required: ["patch"],
+      additionalProperties: false,
+      "x-shioricode-request-kind": "file-change",
+      "x-shioricode-needs-approval": true,
+    });
+  });
+
   it("adds plan-mode specific planning tools when the thread is in plan mode", () => {
     const tools = buildHostedToolDescriptors({
       allowedRequestKinds: new Set(),
@@ -4510,7 +4537,14 @@ describe("ShioriAdapterLive fetch reliability", () => {
       return responseFromChunks([
         { type: "text-start", id: "text-1" },
         { type: "text-delta", id: "text-1", delta: "partial " },
-        { type: "error", errorText: "Upstream provider returned 500." },
+        {
+          type: "error",
+          errorText: JSON.stringify({
+            code: 502,
+            message: "Network connection lost.",
+            metadata: { error_type: "provider_unavailable" },
+          }),
+        },
       ]);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -4544,7 +4578,7 @@ describe("ShioriAdapterLive fetch reliability", () => {
             assert.equal(completed.value.payload.state, "failed");
             assert.match(
               String(completed.value.payload.errorMessage ?? ""),
-              /Upstream provider returned 500/i,
+              /Network connection lost\. \(provider unavailable\)/i,
             );
           }
         }).pipe(Effect.provide(shioriAdapterTestLayer)),

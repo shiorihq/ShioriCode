@@ -8,7 +8,6 @@ import {
   CopyIcon,
   PencilIcon,
   SearchIcon,
-  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -48,7 +47,6 @@ import { useQueries } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { type SidebarProjectSortOrder, type SidebarThreadSortOrder } from "contracts/settings";
 import { isElectron } from "../env";
-import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
@@ -71,7 +69,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { toastManager } from "./ui/toast";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { formatRelativeTime } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import {
   getArm64IntelBuildWarningDescription,
@@ -116,6 +114,7 @@ import {
   SidebarBackgroundSubagentRowsView,
   useSidebarBackgroundSubagentRows,
 } from "./sidebar/SidebarBackgroundSubagentRows";
+import { SidebarUserFooter } from "./sidebar/SidebarUserFooter";
 import {
   getArchivedOnlyProjectEmptyStateLabel,
   getProjectDeletionBlocker,
@@ -678,9 +677,11 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                         : "text-muted-foreground/40"
                     }`}
                   >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
+                    {
+                      formatRelativeTime(
+                        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                      ).value
+                    }
                   </span>
                 )}
               </span>
@@ -815,90 +816,6 @@ function SortableProjectItem({
     >
       {children({ attributes, listeners, setActivatorNodeRef })}
     </li>
-  );
-}
-
-function UserAvatar(props: { src: string | null | undefined; name: string | null | undefined }) {
-  const initials = (props.name ?? "?").charAt(0).toUpperCase();
-
-  return props.src ? (
-    <img
-      src={props.src}
-      alt=""
-      className="size-6 shrink-0 rounded-md object-cover"
-      referrerPolicy="no-referrer"
-    />
-  ) : (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-sm font-medium text-muted-foreground">
-      {initials}
-    </span>
-  );
-}
-
-function SidebarUserFooter(props: { onSettingsClick: () => void; sortMenu?: ReactNode }) {
-  const { isAuthenticated, viewer, subscriptionPlanLabel } = useHostedShioriState();
-
-  if (!isAuthenticated || !viewer) {
-    return (
-      <div className="flex items-center gap-1">
-        {props.sortMenu}
-        <SidebarMenu className="flex-1">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip="Settings"
-              className="gap-2 px-2 py-1.5 text-foreground"
-              onClick={props.onSettingsClick}
-            >
-              <SettingsIcon className="size-3.5" />
-              <span className="text-sm">Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </div>
-    );
-  }
-
-  const displayName = viewer.name ?? viewer.email ?? "User";
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sidebar-foreground transition-colors group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0",
-          SIDEBAR_HOVER_SURFACE_CLASS,
-        )}
-        onClick={props.onSettingsClick}
-      >
-        <span className="shrink-0">
-          <UserAvatar src={viewer.image} name={viewer.name} />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-          <span className="block truncate text-xs font-medium text-sidebar-foreground">
-            {displayName}
-          </span>
-          {subscriptionPlanLabel ? (
-            <span className="block truncate text-[10px] leading-tight text-sidebar-foreground/80">
-              {subscriptionPlanLabel}
-            </span>
-          ) : null}
-        </span>
-      </button>
-      <div className="flex shrink-0 items-center gap-0.5 group-data-[collapsible=icon]:hidden">
-        {props.sortMenu}
-        <button
-          type="button"
-          className={cn(
-            "inline-flex size-5 items-center justify-center rounded-md text-sidebar-foreground transition-colors",
-            SIDEBAR_HOVER_SURFACE_CLASS,
-          )}
-          onClick={props.onSettingsClick}
-        >
-          <SettingsIcon className="size-3.5" />
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -1040,25 +957,6 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
     [archiveThread],
   );
 
-  const focusMostRecentThreadForProject = useCallback(
-    (projectId: ProjectId) => {
-      const latestThread = sortThreadsForSidebar(
-        (threadIdsByProjectId[projectId] ?? [])
-          .map((threadId) => sidebarThreadsById[threadId])
-          .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-          .filter((thread) => thread.archivedAt === null),
-        appSettings.sidebarThreadSortOrder,
-      )[0];
-      if (!latestThread) return;
-
-      void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
-      });
-    },
-    [appSettings.sidebarThreadSortOrder, navigate, sidebarThreadsById, threadIdsByProjectId],
-  );
-
   const addProjectFromPath = useCallback(
     async (rawCwd: string) => {
       const cwd = rawCwd.trim();
@@ -1076,7 +974,9 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
 
       const existing = projects.find((project) => project.cwd === cwd);
       if (existing) {
-        focusMostRecentThreadForProject(existing.id);
+        await handleNewThread(existing.id, {
+          envMode: appSettings.defaultThreadEnvMode,
+        });
         finishAddingProject();
         return;
       }
@@ -1096,7 +996,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
         });
         await handleNewThread(projectId, {
           envMode: appSettings.defaultThreadEnvMode,
-        }).catch(() => undefined);
+        });
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -1115,7 +1015,6 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
       finishAddingProject();
     },
     [
-      focusMostRecentThreadForProject,
       handleNewThread,
       isAddingProject,
       projects,

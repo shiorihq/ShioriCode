@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describePullRequestQueryError,
   filterPullRequests,
   formatPullRequestCountLabel,
   getPullRequestEmptyStateCopy,
@@ -89,5 +90,27 @@ describe("list copy helpers", () => {
   it("returns filter-aware empty states", () => {
     expect(getPullRequestEmptyStateCopy("closed").title).toBe("No closed pull requests");
     expect(getPullRequestEmptyStateCopy("draft").title).toBe("No draft pull requests");
+  });
+});
+
+describe("describePullRequestQueryError", () => {
+  it("returns a friendly message for non-git projects", () => {
+    expect(
+      describePullRequestQueryError(
+        new Error("GitHub CLI failed in execute: fatal: not a git repository"),
+      ),
+    ).toBe("Pull requests are unavailable because this project is not a git repository.");
+  });
+
+  it("returns a friendly message when GitHub CLI is missing", () => {
+    expect(describePullRequestQueryError(new Error("command not found: gh"))).toBe(
+      "GitHub CLI (`gh`) is required to view pull requests for this project.",
+    );
+  });
+
+  it("returns a friendly message when GitHub CLI needs auth", () => {
+    expect(describePullRequestQueryError(new Error("Run `gh auth login` first."))).toBe(
+      "Authenticate GitHub CLI with `gh auth login` to view pull requests for this project.",
+    );
   });
 });

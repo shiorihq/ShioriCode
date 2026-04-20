@@ -2,6 +2,7 @@ node_modules
 .bun
 .omx/
 .turbo
+.playwright-cli/
 .DS_Store
 *.log
 *.tsbuildinfo

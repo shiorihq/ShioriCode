@@ -1,4 +1,4 @@
-import { ProjectId, type ModelSelection, type ThreadId } from "contracts";
+import { ProjectId, type ModelSelection, type ServerProvider, type ThreadId } from "contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -9,6 +9,7 @@ import {
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import { isPendingProviderCheckStatus } from "../providerModels";
 export {
   createLocalDispatchSnapshot,
   hasServerAcknowledgedLocalDispatch,
@@ -201,10 +202,70 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
+function isTransientProviderProbeTimeout(status: ServerProvider): boolean {
+  return (
+    status.enabled &&
+    status.installed &&
+    (status.status === "warning" || status.status === "error") &&
+    status.message?.toLowerCase().includes("timed out while running command.") === true
+  );
+}
+
+export function getVisibleChatProviderStatus(
+  status: ServerProvider | null | undefined,
+): ServerProvider | null {
+  if (!status || status.status === "ready" || status.status === "disabled") {
+    return null;
+  }
+
+  return isTransientProviderProbeTimeout(status) || isPendingProviderCheckStatus(status)
+    ? null
+    : status;
+}
+
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
   );
+}
+
+export async function waitForServerThread(threadId: ThreadId, timeoutMs = 1_000): Promise<boolean> {
+  const getThread = () => useStore.getState().threads.find((thread) => thread.id === threadId);
+  if (getThread()) {
+    return true;
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+    const finish = (result: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      unsubscribe();
+      resolve(result);
+    };
+
+    const unsubscribe = useStore.subscribe((state) => {
+      if (!state.threads.some((thread) => thread.id === threadId)) {
+        return;
+      }
+      finish(true);
+    });
+
+    if (getThread()) {
+      finish(true);
+      return;
+    }
+
+    timeoutId = globalThis.setTimeout(() => {
+      finish(false);
+    }, timeoutMs);
+  });
 }
 
 export async function waitForStartedServerThread(

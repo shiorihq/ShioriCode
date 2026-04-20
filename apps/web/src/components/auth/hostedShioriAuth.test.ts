@@ -29,6 +29,22 @@ describe("toHostedShioriAuthErrorMessage", () => {
       ),
     ).toBe("Temporary or disposable email addresses are not allowed");
   });
+
+  it("sanitizes leaked server stack traces for disposable email validation", () => {
+    expect(
+      toHostedShioriAuthErrorMessage(
+        "Server Error\nUncaught Error: Temporary or disposable email addresses are not allowed at profile [as profile] (../../convex/auth.ts:167:12)\nCalled by client",
+      ),
+    ).toBe("Temporary or disposable email addresses are not allowed");
+  });
+
+  it("strips framework noise from unexpected server errors", () => {
+    expect(
+      toHostedShioriAuthErrorMessage(
+        "Server Error\nUncaught Error: Something went wrong\n    at handler (/tmp/file.ts:1:1)",
+      ),
+    ).toBe("Something went wrong");
+  });
 });
 
 describe("withHostedShioriRedirect", () => {

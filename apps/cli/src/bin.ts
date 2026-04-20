@@ -21,6 +21,7 @@ export function printHelp(): void {
   console.log(`shiori ${version}
 
 Usage:
+  shiori <folder>            Shortcut for "shiori open <folder>".
   shiori open [<folder>]
   shiori status
   shiori project list
@@ -248,6 +249,17 @@ export async function main(rawArgs: string[]): Promise<void> {
         });
       }
       console.log(threadId);
+    });
+    return;
+  }
+
+  const candidatePath = path.resolve(subject);
+  if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()) {
+    await withCliContext({ baseDir }, async ({ rpc, snapshot }) => {
+      await ensureProjectForCwd(rpc, snapshot, candidatePath);
+      const httpUrl = await resolveHttpUrl(baseDir);
+      await openInBrowser(httpUrl);
+      console.log(`Opened ${candidatePath} in ShioriCode at ${httpUrl}`);
     });
     return;
   }

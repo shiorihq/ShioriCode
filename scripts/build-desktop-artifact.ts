@@ -488,6 +488,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    protocols: [
+      {
+        name: "ShioriCode",
+        schemes: ["shioricode"],
+      },
+    ],
   };
   const genericPublishConfig = resolveGenericPublishConfig();
   const githubPublishConfig = resolveGitHubPublishConfig();

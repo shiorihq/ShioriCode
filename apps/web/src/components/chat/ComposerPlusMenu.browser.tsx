@@ -63,15 +63,42 @@ const CODEX_MODELS = [
   },
 ] as const;
 
+const SHIORI_MODELS = [
+  {
+    slug: "zhipu/glm-5.1",
+    name: "GLM-5.1",
+    isCustom: false,
+    multiModal: false,
+    capabilities: {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+] as const;
+
 async function mountMenu(props?: {
   provider?: ProviderKind;
-  model?: "claude-opus-4-6" | "claude-opus-4-7" | "gpt-5.4";
+  model?: "claude-opus-4-6" | "claude-opus-4-7" | "gpt-5.4" | "zhipu/glm-5.1";
   fastMode?: boolean;
 }) {
   const threadId = ThreadId.makeUnsafe("thread-composer-plus-menu");
   const provider = props?.provider ?? "claudeAgent";
-  const model = props?.model ?? (provider === "claudeAgent" ? "claude-opus-4-6" : "gpt-5.4");
-  const models = provider === "claudeAgent" ? CLAUDE_MODELS : CODEX_MODELS;
+  const model =
+    props?.model ??
+    (provider === "claudeAgent"
+      ? "claude-opus-4-6"
+      : provider === "shiori"
+        ? "zhipu/glm-5.1"
+        : "gpt-5.4");
+  const models =
+    provider === "claudeAgent"
+      ? CLAUDE_MODELS
+      : provider === "shiori"
+        ? SHIORI_MODELS
+        : CODEX_MODELS;
   const modelOptions = props?.fastMode !== undefined ? { fastMode: props.fastMode } : undefined;
 
   useComposerDraftStore.setState({
@@ -176,6 +203,22 @@ describe("ComposerPlusMenu", () => {
 
       await vi.waitFor(() => {
         expect(document.body.textContent ?? "").not.toContain("Speed");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables file attachments for models without multimodal support", async () => {
+    const mounted = await mountMenu({ provider: "shiori", model: "zhipu/glm-5.1" });
+
+    try {
+      await page.getByRole("button", { name: "More options" }).click();
+      const addFilesItem = page.getByRole("menuitem", { name: /Add photos & files/i });
+
+      await expect.element(addFilesItem).toHaveAttribute("data-disabled");
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Unsupported");
       });
     } finally {
       await mounted.cleanup();

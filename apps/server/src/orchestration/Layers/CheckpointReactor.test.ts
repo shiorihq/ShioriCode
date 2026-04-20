@@ -121,7 +121,17 @@ async function waitForThread(
   engine: OrchestrationEngineShape,
   predicate: (thread: {
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{
+      checkpointTurnCount: number;
+      turnId?: string;
+      status?: string;
+      files?: ReadonlyArray<{
+        path: string;
+        kind: string;
+        additions?: number;
+        deletions?: number;
+      }>;
+    }>;
     activities: ReadonlyArray<{ kind: string }>;
     messages: ReadonlyArray<{ role: string; text: string; id: string }>;
   }) => boolean,
@@ -130,7 +140,17 @@ async function waitForThread(
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{
+      checkpointTurnCount: number;
+      turnId?: string;
+      status?: string;
+      files?: ReadonlyArray<{
+        path: string;
+        kind: string;
+        additions?: number;
+        deletions?: number;
+      }>;
+    }>;
     activities: ReadonlyArray<{ kind: string }>;
     messages: ReadonlyArray<{ role: string; text: string; id: string }>;
   }> => {
@@ -701,6 +721,58 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("preserves provider-reported file summaries when replacing a placeholder checkpoint", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+
+    fs.mkdirSync(path.join(harness.cwd, ".playwright-cli"), { recursive: true });
+    fs.writeFileSync(path.join(harness.cwd, ".playwright-cli", "noise.yml"), "noise\n", "utf8");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-placeholder-diff"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-placeholder"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "missing",
+        files: [
+          {
+            path: "src/app.ts",
+            kind: "modified",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+        assistantMessageId: MessageId.makeUnsafe("assistant:turn-placeholder"),
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some(
+        (checkpoint) =>
+          checkpoint.checkpointTurnCount === 1 &&
+          checkpoint.turnId === "turn-placeholder" &&
+          checkpoint.status === "ready",
+      ),
+    );
+
+    expect(thread.checkpoints[0]?.files).toEqual([
+      {
+        path: "src/app.ts",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+    ]);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1)),
+    ).toBe(true);
   });
 
   it("ignores non-v2 checkpoint.captured runtime events", async () => {

@@ -82,6 +82,47 @@
   animation-duration: 0s !important;
 }
 
+@keyframes fast-mode-blitz-fall {
+  0% {
+    top: -14%;
+    opacity: 0;
+    transform: rotate(-6deg);
+  }
+  14% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 0.9;
+  }
+  100% {
+    top: 112%;
+    opacity: 0;
+    transform: rotate(8deg);
+  }
+}
+
+.fast-mode-blitz {
+  position: absolute;
+  top: -14%;
+  pointer-events: none;
+  user-select: none;
+  line-height: 1;
+  z-index: 30;
+  color: #fde047;
+  filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.7));
+  animation-name: fast-mode-blitz-fall;
+  animation-timing-function: cubic-bezier(0.45, 0, 0.7, 0.2);
+  animation-fill-mode: forwards;
+  will-change: top, opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fast-mode-blitz {
+    animation: none;
+    display: none;
+  }
+}
+
 .assistant-text-selectable,
 .assistant-text-selectable * {
   user-select: text;
@@ -302,6 +343,37 @@ body {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-white) 16%, transparent);
 }
 
+:root[data-sidebar-translucent] [data-slot="sidebar-footer"] {
+  background: transparent;
+}
+
+[data-app-chat-shell-with-sidebar] {
+  border-left: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+[data-app-chat-shell-with-sidebar]::before {
+  content: "";
+  position: absolute;
+  top: var(--app-sidebar-shell-radius);
+  bottom: 0;
+  left: 0;
+  width: 18px;
+  pointer-events: none;
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--color-white) 28%, transparent),
+    inset 12px 0 18px -18px color-mix(in srgb, var(--color-black) 14%, transparent);
+}
+
+.dark [data-app-chat-shell-with-sidebar] {
+  border-left-color: color-mix(in srgb, var(--border) 94%, transparent);
+}
+
+.dark [data-app-chat-shell-with-sidebar]::before {
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--color-white) 12%, transparent),
+    inset 12px 0 18px -18px color-mix(in srgb, var(--color-white) 14%, transparent);
+}
+
 .sidebar-scroll-fade [data-slot="scroll-area-viewport"] {
   --sidebar-scroll-fade-distance: 4.5rem;
   -webkit-mask-image: linear-gradient(
@@ -315,6 +387,35 @@ body {
     black 0,
     black calc(100% - var(--sidebar-scroll-fade-distance)),
     transparent 100%
+  );
+}
+
+.queue-scroll {
+  --queue-fade-distance: 1.25rem;
+  --queue-fade-top: black;
+  --queue-fade-bottom: black;
+}
+.queue-scroll[data-fade-top] {
+  --queue-fade-top: transparent;
+}
+.queue-scroll[data-fade-bottom] {
+  --queue-fade-bottom: transparent;
+}
+.queue-scroll[data-fade-top],
+.queue-scroll[data-fade-bottom] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    var(--queue-fade-top) 0,
+    black var(--queue-fade-distance),
+    black calc(100% - var(--queue-fade-distance)),
+    var(--queue-fade-bottom) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    var(--queue-fade-top) 0,
+    black var(--queue-fade-distance),
+    black calc(100% - var(--queue-fade-distance)),
+    var(--queue-fade-bottom) 100%
   );
 }
 

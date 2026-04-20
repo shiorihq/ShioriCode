@@ -16,7 +16,11 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import {
+  getProviderModelCapabilities,
+  providerModelSupportsImageAttachments,
+} from "../../providerModels";
+import { playFastModeBlitz } from "./fastModeBlitzFx";
 
 export interface ComposerPlusMenuProps {
   threadId: ThreadId;
@@ -43,6 +47,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
 
   const caps = getProviderModelCapabilities(models, model, provider);
+  const supportsImageAttachments = providerModelSupportsImageAttachments(models, model, provider);
   const thinkingEnabled = caps.supportsThinkingToggle
     ? provider === "shiori"
       ? ((modelOptions as { thinking?: boolean } | undefined)?.thinking ?? false)
@@ -65,12 +70,16 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
 
   const handleSpeedChange = useCallback(
     (value: string) => {
-      const next = { ...(modelOptions as Record<string, unknown>), fastMode: value === "fast" };
+      const nextFastMode = value === "fast";
+      if (nextFastMode !== fastModeEnabled) {
+        playFastModeBlitz(nextFastMode);
+      }
+      const next = { ...(modelOptions as Record<string, unknown>), fastMode: nextFastMode };
       setProviderModelOptions(threadId, provider, next as ProviderModelOptions[ProviderKind], {
         persistSticky: true,
       });
     },
-    [modelOptions, provider, setProviderModelOptions, threadId],
+    [fastModeEnabled, modelOptions, provider, setProviderModelOptions, threadId],
   );
 
   const handleFileInputChange = useCallback(
@@ -92,6 +101,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
         type="file"
         accept="image/*"
         multiple
+        disabled={!supportsImageAttachments}
         className="hidden"
         onChange={handleFileInputChange}
       />
@@ -111,12 +121,18 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
         </MenuTrigger>
         <MenuPopup align="start" side="top" sideOffset={8}>
           <MenuItem
+            disabled={!supportsImageAttachments}
             onClick={() => {
               fileInputRef.current?.click();
             }}
           >
             <PaperclipIcon className="size-4 shrink-0" />
-            Add photos & files
+            <span>Add photos & files</span>
+            {!supportsImageAttachments ? (
+              <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                Unsupported
+              </span>
+            ) : null}
           </MenuItem>
 
           <MenuDivider />

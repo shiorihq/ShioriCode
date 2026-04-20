@@ -16,6 +16,15 @@ const EMPTY_CAPABILITIES: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
+function findProviderModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderKind,
+): ServerProviderModel | undefined {
+  const slug = normalizeModelSlug(model, provider);
+  return models.find((candidate) => candidate.slug === slug);
+}
+
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
@@ -48,12 +57,70 @@ export function resolveSelectableProvider(
   return providers.find((candidate) => candidate.enabled)?.provider ?? requested;
 }
 
+export function isPendingProviderCheckStatus(snapshot: ServerProvider | null | undefined): boolean {
+  return (
+    snapshot?.status === "warning" &&
+    typeof snapshot.message === "string" &&
+    /^Checking\b/i.test(snapshot.message.trim())
+  );
+}
+
+export function getProviderPickerState(snapshot: ServerProvider | null | undefined): {
+  selectable: boolean;
+  badgeLabel: string | null;
+} {
+  if (!snapshot) {
+    return {
+      selectable: true,
+      badgeLabel: null,
+    };
+  }
+
+  if (!snapshot.enabled || snapshot.status === "disabled") {
+    return {
+      selectable: false,
+      badgeLabel: "Disabled",
+    };
+  }
+
+  if (!snapshot.installed) {
+    return {
+      selectable: false,
+      badgeLabel: "Not installed",
+    };
+  }
+
+  if (snapshot.status === "warning") {
+    return isPendingProviderCheckStatus(snapshot)
+      ? {
+          selectable: true,
+          badgeLabel: "Checking",
+        }
+      : {
+          selectable: false,
+          badgeLabel: "Unavailable",
+        };
+  }
+
+  if (snapshot.status === "error") {
+    return {
+      selectable: false,
+      badgeLabel: "Unavailable",
+    };
+  }
+
+  return {
+    selectable: true,
+    badgeLabel: null,
+  };
+}
+
 export function getProviderUnavailableReason(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
 ): string | null {
   const snapshot = getProviderSnapshot(providers, provider);
-  if (!snapshot || snapshot.status === "ready") {
+  if (!snapshot || snapshot.status === "ready" || isPendingProviderCheckStatus(snapshot)) {
     return null;
   }
 
@@ -74,8 +141,28 @@ export function getProviderModelCapabilities(
   model: string | null | undefined,
   provider: ProviderKind,
 ): ModelCapabilities {
-  const slug = normalizeModelSlug(model, provider);
-  return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+  return findProviderModel(models, model, provider)?.capabilities ?? EMPTY_CAPABILITIES;
+}
+
+export function getProviderModelDisplayName(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderKind,
+): string {
+  return (
+    findProviderModel(models, model, provider)?.name ??
+    normalizeModelSlug(model, provider) ??
+    model ??
+    DEFAULT_MODEL_BY_PROVIDER[provider]
+  );
+}
+
+export function providerModelSupportsImageAttachments(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderKind,
+): boolean {
+  return findProviderModel(models, model, provider)?.multiModal ?? true;
 }
 
 export function getDefaultServerModel(

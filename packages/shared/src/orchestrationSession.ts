@@ -12,6 +12,11 @@ import {
   type TurnId,
 } from "contracts";
 import { isMcpRefreshTokenDiagnosticMessage } from "./mcpDiagnostics";
+import {
+  extractStructuredProviderToolData,
+  normalizeProviderToolName,
+  summarizeProviderToolInvocation,
+} from "./providerTool";
 
 import type {
   ChatMessage,
@@ -836,12 +841,13 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const normalizedCommand = normalizeCommandValue(entry.command ?? entry.detail) ?? "";
   const detail = entry.detail?.trim() ?? "";
+  const structuredLifecycleIdentity = deriveStructuredToolLifecycleIdentity(entry);
   const itemType = entry.itemType ?? "";
   const parentItemId = entry.parentItemId ?? "";
   const lifecycleIdentity =
     entry.itemType === "command_execution" || entry.requestKind === "command"
-      ? normalizedCommand || detail
-      : detail;
+      ? normalizedCommand || structuredLifecycleIdentity || detail
+      : structuredLifecycleIdentity || detail || normalizedCommand;
   if (
     normalizedLabel.length === 0 &&
     lifecycleIdentity.length === 0 &&
@@ -851,6 +857,25 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     return undefined;
   }
   return [parentItemId, itemType, normalizedLabel, lifecycleIdentity].join("\u001f");
+}
+
+function deriveStructuredToolLifecycleIdentity(entry: DerivedWorkLogEntry): string {
+  const structured = extractStructuredProviderToolData(entry.output);
+  if (!structured) {
+    return "";
+  }
+
+  const normalizedToolName = normalizeProviderToolName(structured.toolName) ?? "";
+  const summary = summarizeProviderToolInvocation(structured.toolName, structured.input);
+  const normalizedSummary = summary ? summary.replace(/\s+/g, " ").trim().toLowerCase() : "";
+
+  if (normalizedToolName.length === 0) {
+    return normalizedSummary;
+  }
+  if (normalizedSummary.length === 0) {
+    return normalizedToolName;
+  }
+  return `${normalizedToolName}\u001f${normalizedSummary}`;
 }
 
 function normalizeCompactToolLabel(value: string): string {
@@ -1344,6 +1369,9 @@ function compareTimelineEntryOrder(left: TimelineEntry, right: TimelineEntry): n
 export function deriveVisibleTimelineMessages(
   messages: ReadonlyArray<ChatMessage>,
   session: Pick<ThreadSession, "activeTurnId" | "orchestrationStatus"> | null,
+  options?: {
+    readonly preserveCompletedAssistantMessages?: boolean;
+  },
 ): ChatMessage[] {
   const latestAssistantMessageIdByTurnId = new Map<TurnId, MessageId>();
   const assistantMessageCountByTurnId = new Map<TurnId, number>();
@@ -1361,6 +1389,7 @@ export function deriveVisibleTimelineMessages(
 
   const activeTurnId =
     session?.orchestrationStatus === "running" ? (session.activeTurnId ?? null) : null;
+  const preserveCompletedAssistantMessages = options?.preserveCompletedAssistantMessages === true;
 
   return messages.filter((message) => {
     if (message.role !== "assistant" || message.turnId == null) {
@@ -1373,7 +1402,11 @@ export function deriveVisibleTimelineMessages(
     }
 
     if (activeTurnId !== null && message.turnId === activeTurnId) {
-      return message.streaming;
+      return true;
+    }
+
+    if (preserveCompletedAssistantMessages) {
+      return true;
     }
 
     return latestAssistantMessageIdByTurnId.get(message.turnId) === message.id;

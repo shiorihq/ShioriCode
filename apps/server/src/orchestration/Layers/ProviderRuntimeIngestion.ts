@@ -19,6 +19,7 @@ import { makeDrainableWorker } from "shared/DrainableWorker";
 import { isMcpRefreshTokenDiagnosticMessage } from "shared/mcpDiagnostics";
 import { snapshotProviderToolData } from "shared/providerTool";
 
+import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -1708,7 +1709,12 @@ const make = Effect.fn("make")(function* () {
             completedAt: now,
             checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
             status: "missing",
-            files: [],
+            files: parseTurnDiffFilesFromUnifiedDiff(event.payload.unifiedDiff).map((file) => ({
+              path: file.path,
+              kind: "modified" as const,
+              additions: file.additions,
+              deletions: file.deletions,
+            })),
             assistantMessageId,
             checkpointTurnCount: maxTurnCount + 1,
             createdAt: now,

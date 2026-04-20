@@ -56,6 +56,11 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { shouldConfirmBeforeQuit } from "./quitConfirmation";
 import { MACOS_TRAFFIC_LIGHT_POSITION, resolveDesktopWindowControlsInset } from "./windowControls";
+import {
+  extractDesktopDeepLinkArg,
+  normalizeDesktopDeepLink,
+  resolveDesktopDeepLinkWindowUrl,
+} from "./deepLink";
 
 syncShellEnvironment();
 
@@ -134,6 +139,10 @@ let companionCliState: DesktopCompanionCliState = {
 };
 let companionCliInstallInFlight = false;
 let systemFontListCache: string[] | null = null;
+let pendingDesktopDeepLinkUrl: string | null = extractDesktopDeepLinkArg(
+  process.argv,
+  DESKTOP_SCHEME,
+);
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -143,6 +152,93 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+
+function defaultDesktopWindowUrl(): string {
+  return isDevelopment
+    ? (process.env.VITE_DEV_SERVER_URL as string)
+    : `${DESKTOP_SCHEME}://app/index.html`;
+}
+
+function resolvePendingDesktopWindowUrl(): string | null {
+  const rawUrl = pendingDesktopDeepLinkUrl;
+  if (!rawUrl) {
+    return null;
+  }
+
+  pendingDesktopDeepLinkUrl = null;
+  return resolveDesktopDeepLinkWindowUrl({
+    rawUrl,
+    scheme: DESKTOP_SCHEME,
+    isDevelopment,
+    devServerUrl: process.env.VITE_DEV_SERVER_URL,
+  });
+}
+
+function showAndFocusWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  if (!window.isVisible()) {
+    window.show();
+  }
+  window.focus();
+}
+
+function applyPendingDesktopDeepLink(window: BrowserWindow | null): void {
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  const targetUrl = resolvePendingDesktopWindowUrl();
+  if (!targetUrl) {
+    return;
+  }
+
+  void window.loadURL(targetUrl).catch((error) => {
+    console.warn("[desktop] failed to open deep link", error);
+  });
+}
+
+function handleDesktopDeepLink(rawUrl: string): void {
+  const normalized = normalizeDesktopDeepLink(rawUrl, DESKTOP_SCHEME);
+  if (!normalized) {
+    return;
+  }
+
+  pendingDesktopDeepLinkUrl = normalized;
+  if (!app.isReady()) {
+    return;
+  }
+
+  const targetWindow = mainWindow ?? createWindow();
+  if (!mainWindow) {
+    mainWindow = targetWindow;
+  }
+
+  showAndFocusWindow(targetWindow);
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", () => {
+      applyPendingDesktopDeepLink(targetWindow);
+    });
+    return;
+  }
+
+  applyPendingDesktopDeepLink(targetWindow);
+}
+
+function registerDesktopProtocolClient(): void {
+  try {
+    const entryPath = process.argv[1];
+    if (isDevelopment && entryPath) {
+      app.setAsDefaultProtocolClient(DESKTOP_SCHEME, process.execPath, [Path.resolve(entryPath)]);
+      return;
+    }
+
+    app.setAsDefaultProtocolClient(DESKTOP_SCHEME);
+  } catch (error) {
+    console.warn("[desktop] failed to register protocol client", error);
+  }
+}
 
 function readDesktopClientSettings(): ClientSettings {
   try {
@@ -1868,16 +1964,14 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    applyPendingDesktopDeepLink(window);
   });
   window.once("ready-to-show", () => {
-    window.show();
+    showAndFocusWindow(window);
   });
 
-  if (isDevelopment) {
-    void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-  } else {
-    void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
-  }
+  const initialWindowUrl = resolvePendingDesktopWindowUrl() ?? defaultDesktopWindowUrl();
+  void window.loadURL(initialWindowUrl);
 
   window.on("close", (event) => {
     if (process.platform === "darwin" || !shouldPromptForQuit()) {
@@ -1904,6 +1998,29 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, commandLine) => {
+    const deepLink = extractDesktopDeepLinkArg(commandLine, DESKTOP_SCHEME);
+    if (deepLink) {
+      handleDesktopDeepLink(deepLink);
+      return;
+    }
+
+    const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    if (existingWindow) {
+      showAndFocusWindow(existingWindow);
+    }
+  });
+}
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDesktopDeepLink(url);
+});
+
 // Override Electron's userData path before the `ready` event so that
 // Chromium session data uses a filesystem-friendly directory name.
 // Must be called synchronously at the top level — before `app.whenReady()`.
@@ -1928,8 +2045,12 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap ipc handlers registered");
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
-  mainWindow = createWindow();
-  writeDesktopLogHeader("bootstrap main window created");
+  if (mainWindow === null) {
+    mainWindow = createWindow();
+    writeDesktopLogHeader("bootstrap main window created");
+  } else {
+    applyPendingDesktopDeepLink(mainWindow);
+  }
 }
 
 app.on("before-quit", (event) => {
@@ -1947,6 +2068,7 @@ app
   .then(() => {
     writeDesktopLogHeader("app ready");
     configureAppIdentity();
+    registerDesktopProtocolClient();
     configureApplicationMenu();
     registerDesktopProtocol();
     configureAutoUpdater();

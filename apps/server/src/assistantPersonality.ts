@@ -42,6 +42,34 @@ export function buildAssistantPersonalityAppendix(
   ].join("\n");
 }
 
+export function buildMemoryGenerationAppendix(
+  generateMemories: boolean | null | undefined,
+): string | undefined {
+  if (generateMemories === false) {
+    return undefined;
+  }
+
+  return [
+    "## Memories",
+    "If your runtime supports durable memories or preference capture, keep them updated with stable, reusable facts that will help in future turns.",
+    "Only record enduring preferences, project conventions, or long-lived context.",
+    "Never store secrets, credentials, tokens, or other sensitive values as memories.",
+    "Ignore this section when no memory mechanism is available in the current runtime.",
+  ].join("\n");
+}
+
+export function buildAssistantSettingsAppendix(input: {
+  personality: AssistantPersonality | null | undefined;
+  generateMemories: boolean | null | undefined;
+}): string | undefined {
+  const appendices = [
+    buildAssistantPersonalityAppendix(input.personality),
+    buildMemoryGenerationAppendix(input.generateMemories),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  return appendices.length > 0 ? appendices.join("\n\n") : undefined;
+}
+
 export function appendPromptAppendix(base: string, appendix: string | undefined): string {
   return appendix ? `${base}\n\n${appendix}` : base;
 }

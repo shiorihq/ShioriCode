@@ -93,7 +93,7 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     return {
-      getProviders: syncProviders({ publish: false }).pipe(
+      getProviders: Ref.get(providersRef).pipe(
         Effect.tapError(Effect.logError),
         Effect.orElseSucceed(() => []),
       ),

@@ -1447,6 +1447,23 @@ describe("MessagesTimeline virtualization harness", () => {
         () => mounted.host.querySelector<HTMLElement>(`[data-timeline-row-id="${targetRowId}"]`),
         "Expected current-turn work row to remain visible after completion settles.",
       );
+
+      const afterCompletion = await measureTimelineRow({
+        host: mounted.host,
+        props: {
+          ...createBaseTimelineProps({
+            messages: [...historicalMessages, currentTurnUserMessage, currentTurnAssistantMessage],
+            workEntries: completedTurnWorkEntries,
+          }),
+          isWorking: false,
+          activeTurnInProgress: false,
+          activeTurnStartedAt: currentTurnUserMessage.createdAt,
+        },
+        targetRowId,
+      });
+      expect(
+        Math.abs(afterCompletion.actualHeightPx - afterCompletion.virtualizerSizePx),
+      ).toBeLessThanOrEqual(8);
     } finally {
       await mounted.cleanup();
     }

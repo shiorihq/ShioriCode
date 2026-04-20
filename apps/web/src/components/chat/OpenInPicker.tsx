@@ -4,7 +4,6 @@ import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../key
 import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { AntigravityIcon, CursorIcon, Icon, TraeIcon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
@@ -108,7 +107,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   }, [preferredEditor, keybindings, openInCwd]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <>
       <Button
         aria-label={primaryOption ? `Open in ${primaryOption.label}` : "Open in editor"}
         disabled={!preferredEditor || !openInCwd || !primaryOption}
@@ -120,9 +119,10 @@ export const OpenInPicker = memo(function OpenInPicker({
           <primaryOption.Icon aria-hidden="true" className="size-3.5" />
         ) : null}
       </Button>
-      <GroupSeparator />
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
+        <MenuTrigger
+          render={<Button aria-label="Editor options" size="icon-xs" variant="outline" />}
+        >
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
@@ -138,6 +138,6 @@ export const OpenInPicker = memo(function OpenInPicker({
           ))}
         </MenuPopup>
       </Menu>
-    </Group>
+    </>
   );
 });

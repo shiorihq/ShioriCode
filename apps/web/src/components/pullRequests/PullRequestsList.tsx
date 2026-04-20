@@ -25,9 +25,12 @@ import { useUiStateStore } from "~/uiStateStore";
 import type { Project } from "~/types";
 
 import {
+  describePullRequestQueryError,
   filterPullRequests,
   getPullRequestEmptyStateCopy,
   getPullRequestStatusTone,
+  isPullRequestAuthError,
+  isPullRequestGhMissingError,
   PULL_REQUEST_FILTER_LABELS,
   shouldExpandProjectByDefault,
   type PullRequestStatusTone,
@@ -55,27 +58,6 @@ type PrQueryState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "success"; pullRequests: readonly GitResolvedPullRequest[] };
-
-function describeQueryError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "Failed to load pull requests.";
-}
-
-function isAuthError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("not authenticated") ||
-    lower.includes("gh auth login") ||
-    lower.includes("no oauth token")
-  );
-}
-
-function isGhMissingError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("command not found: gh") || lower.includes("gh`) is required");
-}
 
 export function PullRequestsList({
   filter,
@@ -157,7 +139,7 @@ export function PullRequestsList({
       if (query.isError) {
         return {
           project,
-          state: { status: "error", message: describeQueryError(query.error) },
+          state: { status: "error", message: describePullRequestQueryError(query.error) },
           visiblePullRequests: [],
         };
       }
@@ -373,8 +355,8 @@ function ProjectPullRequestRows({
   }
 
   if (state.status === "error") {
-    const isAuth = isAuthError(state.message);
-    const isMissing = isGhMissingError(state.message);
+    const isAuth = isPullRequestAuthError(state.message);
+    const isMissing = isPullRequestGhMissingError(state.message);
     return (
       <div className="flex flex-col gap-1.5 px-4 pb-3 pt-1">
         <p className="text-xs text-destructive/90 text-pretty">

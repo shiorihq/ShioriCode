@@ -1399,10 +1399,7 @@ describe("ClaudeAdapterLive", () => {
         if (turnCompleted?.type === "turn.completed") {
           assert.equal(String(turnCompleted.turnId), String(turn.turnId));
           assert.equal(turnCompleted.payload.state, "interrupted");
-          assert.equal(
-            turnCompleted.payload.errorMessage,
-            "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use",
-          );
+          assert.equal(turnCompleted.payload.errorMessage, undefined);
           assert.equal(turnCompleted.payload.stopReason, "tool_use");
         }
       }).pipe(

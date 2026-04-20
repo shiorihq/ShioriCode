@@ -91,6 +91,7 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
           showCurvedSidebarEdge &&
             "-ml-px overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]",
         )}
+        data-app-chat-shell-with-sidebar={showCurvedSidebarEdge || undefined}
       >
         {children}
       </div>

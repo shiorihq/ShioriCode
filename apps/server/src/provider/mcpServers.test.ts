@@ -9,12 +9,14 @@ import type { McpServerEntry } from "contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  buildCodexLeanAppServerConfig,
   listEffectiveMcpServerRows,
   buildProviderMcpToolRuntime,
   buildCodexManagedMcpConfigFragment,
   discoverClaudeMcpServers,
   discoverCodexMcpServers,
   filterMcpServersForProvider,
+  loadEffectiveMcpServersForProvider,
   loadCodexManagedMcpServers,
   prepareCodexHomeWithManagedMcpServers,
   removeExternalMcpServer,
@@ -147,6 +149,72 @@ describe("buildCodexManagedMcpConfigFragment", () => {
     assert.match(fragment, /Authorization = "Bearer token"/);
     assert.match(fragment, /\[mcp_servers\.shioricode_events\]/);
     assert.match(fragment, /transport = "sse"/);
+  });
+});
+
+describe("buildCodexLeanAppServerConfig", () => {
+  it("keeps provider essentials while disabling plugins and app surfaces", () => {
+    const config = buildCodexLeanAppServerConfig({
+      baseConfig: [
+        'model_provider = "custom"',
+        'openai_base_url = "https://api.example.com/v1"',
+        "",
+        "[features]",
+        "plugins = true",
+        "apps = true",
+        "fast_mode = true",
+        "",
+        "[analytics]",
+        "enabled = true",
+        "",
+        "[feedback]",
+        "enabled = true",
+        "",
+        "[history]",
+        'persistence = "save-all"',
+        "",
+        "[plugins.demo]",
+        "enabled = true",
+        "",
+        "[marketplaces.demo]",
+        'source = "github.com/example/demo"',
+        "",
+        "[mcp_servers.remote]",
+        'url = "https://remote.example/mcp"',
+        "",
+        "[model_providers.custom]",
+        'name = "Custom"',
+        'base_url = "https://llm.example.com/v1"',
+      ].join("\n"),
+      servers: [
+        {
+          name: "filesystem",
+          transport: "stdio",
+          command: "node",
+          args: ["server.js"],
+          enabled: true,
+          providers: ["codex"],
+        },
+      ],
+    });
+
+    assert.match(config, /model_provider = "custom"/);
+    assert.match(config, /openai_base_url = "https:\/\/api\.example\.com\/v1"/);
+    assert.match(config, /\[model_providers\.custom\]/);
+    assert.match(config, /\[features\]/);
+    assert.match(config, /plugins = false/);
+    assert.match(config, /apps = false/);
+    assert.match(config, /fast_mode = true/);
+    assert.match(config, /\[analytics\]/);
+    assert.match(config, /enabled = false/);
+    assert.match(config, /\[feedback\]/);
+    assert.match(config, /\[history\]/);
+    assert.match(config, /persistence = "none"/);
+    assert.match(config, /\[apps\._default\]/);
+    assert.match(config, /\[mcp_servers\.shioricode_filesystem\]/);
+    assert.doesNotMatch(config, /\[plugins\.demo\]/);
+    assert.doesNotMatch(config, /\[marketplaces\.demo\]/);
+    assert.doesNotMatch(config, /\[mcp_servers\.remote\]/);
   });
 });
 
@@ -381,6 +449,54 @@ describe("external MCP discovery", () => {
       url: "https://project.example/mcp",
       providers: ["shiori"],
     });
+  });
+
+  it("dedupes equivalent discovered Codex and Claude servers for Shiori", async () => {
+    const codexHome = await createTempDir("shiori-mcp-codex-home-");
+    const claudeHome = await createTempDir("shiori-mcp-claude-home-");
+    const workspaceRoot = await createTempDir("shiori-mcp-project-");
+    const claudeDesktopConfig = path.join(claudeHome, "claude_desktop_config.json");
+
+    await mkdir(path.join(workspaceRoot, ".claude"), { recursive: true });
+
+    await writeFile(
+      path.join(codexHome, "config.toml"),
+      ["[mcp_servers.posthog]", 'transport = "sse"', 'url = "https://mcp-eu.posthog.com/sse"'].join(
+        "\n",
+      ),
+      "utf8",
+    );
+
+    await writeFile(claudeDesktopConfig, JSON.stringify({ mcpServers: {} }), "utf8");
+    await writeFile(
+      path.join(workspaceRoot, ".claude", "settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          posthog: {
+            transport: "sse",
+            url: "https://mcp-eu.posthog.com/sse",
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await loadEffectiveMcpServersForProvider({
+      provider: "shiori",
+      cwd: workspaceRoot,
+      settings: {
+        providers: {
+          codex: { homePath: codexHome },
+        },
+        mcpServers: {
+          servers: [],
+        },
+      } as never,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.servers.filter((server) => server.name === "codex:posthog")).toHaveLength(1);
+    expect(result.servers.some((server) => server.name === "claude:posthog")).toBe(false);
   });
 
   it("removes Codex MCP servers from config.toml", async () => {
@@ -620,12 +736,16 @@ describe("buildProviderMcpToolRuntime", () => {
 });
 
 describe("prepareCodexHomeWithManagedMcpServers", () => {
-  it("creates an isolated CODEX_HOME with managed MCP config appended", async () => {
+  it("creates an isolated lean CODEX_HOME with managed MCP config", async () => {
     const sourceHome = await createTempDir("codex-home-source-");
     const runtimeRoot = await createTempDir("codex-home-runtime-");
     await mkdir(path.join(sourceHome, "skills", "demo"), { recursive: true });
     await writeFile(path.join(sourceHome, "auth.json"), '{"access_token":"token"}', "utf8");
-    await writeFile(path.join(sourceHome, "config.toml"), 'model = "gpt-5"\n', "utf8");
+    await writeFile(
+      path.join(sourceHome, "config.toml"),
+      ['model = "gpt-5"', "", "[features]", "plugins = true"].join("\n"),
+      "utf8",
+    );
     await writeFile(path.join(sourceHome, "skills", "demo", "SKILL.md"), "# Demo\n", "utf8");
 
     const prepared = await prepareCodexHomeWithManagedMcpServers({
@@ -655,9 +775,29 @@ describe("prepareCodexHomeWithManagedMcpServers", () => {
     assert.equal(auth, '{"access_token":"token"}');
     assert.equal(skill, "# Demo\n");
     assert.match(config, /model = "gpt-5"/);
+    assert.match(config, /plugins = false/);
     assert.match(config, /\[mcp_servers\.shioricode_filesystem\]/);
-    assert.match(config, /args = \["server\.js"\]/);
+    assert.match(config, /args = \[\s*"server\.js"\s*\]/);
 
     await prepared.cleanup();
+  });
+
+  it("uses the real CODEX_HOME when no managed MCP servers are present", async () => {
+    const sourceHome = await createTempDir("codex-home-source-empty-");
+    const runtimeRoot = await createTempDir("codex-home-runtime-empty-");
+    await writeFile(
+      path.join(sourceHome, "config.toml"),
+      ['model_provider = "custom"', "", "[features]", "plugins = true"].join("\n"),
+      "utf8",
+    );
+
+    const prepared = await prepareCodexHomeWithManagedMcpServers({
+      threadId: "thread-empty",
+      runtimeRootDir: runtimeRoot,
+      homePath: sourceHome,
+      servers: [],
+    });
+
+    assert.equal(prepared, null);
   });
 });

@@ -1,5 +1,6 @@
 import { useQuery as useServerQuery } from "@tanstack/react-query";
 import { type HostedBillingPlan, type HostedBillingSnapshot } from "contracts";
+import { ArrowRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { type HostedSubscriptionPlanId } from "../../convex/api";
@@ -224,12 +225,18 @@ export function HostedBillingPanelView(props: HostedBillingPanelViewProps) {
                   </ul>
 
                   <Button
-                    className="mt-6 w-full"
+                    className="group mt-6 w-full"
                     variant={plan.highlighted ? "default" : "outline"}
                     disabled={upgradeState.disabled || props.pendingAction !== null}
                     onClick={() => props.onCheckout(plan.id)}
                   >
-                    {isPendingCheckout ? "Opening checkout…" : upgradeState.label}
+                    <span>{isPendingCheckout ? "Opening checkout…" : upgradeState.label}</span>
+                    {!upgradeState.disabled && !isPendingCheckout ? (
+                      <ArrowRightIcon
+                        aria-hidden="true"
+                        className="ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5"
+                      />
+                    ) : null}
                   </Button>
                 </article>
               );
@@ -310,10 +317,12 @@ export function HostedBillingPanel({ mode }: { mode: HostedBillingPanelMode }) {
     return toActionErrorMessage(billingSnapshotQuery.error);
   }, [billingSnapshotQuery.error]);
 
+  const snapshot = billingSnapshotQuery.data ?? null;
+
   return (
     <HostedBillingPanelView
       mode={mode}
-      snapshot={billingSnapshotQuery.data ?? null}
+      snapshot={snapshot}
       isLoading={billingSnapshotQuery.isLoading}
       errorMessage={errorMessage}
       subscriptionPlanId={subscriptionPlanId}

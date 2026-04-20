@@ -89,6 +89,32 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("renders Todo Write with a friendly todo-list summary instead of raw JSON", () => {
+    const todoWriteEntry = {
+      id: "todo-write-entry",
+      createdAt: "2026-04-19T11:19:28.205Z",
+      label: "Todo Write",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail:
+        'Todo Write: {"todos":[{"content":"Initialize browser session","status":"in_progress"}]}',
+      output: {
+        toolName: "TodoWrite",
+        input: {
+          todos: [{ content: "Initialize browser session", status: "in_progress" }],
+        },
+      },
+    };
+
+    expect(formatWorkEntry(todoWriteEntry)).toMatchObject({
+      kind: "other",
+      action: "Updated",
+      detail: "todo list (1 task)",
+      monospace: false,
+    });
+    expect(buildWorkGroupSummary([todoWriteEntry], false)).toBe("Updated todo list (1 task)");
+  });
+
   it("dedupes repeated file reads when summarizing exploration work groups", () => {
     const entries = [
       {
@@ -452,7 +478,7 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
-  it("formats Skill tool calls with the launched skill name", () => {
+  it("formats Skill tool calls with the used skill name", () => {
     const skillEntry = {
       id: "claude-skill",
       createdAt: "2026-02-23T00:00:01.000Z",
@@ -464,7 +490,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(formatWorkEntry(skillEntry)).toMatchObject({
       kind: "other",
-      action: "Launched skill",
+      action: "Used Skill",
       detail: "dogfood",
       monospace: false,
     });
@@ -869,15 +895,17 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     const workRows = rows.filter((row) => row.kind === "work");
-    expect(workRows).toHaveLength(4);
+    expect(workRows).toHaveLength(2);
     expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-edit"]);
-    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-read"]);
-    expect(workRows[2]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-command"]);
-    expect(workRows[3]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-web-search"]);
+    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "work-read",
+      "work-command",
+      "work-web-search",
+    ]);
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe("Edited 1 file");
-    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe("Explored 1 file");
-    expect(buildWorkGroupSummary(workRows[2]!.groupedEntries, false)).toBe("Ran 1 command");
-    expect(buildWorkGroupSummary(workRows[3]!.groupedEntries, false)).toBe("Searched web 1 time");
+    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe(
+      "Explored 1 file, ran 1 command, searched web 1 time",
+    );
   });
 
   it("marks the trailing work group as sticky in progress while the turn is still active", () => {

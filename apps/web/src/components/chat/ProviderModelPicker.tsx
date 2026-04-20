@@ -1,4 +1,4 @@
-import { type ProviderKind, type ServerProvider } from "contracts";
+import { type ProviderKind, type ProviderModelOptions, type ServerProvider } from "contracts";
 import { resolveSelectableModel } from "shared/model";
 import { memo, useMemo, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
@@ -19,7 +19,12 @@ import {
 } from "../ui/menu";
 import { ClaudeAI, CursorIcon, Icon, OpenAI, ShioriIcon } from "../Icons";
 import { cn } from "~/lib/utils";
-import { getProviderSnapshot } from "../../providerModels";
+import {
+  getProviderPickerState,
+  getProviderModelCapabilities,
+  getProviderModels,
+  getProviderSnapshot,
+} from "../../providerModels";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -35,6 +40,12 @@ const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   claudeAgent: ClaudeAI,
   cursor: CursorIcon,
 };
+
+const FastModeBoltIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 16 16" fill="currentColor">
+    <path d="M9.982 1.055a.75.75 0 0 1 .64.88l-.74 4.065h2.945a.75.75 0 0 1 .557 1.252L7.27 14.032a.75.75 0 0 1-1.31-.6l.848-4.682H3.75a.75.75 0 0 1-.546-1.264l5.523-5.657a.75.75 0 0 1 1.255.226Z" />
+  </svg>
+);
 
 export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 
@@ -117,6 +128,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   lockedProvider: ProviderKind | null;
   providers?: ReadonlyArray<ServerProvider>;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  modelOptions?: ProviderModelOptions[ProviderKind];
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
@@ -132,6 +144,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
+  const fastModeActive = useMemo(() => {
+    if (!props.providers || !props.modelOptions || !("fastMode" in props.modelOptions)) {
+      return false;
+    }
+    if (props.modelOptions.fastMode !== true) {
+      return false;
+    }
+    const activeProviderModels = getProviderModels(props.providers, activeProvider);
+    return getProviderModelCapabilities(activeProviderModels, props.model, activeProvider)
+      .supportsFastMode;
+  }, [activeProvider, props.model, props.modelOptions, props.providers]);
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
@@ -165,7 +188,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             style={props.compact ? { paddingInlineEnd: "12px" } : undefined}
             className={cn(
-              "justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
+              "group/provider-model-picker justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
               props.compact ? "max-w-42 min-w-0 shrink" : "sm:px-3",
               props.triggerClassName,
             )}
@@ -176,15 +199,36 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn("flex items-center gap-2", props.compact ? "max-w-36 sm:pl-1" : undefined)}
         >
-          <ProviderIcon
-            aria-hidden="true"
-            data-chat-provider-model-picker-provider-icon="true"
-            className={cn(
-              "size-4 shrink-0",
-              providerIconClassName(activeProvider, "text-muted-foreground/70"),
-              props.activeProviderIconClassName,
+          <span className="relative flex size-4 shrink-0 items-center justify-center">
+            {fastModeActive ? (
+              <>
+                <FastModeBoltIcon
+                  aria-hidden="true"
+                  data-chat-provider-model-picker-fast-icon="true"
+                  className="size-4 shrink-0 text-muted-foreground/70 transition-opacity duration-150 group-hover/provider-model-picker:opacity-0 group-focus-visible/provider-model-picker:opacity-0"
+                />
+                <ProviderIcon
+                  aria-hidden="true"
+                  data-chat-provider-model-picker-provider-icon="true"
+                  className={cn(
+                    "absolute inset-0 size-4 shrink-0 opacity-0 transition-opacity duration-150 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
+                    providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                    props.activeProviderIconClassName,
+                  )}
+                />
+              </>
+            ) : (
+              <ProviderIcon
+                aria-hidden="true"
+                data-chat-provider-model-picker-provider-icon="true"
+                className={cn(
+                  "size-4 shrink-0",
+                  providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                  props.activeProviderIconClassName,
+                )}
+              />
             )}
-          />
+          </span>
           <span className="min-w-0 flex-1 truncate whitespace-nowrap">{selectedModelLabel}</span>
           <ChevronDownIcon
             aria-hidden="true"
@@ -219,12 +263,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               const liveProvider = props.providers
                 ? getProviderSnapshot(props.providers, option.value)
                 : undefined;
-              if (liveProvider && liveProvider.status !== "ready") {
-                const unavailableLabel = !liveProvider.enabled
-                  ? "Disabled"
-                  : !liveProvider.installed
-                    ? "Not installed"
-                    : "Unavailable";
+              const providerMenuState = getProviderPickerState(liveProvider);
+              if (!providerMenuState.selectable) {
                 return (
                   <MenuItem key={option.value} disabled>
                     <OptionIcon
@@ -236,7 +276,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     />
                     <span>{option.label}</span>
                     <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                      {unavailableLabel}
+                      {providerMenuState.badgeLabel}
                     </span>
                   </MenuItem>
                 );
@@ -252,6 +292,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       )}
                     />
                     {option.label}
+                    {providerMenuState.badgeLabel ? (
+                      <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                        {providerMenuState.badgeLabel}
+                      </span>
+                    ) : null}
                   </MenuSubTrigger>
                   <MenuSubPopup className="[--available-height:min(24rem,70vh)]" sideOffset={4}>
                     <MenuGroup>

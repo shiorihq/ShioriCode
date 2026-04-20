@@ -16,6 +16,48 @@ export function getPullRequestStatusTone(
   return pullRequest.isDraft === true ? "draft" : "open";
 }
 
+function extractPullRequestQueryErrorMessage(error: unknown): string | null {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return typeof error === "string" && error.trim().length > 0 ? error : null;
+}
+
+export function isPullRequestAuthError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("not authenticated") ||
+    lower.includes("gh auth login") ||
+    lower.includes("no oauth token")
+  );
+}
+
+export function isPullRequestGhMissingError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("command not found: gh") || lower.includes("gh`) is required");
+}
+
+export function describePullRequestQueryError(error: unknown): string {
+  const message = extractPullRequestQueryErrorMessage(error);
+  if (!message) {
+    return "Failed to load pull requests.";
+  }
+
+  if (message.toLowerCase().includes("not a git repository")) {
+    return "Pull requests are unavailable because this project is not a git repository.";
+  }
+
+  if (isPullRequestGhMissingError(message)) {
+    return "GitHub CLI (`gh`) is required to view pull requests for this project.";
+  }
+
+  if (isPullRequestAuthError(message)) {
+    return "Authenticate GitHub CLI with `gh auth login` to view pull requests for this project.";
+  }
+
+  return message;
+}
+
 export function filterPullRequests(
   pullRequests: readonly GitResolvedPullRequest[],
   filter: GitPullRequestListFilter,

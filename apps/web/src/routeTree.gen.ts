@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -24,6 +25,11 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
 
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -98,6 +104,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/welcome': typeof WelcomeRoute
   '/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -112,6 +119,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/welcome': typeof WelcomeRoute
   '/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -129,6 +137,7 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/welcome': typeof WelcomeRoute
   '/_chat/$threadId': typeof ChatThreadIdRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/'
     | '/pull-requests'
     | '/settings'
+    | '/welcome'
     | '/$threadId'
     | '/settings/account'
     | '/settings/appearance'
@@ -161,6 +171,7 @@ export interface FileRouteTypes {
   to:
     | '/pull-requests'
     | '/settings'
+    | '/welcome'
     | '/$threadId'
     | '/settings/account'
     | '/settings/appearance'
@@ -177,6 +188,7 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/pull-requests'
     | '/settings'
+    | '/welcome'
     | '/_chat/$threadId'
     | '/settings/account'
     | '/settings/appearance'
@@ -194,10 +206,18 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   PullRequestsRoute: typeof PullRequestsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  WelcomeRoute: typeof WelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -343,6 +363,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   PullRequestsRoute: PullRequestsRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

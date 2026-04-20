@@ -22,7 +22,7 @@ import {
 import { normalizeModelSlug } from "shared/model";
 import { Effect, ServiceMap } from "effect";
 
-import { buildAssistantPersonalityAppendix } from "./assistantPersonality";
+import { buildAssistantSettingsAppendix } from "./assistantPersonality";
 import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
@@ -39,24 +39,41 @@ import {
   type PendingRequestKey,
   type PendingUserInputRequest,
 } from "./provider/codexRequestTracker";
-import { classifyCodexStderrLine, isRecoverableThreadResumeError } from "./provider/codexStderr";
+import {
+  classifyCodexStderrLine,
+  consumeCodexStderrChunk,
+  flushCodexStderrStream,
+  isRecoverableThreadResumeError,
+  type CodexStderrStreamState,
+} from "./provider/codexStderr";
 import { toCodexUserInputAnswers } from "./provider/codexUserInput";
 import {
+  CODEX_SPARK_MODEL,
   readCodexAccountSnapshot,
   readCodexUsageSnapshot,
   resolveCodexModelForAccount,
   type CodexAccountSnapshot,
 } from "./provider/codexAccount";
 import { buildCodexCollaborationMode } from "./provider/policy/codexPromptPolicy";
-import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer";
+import {
+  buildCodexAppServerArgs,
+  buildCodexInitializeParams,
+  CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
+  killCodexChildProcess,
+} from "./provider/codexAppServer";
 import type { CodexUsageSnapshot } from "./provider/Services/ProviderUsage.ts";
 import { ServerSettingsService } from "./serverSettings";
 
-export { buildCodexInitializeParams } from "./provider/codexAppServer";
+export {
+  buildCodexAppServerArgs,
+  buildCodexInitializeParams,
+  CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
+} from "./provider/codexAppServer";
 export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount";
 
 interface CodexSessionContext {
   session: ProviderSession;
+  providerThreadId?: string;
   account: CodexAccountSnapshot;
   supportsReasoningSummary: boolean;
   child: ChildProcessWithoutNullStreams;
@@ -158,6 +175,10 @@ export function normalizeCodexModelSlug(
   return normalized;
 }
 
+function supportsDetailedReasoningSummaryForModel(model: string | undefined): boolean {
+  return model !== CODEX_SPARK_MODEL;
+}
+
 export interface CodexAppServerManagerEvents {
   event: [event: ProviderEvent];
 }
@@ -176,14 +197,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ? Effect.runPromiseWith(this.services)(effect as Effect.Effect<A, E, never>)
       : Effect.runPromise(effect as Effect.Effect<A, E, never>);
 
-  private async readAssistantPersonalityAppendix(): Promise<string | undefined> {
+  private async readAssistantSettingsAppendix(): Promise<string | undefined> {
     try {
       const result = (await this.runPromise(
         Effect.result(
           Effect.gen(function* () {
             const serverSettings = yield* ServerSettingsService;
             const settings = yield* serverSettings.getSettings;
-            return buildAssistantPersonalityAppendix(settings.assistantPersonality);
+            return buildAssistantSettingsAppendix({
+              personality: settings.assistantPersonality,
+              generateMemories: settings.generateMemories,
+            });
           }),
         ),
       )) as { _tag: "Success"; value: string | undefined } | { _tag: "Failure" };
@@ -263,7 +287,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = spawn(codexBinaryPath, buildCodexAppServerArgs(), {
         cwd: resolvedCwd,
         env: {
           ...process.env,
@@ -297,7 +321,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
 
-      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      await this.sendRequest(
+        context,
+        "initialize",
+        buildCodexInitializeParams(),
+        CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
+      );
 
       this.writeMessage(context, { method: "initialized" });
       const requestedModel = normalizeCodexModelSlug(input.model);
@@ -311,8 +340,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const threadStartParams = {
         ...sessionOverrides,
-        experimentalRawEvents: context.supportsReasoningSummary,
-        persistExtendedHistory: context.supportsReasoningSummary,
+        experimentalRawEvents: false,
       };
       const resumeThreadId = readResumeThreadId(input);
       this.emitLifecycleEvent(
@@ -338,7 +366,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           threadOpenResponse = await this.sendRequest(context, "thread/resume", {
             ...sessionOverrides,
             threadId: resumeThreadId,
-            persistExtendedHistory: context.supportsReasoningSummary,
           });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
@@ -386,9 +413,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
       const providerThreadId = threadIdRaw;
 
+      context.providerThreadId = providerThreadId;
       this.updateSession(context, {
         status: "ready",
-        resumeCursor: { threadId: providerThreadId },
+        ...(threadOpenMethod === "thread/resume"
+          ? { resumeCursor: { threadId: providerThreadId } }
+          : {}),
       });
       this.emitLifecycleEvent(
         context,
@@ -456,11 +486,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error("Turn input must include text or attachments.");
     }
 
-    const providerThreadId = readResumeThreadId({
-      threadId: context.session.threadId,
-      runtimeMode: context.session.runtimeMode,
-      resumeCursor: context.session.resumeCursor,
-    });
+    const providerThreadId = this.readProviderThreadId(context);
     if (!providerThreadId) {
       throw new Error("Session is missing provider resume thread id.");
     }
@@ -498,10 +524,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (input.effort) {
       turnStartParams.effort = input.effort;
     }
-    if (context.supportsReasoningSummary) {
+    if (
+      context.supportsReasoningSummary &&
+      supportsDetailedReasoningSummaryForModel(normalizedModel)
+    ) {
       turnStartParams.summary = "detailed";
     }
-    const developerInstructionsAppendix = await this.readAssistantPersonalityAppendix();
+    const developerInstructionsAppendix = await this.readAssistantSettingsAppendix();
     const collaborationMode = buildCodexCollaborationMode({
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
@@ -523,21 +552,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error("turn/start response did not include a turn id.");
     }
     const turnId = TurnId.makeUnsafe(turnIdRaw);
+    const resumeCursor = { threadId: providerThreadId };
 
     this.updateSession(context, {
       status: "running",
       activeTurnId: turnId,
-      ...(context.session.resumeCursor !== undefined
-        ? { resumeCursor: context.session.resumeCursor }
-        : {}),
+      resumeCursor,
     });
 
     return {
       threadId: context.session.threadId,
       turnId,
-      ...(context.session.resumeCursor !== undefined
-        ? { resumeCursor: context.session.resumeCursor }
-        : {}),
+      resumeCursor,
     };
   }
 
@@ -545,11 +571,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const context = this.requireSession(threadId);
     const effectiveTurnId = turnId ?? context.session.activeTurnId;
 
-    const providerThreadId = readResumeThreadId({
-      threadId: context.session.threadId,
-      runtimeMode: context.session.runtimeMode,
-      resumeCursor: context.session.resumeCursor,
-    });
+    const providerThreadId = this.readProviderThreadId(context);
     if (!effectiveTurnId || !providerThreadId) {
       return;
     }
@@ -562,11 +584,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   async readThread(threadId: ThreadId): Promise<CodexThreadSnapshot> {
     const context = this.requireSession(threadId);
-    const providerThreadId = readResumeThreadId({
-      threadId: context.session.threadId,
-      runtimeMode: context.session.runtimeMode,
-      resumeCursor: context.session.resumeCursor,
-    });
+    const providerThreadId = this.readProviderThreadId(context);
     if (!providerThreadId) {
       throw new Error("Session is missing a provider resume thread id.");
     }
@@ -580,11 +598,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   async rollbackThread(threadId: ThreadId, numTurns: number): Promise<CodexThreadSnapshot> {
     const context = this.requireSession(threadId);
-    const providerThreadId = readResumeThreadId({
-      threadId: context.session.threadId,
-      runtimeMode: context.session.runtimeMode,
-      resumeCursor: context.session.resumeCursor,
-    });
+    const providerThreadId = this.readProviderThreadId(context);
     if (!providerThreadId) {
       throw new Error("Session is missing a provider resume thread id.");
     }
@@ -754,10 +768,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     // StringDecoder buffers incomplete multi-byte UTF-8 sequences across
     // chunk boundaries, preventing replacement-character corruption.
     const stderrDecoder = new StringDecoder("utf8");
-    context.child.stderr.on("data", (chunk: Buffer) => {
-      const raw = stderrDecoder.write(chunk);
-      const lines = raw.split(/\r?\n/g);
-      for (const rawLine of lines) {
+    let stderrState: CodexStderrStreamState = { pendingBlock: null, remainder: "" };
+    const emitClassifiedStderrLines = (rawLines: ReadonlyArray<string>) => {
+      for (const rawLine of rawLines) {
         const classified = classifyCodexStderrLine(rawLine);
         if (!classified) {
           continue;
@@ -765,6 +778,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
         this.emitNotificationEvent(context, "process/stderr", classified.message);
       }
+    };
+    context.child.stderr.on("data", (chunk: Buffer) => {
+      const raw = stderrDecoder.write(chunk);
+      const next = consumeCodexStderrChunk(stderrState, raw);
+      stderrState = next.state;
+      emitClassifiedStderrLines(next.emittedLines);
+    });
+    context.child.stderr.on("end", () => {
+      const raw = stderrDecoder.end();
+      if (raw.length > 0) {
+        const next = consumeCodexStderrChunk(stderrState, raw);
+        stderrState = next.state;
+        emitClassifiedStderrLines(next.emittedLines);
+      }
+
+      const flushed = flushCodexStderrStream(stderrState);
+      stderrState = flushed.state;
+      emitClassifiedStderrLines(flushed.emittedLines);
     });
 
     context.child.on("error", (error) => {
@@ -876,7 +907,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         this.readString(this.readObject(notification.params)?.thread, "id"),
       );
       if (providerThreadId) {
-        this.updateSession(context, { resumeCursor: { threadId: providerThreadId } });
+        context.providerThreadId = providerThreadId;
       }
       return;
     }
@@ -1108,6 +1139,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  private readProviderThreadId(context: CodexSessionContext): string | undefined {
+    return (
+      context.providerThreadId ??
+      readResumeThreadId({
+        threadId: context.session.threadId,
+        runtimeMode: context.session.runtimeMode,
+        resumeCursor: context.session.resumeCursor,
+      })
+    );
   }
 
   private requestKindForMethod(method: string): ProviderRequestKind | undefined {

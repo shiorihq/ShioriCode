@@ -6,17 +6,16 @@ import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "contracts";
 
 import {
+  buildCodexAppServerArgs,
   buildCodexInitializeParams,
+  CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
   CodexAppServerManager,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 import { classifyCodexStderrLine, isRecoverableThreadResumeError } from "./provider/codexStderr";
-import {
-  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-} from "./provider/policy/codexPromptPolicy";
+import { buildCodexCollaborationMode } from "./provider/policy/codexPromptPolicy";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
@@ -427,6 +426,14 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
+  it("forces stdio transport for codex app-server", () => {
+    expect(buildCodexAppServerArgs()).toEqual(["app-server"]);
+  });
+
+  it("allows a longer initialize timeout for slow codex app-server startup", () => {
+    expect(CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS).toBe(60_000);
+  });
+
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
       clientInfo: {
@@ -705,6 +712,76 @@ describe("sendTurn", () => {
     });
   });
 
+  it("uses the in-memory provider thread id before the session becomes resumable", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      providerThreadId: "provider_thread_1",
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      supportsReasoningSummary: false,
+      collabReceiverTurns: new Map(),
+    };
+    const requireSession = vi
+      .spyOn(
+        manager as unknown as { requireSession: (sessionId: string) => unknown },
+        "requireSession",
+      )
+      .mockReturnValue(context);
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+        "sendRequest",
+      )
+      .mockResolvedValue({
+        turn: {
+          id: "turn_1",
+        },
+      });
+    const updateSession = vi
+      .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
+      .mockImplementation(() => {});
+
+    const result = await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "hello",
+    });
+
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turnId: "turn_1",
+      resumeCursor: { threadId: "provider_thread_1" },
+    });
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "provider_thread_1",
+      input: [
+        {
+          type: "text",
+          text: "hello",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+    });
+    expect(updateSession).toHaveBeenCalledWith(context, {
+      status: "running",
+      activeTurnId: "turn_1",
+      resumeCursor: { threadId: "provider_thread_1" },
+    });
+  });
+
   it("passes Codex plan mode as a collaboration preset on turn/start", async () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
 
@@ -724,14 +801,10 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
-      collaborationMode: {
-        mode: "plan",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-        },
-      },
+      collaborationMode: buildCodexCollaborationMode({
+        interactionMode: "plan",
+        model: "gpt-5.3-codex",
+      }),
     });
   });
 
@@ -754,14 +827,10 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
-      collaborationMode: {
-        mode: "default",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-        },
-      },
+      collaborationMode: buildCodexCollaborationMode({
+        interactionMode: "default",
+        model: "gpt-5.3-codex",
+      }),
     });
   });
 
@@ -769,9 +838,9 @@ describe("sendTurn", () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
     vi.spyOn(
       manager as unknown as {
-        readAssistantPersonalityAppendix: () => Promise<string | undefined>;
+        readAssistantSettingsAppendix: () => Promise<string | undefined>;
       },
-      "readAssistantPersonalityAppendix",
+      "readAssistantSettingsAppendix",
     ).mockResolvedValue(
       [
         "## Personality Overlay",
@@ -797,22 +866,16 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
-      collaborationMode: {
-        mode: "default",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: [
-            CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-            [
-              "## Personality Overlay",
-              "Apply this as a light tone overlay on top of every other instruction in this prompt.",
-              "Never let tone reduce honesty, correctness, safety, or clarity.",
-              "Sound practical, grounded, and outcome-focused.",
-            ].join("\n"),
-          ].join("\n\n"),
-        },
-      },
+      collaborationMode: buildCodexCollaborationMode({
+        interactionMode: "default",
+        model: "gpt-5.3-codex",
+        developerInstructionsAppendix: [
+          "## Personality Overlay",
+          "Apply this as a light tone overlay on top of every other instruction in this prompt.",
+          "Never let tone reduce honesty, correctness, safety, or clarity.",
+          "Sound practical, grounded, and outcome-focused.",
+        ].join("\n"),
+      }),
     });
   });
 
@@ -836,14 +899,10 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.2-codex",
-      collaborationMode: {
-        mode: "plan",
-        settings: {
-          model: "gpt-5.2-codex",
-          reasoning_effort: "medium",
-          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-        },
-      },
+      collaborationMode: buildCodexCollaborationMode({
+        interactionMode: "plan",
+        model: "gpt-5.2-codex",
+      }),
     });
   });
 
@@ -867,6 +926,29 @@ describe("sendTurn", () => {
       ],
       model: "gpt-5.3-codex",
       summary: "detailed",
+    });
+  });
+
+  it("does not request detailed reasoning summaries for spark", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.model = "gpt-5.3-codex-spark";
+    context.supportsReasoningSummary = true;
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Build a simple 2d pixel video game.",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Build a simple 2d pixel video game.",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex-spark",
     });
   });
 
@@ -905,6 +987,61 @@ describe("thread checkpoint control", () => {
     });
     expect(result).toEqual({
       threadId: "thread_1",
+      turns: [
+        {
+          id: "turn_1",
+          items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+        },
+      ],
+    });
+  });
+
+  it("reads thread turns for fresh prewarmed sessions before a resume cursor exists", async () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId: "thread_1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      providerThreadId: "provider_thread_1",
+      collabReceiverTurns: new Map(),
+    };
+    const requireSession = vi
+      .spyOn(
+        manager as unknown as { requireSession: (sessionId: string) => unknown },
+        "requireSession",
+      )
+      .mockReturnValue(context);
+    const sendRequest = vi.spyOn(
+      manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+      "sendRequest",
+    );
+    sendRequest.mockResolvedValue({
+      thread: {
+        id: "provider_thread_1",
+        turns: [
+          {
+            id: "turn_1",
+            items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+          },
+        ],
+      },
+    });
+
+    const result = await manager.readThread(asThreadId("thread_1"));
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
+      threadId: "provider_thread_1",
+      includeTurns: true,
+    });
+    expect(result).toEqual({
+      threadId: "provider_thread_1",
       turns: [
         {
           id: "turn_1",
@@ -1411,6 +1548,7 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
       });
 
       expect(firstTurn.threadId).toBe(firstSession.threadId);
+      expect(firstTurn.resumeCursor).toBeDefined();
 
       await vi.waitFor(
         async () => {
@@ -1431,7 +1569,7 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
         provider: "codex",
         cwd: workspaceDir,
         runtimeMode: "approval-required",
-        resumeCursor: firstSession.resumeCursor,
+        resumeCursor: firstTurn.resumeCursor,
         binaryPath: process.env.CODEX_BINARY_PATH!,
         ...(process.env.CODEX_HOME_PATH ? { homePath: process.env.CODEX_HOME_PATH } : {}),
       });

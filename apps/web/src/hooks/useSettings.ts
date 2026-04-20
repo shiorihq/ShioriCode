@@ -202,6 +202,10 @@ export function buildLegacyClientSettingsMigrationPatch(
     patch.diffWordWrap = legacySettings.diffWordWrap;
   }
 
+  if (Predicate.isBoolean(legacySettings.blurPersonalData)) {
+    patch.blurPersonalData = legacySettings.blurPersonalData;
+  }
+
   if (Schema.is(SidebarProjectSortOrder)(legacySettings.sidebarProjectSortOrder)) {
     patch.sidebarProjectSortOrder = legacySettings.sidebarProjectSortOrder;
   }

@@ -24,6 +24,17 @@ describe("shouldPrewarmThreadSession", () => {
         },
         resumeState: "needs_resume",
       }),
+    ).toBe(true);
+  });
+
+  it("does not prewarm threads that are already being resumed", () => {
+    expect(
+      shouldPrewarmThreadSession({
+        session: {
+          orchestrationStatus: "error",
+        },
+        resumeState: "resuming",
+      }),
     ).toBe(false);
   });
 

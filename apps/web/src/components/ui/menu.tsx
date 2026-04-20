@@ -2,92 +2,10 @@
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ChevronRightIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
-
-/** Track scroll position and expose top/bottom fade visibility. */
-function useScrollFadeOverlays() {
-  const [topFadeStrength, setTopFadeStrength] = useState(0);
-  const [bottomFadeStrength, setBottomFadeStrength] = useState(0);
-  const targetTopRef = useRef(0);
-  const targetBottomRef = useRef(0);
-  const topRef = useRef(0);
-  const bottomRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
-
-  const step = useCallback(() => {
-    const epsilon = 0.005;
-    const maxStepPerFrame = 0.045;
-    const topDelta = targetTopRef.current - topRef.current;
-    const bottomDelta = targetBottomRef.current - bottomRef.current;
-    const nextTop =
-      topRef.current + Math.sign(topDelta) * Math.min(Math.abs(topDelta), maxStepPerFrame);
-    const nextBottom =
-      bottomRef.current + Math.sign(bottomDelta) * Math.min(Math.abs(bottomDelta), maxStepPerFrame);
-
-    topRef.current = nextTop;
-    bottomRef.current = nextBottom;
-    setTopFadeStrength(nextTop);
-    setBottomFadeStrength(nextBottom);
-
-    if (
-      Math.abs(targetTopRef.current - nextTop) > epsilon ||
-      Math.abs(targetBottomRef.current - nextBottom) > epsilon
-    ) {
-      rafRef.current = requestAnimationFrame(step);
-      return;
-    }
-
-    // Snap to final values to avoid tiny tailing updates.
-    topRef.current = targetTopRef.current;
-    bottomRef.current = targetBottomRef.current;
-    setTopFadeStrength(targetTopRef.current);
-    setBottomFadeStrength(targetBottomRef.current);
-    rafRef.current = null;
-  }, []);
-
-  const scheduleStep = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(step);
-  }, [step]);
-
-  const update = useCallback(
-    (el: HTMLElement) => {
-      const threshold = Math.max(120, Math.round(el.clientHeight * 0.35));
-      const distanceFromTop = el.scrollTop;
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const toStrength = (distance: number) => Math.max(0, Math.min(1, distance / threshold));
-
-      targetTopRef.current = toStrength(distanceFromTop);
-      targetBottomRef.current = toStrength(distanceFromBottom);
-      scheduleStep();
-    },
-    [scheduleStep],
-  );
-
-  const refCb: RefCallback<HTMLDivElement> = useCallback(
-    (node) => {
-      if (node) update(node);
-    },
-    [update],
-  );
-
-  const onScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => update(e.currentTarget),
-    [update],
-  );
-
-  useEffect(
-    () => () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    },
-    [],
-  );
-
-  return { ref: refCb, onScroll, topFadeStrength, bottomFadeStrength };
-}
+import { useScrollFadeOverlays } from "./useScrollFadeOverlays";
 
 const MenuCreateHandle = MenuPrimitive.createHandle;
 

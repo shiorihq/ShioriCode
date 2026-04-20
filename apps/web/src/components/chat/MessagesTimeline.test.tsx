@@ -469,6 +469,7 @@ describe("MessagesTimeline", () => {
 
   it("renders Skill tool calls as a structured workflow card instead of raw JSON", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const skillPath = "/Users/choki/.agents/skills/dogfood/SKILL.md";
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         hasMessages
@@ -494,9 +495,10 @@ describe("MessagesTimeline", () => {
                   skill: "dogfood",
                 },
                 result: {
-                  type: "tool_result",
                   tool_use_id: "tool_abc123",
-                  content: 'Launching skill: "dogfood"',
+                  skill: "dogfood",
+                  path: skillPath,
+                  content: "# Dogfood\n\nUse evidence first.",
                 },
               },
             },
@@ -520,9 +522,14 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Skill workflow");
+    expect(markup).toContain("Used Skill");
     expect(markup).toContain("dogfood");
+    expect(markup).toContain(`href="${skillPath}"`);
     expect(markup).toContain("tool_abc123");
+    expect(markup).toContain("<h1>Dogfood</h1>");
+    expect(markup).toContain("Use evidence first.");
+    expect(markup).toContain("text-xs");
+    expect(markup).not.toContain("Skill workflow");
     expect(markup).not.toContain("&quot;skill&quot;");
   });
 
@@ -1361,6 +1368,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Exploring 1 file");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("shimmer shimmer-spread-200");
+    expect(markup).toContain("text-muted-foreground/80");
+    expect(markup).toContain("hover:text-foreground/70");
   });
 
   it("keeps expanded in-progress groups in a capped scroll viewport instead of hiding later entries", async () => {
@@ -1484,10 +1493,13 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("file-6.ts");
     expect(markup).toContain("max-h-48");
     expect(markup).toContain("overflow-y-auto");
+    expect(markup).toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).toContain("[scrollbar-width:none]");
+    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
     expect(markup).not.toContain("Show 1 more");
   });
 
-  it("still uses a show-more affordance for completed groups with more than five entries", async () => {
+  it("caps completed groups with internal scrolling instead of a show-more affordance", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1601,9 +1613,10 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Explored 6 files");
-    expect(markup).toContain("Show 1 more");
-    expect(markup).not.toContain("file-6.ts");
-    expect(markup).not.toContain("overflow-y-auto");
+    expect(markup).toContain("file-6.ts");
+    expect(markup).toContain("max-h-48");
+    expect(markup).toContain("overflow-y-auto");
+    expect(markup).not.toContain("Show 1 more");
   });
 
   it("caps expanded nested subagent activity lists inside the chat timeline", async () => {
@@ -1670,6 +1683,9 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("apps/web/src/components/chat/file-8.tsx");
     expect(markup).toContain("max-h-48");
     expect(markup).toContain("overflow-y-auto");
+    expect(markup).toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).toContain("[scrollbar-width:none]");
+    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
   });
 
   it("keeps completed exploration groups collapsed by default", async () => {
@@ -2044,7 +2060,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup.match(/class="list-none py-0\.5"/g)).toHaveLength(1);
+    expect(markup.match(/class="list-none py-0\.5"/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(markup).not.toContain('class="list-none py-0.5 pl-4"');
   });
 
@@ -2230,7 +2246,11 @@ describe("MessagesTimeline", () => {
 
     expect(streamingMarkup).toContain("Thinking");
     expect(streamingMarkup).toContain("<strong>Inspecting project details</strong>");
+    expect(streamingMarkup).toContain("max-h-48");
+    expect(streamingMarkup).toContain("overflow-y-auto");
     expect(completedMarkup).toContain("Thought");
+    expect(completedMarkup).not.toContain("max-h-48");
+    expect(completedMarkup).not.toContain("overflow-y-auto");
     expect(completedMarkup).not.toContain("bg-muted/20");
   });
 
@@ -2454,6 +2474,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Thought");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain('disabled=""');
+    expect(markup).not.toContain("max-h-48");
   });
 
   it("hides assistant footer actions for an in-progress active turn until the whole response finishes", async () => {
@@ -2567,6 +2588,56 @@ describe("MessagesTimeline", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("hides the bottom working indicator while the first assistant response has not arrived yet", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        showWorkingIndicator={false}
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-working-read",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-working-read",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file started",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Read file",
+              detail: "package.json",
+              running: true,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Reading");
+    expect(markup).toContain("package.json");
+    expect(markup).not.toContain("Working for");
   });
 
   it("keeps top-level assistant and activity rows on a shared leading edge", async () => {

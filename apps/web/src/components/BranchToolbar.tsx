@@ -8,6 +8,7 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
+import { cn } from "~/lib/utils";
 import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
@@ -25,6 +26,7 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
+  isGitRepo?: boolean;
   /** When true, renders controls inline without the wrapper div. */
   inline?: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -35,6 +37,7 @@ export default function BranchToolbar({
   threadId,
   onEnvModeChange,
   envLocked,
+  isGitRepo = true,
   inline,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -128,7 +131,12 @@ export default function BranchToolbar({
 
   if (!activeThreadId || !activeProject) return null;
 
-  const projectSelector = hasServerThread ? null : (
+  const projectSelector = hasServerThread ? (
+    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <BoxIcon className="size-3" />
+      <span className="max-w-[10rem] truncate">{activeProject.name}</span>
+    </span>
+  ) : (
     <Select
       value={activeProject.id}
       onValueChange={(value) => handleProjectChange(value as ProjectId)}
@@ -151,53 +159,57 @@ export default function BranchToolbar({
     </Select>
   );
 
-  const envModeSelector =
-    envLocked || activeWorktreePath ? (
-      <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-        {activeWorktreePath ? (
-          <>
-            <GitForkIcon className="size-3" />
-            Worktree
-          </>
+  const envModeSelector = !isGitRepo ? (
+    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <FolderIcon className="size-3" />
+      Local
+    </span>
+  ) : envLocked || activeWorktreePath ? (
+    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      {activeWorktreePath ? (
+        <>
+          <GitForkIcon className="size-3" />
+          Worktree
+        </>
+      ) : (
+        <>
+          <FolderIcon className="size-3" />
+          Local
+        </>
+      )}
+    </span>
+  ) : (
+    <Select
+      value={effectiveEnvMode}
+      onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+      items={envModeItems}
+    >
+      <SelectTrigger variant="ghost" size="xs" className="font-medium">
+        {effectiveEnvMode === "worktree" ? (
+          <GitForkIcon className="size-3" />
         ) : (
-          <>
+          <FolderIcon className="size-3" />
+        )}
+        <SelectValue />
+      </SelectTrigger>
+      <SelectPopup>
+        <SelectItem value="local">
+          <span className="inline-flex items-center gap-1.5">
             <FolderIcon className="size-3" />
             Local
-          </>
-        )}
-      </span>
-    ) : (
-      <Select
-        value={effectiveEnvMode}
-        onValueChange={(value) => onEnvModeChange(value as EnvMode)}
-        items={envModeItems}
-      >
-        <SelectTrigger variant="ghost" size="xs" className="font-medium">
-          {effectiveEnvMode === "worktree" ? (
+          </span>
+        </SelectItem>
+        <SelectItem value="worktree">
+          <span className="inline-flex items-center gap-1.5">
             <GitForkIcon className="size-3" />
-          ) : (
-            <FolderIcon className="size-3" />
-          )}
-          <SelectValue />
-        </SelectTrigger>
-        <SelectPopup>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderIcon className="size-3" />
-              Local
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <GitForkIcon className="size-3" />
-              New worktree
-            </span>
-          </SelectItem>
-        </SelectPopup>
-      </Select>
-    );
+            New worktree
+          </span>
+        </SelectItem>
+      </SelectPopup>
+    </Select>
+  );
 
-  const branchSelector = (
+  const branchSelector = isGitRepo ? (
     <BranchToolbarBranchSelector
       activeProjectCwd={activeProject.cwd}
       activeThreadBranch={activeThreadBranch}
@@ -209,7 +221,7 @@ export default function BranchToolbar({
       {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
       {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
     />
-  );
+  ) : null;
 
   if (inline) {
     return (
@@ -222,7 +234,12 @@ export default function BranchToolbar({
   }
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-3xl items-center justify-between px-5 pb-3 pt-1">
+    <div
+      className={cn(
+        "mx-auto flex w-full min-w-0 max-w-3xl items-center px-5 pb-3 pt-1",
+        branchSelector ? "justify-between" : "justify-start",
+      )}
+    >
       <div className="flex min-w-0 items-center gap-1">
         {projectSelector}
         {envModeSelector}

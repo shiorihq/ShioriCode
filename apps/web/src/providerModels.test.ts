@@ -1,7 +1,14 @@
-import type { ProviderKind, ServerProvider } from "contracts";
 import { describe, expect, it } from "vitest";
 
-import { getProviderUnavailableReason } from "./providerModels";
+import type { ProviderKind, ServerProvider, ServerProviderModel } from "contracts";
+
+import {
+  getProviderPickerState,
+  getProviderUnavailableReason,
+  getProviderModelDisplayName,
+  isPendingProviderCheckStatus,
+  providerModelSupportsImageAttachments,
+} from "./providerModels";
 
 function buildProvider(
   provider: ProviderKind,
@@ -39,6 +46,20 @@ describe("getProviderUnavailableReason", () => {
     ).toBe("ShioriCode requires an active paid Shiori subscription.");
   });
 
+  it("returns null while the provider is still being checked in the background", () => {
+    expect(
+      getProviderUnavailableReason(
+        [
+          buildProvider("codex", {
+            status: "warning",
+            message: "Checking Codex CLI availability...",
+          }),
+        ],
+        "codex",
+      ),
+    ).toBeNull();
+  });
+
   it("returns a default disabled message when the provider is disabled", () => {
     expect(
       getProviderUnavailableReason(
@@ -64,5 +85,93 @@ describe("getProviderUnavailableReason", () => {
         "codex",
       ),
     ).toBe("Codex provider is unavailable.");
+  });
+});
+
+describe("isPendingProviderCheckStatus", () => {
+  it("detects transient provider checking messages", () => {
+    expect(
+      isPendingProviderCheckStatus(
+        buildProvider("codex", {
+          status: "warning",
+          message: "Checking Codex CLI availability...",
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("getProviderPickerState", () => {
+  it("keeps pending background checks selectable", () => {
+    expect(
+      getProviderPickerState(
+        buildProvider("codex", {
+          status: "warning",
+          message: "Checking Codex CLI availability...",
+        }),
+      ),
+    ).toEqual({
+      selectable: true,
+      badgeLabel: "Checking",
+    });
+  });
+
+  it("disables blocking warnings in the picker", () => {
+    expect(
+      getProviderPickerState(
+        buildProvider("shiori", {
+          status: "warning",
+          message: "ShioriCode requires an active paid Shiori subscription.",
+        }),
+      ),
+    ).toEqual({
+      selectable: false,
+      badgeLabel: "Unavailable",
+    });
+  });
+});
+
+describe("providerModelSupportsImageAttachments", () => {
+  it("returns false when the selected model is explicitly non-multimodal", () => {
+    const models: ServerProviderModel[] = [
+      {
+        slug: "zhipu/glm-5.1",
+        name: "GLM-5.1",
+        isCustom: false,
+        multiModal: false,
+        capabilities: null,
+      },
+    ];
+
+    expect(providerModelSupportsImageAttachments(models, "zhipu/glm-5.1", "shiori")).toBe(false);
+  });
+
+  it("defaults to allowing attachments when capability metadata is missing", () => {
+    const models: ServerProviderModel[] = [
+      {
+        slug: "openai/gpt-5.4",
+        name: "GPT-5.4",
+        isCustom: false,
+        capabilities: null,
+      },
+    ];
+
+    expect(providerModelSupportsImageAttachments(models, "openai/gpt-5.4", "shiori")).toBe(true);
+  });
+});
+
+describe("getProviderModelDisplayName", () => {
+  it("prefers the resolved model display name", () => {
+    const models: ServerProviderModel[] = [
+      {
+        slug: "zhipu/glm-5.1",
+        name: "GLM-5.1",
+        isCustom: false,
+        multiModal: false,
+        capabilities: null,
+      },
+    ];
+
+    expect(getProviderModelDisplayName(models, "zhipu/glm-5.1", "shiori")).toBe("GLM-5.1");
   });
 });

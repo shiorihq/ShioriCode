@@ -3,7 +3,12 @@ import readline from "node:readline";
 
 import { TurnId } from "contracts";
 
-import { buildCodexInitializeParams, type CodexThreadSnapshot } from "../codexAppServerManager.ts";
+import {
+  buildCodexAppServerArgs,
+  buildCodexInitializeParams,
+  CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
+  type CodexThreadSnapshot,
+} from "../codexAppServerManager.ts";
 
 interface JsonRpcResponse {
   id: string | number;
@@ -113,7 +118,7 @@ export async function readCodexStoredThread(input: {
   readonly providerThreadId: string;
   readonly timeoutMs?: number;
 }): Promise<CodexThreadSnapshot> {
-  const child = spawn(input.binaryPath, ["app-server"], {
+  const child = spawn(input.binaryPath, buildCodexAppServerArgs(), {
     cwd: input.cwd,
     env: {
       ...process.env,
@@ -124,9 +129,10 @@ export async function readCodexStoredThread(input: {
   });
   const output = readline.createInterface({ input: child.stdout });
   const timeoutMs = input.timeoutMs ?? 20_000;
+  const initializeTimeoutMs = Math.max(timeoutMs, CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS);
   let nextRequestId = 1;
 
-  const send = async (method: string, params: unknown) => {
+  const send = async (method: string, params: unknown, requestTimeoutMs = timeoutMs) => {
     const requestId = nextRequestId;
     nextRequestId += 1;
 
@@ -136,11 +142,11 @@ export async function readCodexStoredThread(input: {
       params,
     });
     child.stdin.write(`${encoded}\n`);
-    return await readResponse(output, { requestId, method, timeoutMs });
+    return await readResponse(output, { requestId, method, timeoutMs: requestTimeoutMs });
   };
 
   try {
-    await send("initialize", buildCodexInitializeParams());
+    await send("initialize", buildCodexInitializeParams(), initializeTimeoutMs);
     child.stdin.write(`${JSON.stringify({ method: "initialized" })}\n`);
     const threadReadResponse = await send("thread/read", {
       threadId: input.providerThreadId,

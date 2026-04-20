@@ -10,6 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type UIEvent as ReactUIEvent,
 } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 import {
@@ -38,8 +39,9 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 import { InlineEditDiff, extractBasename, parseEditDiff } from "./InlineEditDiff";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
+import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
+import { useScrollFadeOverlays } from "../ui/useScrollFadeOverlays";
 import {
-  MAX_VISIBLE_WORK_LOG_ENTRIES,
   buildWorkGroupSummary,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
@@ -48,6 +50,7 @@ import {
   formatWorkEntry,
   getGroupedWorkEntryExpansionKey,
   getDisplayedWorkEntries,
+  isFileChangeWorkEntry,
   isRuntimeDiagnosticWorkEntry,
   isWorkRowExpanded,
   isWorkRowInProgress,
@@ -83,6 +86,7 @@ const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
+  showWorkingIndicator?: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   activeTurnId?: TurnId | null;
@@ -119,6 +123,7 @@ interface MessagesTimelineProps {
 function MessagesTimelineView({
   hasMessages,
   isWorking,
+  showWorkingIndicator = isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
   activeTurnId = null,
@@ -174,10 +179,10 @@ function MessagesTimelineView({
       deriveMessagesTimelineRows({
         timelineEntries,
         completionDividerBeforeEntryId,
-        isWorking,
+        isWorking: showWorkingIndicator,
         activeTurnStartedAt,
       }),
-    [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt],
+    [timelineEntries, completionDividerBeforeEntryId, showWorkingIndicator, activeTurnStartedAt],
   );
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
@@ -318,6 +323,11 @@ function MessagesTimelineView({
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
+  const firstNonVirtualizedRowId = rows[virtualizedRowCount]?.id ?? null;
+
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [firstNonVirtualizedRowId, rowVirtualizer, rows.length, virtualizedRowCount]);
 
   // Show the message action row at the very end of each completed turn,
   // anchored to the last row of the turn (which may be a work/reasoning row
@@ -434,8 +444,8 @@ function MessagesTimelineView({
                 type="button"
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
-                  "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-foreground/60 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-                  "cursor-pointer hover:text-foreground/70",
+                  "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+                  "cursor-pointer hover:text-foreground focus-visible:text-foreground",
                 )}
                 onClick={toggleCurrentGroup}
               >
@@ -448,7 +458,7 @@ function MessagesTimelineView({
                 aria-controls={groupItemsId}
                 aria-expanded={isExpanded}
                 className={cn(
-                  "group flex size-5 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent text-foreground/50 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+                  "group flex size-5 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent text-muted-foreground/60 transition-colors duration-150 hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
                 )}
                 onClick={toggleCurrentGroup}
               >
@@ -461,7 +471,8 @@ function MessagesTimelineView({
               </button>
             </div>
             <AnimatedExpandPanel open={isExpanded}>
-              <div
+              <MaskedScrollViewport
+                dependencyKey={row.childRows.length}
                 id={groupItemsId}
                 className="mt-0.5 max-h-48 space-y-0.5 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent"
               >
@@ -470,7 +481,7 @@ function MessagesTimelineView({
                     {renderWorkRow(childRow, depth + 1)}
                   </div>
                 ))}
-              </div>
+              </MaskedScrollViewport>
             </AnimatedExpandPanel>
           </div>
         </div>
@@ -491,6 +502,7 @@ function MessagesTimelineView({
       if (hasInlineEntries || rowIsInProgress) {
         const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
         const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
+        const isEditGroup = entries.every(isFileChangeWorkEntry);
         return (
           <div className={wrapperClassName}>
             <GroupedWorkEntries
@@ -505,6 +517,7 @@ function MessagesTimelineView({
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onHeightChange={scheduleTimelineMeasure}
+              isEditGroup={isEditGroup}
               onToggleGroup={() => {
                 onToggleWorkGroup(groupId, isExpanded);
                 scheduleTimelineMeasure();
@@ -545,6 +558,7 @@ function MessagesTimelineView({
     const isExpanded = depth > 0 || isWorkRowExpanded(row, expandedWorkGroups);
     const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
     const groupItemsId = `work-group-items-${groupId}`;
+    const isEditGroup = entries.every(isFileChangeWorkEntry);
 
     return (
       <div className={wrapperClassName}>
@@ -560,6 +574,7 @@ function MessagesTimelineView({
           expandedWorkGroups={expandedWorkGroups}
           onToggleWorkGroup={onToggleWorkGroup}
           onHeightChange={scheduleTimelineMeasure}
+          isEditGroup={isEditGroup}
           onToggleGroup={() => {
             onToggleWorkGroup(groupId, isExpanded);
             scheduleTimelineMeasure();
@@ -1139,6 +1154,7 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
 }) {
   const { reasoning, markdownCwd, onHeightChange } = props;
   const [isExpanded, setIsExpanded] = useState(reasoning.streaming);
+  const reasoningViewportRef = useRef<HTMLDivElement | null>(null);
   const hasContent = reasoning.text.trim().length > 0;
   const placeholderText = reasoning.streaming
     ? "Reasoning is in progress. Details may remain hidden for this provider."
@@ -1155,6 +1171,19 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
   useLayoutEffect(() => {
     onHeightChange?.();
   }, [isExpanded, onHeightChange, reasoning.streaming, reasoning.text]);
+
+  useLayoutEffect(() => {
+    if (!reasoning.streaming || !isExpanded) {
+      return;
+    }
+
+    const reasoningViewport = reasoningViewportRef.current;
+    if (!reasoningViewport) {
+      return;
+    }
+
+    reasoningViewport.scrollTop = reasoningViewport.scrollHeight;
+  }, [isExpanded, reasoning.streaming, reasoning.text]);
 
   return (
     <div className="py-0.5">
@@ -1180,9 +1209,12 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
         />
       </button>
       <AnimatedExpandPanel open={isExpanded}>
-        <div className="mt-1">
+        <div
+          ref={reasoningViewportRef}
+          className="mt-1 max-h-48 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent"
+        >
           {hasContent ? (
-            <div className="pr-2">
+            <div className="pr-1">
               <ChatMarkdown
                 text={reasoning.text}
                 cwd={markdownCwd}
@@ -1194,7 +1226,7 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
             <p
               className={cn(
                 CHAT_THREAD_BODY_CLASS,
-                "assistant-text-selectable pr-2 text-foreground/55",
+                "assistant-text-selectable pr-1 text-foreground/55",
               )}
             >
               {placeholderText}
@@ -1271,6 +1303,49 @@ function resolveFilePathForOpen(path: string, cwd: string | undefined): string {
   return `${trimmedCwd}/${trimmedPath}`;
 }
 
+function getPathDirectory(path: string | null): string | undefined {
+  if (!path) {
+    return undefined;
+  }
+
+  const normalized = path.replace(/[\\/]+$/, "");
+  const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return lastSlashIndex <= 0 ? undefined : normalized.slice(0, lastSlashIndex);
+}
+
+const WorkEntryPathLink = memo(function WorkEntryPathLink(props: {
+  label: string;
+  path: string;
+  cwd: string | undefined;
+  title?: string;
+}) {
+  const { label, path, cwd, title } = props;
+  const resolvedPath = resolveFilePathForOpen(path, cwd);
+  const handleClick = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const api = readNativeApi();
+      if (!api) return;
+      void openInPreferredEditor(api, resolvedPath).catch((error) => {
+        console.error("Failed to open file in preferred editor", error);
+      });
+    },
+    [resolvedPath],
+  );
+
+  return (
+    <a
+      href={resolvedPath}
+      onClick={handleClick}
+      className="cursor-pointer rounded-sm text-primary underline-offset-[3px] hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+      title={title ?? `Open ${path} in preferred editor`}
+    >
+      {label}
+    </a>
+  );
+});
+
 /**
  * File link rendered next to verbs like "Edited"/"Created"/"Wrote" for file-
  * change work entries. Clicking opens the file in the user's preferred editor
@@ -1283,29 +1358,15 @@ const WorkEntryFileLink = memo(function WorkEntryFileLink(props: {
   cwd: string | undefined;
 }) {
   const { basename, path, cwd } = props;
-  const handleClick = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>) => {
-      event.stopPropagation();
-      const api = readNativeApi();
-      if (!api) return;
-      const target = resolveFilePathForOpen(path, cwd);
-      void openInPreferredEditor(api, target).catch((error) => {
-        console.error("Failed to open file in preferred editor", error);
-      });
-    },
-    [cwd, path],
-  );
   return (
     <>
       {" "}
-      <button
-        type="button"
-        onClick={handleClick}
-        className="cursor-pointer rounded-sm border-0 bg-transparent p-0 text-primary underline-offset-[3px] hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+      <WorkEntryPathLink
+        label={basename}
+        path={path}
+        cwd={cwd}
         title={`Open ${path} in preferred editor`}
-      >
-        {basename}
-      </button>
+      />
     </>
   );
 });
@@ -1319,8 +1380,11 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
   const { workEntry, indented = true, asListItem = false, cwd } = props;
   const { action, detail } = formatMinimalEntry(workEntry);
   const formattedEntry = formatWorkEntry(workEntry);
+  const skillWorkflowCard = useMemo(() => extractSkillWorkflowCard(workEntry), [workEntry]);
   const detailUsesMono = formattedEntry.monospace;
   const isFileChange = formattedEntry.kind === "edit";
+  const linkedSkillPath =
+    detail && skillWorkflowCard?.skillName === detail ? skillWorkflowCard.skillPath : null;
   const Component = asListItem ? "li" : "p";
 
   return (
@@ -1339,6 +1403,11 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
       {detail &&
         (isFileChange ? (
           <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
+        ) : linkedSkillPath ? (
+          <>
+            {" "}
+            <WorkEntryPathLink label={detail} path={linkedSkillPath} cwd={cwd} />
+          </>
         ) : (
           <WorkEntryDetail detail={detail} monospace={detailUsesMono} />
         ))}
@@ -1610,30 +1679,30 @@ function stripLeadingRootLine(text: string | null, rootPath: string | null): str
 
 const SkillWorkflowCardView = memo(function SkillWorkflowCardView(props: {
   card: SkillWorkflowCard;
+  cwd?: string | undefined;
 }) {
-  const { card } = props;
+  const { card, cwd } = props;
+  const markdownCwd = getPathDirectory(card.skillPath) ?? cwd;
   return (
-    <div
-      className={cn(
-        CHAT_THREAD_BODY_CLASS,
-        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 pl-4 text-foreground/80",
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span className="font-medium text-foreground/75">Skill workflow</span>
-        {card.skillName && (
-          <span className="rounded-sm bg-foreground/10 px-1.5 py-0.5 font-mono text-foreground/75">
-            {card.skillName}
-          </span>
-        )}
-      </div>
+    <div className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 pl-4 text-foreground/80")}>
       {card.toolUseId && (
-        <div className="font-mono text-foreground/60">Tool call {card.toolUseId}</div>
+        <div className="mb-1 font-mono text-xs text-foreground/50">Tool call {card.toolUseId}</div>
       )}
-      {card.resultText && (
-        <pre className="overflow-x-auto whitespace-pre-wrap text-foreground/70">
+      {card.skillMarkdown ? (
+        <ChatMarkdown
+          text={card.skillMarkdown}
+          cwd={markdownCwd}
+          className="text-xs leading-5 text-foreground/75"
+        />
+      ) : card.resultText ? (
+        <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-foreground/70">
           {card.resultText}
         </pre>
+      ) : null}
+      {card.skillPath && !card.skillMarkdown && (
+        <div className="mt-1 font-mono text-xs text-foreground/55">
+          <WorkEntryPathLink label={card.skillPath} path={card.skillPath} cwd={cwd} />
+        </div>
       )}
     </div>
   );
@@ -1728,6 +1797,8 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
     () => extractDelegatedAgentWorkflowCard(workEntry),
     [workEntry],
   );
+  const linkedSkillPath =
+    detail && skillWorkflowCard?.skillName === detail ? skillWorkflowCard.skillPath : null;
   const hasStructuredWorkflowCard = Boolean(skillWorkflowCard ?? delegatedAgentCard);
   const outputSummary = useMemo(() => summarizeToolOutput(workEntry.output), [workEntry.output]);
   const outputText =
@@ -1786,6 +1857,11 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
             {detail &&
               (isFileChange ? (
                 <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
+              ) : linkedSkillPath ? (
+                <>
+                  {" "}
+                  <WorkEntryPathLink label={detail} path={linkedSkillPath} cwd={cwd} />
+                </>
               ) : (
                 <WorkEntryDetail detail={detail} monospace={detailUsesMono} />
               ))}
@@ -1813,7 +1889,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
 
       <AnimatedExpandPanel open={isExpanded}>
         <div id={expandedContentId}>
-          {skillWorkflowCard && <SkillWorkflowCardView card={skillWorkflowCard} />}
+          {skillWorkflowCard && <SkillWorkflowCardView card={skillWorkflowCard} cwd={cwd} />}
           {delegatedAgentCard && <DelegatedAgentCardView card={delegatedAgentCard} />}
           {runtimeDiagnosticDetail && (
             <div className="mt-0.5 pl-4">
@@ -2058,12 +2134,14 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
   onToggleWorkGroup: (groupId: string, currentlyExpanded: boolean) => void;
   onToggleGroup: () => void;
   onHeightChange?: (() => void) | undefined;
+  isEditGroup?: boolean;
 }) {
   const {
     expandedWorkGroups,
     entries,
     groupItemsId,
     inlineEntries,
+    isEditGroup = false,
     isExpanded,
     isInProgress,
     markdownCwd,
@@ -2073,28 +2151,48 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
     onToggleWorkGroup,
     summary,
   } = props;
-  const [showAllEntries, setShowAllEntries] = useState(false);
   const entriesViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickWorkEntriesToBottomRef = useRef(true);
   const displayedEntries = useMemo(() => getDisplayedWorkEntries(entries), [entries]);
-  const hiddenEntryCount = Math.max(displayedEntries.length - MAX_VISIBLE_WORK_LOG_ENTRIES, 0);
-  const shouldUseScrollViewport =
-    isExpanded && hiddenEntryCount > 0 && !inlineEntries && (isInProgress || nested);
-  const visibleEntries =
-    isExpanded && !showAllEntries && !shouldUseScrollViewport
-      ? displayedEntries.slice(0, MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : displayedEntries;
-  const shouldShowMoreToggle =
-    isExpanded && hiddenEntryCount > 0 && !inlineEntries && !shouldUseScrollViewport;
+  const shouldUseScrollViewport = isExpanded && !isEditGroup;
+  const shouldAutoStickScrollViewport = shouldUseScrollViewport && (isInProgress || nested);
+  const {
+    bottomFadeStrength: entriesBottomFadeStrength,
+    onScroll: onEntriesFadeScroll,
+    ref: entriesFadeRef,
+    topFadeStrength: entriesTopFadeStrength,
+    update: updateEntriesFade,
+  } = useScrollFadeOverlays();
+  const showEntriesTopFade = entriesTopFadeStrength > 0.01;
+  const showEntriesBottomFade = entriesBottomFadeStrength > 0.01;
+  const entriesViewportMaskImage = shouldUseScrollViewport
+    ? `linear-gradient(to bottom, ${
+        showEntriesTopFade ? "transparent 0%, black 3rem" : "black 0%"
+      }, ${showEntriesBottomFade ? "black calc(100% - 3rem), transparent 100%" : "black 100%"})`
+    : undefined;
+
+  const handleEntriesViewportRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      entriesViewportRef.current = node;
+      entriesFadeRef(node);
+    },
+    [entriesFadeRef],
+  );
+
+  const handleEntriesViewportScroll = useCallback(
+    (event: ReactUIEvent<HTMLDivElement>) => {
+      onEntriesFadeScroll(event);
+      if (!shouldAutoStickScrollViewport) {
+        return;
+      }
+
+      shouldStickWorkEntriesToBottomRef.current = isScrollContainerNearBottom(event.currentTarget);
+    },
+    [onEntriesFadeScroll, shouldAutoStickScrollViewport],
+  );
 
   useEffect(() => {
-    if (!isExpanded) {
-      setShowAllEntries(false);
-    }
-  }, [isExpanded]);
-
-  useEffect(() => {
-    if (!shouldUseScrollViewport) {
+    if (!shouldAutoStickScrollViewport) {
       shouldStickWorkEntriesToBottomRef.current = true;
       return;
     }
@@ -2104,29 +2202,57 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
       return;
     }
 
-    const updateStickiness = () => {
-      shouldStickWorkEntriesToBottomRef.current = isScrollContainerNearBottom(entriesViewport);
-    };
+    shouldStickWorkEntriesToBottomRef.current = isScrollContainerNearBottom(entriesViewport);
+    updateEntriesFade(entriesViewport);
+  }, [shouldAutoStickScrollViewport, updateEntriesFade]);
 
-    updateStickiness();
-    entriesViewport.addEventListener("scroll", updateStickiness, { passive: true });
+  useEffect(() => {
+    if (!shouldUseScrollViewport || !isExpanded) {
+      return;
+    }
+
+    const entriesViewport = entriesViewportRef.current;
+    if (!entriesViewport) {
+      return;
+    }
+
+    updateEntriesFade(entriesViewport);
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateEntriesFade(entriesViewport);
+    });
+    resizeObserver.observe(entriesViewport);
     return () => {
-      entriesViewport.removeEventListener("scroll", updateStickiness);
+      resizeObserver.disconnect();
     };
-  }, [shouldUseScrollViewport]);
+  }, [isExpanded, shouldUseScrollViewport, updateEntriesFade]);
 
   useLayoutEffect(() => {
     onHeightChange?.();
-  }, [
-    displayedEntries.length,
-    isExpanded,
-    onHeightChange,
-    shouldUseScrollViewport,
-    showAllEntries,
-  ]);
+  }, [displayedEntries.length, isExpanded, onHeightChange, shouldUseScrollViewport]);
 
   useLayoutEffect(() => {
     if (!shouldUseScrollViewport || !isExpanded) {
+      return;
+    }
+
+    const entriesViewport = entriesViewportRef.current;
+    if (!entriesViewport) {
+      return;
+    }
+
+    updateEntriesFade(entriesViewport);
+
+    const frame = window.requestAnimationFrame(() => {
+      updateEntriesFade(entriesViewport);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [displayedEntries.length, isExpanded, shouldUseScrollViewport, updateEntriesFade]);
+
+  useLayoutEffect(() => {
+    if (!shouldAutoStickScrollViewport || !isExpanded) {
       return;
     }
 
@@ -2136,7 +2262,8 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
     }
 
     entriesViewport.scrollTop = entriesViewport.scrollHeight;
-  }, [displayedEntries.length, isExpanded, shouldUseScrollViewport]);
+    updateEntriesFade(entriesViewport);
+  }, [displayedEntries.length, isExpanded, shouldAutoStickScrollViewport, updateEntriesFade]);
 
   return (
     <div>
@@ -2146,8 +2273,8 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
         aria-expanded={isExpanded}
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-foreground/60 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-          "cursor-pointer hover:text-foreground",
+          "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+          "cursor-pointer hover:text-foreground focus-visible:text-foreground",
         )}
         onClick={() => {
           onToggleGroup();
@@ -2164,15 +2291,24 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
       <AnimatedExpandPanel open={isExpanded}>
         <div id={groupItemsId} className="mt-0.5">
           <div
-            ref={entriesViewportRef}
+            ref={handleEntriesViewportRef}
             className={cn(
               shouldUseScrollViewport &&
-                "max-h-48 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent",
+                "max-h-48 overflow-y-auto overscroll-contain pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             )}
+            style={
+              entriesViewportMaskImage
+                ? {
+                    WebkitMaskImage: entriesViewportMaskImage,
+                    maskImage: entriesViewportMaskImage,
+                  }
+                : undefined
+            }
+            onScroll={handleEntriesViewportScroll}
           >
             <ul>
               {(
-                inlineEntries ?? visibleEntries.map((entry) => ({ kind: "work" as const, entry }))
+                inlineEntries ?? displayedEntries.map((entry) => ({ kind: "work" as const, entry }))
               ).map((item) => {
                 if (item.kind === "reasoning") {
                   return (
@@ -2231,22 +2367,6 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
               })}
             </ul>
           </div>
-          {shouldShowMoreToggle ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className={cn(
-                CHAT_THREAD_BODY_CLASS,
-                "mt-1 h-auto px-4 py-0 text-foreground/65 hover:bg-transparent hover:text-foreground/85",
-              )}
-              onClick={() => {
-                setShowAllEntries((current) => !current);
-              }}
-            >
-              {showAllEntries ? "Show fewer" : `Show ${hiddenEntryCount} more`}
-            </Button>
-          ) : null}
         </div>
       </AnimatedExpandPanel>
     </div>

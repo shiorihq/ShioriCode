@@ -3,12 +3,42 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { LoadingText } from "../ui/loading-text";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSettings } from "../../hooks/useSettings";
+import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/personalDetails";
 
 import { toHostedShioriAuthErrorMessage, withHostedShioriRedirect } from "./hostedShioriAuth";
 
-type PasswordStage = "signIn" | "signUp" | "verifyEmail" | "forgot" | "reset";
+export type PasswordStage = "signIn" | "signUp" | "verifyEmail" | "forgot" | "reset";
 type OAuthProvider = "github" | "google" | "apple";
+
+const MIN_PASSWORD_LENGTH = 8;
+const URL_STAGE_PARAM = "auth";
+const URL_STAGE_VALUES = new Set<PasswordStage>([
+  "signIn",
+  "signUp",
+  "verifyEmail",
+  "forgot",
+  "reset",
+]);
+
+function readStageFromUrl(): PasswordStage | null {
+  if (typeof window === "undefined") return null;
+  const value = new URL(window.location.href).searchParams.get(URL_STAGE_PARAM);
+  return value && URL_STAGE_VALUES.has(value as PasswordStage) ? (value as PasswordStage) : null;
+}
+
+function writeStageToUrl(stage: PasswordStage) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (stage === "signIn") {
+    url.searchParams.delete(URL_STAGE_PARAM);
+  } else {
+    url.searchParams.set(URL_STAGE_PARAM, stage);
+  }
+  const next = url.pathname + (url.search ? url.search : "") + url.hash;
+  window.history.replaceState(window.history.state, "", next);
+}
 
 function GitHubIcon() {
   return (
@@ -55,11 +85,19 @@ export function HostedShioriAuthPanel(props?: {
   heading?: string;
   description?: string;
   compact?: boolean;
+  syncStageWithUrl?: boolean;
+  onStageChange?: (stage: PasswordStage) => void;
 }) {
   const { isAuthenticated, isAuthLoading, viewer, signIn, signOut } = useHostedShioriState();
-  const [stage, setStage] = useState<PasswordStage>("signIn");
+  const blurPersonalData = useSettings().blurPersonalData;
+  const syncStageWithUrl = props?.syncStageWithUrl === true;
+  const onStageChangeProp = props?.onStageChange;
+  const [stage, setStageInner] = useState<PasswordStage>(
+    () => (syncStageWithUrl ? readStageFromUrl() : null) ?? "signIn",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -68,6 +106,32 @@ export function HostedShioriAuthPanel(props?: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+
+  const setStage = useCallback(
+    (next: PasswordStage) => {
+      setStageInner(next);
+      if (syncStageWithUrl) writeStageToUrl(next);
+      onStageChangeProp?.(next);
+    },
+    [syncStageWithUrl, onStageChangeProp],
+  );
+
+  useEffect(() => {
+    onStageChangeProp?.(stage);
+    // Intentionally only on mount so the parent can pick up the URL-initialized stage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!syncStageWithUrl) return;
+    const handler = () => {
+      const nextStage = readStageFromUrl() ?? "signIn";
+      setStageInner(nextStage);
+      onStageChangeProp?.(nextStage);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [syncStageWithUrl, onStageChangeProp]);
 
   const disabled = props?.disabled === true || pendingAction !== null;
   const heading = props?.heading ?? "Sign in";
@@ -138,6 +202,17 @@ export function HostedShioriAuthPanel(props?: {
   );
 
   const handlePasswordSubmit = useCallback(() => {
+    if (stage === "signUp") {
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+
     void runAsync(`password:${stage}`, async () => {
       if (stage === "signIn" || stage === "signUp") {
         const result = await signIn("password", {
@@ -199,8 +274,21 @@ export function HostedShioriAuthPanel(props?: {
       setNotice("Password updated. Sign in with your new password.");
       setStage("signIn");
       setEmail(resetEmail);
+      setConfirmPassword("");
     });
-  }, [code, email, newPassword, password, resetEmail, runAsync, signIn, stage, verificationEmail]);
+  }, [
+    code,
+    confirmPassword,
+    email,
+    newPassword,
+    password,
+    resetEmail,
+    runAsync,
+    setStage,
+    signIn,
+    stage,
+    verificationEmail,
+  ]);
 
   const handleResendVerification = useCallback(() => {
     void runAsync("password:resend-verification", async () => {
@@ -227,9 +315,18 @@ export function HostedShioriAuthPanel(props?: {
       setError(null);
       setStage("signIn");
     });
-  }, [runAsync, signOut]);
+  }, [runAsync, setStage, signOut]);
 
   const showHeader = Boolean(heading || description);
+  const signedInIdentity = viewer?.name ?? viewer?.email ?? "Signed in";
+  const signedInIdentityBlurClass = getPersonalDetailsBlurClass(
+    shouldBlurEmailMention({
+      blurPersonalData,
+      email: viewer?.email,
+      text: signedInIdentity,
+    }),
+  );
+  const emailBlurClass = getPersonalDetailsBlurClass(blurPersonalData);
 
   return (
     <div className={props?.className}>
@@ -244,11 +341,13 @@ export function HostedShioriAuthPanel(props?: {
         {isAuthenticated ? (
           <div className="space-y-3">
             <div className="rounded-xl border border-border/70 bg-background/60 p-3">
-              <div className="text-sm font-medium text-foreground">
-                {viewer?.name ?? viewer?.email ?? "Signed in"}
+              <div className={`text-sm font-medium text-foreground ${signedInIdentityBlurClass}`}>
+                {signedInIdentity}
               </div>
               {viewer?.email ? (
-                <div className="text-xs text-muted-foreground">{viewer.email}</div>
+                <div className={`text-xs text-muted-foreground ${emailBlurClass}`}>
+                  {viewer.email}
+                </div>
               ) : null}
             </div>
             <Button
@@ -321,8 +420,17 @@ export function HostedShioriAuthPanel(props?: {
 
             <form
               className="space-y-3"
+              noValidate
               onSubmit={(event) => {
                 event.preventDefault();
+                const form = event.currentTarget;
+                if (!form.checkValidity()) {
+                  const firstInvalid = form.querySelector<HTMLElement>(":invalid");
+                  firstInvalid?.focus();
+                  form.reportValidity();
+                  return;
+                }
+                setError(null);
                 handlePasswordSubmit();
               }}
             >
@@ -352,6 +460,29 @@ export function HostedShioriAuthPanel(props?: {
                     type="password"
                     autoComplete={stage === "signIn" ? "current-password" : "new-password"}
                     required
+                    minLength={stage === "signUp" ? MIN_PASSWORD_LENGTH : undefined}
+                    disabled={disabled}
+                    aria-describedby={stage === "signUp" ? "hosted-auth-password-hint" : undefined}
+                  />
+                  {stage === "signUp" ? (
+                    <p id="hosted-auth-password-hint" className="text-[11px] text-muted-foreground">
+                      At least {MIN_PASSWORD_LENGTH} characters.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
+              {stage === "signUp" && (
+                <div className="space-y-2">
+                  <Label htmlFor="hosted-auth-confirm-password">Confirm password</Label>
+                  <Input
+                    id="hosted-auth-confirm-password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={MIN_PASSWORD_LENGTH}
                     disabled={disabled}
                   />
                 </div>
@@ -360,7 +491,8 @@ export function HostedShioriAuthPanel(props?: {
               {stage === "verifyEmail" && (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    Enter the verification code sent to {verificationEmail}.
+                    Enter the verification code sent to{" "}
+                    <span className={emailBlurClass}>{verificationEmail}</span>.
                   </p>
                   <div className="space-y-2">
                     <Label htmlFor="hosted-auth-code">Verification code</Label>
@@ -379,7 +511,8 @@ export function HostedShioriAuthPanel(props?: {
               {stage === "reset" && (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    Enter the reset code sent to {resetEmail}.
+                    Enter the reset code sent to{" "}
+                    <span className={emailBlurClass}>{resetEmail}</span>.
                   </p>
                   <div className="space-y-2">
                     <Label htmlFor="hosted-reset-code">Reset code</Label>
@@ -407,8 +540,32 @@ export function HostedShioriAuthPanel(props?: {
                 </>
               )}
 
-              {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {notice ? (
+                <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+                  {notice}
+                </p>
+              ) : null}
+              {error ? (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="mt-0.5 h-4 w-4 flex-shrink-0"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 4a1 1 0 011 1v4a1 1 0 11-2 0V7a1 1 0 011-1zm0 8.5a1 1 0 100 2 1 1 0 000-2z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <span className="leading-snug">{error}</span>
+                </div>
+              ) : null}
 
               <Button
                 className="w-full"

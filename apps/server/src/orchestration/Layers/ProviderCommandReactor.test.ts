@@ -102,7 +102,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
-    readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly sessionModelSwitch?: "unsupported" | "in-session" | "restart-session";
     readonly providerStatuses?: ReadonlyArray<ServerProvider>;
   }) {
     const harnessOptions = input;
@@ -125,6 +125,16 @@ describe("ProviderCommandReactor", () => {
         typeof startInput === "object" && startInput !== null && "resumeCursor" in startInput
           ? startInput.resumeCursor
           : undefined;
+      const requestedModel =
+        typeof startInput === "object" &&
+        startInput !== null &&
+        "modelSelection" in startInput &&
+        typeof startInput.modelSelection === "object" &&
+        startInput.modelSelection !== null &&
+        "model" in startInput.modelSelection &&
+        typeof startInput.modelSelection.model === "string"
+          ? startInput.modelSelection.model
+          : undefined;
       const threadId =
         typeof startInput === "object" &&
         startInput !== null &&
@@ -143,7 +153,9 @@ describe("ProviderCommandReactor", () => {
             startInput.runtimeMode === "full-access")
             ? startInput.runtimeMode
             : "full-access",
-        ...(modelSelection.model !== undefined ? { model: modelSelection.model } : {}),
+        ...((requestedModel ?? modelSelection.model)
+          ? { model: requestedModel ?? modelSelection.model }
+          : {}),
         threadId,
         resumeCursor: resumeCursor ?? { opaque: `resume-${sessionIndex}` },
         createdAt: now,
@@ -246,7 +258,7 @@ describe("ProviderCommandReactor", () => {
     };
     const providerRegistry = {
       getProviders: Effect.succeed(providerStatuses),
-      refresh: (_provider?: ServerProvider["provider"]) => Effect.succeed(providerStatuses),
+      refresh: vi.fn((_provider?: ServerProvider["provider"]) => Effect.succeed(providerStatuses)),
       streamChanges: Stream.empty,
     } satisfies typeof ProviderRegistry.Service;
 
@@ -315,6 +327,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest,
       respondToUserInput,
       stopSession,
+      refreshProviders: providerRegistry.refresh,
       renameBranch,
       generateBranchName,
       generateThreadTitle,
@@ -452,6 +465,77 @@ describe("ProviderCommandReactor", () => {
         options: {
           effort: "medium",
         },
+      },
+    });
+  });
+
+  it("starts a fresh Codex session when switching an existing thread into spark", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+      },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-codex-before-spark"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-codex-before-spark"),
+          role: "user",
+          text: "baseline codex turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-codex-switch-spark"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-codex-switch-spark"),
+          role: "user",
+          text: "switch this thread into spark",
+          attachments: [],
+        },
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.3-codex-spark",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+      },
+      runtimeMode: "approval-required",
+    });
+    expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
       },
     });
   });
@@ -704,6 +788,67 @@ describe("ProviderCommandReactor", () => {
         detail: "ShioriCode requires an active paid Shiori subscription for hosted access.",
       },
     });
+  });
+
+  it("does not synchronously refresh pending provider checks before starting a turn", async () => {
+    const checkedAt = new Date().toISOString();
+    const harness = await createHarness({
+      providerStatuses: [
+        {
+          provider: "shiori",
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+        },
+        {
+          provider: "codex",
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          checkedAt,
+          message: "Checking Codex CLI availability...",
+          models: [],
+        },
+        {
+          provider: "claudeAgent",
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+        },
+      ],
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-provider-pending"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-provider-pending"),
+          role: "user",
+          text: "hello codex",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.refreshProviders).not.toHaveBeenCalled();
   });
 
   it("generates a thread title on the first turn", async () => {

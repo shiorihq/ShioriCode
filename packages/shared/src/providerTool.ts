@@ -47,8 +47,20 @@ const FILE_READ_TOOL_NAMES = new Set([
   "view",
 ]);
 
-const SUBAGENT_TOOL_NAMES = new Set(["agent", "spawn agent", "subagent", "task"]);
+const SUBAGENT_TOOL_NAMES = new Set([
+  "agent",
+  "close agent",
+  "resume agent",
+  "send input",
+  "send message",
+  "spawn agent",
+  "subagent",
+  "task",
+  "wait",
+  "wait agent",
+]);
 const USER_INPUT_TOOL_NAMES = new Set(["ask user", "request user input"]);
+const MAX_SNAPSHOT_STRING_LENGTH = 20_000;
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -165,11 +177,18 @@ function snapshotUnknown(value: unknown, depth = 0): unknown {
   if (
     value === null ||
     value === undefined ||
-    typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "boolean"
   ) {
     return value;
+  }
+
+  if (typeof value === "string") {
+    if (value.length <= MAX_SNAPSHOT_STRING_LENGTH) {
+      return value;
+    }
+
+    return `${value.slice(0, MAX_SNAPSHOT_STRING_LENGTH)}[truncated ${value.length - MAX_SNAPSHOT_STRING_LENGTH} chars]`;
   }
 
   if (Array.isArray(value)) {
@@ -369,6 +388,10 @@ export function providerToolTitle(toolName: string | null | undefined): string {
 
   switch (normalized) {
     case "agent":
+    case "close agent":
+      return "Close subagent";
+    case "resume agent":
+      return "Resume subagent";
     case "spawn agent":
     case "subagent":
     case "task":
@@ -394,6 +417,7 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Send input";
     case "update plan":
       return "Update plan";
+    case "wait":
     case "wait agent":
       return "Wait for subagent";
     case "web search":
@@ -474,7 +498,14 @@ export function summarizeProviderToolInvocation(
     }
   }
 
-  if (normalized === "send input" || normalized === "send message" || normalized === "wait agent") {
+  if (
+    normalized === "close agent" ||
+    normalized === "resume agent" ||
+    normalized === "send input" ||
+    normalized === "send message" ||
+    normalized === "wait" ||
+    normalized === "wait agent"
+  ) {
     const targets = joinedTargets(input);
     if (targets) {
       return `${providerToolTitle(normalized)}: ${targets}`;

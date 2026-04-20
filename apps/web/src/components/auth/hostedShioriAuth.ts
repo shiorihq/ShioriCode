@@ -10,8 +10,49 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+function sanitizeHostedShioriAuthErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  if (/temporary or disposable email addresses are not allowed/i.test(trimmed)) {
+    return "Temporary or disposable email addresses are not allowed";
+  }
+
+  const uncaughtMatch = /uncaught error:\s*([^\n]+)/i.exec(trimmed);
+  const rawPrimaryLine = (uncaughtMatch?.[1] ?? trimmed.split(/\r?\n/u)[0] ?? "").trim();
+  const primaryLine = rawPrimaryLine
+    .replace(/\s+at\s.+$/u, "")
+    .replace(/\s+called by client$/iu, "")
+    .trim();
+
+  if (
+    primaryLine.length > 0 &&
+    !/^server error$/iu.test(primaryLine) &&
+    !/^\[convex /iu.test(primaryLine)
+  ) {
+    return primaryLine;
+  }
+
+  const firstMeaningfulLine = trimmed
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line.length > 0 &&
+        !/^server error$/iu.test(line) &&
+        !/^\[convex /iu.test(line) &&
+        !/^at\s/iu.test(line) &&
+        !/^called by client$/iu.test(line),
+    );
+
+  return firstMeaningfulLine ?? trimmed;
+}
+
 export function toHostedShioriAuthErrorMessage(error: unknown): string {
-  const message = extractErrorMessage(error);
+  const rawMessage = extractErrorMessage(error);
+  const message = rawMessage ? sanitizeHostedShioriAuthErrorMessage(rawMessage) : null;
   if (!message) {
     return "Authentication failed. Please try again.";
   }

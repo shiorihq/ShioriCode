@@ -7,7 +7,9 @@ import {
   hostedUpdateProfileMutation,
 } from "../../convex/api";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useSettings } from "../../hooks/useSettings";
 import { getAvatarGradientStyle } from "../../lib/avatar";
+import { getPersonalDetailsBlurClass } from "../../lib/personalDetails";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -93,7 +95,7 @@ function ProfileAvatar({
 
   return (
     <div className="relative group shrink-0">
-      <div className="size-9 overflow-hidden rounded-lg">
+      <div className="size-9 overflow-hidden rounded-md">
         {imageUrl ? (
           <img src={imageUrl} alt="Profile" className="size-full object-cover" />
         ) : (
@@ -103,7 +105,7 @@ function ProfileAvatar({
 
       <button
         type="button"
-        className={`absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg bg-black/50 transition-opacity ${busy ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+        className={`absolute inset-0 flex cursor-pointer items-center justify-center rounded-md bg-black/50 transition-opacity ${busy ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
         onClick={() => fileInputRef.current?.click()}
         disabled={busy}
       >
@@ -151,6 +153,7 @@ function ChangePasswordDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { signIn } = useHostedShioriState();
+  const blurPersonalData = useSettings().blurPersonalData;
   const initiatePasswordChange = useMutation(hostedInitiatePasswordChangeMutation);
 
   const [step, setStep] = useState<PasswordStep>("initial");
@@ -222,9 +225,14 @@ function ChangePasswordDialog({
         <DialogHeader>
           <DialogTitle>Change password</DialogTitle>
           <DialogDescription>
-            {step === "initial"
-              ? "We'll send a secure code to your email to verify your identity."
-              : `Enter the code sent to ${step.email}`}
+            {step === "initial" ? (
+              "We'll send a secure code to your email to verify your identity."
+            ) : (
+              <>
+                Enter the code sent to{" "}
+                <span className={getPersonalDetailsBlurClass(blurPersonalData)}>{step.email}</span>
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -302,6 +310,7 @@ function ChangePasswordDialog({
 
 export function AccountPanel() {
   const { isAuthenticated, isAuthLoading, viewer, signOut } = useHostedShioriState();
+  const blurPersonalData = useSettings().blurPersonalData;
   const updateProfile = useMutation(hostedUpdateProfileMutation);
 
   const [displayName, setDisplayName] = useState("");
@@ -475,7 +484,11 @@ export function AccountPanel() {
           </SettingsRow>
 
           <SettingsRow title="Email" description="Your account email address.">
-            <Input className="mt-2 bg-muted/50" value={viewer?.email ?? ""} disabled />
+            <Input
+              className={`mt-2 bg-muted/50 ${getPersonalDetailsBlurClass(blurPersonalData)}`}
+              value={viewer?.email ?? ""}
+              disabled
+            />
           </SettingsRow>
         </SettingsSection>
 

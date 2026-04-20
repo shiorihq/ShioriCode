@@ -32,34 +32,42 @@ function buildHostedModelCapabilities(input: {
   mandatoryReasoning?: boolean;
   reasoningId?: string;
 }): ModelCapabilities {
+  const supportsThinkingToggle =
+    input.mandatoryReasoning !== true &&
+    (input.supportsReasoningEffort === true ||
+      (typeof input.reasoningId === "string" && input.reasoningId.trim().length > 0));
+
   return {
     ...EMPTY_CAPABILITIES,
     reasoningEffortLevels: buildHostedReasoningEffortLevels(input.supportsReasoningEffort),
-    supportsThinkingToggle:
-      typeof input.reasoningId === "string" &&
-      input.reasoningId.trim().length > 0 &&
-      input.mandatoryReasoning !== true,
+    supportsThinkingToggle,
   };
 }
 
 function isCodingCapableModel(model: HostedCatalogProvider["models"][number]): boolean {
-  return model.coding ?? model.toolCalling;
+  return model.coding === true || (model.coding === undefined && model.toolCalling);
+}
+
+function hasExplicitCodingFlag(model: HostedCatalogProvider["models"][number]): boolean {
+  return model.coding === true;
 }
 
 function resolveHostedModelSlug(providerId: string, modelId: string): string {
   return modelId.includes("/") ? modelId : `${providerId}/${modelId}`;
 }
 
-export function flattenHostedShioriModels(
+function flattenHostedShioriModelsByPredicate(
   providers: ReadonlyArray<HostedCatalogProvider>,
+  shouldIncludeModel: (model: HostedCatalogProvider["models"][number]) => boolean,
 ): ServerProviderModel[] {
   return providers.flatMap((provider) =>
     provider.models
-      .filter((model) => model.isEnabled && isCodingCapableModel(model))
+      .filter((model) => model.isEnabled && shouldIncludeModel(model))
       .map<ServerProviderModel>((model) => ({
         slug: resolveHostedModelSlug(provider.id, model.id),
         name: model.name,
         isCustom: false,
+        multiModal: model.multiModal,
         capabilities: buildHostedModelCapabilities({
           reasoning: model.reasoning,
           ...(model.supportsReasoningEffort !== undefined
@@ -72,6 +80,18 @@ export function flattenHostedShioriModels(
         }),
       })),
   );
+}
+
+export function flattenHostedShioriModels(
+  providers: ReadonlyArray<HostedCatalogProvider>,
+): ServerProviderModel[] {
+  return flattenHostedShioriModelsByPredicate(providers, isCodingCapableModel);
+}
+
+export function flattenHostedShioriSettingsModels(
+  providers: ReadonlyArray<HostedCatalogProvider>,
+): ServerProviderModel[] {
+  return flattenHostedShioriModelsByPredicate(providers, hasExplicitCodingFlag);
 }
 
 function resolveHostedAuthLabel(viewer: HostedViewer | null | undefined): string | undefined {

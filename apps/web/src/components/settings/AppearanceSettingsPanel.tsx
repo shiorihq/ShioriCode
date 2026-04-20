@@ -400,6 +400,30 @@ export function AppearanceSettingsPanel() {
 
       <SettingsSection title="Interface">
         <SettingsRow
+          title="Hide personal details"
+          description="Mask personal details in the interface to reduce casual on-screen exposure."
+          resetAction={
+            settings.blurPersonalData !== DEFAULT_UNIFIED_SETTINGS.blurPersonalData ? (
+              <ResetButton
+                label="personal details masking"
+                onClick={() =>
+                  updateSettings({
+                    blurPersonalData: DEFAULT_UNIFIED_SETTINGS.blurPersonalData,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.blurPersonalData}
+              onCheckedChange={(checked) => updateSettings({ blurPersonalData: Boolean(checked) })}
+              aria-label="Hide personal details"
+            />
+          }
+        />
+
+        <SettingsRow
           title="UI font"
           description="Choose the interface font. Installed fonts load from your system when available."
           status={

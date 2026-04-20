@@ -4,6 +4,8 @@ import { CheckIcon } from "lucide-react";
 import { PROVIDER_DISPLAY_NAMES, type ProviderKind, type ServerProvider } from "contracts";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useSettings } from "../../hooks/useSettings";
+import { getPersonalDetailsBlurClass } from "../../lib/personalDetails";
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 
@@ -42,6 +44,7 @@ export function ProviderCard({
   onRefresh,
   isRefreshing,
 }: ProviderCardProps) {
+  const blurPersonalData = useSettings().blurPersonalData;
   const shouldReduceMotion = useReducedMotion();
   const skip = !!shouldReduceMotion;
   const isReady = provider.status === "ready";
@@ -125,7 +128,8 @@ export function ProviderCard({
         {/* Shiori authenticated detail */}
         {showShioriDetail ? (
           <p className="mt-1 pl-[18px] text-xs text-muted-foreground/50">
-            Authenticated as {viewerEmail}
+            Authenticated as{" "}
+            <span className={getPersonalDetailsBlurClass(blurPersonalData)}>{viewerEmail}</span>
           </p>
         ) : null}
 

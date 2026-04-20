@@ -8,6 +8,8 @@ type RuntimeSqliteLayerConfig = {
   readonly filename: string;
 };
 
+export const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+
 type Loader = {
   layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient>;
 };
@@ -29,6 +31,9 @@ const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // Give concurrent readers/writers time to clear instead of failing turn
+    // startup immediately with "database is locked" under bursty desktop loads.
+    yield* sql.unsafe(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`, []);
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* runMigrations();
   }),

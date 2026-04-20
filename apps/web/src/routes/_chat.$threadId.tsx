@@ -403,7 +403,7 @@ export function shouldPrewarmThreadSession(
     return false;
   }
 
-  if (thread.resumeState !== "resumed") {
+  if (thread.resumeState === "unrecoverable" || thread.resumeState === "resuming") {
     return false;
   }
 

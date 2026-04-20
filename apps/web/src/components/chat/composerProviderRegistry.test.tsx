@@ -34,7 +34,7 @@ const SHIORI_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "high", label: "High" },
       ],
       supportsFastMode: false,
-      supportsThinkingToggle: false,
+      supportsThinkingToggle: true,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     },
@@ -262,6 +262,7 @@ describe("getComposerProviderState", () => {
       provider: "shiori",
       promptEffort: "medium",
       modelOptionsForDispatch: {
+        thinking: false,
         reasoningEffort: "medium",
       },
     });

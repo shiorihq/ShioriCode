@@ -15,6 +15,15 @@ interface JsonRpcProbeResponse {
   };
 }
 
+export const CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS = 60_000;
+
+export function buildCodexAppServerArgs(): string[] {
+  // Current Codex CLI releases expose app-server over stdio without any
+  // transport flag. Keep the argv minimal so probes and session startup
+  // stay compatible with the installed binary.
+  return ["app-server"];
+}
+
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {
   return typeof response.error?.message === "string" ? response.error.message : undefined;
 }
@@ -64,7 +73,7 @@ export async function probeCodexAccount(input: {
   readonly signal?: AbortSignal;
 }): Promise<CodexAccountSnapshot> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(input.binaryPath, ["app-server"], {
+    const child = spawn(input.binaryPath, buildCodexAppServerArgs(), {
       env: {
         ...process.env,
         ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
@@ -182,7 +191,7 @@ export async function probeCodexUsage(input: {
   readonly signal?: AbortSignal;
 }): Promise<CodexUsageSnapshot> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(input.binaryPath, ["app-server"], {
+    const child = spawn(input.binaryPath, buildCodexAppServerArgs(), {
       env: {
         ...process.env,
         ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),

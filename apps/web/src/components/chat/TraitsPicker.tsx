@@ -32,6 +32,7 @@ import {
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
+import { playFastModeBlitz } from "./fastModeBlitzFx";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
 type TraitsPersistence =
@@ -382,8 +383,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           <MenuRadioGroup
             value={fastModeEnabled ? "on" : "off"}
             onValueChange={(value) => {
+              const nextFastMode = value === "on";
+              if (nextFastMode !== fastModeEnabled) {
+                playFastModeBlitz(nextFastMode);
+              }
               updateModelOptions(
-                buildNextOptions(provider, modelOptions, { fastMode: value === "on" }),
+                buildNextOptions(provider, modelOptions, { fastMode: nextFastMode }),
               );
             }}
           >

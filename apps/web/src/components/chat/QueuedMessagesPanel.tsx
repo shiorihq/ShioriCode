@@ -1,5 +1,12 @@
-import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from "lucide-react";
-import { useMemo } from "react";
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  MoreHorizontalIcon,
+  PencilIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { stripInlineTerminalContextPlaceholders } from "../../lib/terminalContext";
 import { cn } from "../../lib/utils";
 import { type QueuedTurnDraft } from "../../queuedTurnsStore";
@@ -12,10 +19,6 @@ interface QueuedMessagesPanelProps {
   onEditQueuedTurn: (queuedTurnId: string) => void;
 }
 
-function formatCountLabel(count: number, singular: string, plural: string): string {
-  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
-}
-
 function buildQueuedMessagePreview(queuedTurn: QueuedTurnDraft): string {
   const strippedPrompt = stripInlineTerminalContextPlaceholders(
     queuedTurn.composerSnapshot.prompt,
@@ -26,18 +29,8 @@ function buildQueuedMessagePreview(queuedTurn: QueuedTurnDraft): string {
 
   const imageCount = queuedTurn.composerSnapshot.persistedAttachments.length;
   const terminalContextCount = queuedTurn.composerSnapshot.terminalContexts.length;
-  if (imageCount > 0 && terminalContextCount > 0) {
-    return `${formatCountLabel(imageCount, "image", "images")} and ${formatCountLabel(
-      terminalContextCount,
-      "terminal excerpt",
-      "terminal excerpts",
-    )}`;
-  }
-  if (imageCount > 0) {
-    return formatCountLabel(imageCount, "image attachment", "image attachments");
-  }
-  if (terminalContextCount > 0) {
-    return formatCountLabel(terminalContextCount, "terminal excerpt", "terminal excerpts");
+  if (imageCount > 0 || terminalContextCount > 0) {
+    return "Attachments only";
   }
   return "Queued follow-up";
 }
@@ -52,56 +45,46 @@ function QueuedMessageRow({
   onEditQueuedTurn: (queuedTurnId: string) => void;
 }) {
   const previewText = useMemo(() => buildQueuedMessagePreview(queuedTurn), [queuedTurn]);
-  const imageCount = queuedTurn.composerSnapshot.persistedAttachments.length;
-  const terminalContextCount = queuedTurn.composerSnapshot.terminalContexts.length;
   const isSending = queuedTurn.status === "sending";
+  const isFailed = queuedTurn.status === "failed";
+  const tooltipText = isFailed && queuedTurn.errorMessage ? queuedTurn.errorMessage : previewText;
 
   return (
-    <div
-      className={cn(
-        "group flex items-start justify-between gap-2 rounded-2xl border px-3 py-2.5 shadow-sm",
-        queuedTurn.status === "failed"
-          ? "border-amber-500/40 bg-amber-500/8"
-          : "border-border/60 bg-muted/25",
-      )}
-    >
-      <div className="min-w-0 flex-1">
-        <p className="line-clamp-2 text-sm leading-5 text-foreground/85">{previewText}</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-          <span>
-            {isSending
-              ? "Sending next"
-              : queuedTurn.status === "failed"
-                ? "Needs attention"
-                : "Queued"}
-          </span>
-          {imageCount > 0 ? <span>{formatCountLabel(imageCount, "image", "images")}</span> : null}
-          {terminalContextCount > 0 ? (
-            <span>
-              {formatCountLabel(terminalContextCount, "terminal excerpt", "terminal excerpts")}
-            </span>
-          ) : null}
-        </div>
-        {queuedTurn.status === "failed" && queuedTurn.errorMessage ? (
-          <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
-            {queuedTurn.errorMessage}
-          </p>
-        ) : null}
+    <div className="group flex min-w-0 items-center justify-between gap-2 py-0.5 text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <ArrowUpIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0",
+            isSending
+              ? "animate-pulse text-foreground/70"
+              : isFailed
+                ? "text-amber-500"
+                : "text-muted-foreground/55",
+          )}
+        />
+        <p
+          className={cn(
+            "min-w-0 flex-1 truncate leading-snug",
+            isFailed ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
+          )}
+          title={tooltipText}
+        >
+          {previewText}
+        </p>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <Button
           type="button"
           size="icon-xs"
           variant="ghost"
-          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
           aria-label="Delete queued message"
           disabled={isSending}
           onClick={() => onDeleteQueuedTurn(queuedTurn.id)}
         >
           <Trash2Icon className="size-3.5" />
         </Button>
-
         <Menu>
           <MenuTrigger
             render={
@@ -109,7 +92,6 @@ function QueuedMessageRow({
                 type="button"
                 size="icon-xs"
                 variant="ghost"
-                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                 aria-label="Queued message actions"
                 disabled={isSending}
               />
@@ -134,31 +116,89 @@ export function QueuedMessagesPanel({
   onDeleteQueuedTurn,
   onEditQueuedTurn,
 }: QueuedMessagesPanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [fadeTop, setFadeTop] = useState(false);
+  const [fadeBottom, setFadeBottom] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || isCollapsed) return;
+    const update = () => {
+      const canScrollUp = el.scrollTop > 1;
+      const canScrollDown = el.scrollHeight - el.clientHeight - el.scrollTop > 1;
+      setFadeTop(canScrollUp);
+      setFadeBottom(canScrollDown);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    el.addEventListener("scroll", update, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", update);
+    };
+  }, [queuedTurns.length, isCollapsed]);
+
   if (queuedTurns.length === 0) {
     return null;
   }
 
+  const count = queuedTurns.length;
+
   return (
-    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/15 px-3 py-2.5 sm:px-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
-            Queue
-          </p>
-          <p className="text-sm text-foreground/75">
-            {formatCountLabel(queuedTurns.length, "message", "messages")} waiting to send
-          </p>
+    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/15 px-4 py-1.5 backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={() => setIsCollapsed((prev) => !prev)}
+        aria-expanded={!isCollapsed}
+        aria-label={isCollapsed ? "Show queued messages" : "Hide queued messages"}
+        className="group/queue-header flex w-fit cursor-pointer items-center gap-1.5 py-1 text-xs font-semibold text-muted-foreground/80 transition-colors hover:text-foreground"
+      >
+        <span>Queued</span>
+        <span className="text-[11px] font-normal text-muted-foreground/55 tabular-nums">
+          {count}
+        </span>
+        <span
+          className={cn(
+            "flex size-4 items-center justify-center transition-opacity",
+            isCollapsed
+              ? "opacity-100"
+              : "opacity-0 group-hover/queue-header:opacity-100 group-focus-visible/queue-header:opacity-100",
+          )}
+          aria-hidden
+        >
+          {isCollapsed ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronUpIcon className="size-3.5" />
+          )}
+        </span>
+      </button>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          isCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
+        )}
+        aria-hidden={isCollapsed}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            ref={scrollRef}
+            data-fade-top={fadeTop || undefined}
+            data-fade-bottom={fadeBottom || undefined}
+            className="queue-scroll flex max-h-[6rem] flex-col gap-px overflow-y-auto"
+          >
+            {queuedTurns.map((queuedTurn) => (
+              <QueuedMessageRow
+                key={queuedTurn.id}
+                queuedTurn={queuedTurn}
+                onDeleteQueuedTurn={onDeleteQueuedTurn}
+                onEditQueuedTurn={onEditQueuedTurn}
+              />
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="space-y-2">
-        {queuedTurns.map((queuedTurn) => (
-          <QueuedMessageRow
-            key={queuedTurn.id}
-            queuedTurn={queuedTurn}
-            onDeleteQueuedTurn={onDeleteQueuedTurn}
-            onEditQueuedTurn={onEditQueuedTurn}
-          />
-        ))}
       </div>
     </div>
   );

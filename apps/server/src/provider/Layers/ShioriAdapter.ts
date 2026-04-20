@@ -42,7 +42,7 @@ import {
 import { resolveModelSlugForProvider } from "shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts";
+import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -98,7 +98,7 @@ export const SHIORI_WORKSPACE_RULES = [
     "You have full access to the user's local machine through the tools exposed in this session.",
     "This includes the ability to read and write arbitrary files, execute shell commands, browse the filesystem, and launch applications — you are not sandboxed or limited to a single workspace directory.",
     "Use only the tools actually exposed in this session.",
-    "If local tools such as exec_command, read_file, write_file, or apply_patch are available, treat them as real capabilities of your current environment.",
+    "If local tools such as exec_command, read_file, write_file, or edit are available, treat them as real capabilities of your current environment.",
     "Do not claim you lack local machine, workspace, file, or browser-launch access when an available tool can perform the action.",
     "Do not describe a limitation unless it is supported by the actual tool surface or by an observed tool failure.",
     "",
@@ -150,6 +150,7 @@ interface ShioriRuntimePromptContext {
   readonly arch?: string | undefined;
   readonly timeZone?: string | undefined;
   readonly personality?: AssistantPersonality | undefined;
+  readonly generateMemories?: boolean | undefined;
   readonly interactionMode?: "default" | "plan" | undefined;
   readonly skillPrompt?: string | undefined;
 }
@@ -188,7 +189,10 @@ export function buildShioriWorkspaceRules(
   const platform = input.platform ?? process.platform;
   const arch = input.arch ?? process.arch;
   const timeZone = input.timeZone ?? resolveLocalTimeZone();
-  const personalityAppendix = buildAssistantPersonalityAppendix(input.personality);
+  const assistantSettingsAppendix = buildAssistantSettingsAppendix({
+    personality: input.personality,
+    generateMemories: input.generateMemories,
+  });
 
   return [
     ...SHIORI_WORKSPACE_RULES,
@@ -207,7 +211,7 @@ export function buildShioriWorkspaceRules(
         ]
       : []),
     ...(input.skillPrompt ? [input.skillPrompt] : []),
-    ...(personalityAppendix ? [personalityAppendix] : []),
+    ...(assistantSettingsAppendix ? [assistantSettingsAppendix] : []),
     [
       "## Runtime Context",
       "The following local context describes the user's machine and current local time for this session.",
@@ -636,41 +640,81 @@ function boundStreamSize(
   return body.pipeThrough(transform);
 }
 
+function extractHostedFailureDetailFromObject(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const metadata =
+    record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+      ? (record.metadata as Record<string, unknown>)
+      : null;
+  const errorType = typeof metadata?.error_type === "string" ? metadata.error_type.trim() : null;
+  const candidate =
+    typeof record.error === "string"
+      ? record.error.trim()
+      : typeof record.message === "string"
+        ? record.message.trim()
+        : typeof record.detail === "string"
+          ? record.detail.trim()
+          : null;
+
+  if (!candidate) {
+    return null;
+  }
+
+  if (!errorType || errorType.length === 0) {
+    return candidate;
+  }
+
+  if (errorType === "provider_unavailable") {
+    return `${candidate} (provider unavailable)`;
+  }
+
+  return `${candidate} (${errorType})`;
+}
+
+function normalizeHostedFailureDetail(rawDetail: string, fallback: string): string {
+  const trimmed = rawDetail.trim();
+  if (trimmed.length === 0) {
+    return fallback;
+  }
+
+  const parseJsonCandidate = (candidate: string): string | null => {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === "string") {
+        return normalizeHostedFailureDetail(parsed, fallback);
+      }
+      return extractHostedFailureDetailFromObject(parsed);
+    } catch {
+      return null;
+    }
+  };
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    const parsed = parseJsonCandidate(trimmed);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return trimmed;
+}
+
 // Read a failure body once the hosted API returns a non-2xx response. Prefer JSON error
 // objects, fall back to plain text, and never let the response body read itself throw.
 const readHostedFailureDetail = (response: Response) =>
   Effect.tryPromise({
-    try: async () => {
-      const text = await response.text();
-      const trimmed = text.trim();
-      if (trimmed.length === 0) {
-        return `Shiori API returned ${response.status} ${response.statusText}`.trim();
-      }
-      if (trimmed.startsWith("{")) {
-        try {
-          const parsed = JSON.parse(trimmed) as unknown;
-          if (parsed && typeof parsed === "object") {
-            const errorField = (parsed as Record<string, unknown>).error;
-            const detailField = (parsed as Record<string, unknown>).detail;
-            const messageField = (parsed as Record<string, unknown>).message;
-            const candidate =
-              typeof errorField === "string"
-                ? errorField
-                : typeof messageField === "string"
-                  ? messageField
-                  : typeof detailField === "string"
-                    ? detailField
-                    : null;
-            if (candidate && candidate.trim().length > 0) {
-              return candidate.trim();
-            }
-          }
-        } catch {
-          // fall through to raw text
-        }
-      }
-      return trimmed;
-    },
+    try: async () =>
+      normalizeHostedFailureDetail(
+        await response.text(),
+        `Shiori API returned ${response.status} ${response.statusText}`.trim(),
+      ),
     catch: () => `Shiori API returned ${response.status} ${response.statusText}`.trim(),
   }).pipe(Effect.orElseSucceed(() => `Shiori API returned ${response.status}`.trim()));
 
@@ -946,6 +990,7 @@ function isHostedApprovalRequired(input: {
 
   switch (input.toolName) {
     case "write_file":
+    case "edit":
     case "apply_patch":
       return hostedPolicyAsks(input.bootstrap, "fileWrite", "destructiveChange");
     case "exec_command":
@@ -971,6 +1016,7 @@ function canPersistSessionApproval(input: {
 
   switch (input.toolName) {
     case "write_file":
+    case "edit":
     case "apply_patch":
       return !hostedPolicyAsks(input.bootstrap, "fileWrite", "destructiveChange");
     case "exec_command":
@@ -1076,9 +1122,9 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
       },
     },
     {
-      name: "apply_patch",
-      title: "Apply patch",
-      description: "Apply a unified diff patch inside the workspace git checkout.",
+      name: "edit",
+      title: "Edit files",
+      description: "Edit workspace files by applying a unified diff patch.",
       inputSchema: {
         type: "object",
         properties: {
@@ -1087,7 +1133,7 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
         required: ["patch"],
         additionalProperties: false,
         "x-shioricode-request-kind": "file-change",
-        "x-shioricode-needs-approval": requiresApproval("apply_patch", "file-change"),
+        "x-shioricode-needs-approval": requiresApproval("edit", "file-change"),
       },
     },
     {
@@ -3040,6 +3086,44 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         });
       });
 
+      const prewarmHostedBootstrapForContext = Effect.fn("prewarmHostedBootstrapForContext")(
+        function* (input: { threadId: ThreadId; authToken: string }) {
+          yield* Effect.sync(() => {
+            void Effect.runPromise(
+              fetchHostedBootstrapForToken(input.authToken).pipe(
+                Effect.flatMap((bootstrap) =>
+                  Ref.update(sessionsRef, (sessions) => {
+                    const next = new Map(sessions);
+                    const context = next.get(String(input.threadId));
+                    if (!context) {
+                      return next;
+                    }
+
+                    const warmedContext = {
+                      ...context,
+                      hostedBootstrap: bootstrap,
+                      hostedBootstrapFetchedAt: Date.now(),
+                      ...(context.activeTurn
+                        ? {
+                            activeTurn: {
+                              ...context.activeTurn,
+                              hostedBootstrap: bootstrap,
+                            },
+                          }
+                        : {}),
+                    } satisfies ShioriSessionContext;
+
+                    next.set(String(input.threadId), warmedContext);
+                    return next;
+                  }),
+                ),
+                Effect.catch(() => Effect.void),
+              ),
+            );
+          });
+        },
+      );
+
       const fetchHostedBootstrapForToken = Effect.fn("fetchHostedBootstrapForToken")(function* (
         authToken: string,
       ) {
@@ -3704,6 +3788,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             rules: buildShioriWorkspaceRules({
               cwd: sessionContext.session.cwd,
               personality: settings.assistantPersonality,
+              generateMemories: settings.generateMemories,
               skillPrompt: sessionContext.activeTurn?.skillPrompt,
             }),
           },
@@ -3809,7 +3894,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 );
               case "error":
                 return yield* Effect.fail(
-                  requestError(`shiori.subagent.stream:${String(input.threadId)}`, chunk.errorText),
+                  requestError(
+                    `shiori.subagent.stream:${String(input.threadId)}`,
+                    normalizeHostedFailureDetail(
+                      chunk.errorText,
+                      "Shiori subagent stream emitted an error.",
+                    ),
+                  ),
                 );
               default:
                 break;
@@ -4685,6 +4776,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               bytesWritten: Buffer.byteLength(content),
             };
           }
+          case "edit":
           case "apply_patch": {
             const patchText =
               typeof input.toolInput.patch === "string" ? input.toolInput.patch : "";
@@ -4851,6 +4943,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             rules: buildShioriWorkspaceRules({
               cwd: input.context.session.cwd,
               personality: settings.assistantPersonality,
+              generateMemories: settings.generateMemories,
               interactionMode,
               skillPrompt: input.context.activeTurn?.skillPrompt,
             }),
@@ -5721,15 +5814,19 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 return;
               }
               case "error": {
+                const errorDetail = normalizeHostedFailureDetail(
+                  chunk.errorText,
+                  "Shiori stream emitted an error.",
+                );
                 yield* Effect.logWarning("shiori stream emitted error chunk", {
                   threadId: input.context.session.threadId,
                   turnId: input.turnId,
-                  errorText: chunk.errorText,
+                  errorText: errorDetail,
                 });
                 return yield* Effect.fail(
                   requestError(
                     `shiori.turn.start:${String(input.context.session.threadId)}`,
-                    chunk.errorText,
+                    errorDetail,
                   ),
                 );
               }
@@ -6036,6 +6133,17 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
           if (!context.toolRuntime) {
             yield* prewarmSessionToolRuntime(input.threadId, provisionalSession.cwd);
+          }
+          const authToken = yield* hostedAuthTokenStore.getToken;
+          if (
+            isJwtLikeToken(authToken) &&
+            context.hostedBootstrap === undefined &&
+            context.activeTurn === null
+          ) {
+            yield* prewarmHostedBootstrapForContext({
+              threadId: input.threadId,
+              authToken,
+            });
           }
           for (const subagent of context.subagents.values()) {
             if (

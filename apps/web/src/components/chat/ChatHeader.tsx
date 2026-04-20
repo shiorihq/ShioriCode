@@ -6,6 +6,7 @@ import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { Button } from "../ui/button";
+import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
 interface ChatHeaderLinkedThread {
@@ -144,32 +145,38 @@ export const ChatHeader = memo(function ChatHeader({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <Group className="shrink-0" aria-label="Thread actions">
         {onBranchThread && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="shrink-0"
-                  aria-label="Branch thread"
-                  onClick={onBranchThread}
-                >
-                  <GitBranchIcon className="size-3" />
-                  Branch
-                </Button>
-              }
-            />
-            <TooltipPopup side="bottom">Create a linked child thread</TooltipPopup>
-          </Tooltip>
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="shrink-0 gap-2 px-3"
+                    aria-label="Fork thread"
+                    onClick={onBranchThread}
+                  >
+                    <GitBranchIcon className="size-3" />
+                    Fork
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Create a linked child thread</TooltipPopup>
+            </Tooltip>
+            <GroupSeparator />
+          </>
         )}
         {activeProjectPath && (
-          <OpenInPicker
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
+          <>
+            <OpenInPicker
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+            <GroupSeparator />
+          </>
         )}
         <Tooltip>
           <TooltipTrigger
@@ -184,7 +191,7 @@ export const ChatHeader = memo(function ChatHeader({
                 disabled={!isGitRepo}
               >
                 <DiffIcon className="size-3" />
-                <span>View diff</span>
+                View diff
               </Toggle>
             }
           />
@@ -196,7 +203,7 @@ export const ChatHeader = memo(function ChatHeader({
                 : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
-      </div>
+      </Group>
     </div>
   );
 });

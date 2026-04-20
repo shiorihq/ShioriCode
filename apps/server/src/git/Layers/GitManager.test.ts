@@ -924,6 +924,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
+        yield* runGit(repoDir, [
+          "config",
+          `url.${upstreamDir}.insteadOf`,
+          "git@github.com:pingdotgg/codething-mvp.git",
+        ]);
         yield* runGit(repoDir, ["checkout", "main"]);
         yield* runGit(repoDir, ["branch", "-D", "effect-atom"]);
         yield* runGit(repoDir, ["checkout", "--track", "my-org/upstream/effect-atom"]);
@@ -1643,32 +1648,40 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("shioricode-git-manager-");
         yield* initRepo(repoDir);
-        const originDir = yield* createBareRemote();
-        const upstreamDir = yield* createBareRemote();
-        yield* configureRemote(repoDir, "origin", originDir, "origin");
-        yield* configureRemote(repoDir, "my-org/upstream", upstreamDir, "my-org/upstream");
-
-        yield* runGit(repoDir, ["checkout", "-b", "effect-atom"]);
-        yield* runGit(repoDir, ["push", "-u", "origin", "effect-atom"]);
-        yield* runGit(repoDir, ["push", "-u", "my-org/upstream", "effect-atom"]);
+        yield* runGit(repoDir, ["checkout", "-b", "upstream/effect-atom"]);
         yield* runGit(repoDir, [
           "config",
           "remote.origin.url",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
-        yield* runGit(repoDir, ["config", "remote.origin.pushurl", originDir]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.origin.fetch",
+          "+refs/heads/*:refs/remotes/origin/*",
+        ]);
         yield* runGit(repoDir, [
           "config",
           "remote.my-org/upstream.url",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
-        yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
-        yield* runGit(repoDir, ["checkout", "main"]);
-        yield* runGit(repoDir, ["branch", "-D", "effect-atom"]);
-        yield* runGit(repoDir, ["checkout", "--track", "my-org/upstream/effect-atom"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.my-org/upstream.fetch",
+          "+refs/heads/*:refs/remotes/my-org/upstream/*",
+        ]);
         fs.writeFileSync(path.join(repoDir, "changes.txt"), "change\n");
         yield* runGit(repoDir, ["add", "changes.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        const mainRef = (yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim();
+        const headRef = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["update-ref", "refs/remotes/origin/main", mainRef]);
+        yield* runGit(repoDir, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/main",
+        ]);
+        yield* runGit(repoDir, ["update-ref", "refs/remotes/my-org/upstream/effect-atom", headRef]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to", "my-org/upstream/effect-atom"]);
 
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
@@ -1680,6 +1693,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/shioricode/pull/1618",
                   baseRefName: "main",
                   headRefName: "effect-atom",
+                  updatedAt: "2026-03-01T00:00:00.000Z",
                 },
               ]),
               "upstream/effect-atom": JSON.stringify([
@@ -1689,6 +1703,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/shioricode/pull/1518",
                   baseRefName: "main",
                   headRefName: "upstream/effect-atom",
+                  updatedAt: "2026-02-01T00:00:00.000Z",
                 },
               ]),
               "pingdotgg:effect-atom": JSON.stringify([]),
@@ -1700,6 +1715,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/shioricode/pull/1518",
                   baseRefName: "main",
                   headRefName: "upstream/effect-atom",
+                  updatedAt: "2026-02-01T00:00:00.000Z",
                 },
               ]),
               "my-org/upstream:upstream/effect-atom": JSON.stringify([
@@ -1709,24 +1725,20 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                   url: "https://github.com/pingdotgg/shioricode/pull/1518",
                   baseRefName: "main",
                   headRefName: "upstream/effect-atom",
+                  updatedAt: "2026-02-01T00:00:00.000Z",
                 },
               ]),
             },
           },
         });
 
-        const result = yield* runStackedAction(manager, {
-          cwd: repoDir,
-          action: "commit_push_pr",
-        });
+        const result = yield* manager.status({ cwd: repoDir });
 
-        expect(result.pr.status).toBe("opened_existing");
-        expect(result.pr.number).toBe(1618);
+        expect(result.pr?.number).toBe(1618);
         expect(ghCalls.some((call) => call.includes("pr list --head upstream/effect-atom "))).toBe(
           false,
         );
       }),
-    12_000,
   );
 
   it.effect(

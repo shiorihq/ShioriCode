@@ -2,6 +2,18 @@ import { normalizeModelSlug } from "shared/model";
 
 import { appendPromptAppendix } from "../../assistantPersonality";
 
+const CODEX_TERMINAL_TOOL_GUARDRAILS = `## Terminal Tool Guardrails
+If you expect to interact with a process after starting it, run \`exec_command\` with \`tty=true\` from the start.
+Use \`tty=true\` for shells, REPLs, prompts, watch mode, long-running interactive programs, or anything that may require later \`write_stdin\` calls.
+Do not call \`write_stdin\` for a buffered \`exec_command\` session started without \`tty=true\`; rerun the command with \`tty=true\` instead.`;
+
+const CODEX_EXPLORATION_GUARDRAILS = `## Exploration Guardrails
+Keep exploration targeted and finite.
+Prefer focused searches and reading the most likely files over repeated directory listing loops.
+Do not repeatedly call \`ls\`, \`pwd\`, \`glob\`, or broad file-listing commands on nearby paths once you already know the relevant area.
+After one or two targeted exploration passes, either make the change, run the next validating command, or state the specific blocker.
+If two consecutive exploration steps produce no new information, stop exploring and switch to execution or summarize what is still missing.`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -163,9 +175,15 @@ export function buildCodexCollaborationMode(input: {
       model,
       reasoning_effort: input.effort ?? "medium",
       developer_instructions: appendPromptAppendix(
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        appendPromptAppendix(
+          appendPromptAppendix(
+            input.interactionMode === "plan"
+              ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+              : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+            CODEX_EXPLORATION_GUARDRAILS,
+          ),
+          CODEX_TERMINAL_TOOL_GUARDRAILS,
+        ),
         input.developerInstructionsAppendix,
       ),
     },

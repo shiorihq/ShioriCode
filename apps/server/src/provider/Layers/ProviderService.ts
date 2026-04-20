@@ -23,11 +23,12 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "contracts";
-import { Effect, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
+import { Effect, Equal, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
 
 import { ProviderValidationError, type ProviderServiceError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderAdapterCapabilities } from "../Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import type { ProviderSessionReconciliation } from "../Services/ProviderService.ts";
@@ -126,6 +127,26 @@ function readPersistedModelSelection(
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
   return Schema.is(ModelSelection)(raw) ? raw : undefined;
+}
+
+function shouldReusePersistedResumeCursor(input: {
+  readonly binding: ProviderRuntimeBinding | undefined;
+  readonly provider: ProviderSession["provider"];
+  readonly requestedModelSelection?: ModelSelection;
+}): boolean {
+  if (!input.binding || input.binding.provider !== input.provider) {
+    return false;
+  }
+
+  if (input.requestedModelSelection === undefined) {
+    return true;
+  }
+
+  const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+  return (
+    persistedModelSelection !== undefined &&
+    Equal.equals(persistedModelSelection, input.requestedModelSelection)
+  );
 }
 
 function readPersistedCwd(
@@ -372,6 +393,53 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return { adapter, session: resumed } as const;
   });
 
+  const projectInactiveReconciliation = Effect.fn("projectInactiveReconciliation")(
+    function* (input: {
+      readonly binding: ProviderRuntimeBinding;
+      readonly capabilities: ProviderAdapterCapabilities;
+      readonly cause: unknown;
+    }) {
+      const nextResumeState: OrchestrationThreadResumeState =
+        input.capabilities.recovery.supportsResumeCursor &&
+        input.binding.resumeCursor !== null &&
+        input.binding.resumeCursor !== undefined
+          ? defaultResumeStateForBinding(input.binding)
+          : "unrecoverable";
+      const nextLastError = formatErrorMessage(input.cause);
+
+      yield* directory.upsert({
+        threadId: input.binding.threadId,
+        provider: input.binding.provider,
+        status: nextResumeState === "unrecoverable" ? "error" : (input.binding.status ?? "stopped"),
+        runtimeMode: input.binding.runtimeMode ?? "full-access",
+        ...(input.binding.resumeCursor !== undefined
+          ? { resumeCursor: input.binding.resumeCursor }
+          : {}),
+        runtimePayload: {
+          ...(isRecord(input.binding.runtimePayload) ? input.binding.runtimePayload : {}),
+          lastError: nextLastError,
+          lastRuntimeEvent: "provider.session.reconcile.failed",
+          lastRuntimeEventAt: new Date().toISOString(),
+        },
+      });
+      yield* analytics.record("provider.session.reconcile.failed", {
+        provider: input.binding.provider,
+        resumeState: nextResumeState,
+        hasResumeCursor:
+          input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined,
+      });
+
+      return {
+        threadId: input.binding.threadId,
+        provider: input.binding.provider,
+        session: null,
+        resumeState: nextResumeState,
+        runtimeMode: input.binding.runtimeMode ?? "full-access",
+        lastError: nextLastError,
+      };
+    },
+  );
+
   const resolveRoutableSession = Effect.fn("resolveRoutableSession")(function* (input: {
     readonly threadId: ThreadId;
     readonly operation: string;
@@ -431,7 +499,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
       const effectiveResumeCursor =
         input.resumeCursor ??
-        (persistedBinding?.provider === input.provider ? persistedBinding.resumeCursor : undefined);
+        (shouldReusePersistedResumeCursor({
+          binding: persistedBinding,
+          provider: input.provider,
+          ...(input.modelSelection !== undefined
+            ? { requestedModelSelection: input.modelSelection }
+            : {}),
+        })
+          ? persistedBinding?.resumeCursor
+          : undefined);
       const adapter = yield* registry.getByProvider(input.provider);
       const session = yield* adapter.startSession({
         ...input,
@@ -713,6 +789,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             };
           }
 
+          const adapter = yield* registry.getByProvider(binding.provider);
+          const capabilities = adapter.capabilities;
+          const hasResumeCursor =
+            binding.resumeCursor !== null && binding.resumeCursor !== undefined;
+          if (!capabilities.recovery.supportsResumeCursor || !hasResumeCursor) {
+            const reason = !capabilities.recovery.supportsResumeCursor
+              ? `Provider '${binding.provider}' does not support resumable sessions for thread '${threadId}'.`
+              : `Cannot recover thread '${threadId}' because no provider resume state is persisted.`;
+            return yield* projectInactiveReconciliation({
+              binding,
+              capabilities,
+              cause: new ProviderValidationError({
+                operation: "ProviderService.reconcileSessions",
+                issue: reason,
+              }),
+            });
+          }
+
           try {
             const recovered = yield* recoverSessionForThread({
               binding,
@@ -727,43 +821,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               lastError: recovered.session.lastError ?? null,
             };
           } catch (cause) {
-            const adapter = yield* registry.getByProvider(binding.provider);
-            const capabilities = adapter.capabilities;
-            const nextResumeState: OrchestrationThreadResumeState =
-              capabilities.recovery.supportsResumeCursor &&
-              binding.resumeCursor !== null &&
-              binding.resumeCursor !== undefined
-                ? defaultResumeStateForBinding(binding)
-                : "unrecoverable";
-            const nextLastError = formatErrorMessage(cause);
-
-            yield* directory.upsert({
-              threadId,
-              provider: binding.provider,
-              status: nextResumeState === "unrecoverable" ? "error" : (binding.status ?? "stopped"),
-              runtimeMode: binding.runtimeMode ?? "full-access",
-              ...(binding.resumeCursor !== undefined ? { resumeCursor: binding.resumeCursor } : {}),
-              runtimePayload: {
-                ...(isRecord(binding.runtimePayload) ? binding.runtimePayload : {}),
-                lastError: nextLastError,
-                lastRuntimeEvent: "provider.session.reconcile.failed",
-                lastRuntimeEventAt: new Date().toISOString(),
-              },
+            return yield* projectInactiveReconciliation({
+              binding,
+              capabilities,
+              cause,
             });
-            yield* analytics.record("provider.session.reconcile.failed", {
-              provider: binding.provider,
-              resumeState: nextResumeState,
-              hasResumeCursor: binding.resumeCursor !== null && binding.resumeCursor !== undefined,
-            });
-
-            return {
-              threadId,
-              provider: binding.provider,
-              session: null,
-              resumeState: nextResumeState,
-              runtimeMode: binding.runtimeMode ?? "full-access",
-              lastError: nextLastError,
-            };
           }
         }),
       { concurrency: 1 },

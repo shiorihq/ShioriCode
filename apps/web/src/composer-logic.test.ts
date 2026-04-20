@@ -60,6 +60,19 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects exact slash commands with command-specific query state", () => {
+    const text = "/personality coa";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      command: "personality",
+      query: "coa",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";
@@ -237,11 +250,29 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
 describe("parseStandaloneComposerSlashCommand", () => {
   it("parses standalone /plan command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
+    expect(parseStandaloneComposerSlashCommand(" /plan ")).toEqual({ command: "plan" });
   });
 
   it("parses standalone /default command", () => {
-    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+    expect(parseStandaloneComposerSlashCommand("/default")).toEqual({ command: "default" });
+  });
+
+  it("parses standalone /memories command", () => {
+    expect(parseStandaloneComposerSlashCommand("/memories")).toEqual({ command: "memories" });
+  });
+
+  it("parses standalone /fork command with explicit worktree mode", () => {
+    expect(parseStandaloneComposerSlashCommand("/fork worktree")).toEqual({
+      command: "fork",
+      value: "worktree",
+    });
+  });
+
+  it("parses standalone /personality command with a specific value", () => {
+    expect(parseStandaloneComposerSlashCommand("/personality coach")).toEqual({
+      command: "personality",
+      value: "coach",
+    });
   });
 
   it("ignores slash commands with extra message text", () => {

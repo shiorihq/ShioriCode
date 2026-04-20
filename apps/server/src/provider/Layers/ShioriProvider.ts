@@ -5,7 +5,7 @@ import type {
   ServerProviderAuth,
   ServerProviderState,
 } from "contracts";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Ref, Stream } from "effect";
 
 import {
   buildPendingServerProvider,
@@ -20,6 +20,7 @@ import { fetchShioriCodeEntitlements } from "../shioriCodeEntitlements";
 
 const PROVIDER = "shiori" as const;
 const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
+const ENTITLEMENT_AUTH_FAILURE_GRACE_MS = 2 * 60 * 1_000;
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -33,7 +34,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "high", label: "High" },
       ],
       supportsFastMode: false,
-      supportsThinkingToggle: false,
+      supportsThinkingToggle: true,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,
@@ -49,7 +50,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "high", label: "High" },
       ],
       supportsFastMode: false,
-      supportsThinkingToggle: false,
+      supportsThinkingToggle: true,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,
@@ -96,7 +97,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-function hasHostedShioriAuthToken(token: string | null): boolean {
+function hasHostedShioriAuthToken(token: string | null): token is string {
   return typeof token === "string" && JWT_LIKE_TOKEN_PATTERN.test(token.trim());
 }
 
@@ -121,21 +122,24 @@ function buildShioriAuth(settings: {
       };
 }
 
-const buildShioriProviderStatus = Effect.fn("buildShioriProviderStatus")(function* (settings: {
-  enabled: boolean;
-  apiBaseUrl: string;
-  customModels: ReadonlyArray<string>;
-  authToken: string | null;
-}): Effect.fn.Return<ServerProvider> {
+function buildShioriProviderStatus(
+  settings: {
+    enabled: boolean;
+    apiBaseUrl: string;
+    customModels: ReadonlyArray<string>;
+    authToken: string | null;
+  },
+  entitlementProbe: {
+    readonly entitlements: {
+      readonly allowed: boolean;
+      readonly plan: string | null;
+      readonly status: string | null;
+    } | null;
+    readonly message: string | null;
+  },
+): ServerProvider {
   const checkedAt = new Date().toISOString();
   const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, settings.customModels);
-  const entitlementProbe =
-    settings.apiBaseUrl && hasHostedShioriAuthToken(settings.authToken)
-      ? yield* fetchShioriCodeEntitlements({
-          apiBaseUrl: settings.apiBaseUrl,
-          authToken: settings.authToken,
-        })
-      : { entitlements: null, message: null };
   const auth = buildShioriAuth({
     ...settings,
     entitlementPlan: entitlementProbe.entitlements?.plan ?? null,
@@ -170,7 +174,7 @@ const buildShioriProviderStatus = Effect.fn("buildShioriProviderStatus")(functio
     models,
     probe,
   });
-});
+}
 
 function buildPendingShioriProviderStatus(settings: {
   enabled: boolean;
@@ -219,38 +223,86 @@ export const ShioriProviderLive = Layer.effect(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const authTokenStore = yield* HostedShioriAuthTokenStore;
+    const stableSnapshotRef = yield* Ref.make<{
+      readonly authToken: string;
+      readonly snapshot: ServerProvider;
+      readonly recordedAtMs: number;
+    } | null>(null);
+
+    const loadSettings = Effect.all({
+      settings: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.shiori),
+      ),
+      authToken: authTokenStore.getToken,
+    }).pipe(
+      Effect.map(({ settings, authToken }) => ({
+        ...settings,
+        authToken,
+      })),
+      Effect.orDie,
+    );
+
+    const loadEntitlementProbe = (settings: {
+      enabled: boolean;
+      apiBaseUrl: string;
+      customModels: ReadonlyArray<string>;
+      authToken: string | null;
+    }) =>
+      settings.apiBaseUrl && hasHostedShioriAuthToken(settings.authToken)
+        ? fetchShioriCodeEntitlements({
+            apiBaseUrl: settings.apiBaseUrl,
+            authToken: settings.authToken,
+          })
+        : Effect.succeed({
+            entitlements: null,
+            message: null,
+            authFailure: false,
+          } as const);
+
+    const checkProvider = loadSettings.pipe(
+      Effect.flatMap((settings) =>
+        Effect.gen(function* () {
+          const entitlementProbe = yield* loadEntitlementProbe(settings);
+          const nextSnapshot = buildShioriProviderStatus(settings, entitlementProbe);
+
+          if (entitlementProbe.authFailure && hasHostedShioriAuthToken(settings.authToken)) {
+            const stableSnapshot = yield* Ref.get(stableSnapshotRef);
+            if (
+              stableSnapshot &&
+              stableSnapshot.authToken === settings.authToken &&
+              Date.now() - stableSnapshot.recordedAtMs < ENTITLEMENT_AUTH_FAILURE_GRACE_MS
+            ) {
+              return stableSnapshot.snapshot;
+            }
+          }
+
+          if (
+            nextSnapshot.status === "ready" &&
+            nextSnapshot.auth.status === "authenticated" &&
+            hasHostedShioriAuthToken(settings.authToken)
+          ) {
+            yield* Ref.set(stableSnapshotRef, {
+              authToken: settings.authToken,
+              snapshot: nextSnapshot,
+              recordedAtMs: Date.now(),
+            });
+          } else if (!hasHostedShioriAuthToken(settings.authToken)) {
+            yield* Ref.set(stableSnapshotRef, null);
+          }
+
+          return nextSnapshot;
+        }),
+      ),
+      Effect.orDie,
+    );
 
     return yield* makeManagedServerProvider({
-      getSettings: Effect.all({
-        settings: serverSettings.getSettings.pipe(
-          Effect.map((settings) => settings.providers.shiori),
-        ),
-        authToken: authTokenStore.getToken,
-      }).pipe(
-        Effect.map(({ settings, authToken }) => ({
-          ...settings,
-          authToken,
-        })),
-        Effect.orDie,
-      ),
+      getSettings: loadSettings,
       streamSettings: Stream.merge(
         serverSettings.streamChanges.pipe(Stream.map(() => undefined)),
         authTokenStore.streamChanges.pipe(Stream.map(() => undefined)),
       ).pipe(
-        Stream.mapEffect(() =>
-          Effect.all({
-            settings: serverSettings.getSettings.pipe(
-              Effect.map((settings) => settings.providers.shiori),
-            ),
-            authToken: authTokenStore.getToken,
-          }).pipe(
-            Effect.map(({ settings, authToken }) => ({
-              ...settings,
-              authToken,
-            })),
-            Effect.orDie,
-          ),
-        ),
+        Stream.mapEffect(() => loadSettings),
         Stream.orDie,
       ),
       haveSettingsChanged: (previous, next) =>
@@ -258,21 +310,7 @@ export const ShioriProviderLive = Layer.effect(
         previous.apiBaseUrl !== next.apiBaseUrl ||
         JSON.stringify(previous.customModels) !== JSON.stringify(next.customModels) ||
         previous.authToken !== next.authToken,
-      checkProvider: Effect.all({
-        settings: serverSettings.getSettings.pipe(
-          Effect.map((settings) => settings.providers.shiori),
-        ),
-        authToken: authTokenStore.getToken,
-      }).pipe(
-        Effect.map(({ settings, authToken }) =>
-          buildShioriProviderStatus({
-            ...settings,
-            authToken,
-          }),
-        ),
-        Effect.flatten,
-        Effect.orDie,
-      ),
+      checkProvider,
       buildInitialSnapshot: buildPendingShioriProviderStatus,
       refreshInterval: "60 seconds",
     });

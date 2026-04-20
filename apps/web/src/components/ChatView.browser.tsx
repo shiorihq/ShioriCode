@@ -1533,6 +1533,131 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not materialize a draft thread just by opening it", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await waitForComposerEditor();
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      await waitForLayout();
+
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.create",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("refreshes provider statuses in the background for transient draft-thread warnings", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            nextFixture.serverConfig.providers[0]!,
+            {
+              provider: "claudeAgent",
+              enabled: true,
+              installed: true,
+              version: "1.0.0",
+              status: "warning",
+              auth: { status: "unknown" },
+              checkedAt: NOW_ISO,
+              message: "Checking Claude CLI availability...",
+              models: [],
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((request) => request._tag === WS_METHODS.serverRefreshProviders),
+        ).toBe(true);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("waits for server thread promotion before starting the first draft turn", async () => {
+    setDraftThreadWithoutWorktree();
+    let createdEventEmitted = false;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.create"
+        ) {
+          const threadId = body.threadId as ThreadId;
+          window.setTimeout(() => {
+            fixture.snapshot = addThreadToSnapshot(fixture.snapshot, threadId);
+            sendOrchestrationDomainEvent(
+              createThreadCreatedEvent(threadId, fixture.snapshot.snapshotSequence),
+            );
+            createdEventEmitted = true;
+          }, 50);
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.turn.start"
+        ) {
+          expect(createdEventEmitted).toBe(true);
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("What is this app about?");
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(() => {
+        expect(createdEventEmitted).toBe(true);
+      });
+
+      await vi.waitFor(() => {
+        expect(useStore.getState().threads.some((thread) => thread.id === THREAD_ID)).toBe(true);
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the project cwd with VS Code Insiders when it is the only available editor", async () => {
     setDraftThreadWithoutWorktree();
 
@@ -3032,6 +3157,141 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the expanded slash-command options", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-menu-expanded" as MessageId,
+        targetText: "expanded command menu thread",
+      }),
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/");
+
+      await waitForComposerMenuItem("slash:compact");
+      await waitForComposerMenuItem("slash:fast");
+      await waitForComposerMenuItem("slash:feedback");
+      await waitForComposerMenuItem("slash:fork");
+      await waitForComposerMenuItem("slash:mcp");
+      await waitForComposerMenuItem("slash:memories");
+      await waitForComposerMenuItem("slash:model");
+      await waitForComposerMenuItem("slash:personality");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("inserts the compact prompt from the slash-command menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-menu-compact" as MessageId,
+        targetText: "compact command thread",
+      }),
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await composerEditor.fill("/");
+
+      const menuItem = await waitForComposerMenuItem("slash:compact");
+      menuItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector<HTMLElement>('[data-testid="composer-editor"]')?.textContent,
+          ).toContain("Compact this thread's context");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("navigates to feedback from the slash-command menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-menu-feedback" as MessageId,
+        targetText: "feedback command thread",
+      }),
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("/");
+
+      const menuItem = await waitForComposerMenuItem("slash:feedback");
+      menuItem.click();
+
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === "/settings/feedback",
+        "Route should navigate to feedback settings from the slash-command menu.",
+      );
+      await waitForElement(
+        () => document.querySelector<HTMLElement>("#feedback-message"),
+        "Unable to find the feedback form message field.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("navigates to skills and MCP from the slash-command menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-menu-mcp" as MessageId,
+        targetText: "mcp command thread",
+      }),
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("/");
+
+      const menuItem = await waitForComposerMenuItem("slash:mcp");
+      menuItem.click();
+
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === "/settings/skills",
+        "Route should navigate to Skills & MCP from the slash-command menu.",
+      );
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("h2")).find(
+            (heading) => heading.textContent?.trim() === "MCP Servers",
+          ) ?? null,
+        "Unable to find the MCP Servers settings section.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows local and worktree fork targets from the slash-command menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-menu-fork-modes" as MessageId,
+        targetText: "fork modes command thread",
+      }),
+    });
+
+    try {
+      await page.getByTestId("composer-editor").fill("/fork ");
+
+      await waitForComposerMenuItem("slash:fork:local");
+      await waitForComposerMenuItem("slash:fork:worktree");
     } finally {
       await mounted.cleanup();
     }

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { ServerProvider } from "contracts";
 
-import { flattenHostedShioriModels, mergeHostedShioriProvider } from "./shioriProvider";
+import {
+  flattenHostedShioriModels,
+  flattenHostedShioriSettingsModels,
+  mergeHostedShioriProvider,
+} from "./shioriProvider";
 
 const baseProvider: ServerProvider = {
   provider: "shiori",
@@ -52,6 +56,7 @@ describe("flattenHostedShioriModels", () => {
         slug: "openai/gpt-5.4",
         name: "GPT-5.4",
         isCustom: false,
+        multiModal: true,
         capabilities: {
           reasoningEffortLevels: [],
           supportsFastMode: false,
@@ -95,6 +100,7 @@ describe("flattenHostedShioriModels", () => {
         slug: "openai/gpt-5.4",
         name: "GPT-5.4",
         isCustom: false,
+        multiModal: true,
         capabilities: {
           reasoningEffortLevels: [
             { value: "low", label: "Low" },
@@ -142,6 +148,7 @@ describe("flattenHostedShioriModels", () => {
         slug: "anthropic/claude-sonnet-4-5",
         name: "Claude Sonnet 4.5",
         isCustom: false,
+        multiModal: true,
         capabilities: {
           reasoningEffortLevels: [
             { value: "low", label: "Low" },
@@ -188,6 +195,7 @@ describe("flattenHostedShioriModels", () => {
         slug: "qwen/qwen3.5-plus-02-15",
         name: "Qwen3.5 Plus",
         isCustom: false,
+        multiModal: true,
         capabilities: {
           reasoningEffortLevels: [],
           supportsFastMode: false,
@@ -231,6 +239,7 @@ describe("flattenHostedShioriModels", () => {
         slug: "anthropic/claude-sonnet-4-5",
         name: "Claude Sonnet 4.5",
         isCustom: false,
+        multiModal: true,
         capabilities: {
           reasoningEffortLevels: [
             { value: "low", label: "Low" },
@@ -272,6 +281,103 @@ describe("flattenHostedShioriModels", () => {
         },
       ]),
     ).toEqual([]);
+  });
+
+  it("preserves hosted multimodal support metadata", () => {
+    expect(
+      flattenHostedShioriModels([
+        {
+          id: "zhipu",
+          title: "Zhipu",
+          description: "",
+          websiteUrl: "https://open.bigmodel.cn",
+          sortOrder: 10,
+          models: [
+            {
+              id: "glm-5.1",
+              name: "GLM-5.1",
+              description: "",
+              reasoning: false,
+              toolCalling: true,
+              multiModal: false,
+              coding: true,
+              isEnabled: true,
+              isPremiumModel: false,
+              contextWindow: 128_000,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        slug: "zhipu/glm-5.1",
+        name: "GLM-5.1",
+        isCustom: false,
+        multiModal: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ]);
+  });
+});
+
+describe("flattenHostedShioriSettingsModels", () => {
+  it("only keeps models explicitly marked with coding: true", () => {
+    expect(
+      flattenHostedShioriSettingsModels([
+        {
+          id: "openai",
+          title: "OpenAI",
+          description: "",
+          websiteUrl: "https://openai.com",
+          sortOrder: 10,
+          models: [
+            {
+              id: "gpt-5.4",
+              name: "GPT-5.4",
+              description: "",
+              reasoning: true,
+              toolCalling: true,
+              multiModal: true,
+              isEnabled: true,
+              isPremiumModel: true,
+              contextWindow: 400_000,
+            },
+            {
+              id: "gpt-5.4-mini",
+              name: "GPT-5.4 Mini",
+              description: "",
+              reasoning: true,
+              toolCalling: true,
+              multiModal: true,
+              coding: true,
+              isEnabled: true,
+              isPremiumModel: true,
+              contextWindow: 400_000,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        slug: "openai/gpt-5.4-mini",
+        name: "GPT-5.4 Mini",
+        isCustom: false,
+        multiModal: true,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ]);
   });
 });
 

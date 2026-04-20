@@ -75,7 +75,7 @@ import {
 } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { buildAssistantPersonalityAppendix } from "../../assistantPersonality.ts";
+import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { fetchClaudeUsageSnapshot } from "../claudeUsage.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
@@ -403,6 +403,16 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
     (errors.includes("request was aborted") ||
       errors.includes("interrupted by user") ||
       errors.includes("aborted"))
+  );
+}
+
+function shouldSuppressResultErrorMessage(result: SDKResultMessage): boolean {
+  const errors = resultErrorsText(result);
+  return (
+    result.subtype === "error_during_execution" &&
+    result.is_error === false &&
+    result.stop_reason === "tool_use" &&
+    (errors.includes("ede_diagnostic") || errors.includes("lede_diagnostic"))
   );
 }
 
@@ -2064,7 +2074,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage =
+      message.subtype === "success" || shouldSuppressResultErrorMessage(message)
+        ? undefined
+        : message.errors[0];
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -2985,9 +2998,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const claudeSettings = serverSettings.providers.claudeAgent;
       const claudeBinaryPath = claudeSettings.binaryPath;
       const claudeMcpServers = buildClaudeMcpServers(serverSettings.mcpServers.servers);
-      const assistantPersonalityAppendix = buildAssistantPersonalityAppendix(
-        serverSettings.assistantPersonality,
-      );
+      const assistantSettingsAppendix = buildAssistantSettingsAppendix({
+        personality: serverSettings.assistantPersonality,
+        generateMemories: serverSettings.generateMemories,
+      });
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -3018,12 +3032,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
-        ...(assistantPersonalityAppendix
+        ...(assistantSettingsAppendix
           ? {
               systemPrompt: {
                 type: "preset" as const,
                 preset: "claude_code" as const,
-                append: assistantPersonalityAppendix,
+                append: assistantSettingsAppendix,
               },
             }
           : {}),

@@ -79,6 +79,7 @@ function createBaseServerConfig(): ServerConfig {
     availableEditors: [],
     settings: {
       enableAssistantStreaming: false,
+      generateMemories: true,
       quitWithoutConfirmation: false,
       assistantPersonality: "default",
       defaultThreadEnvMode: "local" as const,

@@ -14,9 +14,11 @@ describe("buildLegacyClientSettingsMigrationPatch", () => {
     expect(
       buildLegacyClientSettingsMigrationPatch({
         confirmThreadDelete: false,
+        blurPersonalData: true,
       }),
     ).toEqual({
       confirmThreadDelete: false,
+      blurPersonalData: true,
     });
   });
 

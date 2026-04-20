@@ -8,6 +8,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   ProviderKind,
   type OrchestrationSession,
+  type ServerProvider,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -32,6 +33,7 @@ import { makeDrainableWorker } from "shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { ProviderAdapterRequestError, ProviderServiceError } from "../../provider/Errors.ts";
+import { CODEX_SPARK_MODEL } from "../../provider/codexAccount.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -120,6 +122,17 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
   );
 }
 
+function shouldStartFreshCodexSessionForModelSwitch(input: {
+  readonly requestedModelSelection?: ModelSelection;
+  readonly activeSessionModel: string | undefined;
+}): boolean {
+  return (
+    input.requestedModelSelection?.provider === "codex" &&
+    input.requestedModelSelection.model === CODEX_SPARK_MODEL &&
+    input.activeSessionModel !== CODEX_SPARK_MODEL
+  );
+}
+
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = Cause.squash(cause);
   if (Schema.is(ProviderAdapterRequestError)(error)) {
@@ -149,6 +162,35 @@ function providerFailureDetail(cause: Cause.Cause<unknown>): string {
     return error.message;
   }
   return Cause.pretty(cause);
+}
+
+function isPendingProviderCheckMessage(message: string | undefined): boolean {
+  return typeof message === "string" && /^Checking\b/i.test(message.trim());
+}
+
+function providerNotReadyDetail(
+  provider: ProviderKind,
+  snapshot: ServerProvider | null,
+): string | undefined {
+  if (!snapshot) {
+    return undefined;
+  }
+
+  if (snapshot.status === "ready") {
+    return undefined;
+  }
+
+  if (snapshot.status === "warning" && isPendingProviderCheckMessage(snapshot.message)) {
+    return undefined;
+  }
+
+  const providerLabel = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  return (
+    snapshot.message ??
+    (!snapshot.enabled
+      ? `${providerLabel} is disabled in settings.`
+      : `${providerLabel} is not ready yet. Resolve the provider warning before starting a turn.`)
+  );
 }
 
 function isTemporaryWorktreeBranch(branch: string): boolean {
@@ -380,7 +422,13 @@ const make = Effect.gen(function* () {
       const modelChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
-      const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
+      const shouldRestartForModelChange =
+        modelChanged &&
+        (sessionModelSwitch === "restart-session" ||
+          shouldStartFreshCodexSessionForModelSwitch({
+            requestedModelSelection,
+            activeSessionModel: activeSession?.model,
+          }));
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
         currentProvider === "claudeAgent" &&
@@ -506,29 +554,12 @@ const make = Effect.gen(function* () {
   });
 
   const ensureProviderReadyForTurn = Effect.fnUntraced(function* (provider: ProviderKind) {
-    const readProviderSnapshot = Effect.fn("readProviderSnapshot")(function* () {
-      const providers = yield* providerRegistry.getProviders;
-      return providers.find((entry) => entry.provider === provider) ?? null;
-    });
-
-    const initialSnapshot = yield* readProviderSnapshot();
-    const snapshot =
-      initialSnapshot?.status === "ready"
-        ? initialSnapshot
-        : ((yield* providerRegistry.refresh(provider)).find(
-            (entry) => entry.provider === provider,
-          ) ?? initialSnapshot);
-
-    if (snapshot?.status === "ready") {
+    const providers = yield* providerRegistry.getProviders;
+    const snapshot = providers.find((entry) => entry.provider === provider) ?? null;
+    const detail = providerNotReadyDetail(provider, snapshot);
+    if (!detail) {
       return;
     }
-
-    const providerLabel = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
-    const detail =
-      snapshot?.message ??
-      (!snapshot?.enabled
-        ? `${providerLabel} is disabled in settings.`
-        : `${providerLabel} is not ready yet. Resolve the provider warning before starting a turn.`);
 
     return yield* new ProviderAdapterRequestError({
       provider,

@@ -14,6 +14,7 @@ export interface ShioriCodeEntitlements {
 export interface ShioriCodeEntitlementsProbe {
   readonly entitlements: ShioriCodeEntitlements | null;
   readonly message: string | null;
+  readonly authFailure: boolean;
 }
 
 const ENTITLEMENTS_REQUEST_TIMEOUT_MS = 2_500;
@@ -27,6 +28,44 @@ function resolveShioriCodeEntitlementsMessage(entitlements: ShioriCodeEntitlemen
   return null;
 }
 
+function isShioriAuthFailureMessage(message: string | null): boolean {
+  if (!message) {
+    return false;
+  }
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("could not verify oidc token claim") ||
+    lower.includes("token signature is valid") ||
+    lower.includes("token hasn't expired") ||
+    lower.includes("jwt expired") ||
+    lower.includes("invalid refresh token") ||
+    lower.includes("invalid_grant") ||
+    lower.includes("authentication required")
+  );
+}
+
+async function parseErrorPayload(response: Response): Promise<{ errorMessage: string | null }> {
+  const payload = await response
+    .json()
+    .catch(() => null as unknown)
+    .then((value) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null,
+    );
+
+  const message =
+    payload && typeof payload.message === "string"
+      ? payload.message
+      : payload && typeof payload.error === "string"
+        ? payload.error
+        : null;
+
+  return {
+    errorMessage: message,
+  };
+}
+
 export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlements")(
   function* (input: {
     readonly apiBaseUrl: string;
@@ -36,6 +75,7 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
       return {
         entitlements: null,
         message: null,
+        authFailure: false,
       };
     }
     const authToken = input.authToken;
@@ -60,20 +100,30 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
       return {
         entitlements: null,
         message: "Failed to verify the Shiori subscription for this account.",
+        authFailure: false,
       };
     }
+
+    const errorPayload = !response.ok
+      ? yield* Effect.promise(() => parseErrorPayload(response))
+      : null;
 
     if (response.status === 401) {
       return {
         entitlements: null,
         message: "Shiori account token is unavailable or expired. Sign out and sign back in.",
+        authFailure: true,
       };
     }
 
     if (!response.ok) {
+      const authFailure = isShioriAuthFailureMessage(errorPayload?.errorMessage ?? null);
       return {
         entitlements: null,
-        message: `Failed to verify the Shiori subscription (${response.status}).`,
+        message: authFailure
+          ? "Shiori account token is unavailable or expired. Sign out and sign back in."
+          : `Failed to verify the Shiori subscription (${response.status}).`,
+        authFailure,
       };
     }
 
@@ -97,6 +147,7 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
     return {
       entitlements,
       message: resolveShioriCodeEntitlementsMessage(entitlements),
+      authFailure: false,
     };
   },
 );

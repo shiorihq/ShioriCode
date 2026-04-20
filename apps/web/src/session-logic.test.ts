@@ -1286,6 +1286,73 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("collapses generic tool lifecycle rows using structured tool input when detail is missing", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-04-18T12:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        tone: "tool",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          data: {
+            toolName: "skill",
+            input: {
+              skill: "frontend-design",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-04-18T12:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Tool call completed",
+        tone: "tool",
+        payload: {
+          itemType: "dynamic_tool_call",
+          title: "Tool call",
+          data: {
+            item: {
+              toolName: "skill",
+              input: {
+                skill: "frontend-design",
+              },
+            },
+            result: {
+              tool_use_id: "toolu_frontend_design",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "tool-start",
+      createdAt: "2026-04-18T12:00:01.000Z",
+      running: false,
+      output: {
+        toolName: "skill",
+        input: {
+          skill: "frontend-design",
+        },
+        item: {
+          toolName: "skill",
+          input: {
+            skill: "frontend-design",
+          },
+        },
+        result: {
+          tool_use_id: "toolu_frontend_design",
+        },
+      },
+    });
+  });
+
   it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1539,7 +1606,49 @@ describe("deriveVisibleTimelineMessages", () => {
     expect(messages.map((message) => message.id)).toEqual(["user-1", "assistant-final"]);
   });
 
-  it("hides completed assistant commentary rows for the currently running turn", () => {
+  it("keeps completed assistant commentary rows when explicitly preserving them", () => {
+    const messages = deriveVisibleTimelineMessages(
+      [
+        {
+          id: MessageId.makeUnsafe("user-1"),
+          role: "user",
+          text: "ship it",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-23T00:00:00.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-commentary"),
+          role: "assistant",
+          text: "working on it",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-final"),
+          role: "assistant",
+          text: "done",
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-23T00:00:02.000Z",
+          streaming: false,
+        },
+      ],
+      {
+        orchestrationStatus: "ready",
+        activeTurnId: undefined,
+      },
+      { preserveCompletedAssistantMessages: true },
+    );
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "user-1",
+      "assistant-commentary",
+      "assistant-final",
+    ]);
+  });
+
+  it("keeps completed assistant commentary rows for the currently running turn", () => {
     const messages = deriveVisibleTimelineMessages(
       [
         {
@@ -1558,6 +1667,14 @@ describe("deriveVisibleTimelineMessages", () => {
           createdAt: "2026-02-23T00:00:02.000Z",
           streaming: false,
         },
+        {
+          id: MessageId.makeUnsafe("assistant-final-streaming"),
+          role: "assistant",
+          text: "draft",
+          turnId: TurnId.makeUnsafe("turn-live"),
+          createdAt: "2026-02-23T00:00:03.000Z",
+          streaming: true,
+        },
       ],
       {
         orchestrationStatus: "running",
@@ -1565,7 +1682,11 @@ describe("deriveVisibleTimelineMessages", () => {
       },
     );
 
-    expect(messages).toEqual([]);
+    expect(messages.map((message) => message.id)).toEqual([
+      "assistant-commentary-1",
+      "assistant-commentary-2",
+      "assistant-final-streaming",
+    ]);
   });
 });
 

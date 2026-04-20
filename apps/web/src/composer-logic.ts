@@ -2,16 +2,55 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "review";
+export type ComposerSlashCommand =
+  | "compact"
+  | "fast"
+  | "feedback"
+  | "fork"
+  | "mcp"
+  | "memories"
+  | "model"
+  | "personality"
+  | "plan"
+  | "default"
+  | "review";
+
+export type StandaloneComposerSlashCommand =
+  | {
+      command: "compact" | "fast" | "feedback" | "mcp" | "memories" | "plan" | "default" | "review";
+    }
+  | { command: "fork"; value?: "local" | "worktree" }
+  | { command: "personality"; value: "default" | "friendly" | "sassy" | "coach" | "pragmatic" };
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
   query: string;
   rangeStart: number;
   rangeEnd: number;
+  command?: Exclude<ComposerSlashCommand, "model">;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "review"];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
+  "compact",
+  "fast",
+  "feedback",
+  "fork",
+  "mcp",
+  "memories",
+  "model",
+  "personality",
+  "plan",
+  "default",
+  "review",
+] as const;
+const STANDALONE_PERSONALITY_VALUES = [
+  "default",
+  "friendly",
+  "sassy",
+  "coach",
+  "pragmatic",
+] as const;
+const STANDALONE_FORK_VALUES = ["local", "worktree"] as const;
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -190,18 +229,41 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   const linePrefix = text.slice(lineStart, cursor);
 
   if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
+    const commandMatch = /^\/(\S*)(?:\s+(.*))?$/.exec(linePrefix);
     if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
+      const commandQuery = (commandMatch[1] ?? "").toLowerCase();
+      const commandArgument = (commandMatch[2] ?? "").trim();
+      if (commandQuery === "model") {
         return {
           kind: "slash-model",
-          query: "",
+          query: commandArgument,
           rangeStart: lineStart,
           rangeEnd: cursor,
         };
       }
-      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+      if (SLASH_COMMANDS.some((command) => command === commandQuery)) {
+        return {
+          kind: "slash-command",
+          query: commandArgument,
+          command: commandQuery as Exclude<ComposerSlashCommand, "model">,
+          rangeStart: lineStart,
+          rangeEnd: cursor,
+        };
+      }
+      if (commandMatch[2] === undefined) {
+        if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery))) {
+          return {
+            kind: "slash-command",
+            query: commandQuery,
+            rangeStart: lineStart,
+            rangeEnd: cursor,
+          };
+        }
+      }
+      if (commandArgument.length > 0 && commandQuery.length > 0) {
+        return null;
+      }
+      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery))) {
         return {
           kind: "slash-command",
           query: commandQuery,
@@ -210,16 +272,6 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
         };
       }
       return null;
-    }
-
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
-    if (modelMatch) {
-      return {
-        kind: "slash-model",
-        query: (modelMatch[1] ?? "").trim(),
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
     }
   }
 
@@ -239,15 +291,59 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
-  const match = /^\/(plan|default|review)\s*$/i.exec(text.trim());
-  if (!match) {
+): StandaloneComposerSlashCommand | null {
+  const trimmed = text.trim();
+  const forkMatch = /^\/fork(?:\s+(local|worktree))?\s*$/i.exec(trimmed);
+  if (forkMatch) {
+    const value = forkMatch[1]?.toLowerCase();
+    if (
+      value &&
+      STANDALONE_FORK_VALUES.includes(value as (typeof STANDALONE_FORK_VALUES)[number])
+    ) {
+      return {
+        command: "fork",
+        value: value as (typeof STANDALONE_FORK_VALUES)[number],
+      };
+    }
+    return { command: "fork" };
+  }
+
+  const personalityMatch = /^\/personality\s+(default|friendly|sassy|coach|pragmatic)\s*$/i.exec(
+    trimmed,
+  );
+  if (personalityMatch) {
+    const value = personalityMatch[1]?.toLowerCase();
+    if (
+      value &&
+      STANDALONE_PERSONALITY_VALUES.includes(
+        value as (typeof STANDALONE_PERSONALITY_VALUES)[number],
+      )
+    ) {
+      return {
+        command: "personality",
+        value: value as (typeof STANDALONE_PERSONALITY_VALUES)[number],
+      };
+    }
+  }
+
+  const match = /^\/(compact|fast|feedback|mcp|memories|plan|default|review)\s*$/i.exec(trimmed);
+  if (!match || !match[1]) {
     return null;
   }
   const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  if (command === "review") return "review";
-  return "default";
+  if (
+    command === "compact" ||
+    command === "fast" ||
+    command === "feedback" ||
+    command === "mcp" ||
+    command === "memories" ||
+    command === "plan" ||
+    command === "default" ||
+    command === "review"
+  ) {
+    return { command };
+  }
+  return null;
 }
 
 export function replaceTextRange(

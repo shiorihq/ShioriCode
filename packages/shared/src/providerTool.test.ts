@@ -28,6 +28,33 @@ describe("providerTool", () => {
     }
   });
 
+  it("classifies subagent tool aliases used across providers", () => {
+    for (const toolName of [
+      "spawn_agent",
+      "send_input",
+      "wait_agent",
+      "close_agent",
+      "resumeAgent",
+      "wait",
+    ]) {
+      expect(classifyProviderToolLifecycleItemType(toolName)).toBe("collab_agent_tool_call");
+    }
+  });
+
+  it("formats wait-style subagent tool summaries consistently", () => {
+    expect(providerToolTitle("wait")).toBe("Wait for subagent");
+    expect(
+      summarizeProviderToolInvocation("wait", {
+        targets: ["agent-1"],
+      }),
+    ).toBe("Wait for subagent: agent-1");
+    expect(
+      summarizeProviderToolInvocation("close_agent", {
+        target: "agent-2",
+      }),
+    ).toBe("Close subagent: agent-2");
+  });
+
   it("extracts notebook paths from structured tool input", () => {
     expect(getProviderToolInputPath({ notebook_path: "/tmp/demo.ipynb" })).toBe("/tmp/demo.ipynb");
     expect(getProviderToolInputPath({ notebookPath: "/tmp/demo-2.ipynb" })).toBe(

@@ -12,7 +12,7 @@ const baseSnapshot = {
       monthlyPrice: 10,
       annualPrice: 96,
       sortOrder: 0,
-      highlighted: true,
+      highlighted: false,
       buttonText: "Get Plus",
       features: ["Feature A", "Feature B"],
     },
@@ -23,7 +23,7 @@ const baseSnapshot = {
       monthlyPrice: 30,
       annualPrice: 288,
       sortOrder: 1,
-      highlighted: false,
+      highlighted: true,
       buttonText: "Go Pro",
       features: ["Feature C"],
     },
@@ -51,6 +51,7 @@ describe("HostedBillingPanelView", () => {
     expect(html).toContain("Upgrade to continue");
     expect(html).toContain("Get Plus");
     expect(html).toContain("Go Pro");
+    expect(html).toContain("Popular");
     expect(html).not.toContain("Manage billing");
   });
 

@@ -54,6 +54,17 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   });
 }
 
+function toPlatformError(cause: unknown): PlatformError.PlatformError {
+  return cause instanceof Error
+    ? (cause as unknown as PlatformError.PlatformError)
+    : PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "spawn",
+        description: String(cause),
+      });
+}
+
 function mockSpawnerLayer(
   handler: (args: ReadonlyArray<string>) => { stdout: string; stderr: string; code: number },
 ) {
@@ -61,7 +72,10 @@ function mockSpawnerLayer(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const cmd = command as unknown as { args: ReadonlyArray<string> };
-      return Effect.succeed(mockHandle(handler(cmd.args)));
+      return Effect.try({
+        try: () => mockHandle(handler(cmd.args)),
+        catch: toPlatformError,
+      });
     }),
   );
 }
@@ -76,7 +90,10 @@ function mockCommandSpawnerLayer(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const cmd = command as unknown as { command: string; args: ReadonlyArray<string> };
-      return Effect.succeed(mockHandle(handler(cmd.command, cmd.args)));
+      return Effect.try({
+        try: () => mockHandle(handler(cmd.command, cmd.args)),
+        catch: toPlatformError,
+      });
     }),
   );
 }
@@ -610,6 +627,69 @@ it.layer(
             updated.find((status) => status.provider === "codex")?.status,
             "error",
           );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("serves cached provider snapshots from getProviders without reprobeing", () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* makeMutableServerSettingsService();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+
+        let spawnCount = 0;
+        const providerRegistryLayer = ProviderRegistryLive.pipe(
+          Layer.provideMerge(Layer.succeed(ServerSettingsService, serverSettings)),
+          Layer.provideMerge(hostedShioriAuthTokenStoreTestLayer),
+          Layer.provideMerge(
+            mockCommandSpawnerLayer((command, args) => {
+              spawnCount += 1;
+              const joined = args.join(" ");
+              if (joined === "--version") {
+                if (
+                  command === "codex" ||
+                  command === "/Applications/Codex.app/Contents/Resources/codex"
+                ) {
+                  return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+                }
+                if (command === "claude") {
+                  return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+                }
+                return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+              }
+              if (joined === "login status") {
+                return { stdout: "Logged in\n", stderr: "", code: 0 };
+              }
+              if (joined === "auth status") {
+                return {
+                  stdout: JSON.stringify({ authenticated: true, subscriptionType: "pro" }),
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected command: ${command} ${joined}`);
+            }),
+          ),
+        );
+
+        const runtimeServices = yield* Layer.build(
+          Layer.mergeAll(
+            Layer.succeed(ServerSettingsService, serverSettings),
+            providerRegistryLayer,
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry;
+
+          yield* registry.refresh("codex");
+          yield* registry.refresh("claudeAgent");
+          const probeCountAfterRefresh = spawnCount;
+
+          yield* registry.getProviders;
+          yield* registry.getProviders;
+
+          assert.strictEqual(spawnCount, probeCountAfterRefresh);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

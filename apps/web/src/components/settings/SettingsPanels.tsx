@@ -29,6 +29,7 @@ import {
 import { resolveOnboardingState } from "shared/onboarding";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
+import { ASSISTANT_PERSONALITY_OPTIONS } from "../../assistantPersonalityOptions";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -42,7 +43,11 @@ import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { useMergedServerProviders } from "../../convex/shioriProvider";
+import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/personalDetails";
+import {
+  flattenHostedShioriSettingsModels,
+  useMergedServerProviders,
+} from "../../convex/shioriProvider";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import {
   setDesktopUpdateStateQueryData,
@@ -96,34 +101,6 @@ export const DEFAULT_CODE_FONT_OPTION: FontOption = {
   value: DEFAULT_CODE_FONT_FAMILY,
   label: "System Monospace",
 };
-
-const ASSISTANT_PERSONALITY_OPTIONS = [
-  {
-    value: "default",
-    label: "Default",
-    description: "Keep the built-in ShioriCode voice without any extra tone instructions.",
-  },
-  {
-    value: "friendly",
-    label: "Friendly",
-    description: "Warm, approachable, and lightly conversational without getting fluffy.",
-  },
-  {
-    value: "sassy",
-    label: "Sassy",
-    description: "Playful and witty, but still respectful and technically precise.",
-  },
-  {
-    value: "coach",
-    label: "Coach",
-    description: "Encouraging, momentum-focused, and oriented around clear next steps.",
-  },
-  {
-    value: "pragmatic",
-    label: "Pragmatic",
-    description: "Practical, grounded, and focused on the shortest reliable path to the result.",
-  },
-] as const;
 
 export function buildFontOptions(
   fontFamilies: readonly string[],
@@ -680,6 +657,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.themeMode !== DEFAULT_UNIFIED_SETTINGS.themeMode ? ["Theme mode"] : []),
       ...(settings.lightThemeId !== DEFAULT_UNIFIED_SETTINGS.lightThemeId ? ["Light theme"] : []),
       ...(settings.darkThemeId !== DEFAULT_UNIFIED_SETTINGS.darkThemeId ? ["Dark theme"] : []),
+      ...(settings.blurPersonalData !== DEFAULT_UNIFIED_SETTINGS.blurPersonalData
+        ? ["Hide personal details"]
+        : []),
       ...(settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? ["UI font"] : []),
       ...(settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? ["Code font"] : []),
       ...(settings.importedThemes.length > 0 ? ["Imported themes"] : []),
@@ -691,6 +671,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
+        : []),
+      ...(settings.generateMemories !== DEFAULT_UNIFIED_SETTINGS.generateMemories
+        ? ["Memories"]
         : []),
       ...(settings.assistantPersonality !== DEFAULT_ASSISTANT_PERSONALITY
         ? ["Assistant personality"]
@@ -713,6 +696,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       areProviderSettingsDirty,
+      settings.blurPersonalData,
       settings.codeFontFamily,
       isDefaultModelDirty,
       isGitWritingModelDirty,
@@ -721,6 +705,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.generateMemories,
       settings.importedThemes.length,
       settings.lightThemeId,
       settings.onboarding,
@@ -755,7 +740,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const { viewer } = useHostedShioriState();
+  const { viewer, catalogProviders } = useHostedShioriState();
   const canTriggerOnboarding = import.meta.env.DEV && Boolean(viewer?.isAdmin);
   const onboardingState = useMemo(
     () => resolveOnboardingState(settings.onboarding),
@@ -870,7 +855,7 @@ export function GeneralSettingsPanel() {
   const assistantPersonalityOption =
     ASSISTANT_PERSONALITY_OPTIONS.find(
       (option) => option.value === settings.assistantPersonality,
-    ) ?? ASSISTANT_PERSONALITY_OPTIONS[0];
+    ) ?? ASSISTANT_PERSONALITY_OPTIONS[0]!;
   const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
     settings,
     serverProviders,
@@ -928,14 +913,16 @@ export function GeneralSettingsPanel() {
     const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
     const summary = getProviderSummary(liveProvider);
+    const fallbackModels = providerConfig.customModels.map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: true,
+      capabilities: null,
+    }));
     const models: ReadonlyArray<ServerProviderModel> =
-      liveProvider?.models ??
-      providerConfig.customModels.map((slug) => ({
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      }));
+      providerSettings.provider === "shiori" && catalogProviders !== undefined
+        ? flattenHostedShioriSettingsModels(catalogProviders)
+        : (liveProvider?.models ?? fallbackModels);
 
     return {
       provider: providerSettings.provider,
@@ -1061,6 +1048,35 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Memories"
+          description="Ask supported runtimes to generate and refresh durable memories for future turns."
+          resetAction={
+            settings.generateMemories !== DEFAULT_UNIFIED_SETTINGS.generateMemories ? (
+              <SettingResetButton
+                label="memories"
+                onClick={() =>
+                  updateSettings({
+                    generateMemories: DEFAULT_UNIFIED_SETTINGS.generateMemories,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.generateMemories}
+              onCheckedChange={(checked) => updateSettings({ generateMemories: Boolean(checked) })}
+              aria-label="Generate memories"
+            />
+          }
+        >
+          <p className="mt-3 text-xs text-muted-foreground">
+            When enabled, ShioriCode adds a memory-generation overlay to provider prompts for
+            runtimes that support persistent memories.
+          </p>
+        </SettingsRow>
 
         <SettingsRow
           title="Assistant personality"
@@ -1232,6 +1248,7 @@ export function GeneralSettingsPanel() {
                 lockedProvider={null}
                 providers={serverProviders}
                 modelOptionsByProvider={defaultModelOptionsByProvider}
+                modelOptions={defaultModelOptions}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onProviderModelChange={(provider, model) => {
@@ -1295,6 +1312,7 @@ export function GeneralSettingsPanel() {
                 lockedProvider={null}
                 providers={serverProviders}
                 modelOptionsByProvider={gitModelOptionsByProvider}
+                modelOptions={settings.textGenerationModelSelection.options}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onProviderModelChange={(provider, model) => {
@@ -1412,7 +1430,17 @@ export function GeneralSettingsPanel() {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {providerCard.summary.headline}
+                      <span
+                        className={getPersonalDetailsBlurClass(
+                          shouldBlurEmailMention({
+                            blurPersonalData: settings.blurPersonalData,
+                            email: viewer?.email,
+                            text: providerCard.summary.headline,
+                          }),
+                        )}
+                      >
+                        {providerCard.summary.headline}
+                      </span>
                       {providerCard.summary.detail ? ` - ${providerCard.summary.detail}` : null}
                     </p>
                   </div>

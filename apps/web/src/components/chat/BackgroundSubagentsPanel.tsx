@@ -1,11 +1,12 @@
 import { type OrchestrationThreadActivity, type ProviderKind } from "contracts";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { CHAT_THREAD_BODY_CLASS } from "../../chatTypography";
 import { deriveWorkLogEntries, type WorkLogEntry } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
+import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
 import { MinimalWorkEntry } from "./MessagesTimeline";
 import { deriveBackgroundSubagentRows, type CodexBackgroundSubagentRow } from "./subagentDetail";
 
@@ -110,14 +111,15 @@ const BackgroundSubagentRow = memo(function BackgroundSubagentRow(props: {
       </div>
       {hasChildren ? (
         <AnimatedExpandPanel open={expanded}>
-          <div
+          <MaskedScrollViewport
+            dependencyKey={row.childEntries.length}
             data-background-subagent-activity-list="true"
             className="max-h-40 space-y-0.5 overflow-y-auto overscroll-contain px-3 pb-2 pr-2"
           >
             {row.childEntries.map((entry) => (
               <MinimalWorkEntry key={entry.id} workEntry={entry} indented={false} />
             ))}
-          </div>
+          </MaskedScrollViewport>
         </AnimatedExpandPanel>
       ) : null}
     </div>
@@ -197,8 +199,6 @@ export function BackgroundSubagentsPanel(props: BackgroundSubagentsPanelProps) {
     return null;
   }
 
-  const summaryLabel = `${rows.length} background agent${rows.length === 1 ? "" : "s"}`;
-  const summaryText = open ? `${summaryLabel} (@ to tag agents)` : summaryLabel;
   const setOpen = (nextOpen: boolean) => {
     if (props.open === undefined) {
       setInternalOpen(nextOpen);
@@ -227,29 +227,41 @@ export function BackgroundSubagentsPanel(props: BackgroundSubagentsPanelProps) {
       className="relative z-0 mx-auto w-[calc(100%-1rem)] max-w-[49rem] min-w-0 sm:w-[calc(100%-2rem)]"
       data-chat-background-subagents-panel="true"
     >
-      <div className="relative overflow-hidden rounded-t-[20px] border border-b-0 border-border bg-card/90 backdrop-blur-sm">
+      <div className="relative overflow-hidden rounded-t-[19px] border border-b-0 border-border/65 bg-muted/15 px-4 py-1.5 backdrop-blur-sm">
         <button
           type="button"
-          className={cn(
-            CHAT_THREAD_BODY_CLASS,
-            "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent px-3 py-2 text-left text-foreground/65 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-          )}
+          className="group/bg-agents-header flex w-fit cursor-pointer items-center gap-1.5 py-1 text-xs font-semibold text-muted-foreground/80 transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
+          aria-label={open ? "Hide background agents" : "Show background agents"}
         >
-          <span className="truncate">{summaryText}</span>
-          <ChevronDownIcon
+          <span>background agents</span>
+          <span className="text-[11px] font-normal text-muted-foreground/55 tabular-nums">
+            {rows.length}
+          </span>
+          <span
             className={cn(
-              "size-3 shrink-0 opacity-0 transition-all duration-150 group-hover:opacity-100",
-              !open && "-rotate-90",
+              "flex size-4 items-center justify-center transition-opacity",
+              open
+                ? "opacity-0 group-hover/bg-agents-header:opacity-100 group-focus-visible/bg-agents-header:opacity-100"
+                : "opacity-100",
             )}
-            aria-hidden="true"
-          />
+            aria-hidden
+          >
+            {open ? (
+              <ChevronUpIcon className="size-3.5" />
+            ) : (
+              <ChevronDownIcon className="size-3.5" />
+            )}
+          </span>
         </button>
         <AnimatedExpandPanel open={open}>
           <div
             ref={scrollContainerRef}
-            className={cn(needsScroll && "overflow-y-auto")}
+            className={cn(
+              needsScroll &&
+                "overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}
             style={scrollStyle}
           >
             {rows.map((row, index) => (
