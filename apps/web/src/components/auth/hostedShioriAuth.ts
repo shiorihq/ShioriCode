@@ -1,4 +1,4 @@
-import type { HostedPasswordAuthInput } from "contracts";
+import type { HostedOAuthProvider, HostedPasswordAuthInput } from "contracts";
 
 import { convexDeploymentUrl, convexStorageKey } from "../../convex/config";
 import { ensureNativeApi } from "../../nativeApi";
@@ -84,6 +84,27 @@ export function resolveHostedShioriRedirectTarget(
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+export function resolveHostedShioriDesktopRedirectTarget(
+  currentLocationHref: string | undefined,
+): string | undefined {
+  const trimmed = currentLocationHref?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let currentUrl: URL;
+  try {
+    currentUrl = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+
+  const redirectTo = new URL("shioricode://app/index.html");
+  redirectTo.search = currentUrl.search;
+  redirectTo.hash = currentUrl.hash;
+  return redirectTo.toString();
+}
+
 export function withHostedShioriRedirect<T extends Record<string, string>>(
   params: T,
   currentLocationHref: string | undefined,
@@ -94,16 +115,37 @@ export function withHostedShioriRedirect<T extends Record<string, string>>(
 
 const JWT_STORAGE_KEY = "__convexAuthJWT";
 const REFRESH_TOKEN_STORAGE_KEY = "__convexAuthRefreshToken";
+const OAUTH_VERIFIER_STORAGE_KEY = "__convexAuthOAuthVerifier";
 
-function writeConvexAuthTokens(tokens: { token: string; refreshToken: string }) {
+function writeConvexAuthValue(baseKey: string, value: string) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(convexStorageKey(JWT_STORAGE_KEY, convexDeploymentUrl), tokens.token);
-  window.localStorage.setItem(
-    convexStorageKey(REFRESH_TOKEN_STORAGE_KEY, convexDeploymentUrl),
-    tokens.refreshToken,
-  );
+  window.localStorage.setItem(convexStorageKey(baseKey, convexDeploymentUrl), value);
+}
+
+function writeConvexAuthTokens(tokens: { token: string; refreshToken: string }) {
+  writeConvexAuthValue(JWT_STORAGE_KEY, tokens.token);
+  writeConvexAuthValue(REFRESH_TOKEN_STORAGE_KEY, tokens.refreshToken);
+}
+
+export async function signInWithHostedOAuthDesktop(input: {
+  provider: HostedOAuthProvider;
+  currentLocationHref: string | undefined;
+}): Promise<void> {
+  const redirectTo = resolveHostedShioriDesktopRedirectTarget(input.currentLocationHref);
+  if (!redirectTo) {
+    throw new Error("Unable to determine the desktop OAuth callback URL.");
+  }
+
+  const api = ensureNativeApi();
+  const result = await api.server.hostedOAuthStart({
+    provider: input.provider,
+    redirectTo,
+  });
+
+  writeConvexAuthValue(OAUTH_VERIFIER_STORAGE_KEY, result.verifier);
+  await api.shell.openExternal(result.redirect);
 }
 
 export async function signInWithHostedPasswordDesktop(

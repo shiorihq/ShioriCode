@@ -30,20 +30,23 @@ describe("deepLink", () => {
   });
 
   it("canonicalizes supported deep links", () => {
-    expect(normalizeDesktopDeepLink(" shioricode://app/#/welcome?plan=pro ", SCHEME)).toBe(
-      "shioricode://app/index.html#/welcome?plan=pro",
-    );
+    expect(
+      normalizeDesktopDeepLink(
+        " shioricode://app/?code=test-code&state=test-state#/welcome?plan=pro ",
+        SCHEME,
+      ),
+    ).toBe("shioricode://app/index.html?code=test-code&state=test-state#/welcome?plan=pro");
   });
 
   it("maps deep links back to the dev server in development", () => {
     expect(
       resolveDesktopDeepLinkWindowUrl({
-        rawUrl: "shioricode://app/index.html#/welcome?status=success",
+        rawUrl: "shioricode://app/index.html?code=test-code#/welcome?status=success",
         scheme: SCHEME,
         isDevelopment: true,
         devServerUrl: "http://127.0.0.1:5733/",
       }),
-    ).toBe("http://127.0.0.1:5733/#/welcome?status=success");
+    ).toBe("http://127.0.0.1:5733/?code=test-code#/welcome?status=success");
   });
 
   it("returns the packaged protocol URL outside development", () => {

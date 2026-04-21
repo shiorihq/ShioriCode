@@ -19,6 +19,7 @@ function makeApi(): Pick<NativeApi, "server" | "shell"> {
       setShioriAuthToken: vi.fn(),
       getProviderUsage: vi.fn(),
       getHostedBillingSnapshot: vi.fn(),
+      hostedOAuthStart: vi.fn(),
       hostedPasswordAuth: vi.fn(),
       createHostedBillingCheckout: vi.fn(async () => ({
         sessionId: "cs_test_1",

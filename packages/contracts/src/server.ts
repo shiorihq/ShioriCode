@@ -303,6 +303,21 @@ export const HostedPasswordAuthResult = Schema.Struct({
 });
 export type HostedPasswordAuthResult = typeof HostedPasswordAuthResult.Type;
 
+export const HostedOAuthProvider = Schema.Literals(["github", "google", "apple"]);
+export type HostedOAuthProvider = typeof HostedOAuthProvider.Type;
+
+export const HostedOAuthStartInput = Schema.Struct({
+  provider: HostedOAuthProvider,
+  redirectTo: TrimmedNonEmptyString,
+});
+export type HostedOAuthStartInput = typeof HostedOAuthStartInput.Type;
+
+export const HostedOAuthStartResult = Schema.Struct({
+  redirect: TrimmedNonEmptyString,
+  verifier: TrimmedNonEmptyString,
+});
+export type HostedOAuthStartResult = typeof HostedOAuthStartResult.Type;
+
 export const HostedBillingErrorCode = Schema.Literals([
   "configuration",
   "authentication",

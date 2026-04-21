@@ -9,6 +9,7 @@ import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/p
 import { isElectron } from "../../env";
 
 import {
+  signInWithHostedOAuthDesktop,
   signInWithHostedPasswordDesktop,
   toHostedShioriAuthErrorMessage,
   withHostedShioriRedirect,
@@ -194,6 +195,14 @@ export function HostedShioriAuthPanel(props?: {
   const handleOAuthSignIn = useCallback(
     (provider: OAuthProvider) => {
       void runAsync(`oauth:${provider}`, async () => {
+        if (isElectron) {
+          await signInWithHostedOAuthDesktop({
+            provider,
+            currentLocationHref: typeof window === "undefined" ? undefined : window.location.href,
+          });
+          return;
+        }
+
         await signIn(
           provider,
           withHostedShioriRedirect(

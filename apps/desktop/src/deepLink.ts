@@ -42,6 +42,7 @@ export function normalizeDesktopDeepLink(rawUrl: string, scheme: string): string
   }
 
   const normalized = new URL(`${scheme}://app/index.html`);
+  normalized.search = parsed.search;
   normalized.hash = parsed.hash;
   return normalized.toString();
 }
@@ -71,6 +72,7 @@ export function resolveDesktopDeepLinkWindowUrl(input: {
 
   const deepLink = new URL(normalized);
   const devUrl = new URL(devServerUrl);
+  devUrl.search = deepLink.search;
   devUrl.hash = deepLink.hash;
   return devUrl.toString();
 }

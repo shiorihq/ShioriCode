@@ -34,6 +34,8 @@ import type {
   HostedBillingPortalFlow,
   HostedBillingPortalResult,
   HostedBillingSnapshot,
+  HostedOAuthStartInput,
+  HostedOAuthStartResult,
   HostedPasswordAuthInput,
   HostedPasswordAuthResult,
   ServerConfig,
@@ -244,6 +246,7 @@ export interface NativeApi {
     createHostedBillingPortal: (
       flow: HostedBillingPortalFlow,
     ) => Promise<HostedBillingPortalResult>;
+    hostedOAuthStart: (input: HostedOAuthStartInput) => Promise<HostedOAuthStartResult>;
     hostedPasswordAuth: (input: HostedPasswordAuthInput) => Promise<HostedPasswordAuthResult>;
   };
   orchestration: {

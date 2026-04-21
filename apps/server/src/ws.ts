@@ -14,6 +14,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  type HostedOAuthStartResult,
   type HostedPasswordAuthInput,
   type HostedPasswordAuthResult,
   type ServerProvider,
@@ -157,7 +158,7 @@ function isTrustedWebSocketOrigin(input: {
   return collectTrustedWebSocketOrigins(input).has(input.origin.origin);
 }
 
-type ConvexPasswordAuthResponse =
+type ConvexHostedAuthResponse =
   | {
       redirect: string;
       verifier?: string;
@@ -183,6 +184,20 @@ function toHostedAuthMessage(cause: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function runHostedShioriAuthSignIn(
+  provider: string,
+  params: Record<string, unknown>,
+): Promise<ConvexHostedAuthResponse> {
+  return (
+    new ConvexHttpClient(hostedShioriConvexUrl) as unknown as {
+      action: (name: string, args: Record<string, unknown>) => Promise<ConvexHostedAuthResponse>;
+    }
+  ).action("auth:signIn", {
+    provider,
+    params,
+  });
 }
 
 const WsRpcLayer = WsRpcGroup.toLayer(
@@ -462,6 +477,57 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.serverCreateHostedBillingCheckout]: (input) =>
         hostedBilling.createCheckout(input),
       [WS_METHODS.serverCreateHostedBillingPortal]: (input) => hostedBilling.createPortal(input),
+      [WS_METHODS.serverHostedOAuthStart]: (input) =>
+        Effect.logInfo("hosted oauth start requested", {
+          provider: input.provider,
+          hasRedirectTo: input.redirectTo.length > 0,
+        }).pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () =>
+                runHostedShioriAuthSignIn(input.provider, { redirectTo: input.redirectTo }),
+              catch: (cause) =>
+                new HostedAuthError({
+                  code: "requestFailed",
+                  message: toHostedAuthMessage(cause, "Hosted OAuth sign-in failed."),
+                  cause,
+                }),
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(15),
+                orElse: () =>
+                  Effect.fail(
+                    new HostedAuthError({
+                      code: "unavailable",
+                      message: "Hosted OAuth sign-in timed out.",
+                    }),
+                  ),
+              }),
+              Effect.flatMap((result) => {
+                if (!result.redirect || !result.verifier) {
+                  return Effect.fail(
+                    new HostedAuthError({
+                      code: "requestFailed",
+                      message: "Hosted OAuth sign-in did not return a redirect.",
+                    }),
+                  );
+                }
+
+                return Effect.succeed({
+                  redirect: result.redirect,
+                  verifier: result.verifier,
+                } satisfies HostedOAuthStartResult);
+              }),
+              Effect.tap((result) =>
+                Effect.logInfo("hosted oauth start completed", {
+                  provider: input.provider,
+                  hasRedirect: result.redirect.length > 0,
+                  hasVerifier: result.verifier.length > 0,
+                }),
+              ),
+            ),
+          ),
+        ),
       [WS_METHODS.serverHostedPasswordAuth]: (input) =>
         Effect.logInfo("hosted password auth requested", {
           flow: input.flow,
@@ -473,17 +539,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           Effect.andThen(
             Effect.tryPromise({
               try: () =>
-                (
-                  new ConvexHttpClient(hostedShioriConvexUrl) as unknown as {
-                    action: (
-                      name: string,
-                      args: Record<string, unknown>,
-                    ) => Promise<ConvexPasswordAuthResponse>;
-                  }
-                ).action("auth:signIn", {
-                  provider: "password",
-                  params: input satisfies HostedPasswordAuthInput,
-                }),
+                runHostedShioriAuthSignIn("password", input satisfies HostedPasswordAuthInput),
               catch: (cause) =>
                 new HostedAuthError({
                   code: "requestFailed",

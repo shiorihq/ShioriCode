@@ -79,6 +79,7 @@ const rpcClientMock = {
     getHostedBillingSnapshot: vi.fn(),
     createHostedBillingCheckout: vi.fn(),
     createHostedBillingPortal: vi.fn(),
+    hostedOAuthStart: vi.fn(),
     subscribeConfig: vi.fn(),
     subscribeLifecycle: vi.fn(),
   },
@@ -428,6 +429,10 @@ describe("wsNativeApi", () => {
     rpcClientMock.server.createHostedBillingPortal.mockResolvedValue({
       url: "https://billing.stripe.test/session",
     });
+    rpcClientMock.server.hostedOAuthStart.mockResolvedValue({
+      redirect: "https://accounts.example.test/oauth/start",
+      verifier: "desktop-verifier",
+    });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -456,6 +461,15 @@ describe("wsNativeApi", () => {
     await expect(api.server.createHostedBillingPortal("manage")).resolves.toEqual({
       url: "https://billing.stripe.test/session",
     });
+    await expect(
+      api.server.hostedOAuthStart({
+        provider: "github",
+        redirectTo: "shioricode://app/index.html#/settings/account",
+      }),
+    ).resolves.toEqual({
+      redirect: "https://accounts.example.test/oauth/start",
+      verifier: "desktop-verifier",
+    });
 
     expect(rpcClientMock.server.getHostedBillingSnapshot).toHaveBeenCalledWith();
     expect(rpcClientMock.server.createHostedBillingCheckout).toHaveBeenCalledWith({
@@ -464,6 +478,10 @@ describe("wsNativeApi", () => {
     });
     expect(rpcClientMock.server.createHostedBillingPortal).toHaveBeenCalledWith({
       flow: "manage",
+    });
+    expect(rpcClientMock.server.hostedOAuthStart).toHaveBeenCalledWith({
+      provider: "github",
+      redirectTo: "shioricode://app/index.html#/settings/account",
     });
   });
 

@@ -141,6 +141,7 @@ export function createWsNativeApi(): NativeApi {
       getHostedBillingSnapshot: () => rpcClient.server.getHostedBillingSnapshot(),
       createHostedBillingCheckout: (input) => rpcClient.server.createHostedBillingCheckout(input),
       createHostedBillingPortal: (flow) => rpcClient.server.createHostedBillingPortal({ flow }),
+      hostedOAuthStart: (input) => rpcClient.server.hostedOAuthStart(input),
       hostedPasswordAuth: (input) => rpcClient.server.hostedPasswordAuth(input),
     },
     orchestration: {
