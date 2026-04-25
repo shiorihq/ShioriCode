@@ -15,8 +15,11 @@ import React, {
 } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
@@ -313,8 +316,8 @@ function ChatMarkdown({
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={allowHtml ? [rehypeRaw] : undefined}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={allowHtml ? [rehypeRaw, rehypeKatex] : [rehypeKatex]}
         components={markdownComponents}
       >
         {text}
