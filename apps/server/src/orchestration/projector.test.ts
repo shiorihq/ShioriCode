@@ -71,6 +71,7 @@ describe("orchestration projector", () => {
       {
         id: "thread-1",
         projectId: "project-1",
+        projectlessCwd: null,
         title: "demo",
         modelSelection: {
           provider: "codex",
@@ -79,6 +80,7 @@ describe("orchestration projector", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         parentThreadId: null,
+        pinnedAt: null,
         branchSourceTurnId: null,
         branch: null,
         worktreePath: null,

@@ -3912,8 +3912,9 @@ describe("hosted tools", () => {
       generateMemories: false,
     });
 
-    assert.equal(rules.length, 2);
-    const runtimePrompt = rules[1];
+    assert.equal(rules.length, 3);
+    assert.match(rules[1] ?? "", /^## Response Rendering\n/m);
+    const runtimePrompt = rules[2];
     assert.ok(runtimePrompt);
     assert.match(runtimePrompt, /^## Runtime Context\n/m);
     assert.ok(runtimePrompt.includes("Local date:"));

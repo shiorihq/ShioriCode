@@ -15,6 +15,7 @@ import { assert, describe, it, vi } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { buildResponseRenderingAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
@@ -615,13 +616,16 @@ describe("ClaudeAdapterLive", () => {
         type: "preset",
         preset: "claude_code",
         append: [
-          "## Personality Overlay",
-          "Apply this as a light tone overlay on top of every other instruction in this prompt.",
-          "Never let tone reduce honesty, correctness, safety, or clarity.",
-          "Sound practical, grounded, and outcome-focused.",
-          "Prioritize clear tradeoffs, direct recommendations, and efficient execution.",
-          "Avoid theatrics, fluff, and unnecessary caveats when the right path is clear.",
-        ].join("\n"),
+          buildResponseRenderingAppendix(),
+          [
+            "## Personality Overlay",
+            "Apply this as a light tone overlay on top of every other instruction in this prompt.",
+            "Never let tone reduce honesty, correctness, safety, or clarity.",
+            "Sound practical, grounded, and outcome-focused.",
+            "Prioritize clear tradeoffs, direct recommendations, and efficient execution.",
+            "Avoid theatrics, fluff, and unnecessary caveats when the right path is clear.",
+          ].join("\n"),
+        ].join("\n\n"),
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

@@ -39,8 +39,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     checkedAt: "2026-01-01T00:00:00.000Z",
     models: [
       {
-        slug: "gpt-5.4",
-        name: "GPT-5.4",
+        slug: DEFAULT_MODEL_BY_PROVIDER.codex,
+        name: "GPT-5.5",
         isCustom: false,
         capabilities: {
           reasoningEffortLevels: [

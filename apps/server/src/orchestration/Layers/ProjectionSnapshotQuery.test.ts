@@ -19,7 +19,7 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
-  it.effect("ignores projectless thread rows in the project-based snapshot", () =>
+  it.effect("includes projectless thread rows in the snapshot", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -65,8 +65,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const counts = yield* snapshotQuery.getCounts();
 
       assert.deepEqual(snapshot.projects, []);
-      assert.deepEqual(snapshot.threads, []);
-      assert.equal(counts.threadCount, 0);
+      assert.equal(snapshot.threads.length, 1);
+      assert.equal(snapshot.threads[0]?.id, ThreadId.makeUnsafe("thread-projectless"));
+      assert.equal(snapshot.threads[0]?.projectId, null);
+      assert.equal(snapshot.threads[0]?.projectlessCwd, "/tmp/projectless-thread");
+      assert.equal(counts.threadCount, 1);
     }),
   );
 
@@ -303,94 +306,103 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           deletedAt: null,
         },
       ]);
-      assert.deepEqual(snapshot.threads, [
-        {
-          id: ThreadId.makeUnsafe("thread-1"),
-          projectId: asProjectId("project-1"),
-          title: "Thread 1",
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5-codex",
-          },
-          interactionMode: "default",
-          runtimeMode: "full-access",
-          parentThreadId: null,
-          branchSourceTurnId: null,
-          branch: null,
-          worktreePath: null,
-          tag: null,
-          resumeState: "resumed",
-          latestTurn: {
-            turnId: asTurnId("turn-1"),
-            state: "completed",
-            requestedAt: "2026-02-24T00:00:08.000Z",
-            startedAt: "2026-02-24T00:00:08.000Z",
-            completedAt: "2026-02-24T00:00:08.000Z",
-            assistantMessageId: asMessageId("message-1"),
-            sourceProposedPlan: {
-              threadId: ThreadId.makeUnsafe("thread-1"),
-              planId: "plan-1",
-            },
-          },
-          createdAt: "2026-02-24T00:00:02.000Z",
-          updatedAt: "2026-02-24T00:00:03.000Z",
-          archivedAt: null,
-          deletedAt: null,
-          messages: [
-            {
-              id: asMessageId("message-1"),
-              role: "assistant",
-              text: "hello from projection",
-              turnId: asTurnId("turn-1"),
-              streaming: false,
-              createdAt: "2026-02-24T00:00:04.000Z",
-              updatedAt: "2026-02-24T00:00:05.000Z",
-            },
-          ],
-          proposedPlans: [
-            {
-              id: "plan-1",
-              turnId: asTurnId("turn-1"),
-              planMarkdown: "# Ship it",
-              implementedAt: "2026-02-24T00:00:05.500Z",
-              implementationThreadId: ThreadId.makeUnsafe("thread-2"),
-              createdAt: "2026-02-24T00:00:05.000Z",
-              updatedAt: "2026-02-24T00:00:05.500Z",
-            },
-          ],
-          activities: [
-            {
-              id: asEventId("activity-1"),
-              tone: "info",
-              kind: "runtime.note",
-              summary: "provider started",
-              payload: { stage: "start" },
-              turnId: asTurnId("turn-1"),
-              createdAt: "2026-02-24T00:00:06.000Z",
-            },
-          ],
-          checkpoints: [
-            {
-              turnId: asTurnId("turn-1"),
-              checkpointTurnCount: 1,
-              checkpointRef: asCheckpointRef("checkpoint-1"),
-              status: "ready",
-              files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-              assistantMessageId: asMessageId("message-1"),
-              completedAt: "2026-02-24T00:00:08.000Z",
-            },
-          ],
-          session: {
+      const projectThread = snapshot.threads.find((thread) => thread.id === "thread-1");
+      const projectlessThread = snapshot.threads.find(
+        (thread) => thread.id === "thread-projectless",
+      );
+
+      assert.ok(projectThread);
+      assert.ok(projectlessThread);
+      assert.equal(projectlessThread.projectId, null);
+      assert.equal(projectlessThread.projectlessCwd, "/tmp/projectless-thread");
+      assert.deepEqual(projectThread, {
+        id: ThreadId.makeUnsafe("thread-1"),
+        projectId: asProjectId("project-1"),
+        projectlessCwd: null,
+        title: "Thread 1",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        parentThreadId: null,
+        pinnedAt: null,
+        branchSourceTurnId: null,
+        branch: null,
+        worktreePath: null,
+        tag: null,
+        resumeState: "resumed",
+        latestTurn: {
+          turnId: asTurnId("turn-1"),
+          state: "completed",
+          requestedAt: "2026-02-24T00:00:08.000Z",
+          startedAt: "2026-02-24T00:00:08.000Z",
+          completedAt: "2026-02-24T00:00:08.000Z",
+          assistantMessageId: asMessageId("message-1"),
+          sourceProposedPlan: {
             threadId: ThreadId.makeUnsafe("thread-1"),
-            status: "running",
-            providerName: "codex",
-            runtimeMode: "approval-required",
-            activeTurnId: asTurnId("turn-1"),
-            lastError: null,
-            updatedAt: "2026-02-24T00:00:07.000Z",
+            planId: "plan-1",
           },
         },
-      ]);
+        createdAt: "2026-02-24T00:00:02.000Z",
+        updatedAt: "2026-02-24T00:00:03.000Z",
+        archivedAt: null,
+        deletedAt: null,
+        messages: [
+          {
+            id: asMessageId("message-1"),
+            role: "assistant",
+            text: "hello from projection",
+            turnId: asTurnId("turn-1"),
+            streaming: false,
+            createdAt: "2026-02-24T00:00:04.000Z",
+            updatedAt: "2026-02-24T00:00:05.000Z",
+          },
+        ],
+        proposedPlans: [
+          {
+            id: "plan-1",
+            turnId: asTurnId("turn-1"),
+            planMarkdown: "# Ship it",
+            implementedAt: "2026-02-24T00:00:05.500Z",
+            implementationThreadId: ThreadId.makeUnsafe("thread-2"),
+            createdAt: "2026-02-24T00:00:05.000Z",
+            updatedAt: "2026-02-24T00:00:05.500Z",
+          },
+        ],
+        activities: [
+          {
+            id: asEventId("activity-1"),
+            tone: "info",
+            kind: "runtime.note",
+            summary: "provider started",
+            payload: { stage: "start" },
+            turnId: asTurnId("turn-1"),
+            createdAt: "2026-02-24T00:00:06.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: asTurnId("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: asCheckpointRef("checkpoint-1"),
+            status: "ready",
+            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+            assistantMessageId: asMessageId("message-1"),
+            completedAt: "2026-02-24T00:00:08.000Z",
+          },
+        ],
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: "2026-02-24T00:00:07.000Z",
+        },
+      });
     }),
   );
 
