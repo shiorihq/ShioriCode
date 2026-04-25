@@ -35,6 +35,7 @@ import {
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCursorModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
@@ -158,6 +159,18 @@ function normalizeSelectionWithCapabilities(
     case "kimiCode": {
       const options = selection.options
         ? normalizeKimiCodeModelOptionsWithCapabilities(caps, selection.options)
+        : undefined;
+      return {
+        provider: selection.provider,
+        model: selection.model,
+        ...(options ? { options } : {}),
+      };
+    }
+    case "gemini":
+      return selection;
+    case "cursor": {
+      const options = selection.options
+        ? normalizeCursorModelOptionsWithCapabilities(caps, selection.options)
         : undefined;
       return {
         provider: selection.provider,
@@ -705,6 +718,9 @@ export function cycleProvider(
 ): ProviderKind {
   const providers = serverConfig?.providers.map((provider) => provider.provider) ?? [
     "shiori",
+    "kimiCode",
+    "gemini",
+    "cursor",
     "codex",
     "claudeAgent",
   ];

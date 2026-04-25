@@ -45,6 +45,12 @@ function providerLabel(provider: ProviderKind | null): string {
   switch (provider) {
     case "shiori":
       return "shiori";
+    case "kimiCode":
+      return "kimi";
+    case "gemini":
+      return "gemini";
+    case "cursor":
+      return "cursor";
     case "claudeAgent":
       return "claude";
     case "codex":

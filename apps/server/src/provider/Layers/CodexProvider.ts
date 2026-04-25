@@ -19,6 +19,7 @@ import {
   Result,
   Stream,
 } from "effect";
+import { normalizeModelSlug } from "shared/model";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -47,7 +48,11 @@ import {
   type CodexAccountSnapshot,
 } from "../codexAccount";
 import { resolvePreferredCodexBinaryPath } from "../codexBinaryPath";
-import { probeCodexAccount } from "../codexAppServer";
+import {
+  probeCodexMetadata,
+  type CodexAppServerMetadataSnapshot,
+  type CodexAppServerModelSnapshot,
+} from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "contracts";
@@ -55,6 +60,24 @@ import { ServerSettingsError } from "contracts";
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.5",
+    name: "GPT-5.5",
+    isCustom: false,
+    multiModal: true,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High" },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
   {
     slug: "gpt-5.4",
     name: "GPT-5.4",
@@ -158,6 +181,125 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     },
   },
 ];
+
+const CODEX_REASONING_EFFORT_LABELS = new Map([
+  ["xhigh", "Extra High"],
+  ["high", "High"],
+  ["medium", "Medium"],
+  ["low", "Low"],
+]);
+
+function formatCodexReasoningEffortLabel(value: string): string {
+  return (
+    CODEX_REASONING_EFFORT_LABELS.get(value) ??
+    value
+      .replace(/[/_.-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (letter) => letter.toUpperCase())
+  );
+}
+
+function formatCodexModelDisplayName(slug: string, displayName: string | null): string {
+  const normalizedDisplayName = displayName?.trim();
+  if (!slug.startsWith("gpt-")) {
+    return normalizedDisplayName || formatModelSlugName(slug);
+  }
+
+  const withoutPrefix = slug.slice("gpt-".length);
+  const [version, ...suffixParts] = withoutPrefix.split("-");
+  if (!version) {
+    return normalizedDisplayName || formatModelSlugName(slug);
+  }
+
+  const suffix = suffixParts
+    .map((part) =>
+      part
+        .replace(/[/_.-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+    )
+    .filter(Boolean)
+    .join(" ");
+
+  return suffix ? `GPT-${version} ${suffix}` : `GPT-${version}`;
+}
+
+function modelCapabilitiesFromCodexModelListEntry(
+  model: CodexAppServerModelSnapshot,
+): ModelCapabilities {
+  const defaultReasoningEffort = model.defaultReasoningEffort;
+  const reasoningEffortLevels = model.supportedReasoningEfforts.map((effort) => ({
+    value: effort.reasoningEffort,
+    label: formatCodexReasoningEffortLabel(effort.reasoningEffort),
+    ...(defaultReasoningEffort === effort.reasoningEffort ? { isDefault: true } : {}),
+  }));
+
+  return {
+    reasoningEffortLevels,
+    supportsFastMode: model.additionalSpeedTiers.includes("fast"),
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  };
+}
+
+function codexModelsFromAppServerModelList(
+  models: ReadonlyArray<CodexAppServerModelSnapshot> | null | undefined,
+): ReadonlyArray<ServerProviderModel> | null {
+  if (!models || models.length === 0) {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  const visibleModels = models.flatMap((model) => {
+    const slug = normalizeModelSlug(model.model ?? model.id, PROVIDER);
+    if (!slug || model.hidden || seen.has(slug)) {
+      return [];
+    }
+    seen.add(slug);
+
+    return [
+      {
+        slug,
+        name: formatCodexModelDisplayName(slug, model.displayName),
+        isCustom: false,
+        multiModal: model.inputModalities.includes("image"),
+        capabilities: modelCapabilitiesFromCodexModelListEntry(model),
+        isDefault: model.isDefault,
+      },
+    ];
+  });
+
+  if (visibleModels.length === 0) {
+    return null;
+  }
+
+  return [
+    ...visibleModels.filter((model) => model.isDefault),
+    ...visibleModels.filter((model) => !model.isDefault),
+  ].map(({ isDefault: _isDefault, ...model }) => model);
+}
+
+function isCodexMetadataSnapshot(
+  value: CodexAccountSnapshot | CodexAppServerMetadataSnapshot | undefined,
+): value is CodexAppServerMetadataSnapshot {
+  return !!value && "account" in value;
+}
+
+function resolveCodexProviderModels(input: {
+  readonly customModels: ReadonlyArray<string>;
+  readonly metadata?: CodexAppServerMetadataSnapshot;
+  readonly account?: CodexAccountSnapshot;
+}): ReadonlyArray<ServerProviderModel> {
+  const appServerModels = codexModelsFromAppServerModelList(input.metadata?.models);
+  const baseModels = appServerModels ?? BUILT_IN_MODELS;
+  return adjustCodexModelsForAccount(
+    providerModelsFromSettings(baseModels, PROVIDER, input.customModels),
+    input.metadata?.account ?? input.account,
+  );
+}
 
 export function getCodexModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
@@ -324,7 +466,7 @@ const probeCodexCapabilities = (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
 }) =>
-  Effect.tryPromise((signal) => probeCodexAccount({ ...input, signal })).pipe(
+  Effect.tryPromise((signal) => probeCodexMetadata({ ...input, signal })).pipe(
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
@@ -362,10 +504,10 @@ function codexReadyWithUnknownAuth(input: {
 }
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
-  resolveAccount?: (input: {
+  resolveCapabilities?: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
-  }) => Effect.Effect<CodexAccountSnapshot | undefined>,
+  }) => Effect.Effect<CodexAccountSnapshot | CodexAppServerMetadataSnapshot | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -379,7 +521,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     Effect.map((settings) => settings.providers.codex),
   );
   const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, codexSettings.customModels);
+  const models = resolveCodexProviderModels({ customModels: codexSettings.customModels });
   const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
 
   if (!codexSettings.enabled) {
@@ -497,13 +639,25 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
-  const account = resolveAccount
-    ? yield* resolveAccount({
+  const resolvedCapabilities = resolveCapabilities
+    ? yield* resolveCapabilities({
         binaryPath,
         homePath: codexSettings.homePath,
       })
     : undefined;
-  const resolvedModels = adjustCodexModelsForAccount(models, account);
+  let metadata: CodexAppServerMetadataSnapshot | undefined;
+  let account: CodexAccountSnapshot | undefined;
+  if (isCodexMetadataSnapshot(resolvedCapabilities)) {
+    metadata = resolvedCapabilities;
+    account = resolvedCapabilities.account;
+  } else {
+    account = resolvedCapabilities;
+  }
+  const resolvedModels = resolveCodexProviderModels({
+    customModels: codexSettings.customModels,
+    ...(metadata ? { metadata } : {}),
+    ...(account ? { account } : {}),
+  });
 
   if (Result.isFailure(authProbe)) {
     const error = authProbe.failure;

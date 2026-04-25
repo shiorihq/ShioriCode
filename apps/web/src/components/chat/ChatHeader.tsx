@@ -1,6 +1,6 @@
 import { type EditorId, type ResolvedKeybindingsConfig, type ThreadId } from "contracts";
 import { memo } from "react";
-import { ChevronDownIcon, DiffIcon, GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, DiffIcon, GitBranchIcon, GlobeIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
@@ -29,7 +29,9 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   /** Shortcut label for `terminal.toggle` (no header button; consumed so callers may resolve the binding). */
   terminalToggleShortcutLabel: string | null;
+  browserToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
+  browserOpen: boolean;
   diffOpen: boolean;
   isBranchedThread: boolean;
   parentThread: ChatHeaderLinkedThread | null;
@@ -37,6 +39,7 @@ interface ChatHeaderProps {
   childThreads: ReadonlyArray<ChatHeaderLinkedThread>;
   onBranchThread: (() => void) | null;
   onNavigateToThread: (threadId: ThreadId) => void;
+  onToggleBrowser: () => void;
   onToggleDiff: () => void;
 }
 
@@ -48,7 +51,9 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   terminalToggleShortcutLabel: _terminalToggleShortcutLabel,
+  browserToggleShortcutLabel,
   diffToggleShortcutLabel,
+  browserOpen,
   diffOpen,
   isBranchedThread,
   parentThread,
@@ -56,11 +61,13 @@ export const ChatHeader = memo(function ChatHeader({
   childThreads,
   onBranchThread,
   onNavigateToThread,
+  onToggleBrowser,
   onToggleDiff,
 }: ChatHeaderProps) {
   const hasArchivedChildren = childThreads.some((thread) => thread.archivedAt !== null);
   const childCountLabel =
     childThreads.length === 1 ? "1 branch" : `${childThreads.length} branches`;
+  const canShowDiffToggle = Boolean(activeProjectPath);
 
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
@@ -68,7 +75,7 @@ export const ChatHeader = memo(function ChatHeader({
         <div className="flex min-w-0 items-center gap-2 overflow-hidden sm:gap-3">
           <SidebarTrigger className="size-7 shrink-0" />
           <h2
-            className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+            className="min-w-0 shrink truncate text-sm font-normal text-foreground"
             title={activeThreadTitle}
           >
             {activeThreadTitle}
@@ -183,26 +190,50 @@ export const ChatHeader = memo(function ChatHeader({
             render={
               <Toggle
                 className="shrink-0 px-2.5"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
+                pressed={browserOpen}
+                onPressedChange={onToggleBrowser}
+                aria-label="Toggle browser panel"
                 variant="outline"
                 size="xs"
-                disabled={!isGitRepo}
               >
-                <DiffIcon className="size-3" />
-                View diff
+                <GlobeIcon className="size-3" />
+                Browser
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
+            {browserToggleShortcutLabel
+              ? `Toggle browser panel (${browserToggleShortcutLabel})`
+              : "Toggle browser panel"}
           </TooltipPopup>
         </Tooltip>
+        {canShowDiffToggle && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0 px-2.5"
+                  pressed={diffOpen}
+                  onPressedChange={onToggleDiff}
+                  aria-label="Toggle diff panel"
+                  variant="outline"
+                  size="xs"
+                  disabled={!isGitRepo}
+                >
+                  <DiffIcon className="size-3" />
+                  View diff
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!isGitRepo
+                ? "Diff panel is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
       </Group>
     </div>
   );

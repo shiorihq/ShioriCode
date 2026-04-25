@@ -7,6 +7,7 @@ import {
   type ThreadId,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
 } from "contracts";
 import { isClaudeUltrathinkPrompt, resolveEffort } from "shared/model";
 import type { ReactNode } from "react";
@@ -15,6 +16,7 @@ import { EffortPicker, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCursorModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
@@ -77,7 +79,9 @@ function getProviderStateFromCapabilities(
       ? providerOptions.effort
       : "reasoningEffort" in providerOptions
         ? providerOptions.reasoningEffort
-        : null
+        : "reasoning" in providerOptions
+          ? providerOptions.reasoning
+          : null
     : null;
 
   const promptEffort = resolveEffort(caps, rawEffort) ?? null;
@@ -91,12 +95,22 @@ function getProviderStateFromCapabilities(
             caps,
             providerOptions as KimiCodeModelOptions,
           )
-        : provider === "codex"
-          ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions)
-          : normalizeClaudeModelOptionsWithCapabilities(
-              caps,
-              providerOptions as ClaudeModelOptions,
-            );
+        : provider === "gemini"
+          ? undefined
+          : provider === "cursor"
+            ? normalizeCursorModelOptionsWithCapabilities(
+                caps,
+                providerOptions as CursorModelOptions,
+              )
+            : provider === "codex"
+              ? normalizeCodexModelOptionsWithCapabilities(
+                  caps,
+                  providerOptions as CodexModelOptions,
+                )
+              : normalizeClaudeModelOptionsWithCapabilities(
+                  caps,
+                  providerOptions as ClaudeModelOptions,
+                );
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -216,6 +230,55 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
           onPromptChange={onPromptChange}
           includeEffort={false}
           includeFastMode={false}
+        />
+      ) : null,
+  },
+  gemini: {
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: () => null,
+    renderEffortPicker: () => null,
+    renderTraitsPicker: () => null,
+  },
+  cursor: {
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasAuxiliaryTraitControls(models, model, "cursor") ? (
+        <TraitsMenuContent
+          provider="cursor"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode
+        />
+      ) : null,
+    renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasEffortControls(models, model, "cursor") ? (
+        <EffortPicker
+          provider="cursor"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+        />
+      ) : null,
+    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasAuxiliaryTraitControls(models, model, "cursor") ? (
+        <TraitsPicker
+          provider="cursor"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode
         />
       ) : null,
   },

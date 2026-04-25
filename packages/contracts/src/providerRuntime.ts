@@ -25,6 +25,8 @@ const RuntimeEventRawSource = Schema.Literals([
   "claude.sdk.permission",
   "codex.sdk.thread-event",
   "kimi.sdk.wire",
+  "acp.jsonrpc",
+  "acp.cursor.extension",
   "shiori.hosted",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;

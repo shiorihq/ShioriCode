@@ -15,6 +15,7 @@ import {
   type OAuthTokens,
 } from "@ai-sdk/mcp";
 import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
+import type * as EffectAcpSchema from "effect-acp/schema";
 import open from "open";
 import {
   parse as parseToml,
@@ -771,6 +772,63 @@ export function filterMcpServersForProvider(
     if (!server.enabled) return false;
     return server.providers.length === 0 || server.providers.includes(provider);
   });
+}
+
+export function toAcpMcpServers(
+  provider: ProviderKind,
+  settings: ServerSettings,
+  cwd?: string,
+  _options?: unknown,
+): ReadonlyArray<EffectAcpSchema.McpServer> {
+  const acpServers: EffectAcpSchema.McpServer[] = [];
+  for (const server of filterMcpServersForProvider(provider, settings.mcpServers.servers)) {
+    switch (server.transport) {
+      case "stdio": {
+        const command = server.command?.trim();
+        if (!command) break;
+        acpServers.push({
+          name: server.name,
+          command,
+          args: server.args ?? [],
+          env: Object.entries(server.env ?? {}).map(([name, value]) => ({
+            name,
+            value,
+          })),
+          ...(cwd ? { _meta: { cwd } } : {}),
+        });
+        break;
+      }
+      case "http": {
+        const url = server.url?.trim();
+        if (!url) break;
+        acpServers.push({
+          type: "http",
+          name: server.name,
+          url,
+          headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({
+            name,
+            value,
+          })),
+        });
+        break;
+      }
+      case "sse": {
+        const url = server.url?.trim();
+        if (!url) break;
+        acpServers.push({
+          type: "sse",
+          name: server.name,
+          url,
+          headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({
+            name,
+            value,
+          })),
+        });
+        break;
+      }
+    }
+  }
+  return acpServers;
 }
 
 function sanitizeIdentifier(value: string, fallback: string): string {

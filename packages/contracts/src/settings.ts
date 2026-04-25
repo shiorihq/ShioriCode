@@ -5,8 +5,10 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
+  CursorModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  GeminiModelOptions,
   KimiCodeModelOptions,
   ShioriModelOptions,
 } from "./model";
@@ -242,6 +244,23 @@ export const KimiCodeSettings = Schema.Struct({
 });
 export type KimiCodeSettings = typeof KimiCodeSettings.Type;
 
+export const GeminiSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("gemini"),
+  googleCloudProject: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  acpFlag: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type GeminiSettings = typeof GeminiSettings.Type;
+
+export const CursorSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("agent"),
+  apiEndpoint: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type CursorSettings = typeof CursorSettings.Type;
+
 export const ClaudeSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   binaryPath: makeBinaryPathSetting("claude"),
@@ -384,6 +403,8 @@ export const ServerSettings = Schema.Struct({
   providers: Schema.Struct({
     shiori: ShioriSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     kimiCode: KimiCodeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    gemini: GeminiSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    cursor: CursorSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   }).pipe(Schema.withDecodingDefault(() => ({}))),
@@ -424,6 +445,13 @@ const KimiCodeModelOptionsPatch = Schema.Struct({
   thinking: Schema.optionalKey(KimiCodeModelOptions.fields.thinking),
 });
 
+const CursorModelOptionsPatch = Schema.Struct({
+  thinking: Schema.optionalKey(CursorModelOptions.fields.thinking),
+  reasoning: Schema.optionalKey(CursorModelOptions.fields.reasoning),
+  contextWindow: Schema.optionalKey(CursorModelOptions.fields.contextWindow),
+  fastMode: Schema.optionalKey(CursorModelOptions.fields.fastMode),
+});
+
 const ClaudeModelOptionsPatch = Schema.Struct({
   thinking: Schema.optionalKey(ClaudeModelOptions.fields.thinking),
   effort: Schema.optionalKey(ClaudeModelOptions.fields.effort),
@@ -441,6 +469,16 @@ const ModelSelectionPatch = Schema.Union([
     provider: Schema.optionalKey(Schema.Literal("kimiCode")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(KimiCodeModelOptionsPatch),
+  }),
+  Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("gemini")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(GeminiModelOptions),
+  }),
+  Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("cursor")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(CursorModelOptionsPatch),
   }),
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("codex")),
@@ -464,6 +502,21 @@ const KimiCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(Schema.String),
   shareDir: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const GeminiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(Schema.String),
+  googleCloudProject: Schema.optionalKey(Schema.String),
+  acpFlag: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const CursorSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(Schema.String),
+  apiEndpoint: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
@@ -503,6 +556,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       shiori: Schema.optionalKey(ShioriSettingsPatch),
       kimiCode: Schema.optionalKey(KimiCodeSettingsPatch),
+      gemini: Schema.optionalKey(GeminiSettingsPatch),
+      cursor: Schema.optionalKey(CursorSettingsPatch),
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
     }),

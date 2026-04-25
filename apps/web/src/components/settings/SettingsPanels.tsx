@@ -765,6 +765,21 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.kimiCode.shareDir ||
       settings.providers.kimiCode.customModels.length > 0,
     ),
+    gemini: Boolean(
+      settings.providers.gemini.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.gemini.binaryPath ||
+      settings.providers.gemini.googleCloudProject !==
+        DEFAULT_UNIFIED_SETTINGS.providers.gemini.googleCloudProject ||
+      settings.providers.gemini.acpFlag !== DEFAULT_UNIFIED_SETTINGS.providers.gemini.acpFlag ||
+      settings.providers.gemini.customModels.length > 0,
+    ),
+    cursor: Boolean(
+      settings.providers.cursor.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
+      settings.providers.cursor.apiEndpoint !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.apiEndpoint ||
+      settings.providers.cursor.customModels.length > 0,
+    ),
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||

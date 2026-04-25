@@ -89,7 +89,7 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
         className={cn(
           "relative z-10 flex min-h-0 min-w-0 flex-1 flex-col bg-background",
           showCurvedSidebarEdge &&
-            "-ml-px overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]",
+            "-ml-px overflow-hidden rounded-l-[var(--app-sidebar-shell-radius)]",
         )}
         data-app-chat-shell-with-sidebar={showCurvedSidebarEdge || undefined}
       >

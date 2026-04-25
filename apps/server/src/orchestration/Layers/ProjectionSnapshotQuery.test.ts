@@ -19,6 +19,57 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("ignores projectless thread rows in the project-based snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          workspace_kind,
+          project_id,
+          projectless_cwd,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-projectless',
+          'projectless',
+          NULL,
+          '/tmp/projectless-thread',
+          'Projectless Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const counts = yield* snapshotQuery.getCounts();
+
+      assert.deepEqual(snapshot.projects, []);
+      assert.deepEqual(snapshot.threads, []);
+      assert.equal(counts.threadCount, 0);
+    }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

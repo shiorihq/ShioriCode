@@ -2,6 +2,8 @@ import { Option, Schema, SchemaIssue, Struct } from "effect";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
+  CursorModelOptions,
+  GeminiModelOptions,
   KimiCodeModelOptions,
   ShioriModelOptions,
 } from "./model";
@@ -29,7 +31,14 @@ export const ORCHESTRATION_WS_METHODS = {
   replayEvents: "orchestration.replayEvents",
 } as const;
 
-export const ProviderKind = Schema.Literals(["shiori", "kimiCode", "codex", "claudeAgent"]);
+export const ProviderKind = Schema.Literals([
+  "shiori",
+  "kimiCode",
+  "gemini",
+  "cursor",
+  "codex",
+  "claudeAgent",
+]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -61,6 +70,20 @@ export const KimiCodeModelSelection = Schema.Struct({
 });
 export type KimiCodeModelSelection = typeof KimiCodeModelSelection.Type;
 
+export const GeminiModelSelection = Schema.Struct({
+  provider: Schema.Literal("gemini"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(GeminiModelOptions),
+});
+export type GeminiModelSelection = typeof GeminiModelSelection.Type;
+
+export const CursorModelSelection = Schema.Struct({
+  provider: Schema.Literal("cursor"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(CursorModelOptions),
+});
+export type CursorModelSelection = typeof CursorModelSelection.Type;
+
 export const CodexModelSelection = Schema.Struct({
   provider: Schema.Literal("codex"),
   model: TrimmedNonEmptyString,
@@ -78,6 +101,8 @@ export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 export const ModelSelection = Schema.Union([
   ShioriModelSelection,
   KimiCodeModelSelection,
+  GeminiModelSelection,
+  CursorModelSelection,
   CodexModelSelection,
   ClaudeModelSelection,
 ]);

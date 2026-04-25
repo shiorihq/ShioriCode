@@ -16,6 +16,8 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { ShioriAdapterLive } from "./provider/Layers/ShioriAdapter";
 import { KimiCodeAdapterLive } from "./provider/Layers/KimiCodeAdapter";
+import { makeGeminiAdapterLive } from "./provider/Layers/GeminiAdapter";
+import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
@@ -144,6 +146,12 @@ const ProviderLayerLive = Layer.unwrap(
     );
     const shioriAdapterLayer = ShioriAdapterLive.pipe(Layer.provide(providerSessionDirectoryLayer));
     const kimiCodeAdapterLayer = KimiCodeAdapterLive;
+    const geminiAdapterLayer = makeGeminiAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
+    const cursorAdapterLayer = makeCursorAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
@@ -153,6 +161,8 @@ const ProviderLayerLive = Layer.unwrap(
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(shioriAdapterLayer),
       Layer.provide(kimiCodeAdapterLayer),
+      Layer.provide(geminiAdapterLayer),
+      Layer.provide(cursorAdapterLayer),
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),

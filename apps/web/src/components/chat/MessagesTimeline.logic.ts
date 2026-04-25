@@ -1160,29 +1160,55 @@ function pluralizeEnglishNoun(singular: string): string {
   return `${singular}s`;
 }
 
+type WorkGroupSegment = {
+  leadingVerb: string;
+  leadingRest: string;
+  trailing: string;
+};
+
 function workGroupTextSegment(input: {
   count: number;
   leadingVerb: string;
   trailingVerb: string;
   singular: string;
   plural?: string;
-}): { leading: string; trailing: string } | null {
+}): WorkGroupSegment | null {
   if (input.count <= 0) {
     return null;
   }
   const label = pluralizeCount(input.count, input.singular, input.plural);
   return {
-    leading: `${input.leadingVerb} ${label}`,
+    leadingVerb: input.leadingVerb,
+    leadingRest: label,
     trailing: `${input.trailingVerb} ${label}`,
   };
 }
 
-function joinWorkGroupSummarySegments(
-  segments: ReadonlyArray<{ leading: string; trailing: string }>,
-): string {
-  return segments
-    .map((segment, index) => (index === 0 ? segment.leading : segment.trailing))
-    .join(", ");
+function joinWorkGroupSummarySegments(segments: ReadonlyArray<WorkGroupSegment>): {
+  leadingVerb: string;
+  rest: string;
+} {
+  const [first, ...tail] = segments;
+  if (!first) {
+    return { leadingVerb: "", rest: "" };
+  }
+  const restParts: string[] = [];
+  if (first.leadingRest.length > 0) {
+    restParts.push(first.leadingRest);
+  }
+  for (const segment of tail) {
+    restParts.push(segment.trailing);
+  }
+  return { leadingVerb: first.leadingVerb, rest: restParts.join(", ") };
+}
+
+export type WorkGroupSummaryParts = {
+  leadingVerb: string;
+  rest: string;
+};
+
+function joinSummaryParts({ leadingVerb, rest }: WorkGroupSummaryParts): string {
+  return rest.length > 0 ? `${leadingVerb} ${rest}` : leadingVerb;
 }
 
 export function getDisplayedWorkEntries(entries: ReadonlyArray<WorkLogEntry>): WorkLogEntry[] {
@@ -1213,6 +1239,13 @@ export function buildWorkGroupSummary(
   entries: ReadonlyArray<WorkLogEntry>,
   stickyInProgress: boolean,
 ): string {
+  return joinSummaryParts(buildWorkGroupSummaryParts(entries, stickyInProgress));
+}
+
+export function buildWorkGroupSummaryParts(
+  entries: ReadonlyArray<WorkLogEntry>,
+  stickyInProgress: boolean,
+): WorkGroupSummaryParts {
   const isInProgress = entries.some((entry) => entry.running) || stickyInProgress;
   const createdFiles = new Set<string>();
   const editedFiles = new Set<string>();
@@ -1320,7 +1353,7 @@ export function buildWorkGroupSummary(
       trailingVerb: isInProgress ? "deleting" : "deleted",
       singular: "file",
     }),
-  ].filter((segment): segment is { leading: string; trailing: string } => segment !== null);
+  ].filter((segment): segment is WorkGroupSegment => segment !== null);
 
   const explorationParts: string[] = [];
   if (exploredReadKeys.size > 0) {
@@ -1335,7 +1368,8 @@ export function buildWorkGroupSummary(
   if (explorationParts.length > 0) {
     const details = explorationParts.join(", ");
     summarySegments.push({
-      leading: `${isInProgress ? "Exploring" : "Explored"} ${details}`,
+      leadingVerb: isInProgress ? "Exploring" : "Explored",
+      leadingRest: details,
       trailing: `${isInProgress ? "exploring" : "explored"} ${details}`,
     });
   }
@@ -1364,7 +1398,8 @@ export function buildWorkGroupSummary(
     const todoLabel =
       todoWriteCount === 1 ? (todoWriteDetails[0] ?? "todo list") : `${todoWriteCount} todo lists`;
     summarySegments.push({
-      leading: `${isInProgress ? "Updating" : "Updated"} ${todoLabel}`,
+      leadingVerb: isInProgress ? "Updating" : "Updated",
+      leadingRest: todoLabel,
       trailing: `${isInProgress ? "updating" : "updated"} ${todoLabel}`,
     });
   }
@@ -1386,15 +1421,14 @@ export function buildWorkGroupSummary(
 
   if (entries.length === 1) {
     const formattedEntry = formatWorkEntry(entries[0]!);
-    const singleSummary = formattedEntry.detail
-      ? `${formattedEntry.action} ${formattedEntry.detail}`
-      : formattedEntry.action;
-    if (singleSummary.trim().length > 0) {
-      return singleSummary;
+    const action = formattedEntry.action;
+    const detail = formattedEntry.detail ?? "";
+    if ((action + detail).trim().length > 0) {
+      return { leadingVerb: action, rest: detail };
     }
   }
 
-  return isInProgress ? "Working" : "Worked";
+  return { leadingVerb: isInProgress ? "Working" : "Worked", rest: "" };
 }
 
 export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {

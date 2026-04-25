@@ -93,7 +93,14 @@ export class ServerSettingsService extends ServiceMap.Service<
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["shiori", "kimiCode", "codex", "claudeAgent"];
+const PROVIDER_ORDER: readonly ProviderKind[] = [
+  "shiori",
+  "kimiCode",
+  "gemini",
+  "cursor",
+  "codex",
+  "claudeAgent",
+];
 const DEV_SHIORI_API_BASE_URL = "http://127.0.0.1:3000";
 
 function resolveShioriApiBaseUrl(settings: ServerSettings): ServerSettings {

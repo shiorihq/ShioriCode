@@ -98,10 +98,21 @@ export function parseGenericCliVersion(output: string): string | null {
   return match?.[1] ?? null;
 }
 
+export function formatModelSlugName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "Model";
+  return trimmed
+    .replace(/[/_.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   provider: ServerProvider["provider"],
   customModels: ReadonlyArray<string>,
+  customModelCapabilities: ServerProviderModel["capabilities"] = null,
 ): ReadonlyArray<ServerProviderModel> {
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
@@ -117,7 +128,7 @@ export function providerModelsFromSettings(
       slug: normalized,
       name: normalized,
       isCustom: true,
-      capabilities: null,
+      capabilities: customModelCapabilities,
     });
   }
 

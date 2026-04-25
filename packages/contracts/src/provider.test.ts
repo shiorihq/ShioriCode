@@ -93,6 +93,49 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.modelSelection.options?.thinking).toBe(false);
     expect(parsed.modelSelection.options?.reasoningEffort).toBe("medium");
   });
+
+  it("accepts gemini model selections", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "gemini",
+      cwd: "/tmp/workspace",
+      modelSelection: {
+        provider: "gemini",
+        model: "auto",
+      },
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.provider).toBe("gemini");
+    expect(parsed.modelSelection?.provider).toBe("gemini");
+    expect(parsed.modelSelection?.model).toBe("auto");
+  });
+
+  it("accepts cursor model selections", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "cursor",
+      cwd: "/tmp/workspace",
+      modelSelection: {
+        provider: "cursor",
+        model: "composer-2[fast=true]",
+        options: {
+          reasoning: "high",
+          fastMode: true,
+        },
+      },
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.provider).toBe("cursor");
+    expect(parsed.modelSelection?.provider).toBe("cursor");
+    if (parsed.modelSelection?.provider !== "cursor") {
+      throw new Error("Expected cursor modelSelection");
+    }
+    expect(parsed.modelSelection.model).toBe("composer-2[fast=true]");
+    expect(parsed.modelSelection.options?.reasoning).toBe("high");
+    expect(parsed.modelSelection.options?.fastMode).toBe(true);
+  });
 });
 
 describe("ProviderSendTurnInput", () => {

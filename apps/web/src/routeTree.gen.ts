@@ -17,9 +17,11 @@ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
 import { Route as SettingsThemeBuilderRouteImport } from './routes/settings.theme-builder'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
+import { Route as SettingsMobileRouteImport } from './routes/settings.mobile'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsFeedbackRouteImport } from './routes/settings.feedback'
 import { Route as SettingsCreditsRouteImport } from './routes/settings.credits'
+import { Route as SettingsComputerUseRouteImport } from './routes/settings.computer-use'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
@@ -64,6 +66,11 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsMobileRoute = SettingsMobileRouteImport.update({
+  id: '/mobile',
+  path: '/mobile',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
@@ -77,6 +84,11 @@ const SettingsFeedbackRoute = SettingsFeedbackRouteImport.update({
 const SettingsCreditsRoute = SettingsCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsComputerUseRoute = SettingsComputerUseRouteImport.update({
+  id: '/computer-use',
+  path: '/computer-use',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
@@ -109,9 +121,11 @@ export interface FileRoutesByFullPath {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -124,9 +138,11 @@ export interface FileRoutesByTo {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -142,9 +158,11 @@ export interface FileRoutesById {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -161,9 +179,11 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/computer-use'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mobile'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -176,9 +196,11 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/computer-use'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mobile'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -193,9 +215,11 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/computer-use'
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mobile'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -267,6 +291,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/mobile': {
+      id: '/settings/mobile'
+      path: '/mobile'
+      fullPath: '/settings/mobile'
+      preLoaderRoute: typeof SettingsMobileRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/general': {
       id: '/settings/general'
       path: '/general'
@@ -286,6 +317,13 @@ declare module '@tanstack/react-router' {
       path: '/credits'
       fullPath: '/settings/credits'
       preLoaderRoute: typeof SettingsCreditsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/computer-use': {
+      id: '/settings/computer-use'
+      path: '/computer-use'
+      fullPath: '/settings/computer-use'
+      preLoaderRoute: typeof SettingsComputerUseRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/archived': {
@@ -335,9 +373,11 @@ interface SettingsRouteChildren {
   SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsComputerUseRoute: typeof SettingsComputerUseRoute
   SettingsCreditsRoute: typeof SettingsCreditsRoute
   SettingsFeedbackRoute: typeof SettingsFeedbackRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsMobileRoute: typeof SettingsMobileRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsThemeBuilderRoute: typeof SettingsThemeBuilderRoute
   SettingsUsageRoute: typeof SettingsUsageRoute
@@ -347,9 +387,11 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAccountRoute: SettingsAccountRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsComputerUseRoute: SettingsComputerUseRoute,
   SettingsCreditsRoute: SettingsCreditsRoute,
   SettingsFeedbackRoute: SettingsFeedbackRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsMobileRoute: SettingsMobileRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsThemeBuilderRoute: SettingsThemeBuilderRoute,
   SettingsUsageRoute: SettingsUsageRoute,

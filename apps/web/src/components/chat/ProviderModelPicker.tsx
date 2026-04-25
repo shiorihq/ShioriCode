@@ -17,7 +17,8 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { ClaudeAI, CursorIcon, Icon, KimiIcon, OpenAI, ShioriIcon } from "../Icons";
+import type { Icon } from "../Icons";
+import { PROVIDER_BRAND_ICON_BY_PROVIDER, providerBrandIconClassName } from "./providerBrandIcons";
 import { cn } from "~/lib/utils";
 import {
   getProviderPickerState,
@@ -34,13 +35,7 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
   return option.available;
 }
 
-const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
-  shiori: ShioriIcon,
-  kimiCode: KimiIcon,
-  codex: OpenAI,
-  claudeAgent: ClaudeAI,
-  cursor: CursorIcon,
-};
+const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = PROVIDER_BRAND_ICON_BY_PROVIDER;
 
 const FastModeBoltIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 16 16" fill="currentColor">
@@ -58,13 +53,6 @@ function displayModelOptionLabel(
     return "Kimi K2.6";
   }
   return option.name;
-}
-
-function providerIconClassName(
-  provider: ProviderKind | ProviderPickerKind,
-  fallbackClassName: string,
-): string {
-  return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
 }
 
 function shouldShowLockedProviderModelSearch(provider: ProviderKind): boolean {
@@ -225,7 +213,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   data-chat-provider-model-picker-provider-icon="true"
                   className={cn(
                     "absolute inset-0 size-4 shrink-0 opacity-0 transition-opacity duration-150 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
-                    providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                    providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
                     props.activeProviderIconClassName,
                   )}
                 />
@@ -236,7 +224,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 data-chat-provider-model-picker-provider-icon="true"
                 className={cn(
                   "size-4 shrink-0",
-                  providerIconClassName(activeProvider, "text-muted-foreground/70"),
+                  providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
                   props.activeProviderIconClassName,
                 )}
               />
@@ -284,7 +272,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       aria-hidden="true"
                       className={cn(
                         "size-4 shrink-0 opacity-80",
-                        providerIconClassName(option.value, "text-muted-foreground/85"),
+                        providerBrandIconClassName(option.value, "text-muted-foreground/85"),
                       )}
                     />
                     <span>{option.label}</span>
@@ -301,7 +289,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       aria-hidden="true"
                       className={cn(
                         "size-4 shrink-0",
-                        providerIconClassName(option.value, "text-muted-foreground/85"),
+                        providerBrandIconClassName(option.value, "text-muted-foreground/85"),
                       )}
                     />
                     {option.label}

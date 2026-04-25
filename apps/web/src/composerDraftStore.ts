@@ -411,7 +411,12 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "shiori" || value === "kimiCode" || value === "codex" || value === "claudeAgent"
+  return value === "shiori" ||
+    value === "kimiCode" ||
+    value === "gemini" ||
+    value === "cursor" ||
+    value === "codex" ||
+    value === "claudeAgent"
     ? value
     : null;
 }
@@ -437,6 +442,10 @@ function normalizeProviderModelOptions(
   const kimiCodeCandidate =
     candidate?.kimiCode && typeof candidate.kimiCode === "object"
       ? (candidate.kimiCode as Record<string, unknown>)
+      : null;
+  const cursorCandidate =
+    candidate?.cursor && typeof candidate.cursor === "object"
+      ? (candidate.cursor as Record<string, unknown>)
       : null;
 
   const codexReasoningEffort: CodexReasoningEffort | undefined =
@@ -537,12 +546,46 @@ function normalizeProviderModelOptions(
   const kimiCode: KimiCodeModelOptions | undefined =
     kimiCodeThinking !== undefined ? { thinking: kimiCodeThinking } : undefined;
 
-  if (!shiori && !kimiCode && !codex && !claude) {
+  const cursorReasoning =
+    typeof cursorCandidate?.reasoning === "string" && cursorCandidate.reasoning.length > 0
+      ? cursorCandidate.reasoning
+      : undefined;
+  const cursorContextWindow =
+    typeof cursorCandidate?.contextWindow === "string" && cursorCandidate.contextWindow.length > 0
+      ? cursorCandidate.contextWindow
+      : undefined;
+  const cursorFastMode =
+    cursorCandidate?.fastMode === true
+      ? true
+      : cursorCandidate?.fastMode === false
+        ? false
+        : undefined;
+  const cursorThinking =
+    cursorCandidate?.thinking === true
+      ? true
+      : cursorCandidate?.thinking === false
+        ? false
+        : undefined;
+  const cursor =
+    cursorThinking !== undefined ||
+    cursorReasoning !== undefined ||
+    cursorContextWindow !== undefined ||
+    cursorFastMode !== undefined
+      ? {
+          ...(cursorThinking !== undefined ? { thinking: cursorThinking } : {}),
+          ...(cursorReasoning !== undefined ? { reasoning: cursorReasoning } : {}),
+          ...(cursorContextWindow !== undefined ? { contextWindow: cursorContextWindow } : {}),
+          ...(cursorFastMode !== undefined ? { fastMode: cursorFastMode } : {}),
+        }
+      : undefined;
+
+  if (!shiori && !kimiCode && !cursor && !codex && !claude) {
     return null;
   }
   return {
     ...(shiori ? { shiori } : {}),
     ...(kimiCode ? { kimiCode } : {}),
+    ...(cursor ? { cursor } : {}),
     ...(codex ? { codex } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
   };
@@ -582,7 +625,11 @@ function normalizeModelSelection(
         ? modelOptions?.claudeAgent
         : provider === "kimiCode"
           ? modelOptions?.kimiCode
-          : modelOptions?.shiori;
+          : provider === "gemini"
+            ? undefined
+            : provider === "cursor"
+              ? modelOptions?.cursor
+              : modelOptions?.shiori;
   return buildProviderModelSelection(provider, model, options);
 }
 
@@ -640,7 +687,14 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["shiori", "kimiCode", "codex", "claudeAgent"] as const) {
+    for (const provider of [
+      "shiori",
+      "kimiCode",
+      "gemini",
+      "cursor",
+      "codex",
+      "claudeAgent",
+    ] as const) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
         result[provider] = buildProviderModelSelection(
@@ -1721,7 +1775,13 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const base = existing ?? createEmptyThreadDraft();
           const nextMap = { ...base.modelSelectionByProvider };
-          for (const provider of ["shiori", "kimiCode", "codex", "claudeAgent"] as const) {
+          for (const provider of [
+            "shiori",
+            "kimiCode",
+            "gemini",
+            "codex",
+            "claudeAgent",
+          ] as const) {
             // Only touch providers explicitly present in the input
             if (!normalizedOpts || !(provider in normalizedOpts)) continue;
             const opts = normalizedOpts[provider];

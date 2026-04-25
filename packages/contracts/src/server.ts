@@ -51,6 +51,7 @@ export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  shortName: Schema.optional(TrimmedNonEmptyString),
   isCustom: Schema.Boolean,
   multiModal: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
@@ -66,6 +67,8 @@ export const ServerProvider = Schema.Struct({
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
+  slashCommands: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  skills: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   models: Schema.Array(ServerProviderModel),
 });
 export type ServerProvider = typeof ServerProvider.Type;

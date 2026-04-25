@@ -25,6 +25,8 @@ function decodeProviderKind(
   if (
     providerName === "shiori" ||
     providerName === "kimiCode" ||
+    providerName === "gemini" ||
+    providerName === "cursor" ||
     providerName === "codex" ||
     providerName === "claudeAgent"
   ) {

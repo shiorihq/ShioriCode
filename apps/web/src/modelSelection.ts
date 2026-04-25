@@ -49,6 +49,20 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     example: "kimi-code/kimi-for-coding",
     supportsCustomModels: false,
   },
+  gemini: {
+    provider: "gemini",
+    title: "Gemini",
+    description: "Save additional Gemini model slugs for the picker and `/model` command.",
+    placeholder: "your-gemini-model-slug",
+    example: "gemini-3-pro",
+  },
+  cursor: {
+    provider: "cursor",
+    title: "Cursor",
+    description: "Save additional Cursor model slugs for the picker and `/model` command.",
+    placeholder: "your-cursor-model-slug",
+    example: "composer-2",
+  },
   codex: {
     provider: "codex",
     title: "Codex",
@@ -182,6 +196,12 @@ export function buildProviderModelSelection(
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["kimiCode"]> }
         : { provider, model };
+    case "gemini":
+      return { provider, model };
+    case "cursor":
+      return options !== undefined
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["cursor"]> }
+        : { provider, model };
     case "codex":
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["codex"]> }
@@ -215,6 +235,18 @@ export function getCustomModelOptionsByProvider(
       providers,
       "kimiCode",
       selectedProvider === "kimiCode" ? selectedModel : undefined,
+    ),
+    gemini: getAppModelOptions(
+      settings,
+      providers,
+      "gemini",
+      selectedProvider === "gemini" ? selectedModel : undefined,
+    ),
+    cursor: getAppModelOptions(
+      settings,
+      providers,
+      "cursor",
+      selectedProvider === "cursor" ? selectedModel : undefined,
     ),
     codex: getAppModelOptions(
       settings,

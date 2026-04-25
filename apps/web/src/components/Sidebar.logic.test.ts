@@ -800,7 +800,7 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
     expect(className).toContain("sidebar-thread-row");
     expect(className).toContain("sidebar-thread-row--selected-active");
-    expect(className).toContain("font-medium");
+    expect(className).not.toContain("font-medium");
     expect(className).not.toContain("sidebar-thread-row--active");
   });
 
@@ -815,7 +815,7 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("sidebar-thread-row");
     expect(className).toContain("sidebar-thread-row--active");
-    expect(className).toContain("font-medium");
+    expect(className).not.toContain("font-medium");
   });
 
   it("keeps inactive thread titles on the standard foreground color", () => {

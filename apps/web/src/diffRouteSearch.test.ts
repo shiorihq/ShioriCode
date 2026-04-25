@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { parseDiffRouteSearch, stripBrowserSearchParams } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -39,6 +39,16 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
+  it("parses browser panel search values", () => {
+    expect(
+      parseDiffRouteSearch({
+        browser: true,
+      }),
+    ).toEqual({
+      browser: "1",
+    });
+  });
+
   it("drops turn and file values when diff is closed", () => {
     const parsed = parseDiffRouteSearch({
       diff: "0",
@@ -69,6 +79,21 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+});
+
+describe("stripBrowserSearchParams", () => {
+  it("removes only the browser panel flag", () => {
+    expect(
+      stripBrowserSearchParams({
+        diff: "1",
+        diffTurnId: "turn-1",
+        browser: "1",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
     });
   });
 });

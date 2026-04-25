@@ -133,6 +133,60 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it("rehydrates gemini thread bindings", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-gemini");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "gemini",
+        adapterKey: "gemini",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "gemini",
+        adapterKey: "gemini",
+      });
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "gemini");
+    }));
+
+  it("rehydrates cursor thread bindings", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-cursor");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "cursor",
+        adapterKey: "cursor",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "cursor",
+        adapterKey: "cursor",
+      });
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "cursor");
+    }));
+
   it("resets adapterKey to the new provider when provider changes without an explicit adapter key", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;

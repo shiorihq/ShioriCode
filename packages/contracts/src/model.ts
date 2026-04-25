@@ -30,6 +30,17 @@ export const KimiCodeModelOptions = Schema.Struct({
 });
 export type KimiCodeModelOptions = typeof KimiCodeModelOptions.Type;
 
+export const GeminiModelOptions = Schema.Struct({});
+export type GeminiModelOptions = typeof GeminiModelOptions.Type;
+
+export const CursorModelOptions = Schema.Struct({
+  thinking: Schema.optional(Schema.Boolean),
+  reasoning: Schema.optional(Schema.String),
+  contextWindow: Schema.optional(Schema.String),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type CursorModelOptions = typeof CursorModelOptions.Type;
+
 export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
   effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
@@ -41,6 +52,8 @@ export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 export const ProviderModelOptions = Schema.Struct({
   shiori: Schema.optional(ShioriModelOptions),
   kimiCode: Schema.optional(KimiCodeModelOptions),
+  gemini: Schema.optional(GeminiModelOptions),
+  cursor: Schema.optional(CursorModelOptions),
   codex: Schema.optional(CodexModelOptions),
   claudeAgent: Schema.optional(ClaudeModelOptions),
 });
@@ -72,7 +85,9 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   shiori: "openai/gpt-5.4",
   kimiCode: "kimi-code/kimi-for-coding",
-  codex: "gpt-5.4",
+  gemini: "auto",
+  cursor: "auto",
+  codex: "gpt-5.5",
   claudeAgent: "claude-sonnet-4-6",
 };
 
@@ -82,6 +97,8 @@ export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   shiori: "openai/gpt-5.4-mini",
   kimiCode: "kimi-code/kimi-for-coding",
+  gemini: "auto",
+  cursor: "auto",
   codex: "gpt-5.4-mini",
   claudeAgent: "claude-haiku-4-5",
 };
@@ -117,7 +134,21 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "kimi-code/kimi-for-coding": "kimi-code/kimi-for-coding",
     latest: "kimi-code/kimi-for-coding",
   },
+  gemini: {
+    gemini: "auto",
+    auto: "auto",
+    latest: "auto",
+  },
+  cursor: {
+    cursor: "auto",
+    composer: "composer",
+    "composer-2": "composer-2",
+    auto: "auto",
+    default: "auto",
+    latest: "auto",
+  },
   codex: {
+    "5.5": "gpt-5.5",
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",
     "gpt-5.3": "gpt-5.3-codex",
@@ -147,6 +178,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   shiori: "Shiori",
   kimiCode: "Kimi Code",
+  gemini: "Gemini",
+  cursor: "Cursor",
   codex: "Codex",
   claudeAgent: "Claude",
 };

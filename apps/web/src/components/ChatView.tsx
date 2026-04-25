@@ -28,7 +28,11 @@ import { gitCreateWorktreeMutationOptions, gitStatusQueryOptions } from "~/lib/g
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { ASSISTANT_PERSONALITY_OPTIONS } from "../assistantPersonalityOptions";
 import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripBrowserSearchParams,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -88,6 +92,7 @@ import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import BranchToolbar from "./BranchToolbar";
 import { NoActiveThreadState } from "./chat/NoActiveThreadState";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -148,6 +153,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import BrowserPanel from "./browser/BrowserPanel";
 import { BackgroundSubagentsPanel } from "./chat/BackgroundSubagentsPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { deriveBackgroundSubagentRows } from "./chat/subagentDetail";
@@ -209,6 +215,7 @@ import {
   selectQueuedTurnsForThread,
   useQueuedTurnsStore,
 } from "../queuedTurnsStore";
+import { Sheet, SheetPopup } from "./ui/sheet";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -218,6 +225,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const BROWSER_PANEL_SHEET_MEDIA_QUERY = "(max-width: 1180px)";
 
 function shouldBackgroundRefreshProviderStatus(provider: ServerProvider): boolean {
   return (
@@ -981,6 +989,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
+  const browserOpen = rawSearch.browser === "1";
+  const shouldUseBrowserSheet = useMediaQuery(BROWSER_PANEL_SHEET_MEDIA_QUERY);
   const activeThreadId = activeThread?.id ?? null;
   const { serverThreadIds, parentThread, childThreads } = useThreadRelations({
     isServerThread,
@@ -1026,6 +1036,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const isProjectThread = activeProject !== undefined;
   const handleBranchActiveThread = useCallback(async () => {
     if (!isServerThread || !serverThread) {
       return;
@@ -1776,6 +1787,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => ({
       shiori: providerStatuses.find((provider) => provider.provider === "shiori")?.models ?? [],
       kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
+      gemini: providerStatuses.find((provider) => provider.provider === "gemini")?.models ?? [],
+      cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
       codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
       claudeAgent:
         providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
@@ -2123,7 +2136,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
   );
+  const browserPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "browser.toggle", nonTerminalShortcutLabelOptions),
+    [keybindings, nonTerminalShortcutLabelOptions],
+  );
   const onToggleDiff = useCallback(() => {
+    if (!isProjectThread) {
+      return;
+    }
+
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -2133,7 +2154,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [diffOpen, isProjectThread, navigate, threadId]);
+  const onToggleBrowser = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripBrowserSearchParams(previous);
+        return browserOpen ? rest : { ...rest, browser: "1" };
+      },
+    });
+  }, [browserOpen, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3172,6 +3204,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         onToggleDiff();
         return;
       }
+
+      if (command === "browser.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggleBrowser();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -3184,6 +3222,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setTerminalOpen,
     splitTerminal,
     keybindings,
+    onToggleBrowser,
     onToggleDiff,
     toggleInteractionMode,
     toggleTerminalVisibility,
@@ -4716,6 +4755,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      if (!isProjectThread) {
+        return;
+      }
+
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -4727,7 +4770,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, threadId],
+    [isProjectThread, navigate, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -4800,7 +4843,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           keybindings={keybindings}
           availableEditors={availableEditors}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+          browserToggleShortcutLabel={browserPanelShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
+          browserOpen={browserOpen}
           diffOpen={diffOpen}
           isBranchedThread={activeThread.parentThreadId !== null}
           parentThread={
@@ -4831,6 +4876,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               params: { threadId: nextThreadId },
             });
           }}
+          onToggleBrowser={onToggleBrowser}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -4883,6 +4929,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   completionDividerBeforeEntryId={completionDividerBeforeEntryId}
                   completionSummary={completionSummary}
                   turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                  showTurnDiffActions={isProjectThread}
                   expandedWorkGroups={expandedWorkGroups}
                   onToggleWorkGroup={onToggleWorkGroup}
                   onOpenTurnDiff={onOpenTurnDiff}
@@ -5389,6 +5436,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </div>
         {/* end chat column */}
 
+        {!shouldUseBrowserSheet && browserOpen ? (
+          <div
+            className={cn(
+              "hidden min-h-0 shrink-0 border-l border-border bg-card text-foreground md:flex",
+              "w-[min(42vw,36rem)] min-w-[24rem] max-w-[44rem]",
+              "shadow-[-20px_0_40px_-36px_rgba(15,23,42,0.55)]",
+            )}
+          >
+            <BrowserPanel
+              threadId={activeThread.id}
+              active
+              cwd={gitCwd ?? activeProject?.cwd ?? null}
+              isAgentWorking={isWorking}
+              onClose={onToggleBrowser}
+              onStopAgent={() => void onInterrupt()}
+            />
+          </div>
+        ) : null}
+
         {/* Plan sidebar */}
         {planSidebarOpen ? (
           <PlanSidebar
@@ -5422,6 +5488,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}
+
+      {shouldUseBrowserSheet ? (
+        <Sheet
+          open={browserOpen}
+          onOpenChange={(open) => {
+            if (!open && browserOpen) {
+              onToggleBrowser();
+            }
+          }}
+        >
+          <SheetPopup
+            side="right"
+            showCloseButton={false}
+            keepMounted
+            className="w-[min(92vw,920px)] max-w-[920px] p-0"
+          >
+            {browserOpen ? (
+              <BrowserPanel
+                threadId={activeThread.id}
+                active
+                cwd={gitCwd ?? activeProject?.cwd ?? null}
+                isAgentWorking={isWorking}
+                onClose={onToggleBrowser}
+                onStopAgent={() => void onInterrupt()}
+              />
+            ) : null}
+          </SheetPopup>
+        </Sheet>
+      ) : null}
 
       {expandedImage && expandedImageItem && (
         <div

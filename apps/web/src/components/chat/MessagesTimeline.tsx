@@ -41,8 +41,9 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
 import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
 import { useScrollFadeOverlays } from "../ui/useScrollFadeOverlays";
+import type { WorkGroupSummaryParts } from "./MessagesTimeline.logic";
 import {
-  buildWorkGroupSummary,
+  buildWorkGroupSummaryParts,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
   extractDelegatedAgentWorkflowCard,
@@ -82,6 +83,7 @@ const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const MIN_ROWS_FOR_VIRTUALIZATION = 120;
 const TIMELINE_ROW_GAP_CLASS = "pb-2";
 const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
+const EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID = new Map<MessageId, TurnDiffSummary>();
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
@@ -95,6 +97,7 @@ interface MessagesTimelineProps {
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  showTurnDiffActions?: boolean;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string, currentlyExpanded: boolean) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -132,6 +135,7 @@ function MessagesTimelineView({
   completionDividerBeforeEntryId,
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
+  showTurnDiffActions = true,
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
@@ -148,6 +152,9 @@ function MessagesTimelineView({
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+  const visibleTurnDiffSummaryByAssistantMessageId = showTurnDiffActions
+    ? turnDiffSummaryByAssistantMessageId
+    : EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID;
 
   useLayoutEffect(() => {
     const timelineRoot = timelineRootRef.current;
@@ -248,7 +255,7 @@ function MessagesTimelineView({
       return estimateMessagesTimelineRowHeight(row, {
         expandedWorkGroups,
         timelineWidthPx,
-        turnDiffSummaryByAssistantMessageId,
+        turnDiffSummaryByAssistantMessageId: visibleTurnDiffSummaryByAssistantMessageId,
       });
     },
     measureElement: measureVirtualElement,
@@ -427,9 +434,8 @@ function MessagesTimelineView({
       const isInProgress = isWorkRowInProgress(row);
       const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
       const formattedEntry = formatWorkEntry(parentEntry);
-      const summary = formattedEntry.detail
-        ? `${formattedEntry.action} ${formattedEntry.detail}`
-        : formattedEntry.action;
+      const leadingVerb = formattedEntry.action;
+      const summaryRest = formattedEntry.detail ?? "";
       const groupItemsId = `work-group-items-${groupId}`;
       const toggleCurrentGroup = () => {
         onToggleWorkGroup(groupId, isExpanded);
@@ -445,12 +451,21 @@ function MessagesTimelineView({
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
                   "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-                  "cursor-pointer hover:text-foreground/70 focus-visible:text-foreground",
+                  "cursor-pointer focus-visible:text-foreground",
+                  !isInProgress && "hover:text-foreground",
                 )}
                 onClick={toggleCurrentGroup}
               >
                 <span className={cn("truncate", isInProgress && "shimmer shimmer-spread-200")}>
-                  {summary}
+                  <span
+                    className={cn(
+                      "transition-colors duration-150",
+                      isInProgress && "group-hover:text-foreground",
+                    )}
+                  >
+                    {leadingVerb}
+                  </span>
+                  {summaryRest.length > 0 ? ` ${summaryRest}` : null}
                 </span>
               </button>
               <button
@@ -501,7 +516,7 @@ function MessagesTimelineView({
       }
       if (hasInlineEntries || rowIsInProgress) {
         const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
-        const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
+        const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
         const isEditGroup = entries.every(isFileChangeWorkEntry);
         return (
           <div className={wrapperClassName}>
@@ -556,7 +571,7 @@ function MessagesTimelineView({
 
     const isInProgress = isWorkRowInProgress(row);
     const isExpanded = depth > 0 || isWorkRowExpanded(row, expandedWorkGroups);
-    const summary = buildWorkGroupSummary(entries, row.stickyInProgress);
+    const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
     const groupItemsId = `work-group-items-${groupId}`;
     const isEditGroup = entries.every(isFileChangeWorkEntry);
 
@@ -701,7 +716,9 @@ function MessagesTimelineView({
                   isStreaming={Boolean(row.message.streaming)}
                 />
                 {(() => {
-                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                  const turnSummary = visibleTurnDiffSummaryByAssistantMessageId.get(
+                    row.message.id,
+                  );
                   if (!turnSummary) return null;
                   const checkpointFiles = turnSummary.files;
                   if (checkpointFiles.length === 0) return null;
@@ -2179,7 +2196,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
   groupItemsId: string;
   isExpanded: boolean;
   isInProgress: boolean;
-  summary: string;
+  summary: WorkGroupSummaryParts;
   nested?: boolean;
   inlineEntries?: WorkTimelineRow["inlineEntries"];
   markdownCwd: string | undefined;
@@ -2327,13 +2344,24 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
         className={cn(
           CHAT_THREAD_BODY_CLASS,
           "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
-          "cursor-pointer hover:text-foreground/70 focus-visible:text-foreground",
+          "cursor-pointer focus-visible:text-foreground",
+          !isInProgress && "hover:text-foreground",
         )}
         onClick={() => {
           onToggleGroup();
         }}
       >
-        <span className={cn(isInProgress && "shimmer shimmer-spread-200")}>{summary}</span>
+        <span className={cn(isInProgress && "shimmer shimmer-spread-200")}>
+          <span
+            className={cn(
+              "transition-colors duration-150",
+              isInProgress && "group-hover:text-foreground",
+            )}
+          >
+            {summary.leadingVerb}
+          </span>
+          {summary.rest.length > 0 ? ` ${summary.rest}` : null}
+        </span>
         <ChevronDownIcon
           className={cn(
             "size-3 shrink-0 opacity-0 transition-all duration-150 group-hover:opacity-100",

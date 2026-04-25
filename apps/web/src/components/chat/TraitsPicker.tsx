@@ -1,6 +1,7 @@
 import {
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
@@ -57,6 +58,9 @@ function getRawEffort(
   if (provider === "shiori") {
     return trimOrNull((modelOptions as ShioriModelOptions | undefined)?.reasoningEffort);
   }
+  if (provider === "cursor") {
+    return trimOrNull((modelOptions as CursorModelOptions | undefined)?.reasoning);
+  }
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
 }
 
@@ -66,6 +70,9 @@ function getRawContextWindow(
 ): string | null {
   if (provider === "claudeAgent") {
     return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.contextWindow);
+  }
+  if (provider === "cursor") {
+    return trimOrNull((modelOptions as CursorModelOptions | undefined)?.contextWindow);
   }
   return null;
 }
@@ -80,6 +87,9 @@ function buildNextOptions(
   }
   if (provider === "shiori") {
     return { ...(modelOptions as ShioriModelOptions | undefined), ...patch } as ShioriModelOptions;
+  }
+  if (provider === "cursor") {
+    return { ...(modelOptions as CursorModelOptions | undefined), ...patch } as CursorModelOptions;
   }
   return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
 }
@@ -107,7 +117,9 @@ function getSelectedTraits(
   const thinkingEnabled = caps.supportsThinkingToggle
     ? provider === "shiori"
       ? ((modelOptions as ShioriModelOptions | undefined)?.thinking ?? false)
-      : ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
+      : provider === "cursor"
+        ? ((modelOptions as CursorModelOptions | undefined)?.thinking ?? false)
+        : ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
     : null;
 
   // Fast mode
@@ -229,7 +241,12 @@ function useResolvedTraits(input: {
         const stripped = input.prompt.replace(/^Ultrathink:\s*/i, "");
         input.onPromptChange(stripped);
       }
-      const effortKey = input.provider === "claudeAgent" ? "effort" : "reasoningEffort";
+      const effortKey =
+        input.provider === "claudeAgent"
+          ? "effort"
+          : input.provider === "cursor"
+            ? "reasoning"
+            : "reasoningEffort";
       input.updateModelOptions(
         buildNextOptions(input.provider, input.modelOptions, {
           [effortKey]: nextOption.value,

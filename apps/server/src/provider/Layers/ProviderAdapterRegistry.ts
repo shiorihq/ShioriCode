@@ -17,6 +17,8 @@ import {
 } from "../Services/ProviderAdapterRegistry.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import { CursorAdapter } from "../Services/CursorAdapter.ts";
+import { GeminiAdapter } from "../Services/GeminiAdapter.ts";
 import { KimiCodeAdapter } from "../Services/KimiCodeAdapter.ts";
 import { ShioriAdapter } from "../Services/ShioriAdapter.ts";
 
@@ -30,7 +32,14 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
   const adapters =
     options?.adapters !== undefined
       ? options.adapters
-      : [yield* ShioriAdapter, yield* KimiCodeAdapter, yield* CodexAdapter, yield* ClaudeAdapter];
+      : [
+          yield* ShioriAdapter,
+          yield* KimiCodeAdapter,
+          yield* GeminiAdapter,
+          yield* CursorAdapter,
+          yield* CodexAdapter,
+          yield* ClaudeAdapter,
+        ];
   const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 
   const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (provider) => {

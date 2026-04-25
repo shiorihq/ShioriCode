@@ -417,7 +417,7 @@ export function shouldPrewarmThreadSession(
 export const Route = createFileRoute("/_chat/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<DiffRouteSearch>(["diff", "browser"])],
   },
   component: ChatThreadRouteView,
 });

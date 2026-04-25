@@ -4,9 +4,10 @@ export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
+  browser?: "1" | undefined;
 }
 
-function isDiffOpenValue(value: unknown): boolean {
+function isPanelOpenValue(value: unknown): boolean {
   return value === "1" || value === 1 || value === true;
 }
 
@@ -25,15 +26,24 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
   return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath">;
 }
 
+export function stripBrowserSearchParams<T extends Record<string, unknown>>(
+  params: T,
+): Omit<T, "browser"> {
+  const { browser: _browser, ...rest } = params;
+  return rest as Omit<T, "browser">;
+}
+
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
-  const diff = isDiffOpenValue(search.diff) ? "1" : undefined;
+  const diff = isPanelOpenValue(search.diff) ? "1" : undefined;
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId = diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
+  const browser = isPanelOpenValue(search.browser) ? "1" : undefined;
 
   return {
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
+    ...(browser ? { browser } : {}),
   };
 }

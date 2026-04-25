@@ -52,9 +52,8 @@ describe("AppSidebarLayout", () => {
       </AppSidebarLayout>,
     );
 
-    expect(html).toContain("-ml-px overflow-hidden rounded-tl-[var(--app-sidebar-shell-radius)]");
+    expect(html).toContain("-ml-px overflow-hidden rounded-l-[var(--app-sidebar-shell-radius)]");
     expect(html).toContain('data-app-chat-shell-with-sidebar="true"');
     expect(html).not.toContain('data-app-sidebar-content-shell="true"');
-    expect(html).not.toContain("rounded-bl-[var(--app-sidebar-shell-radius)]");
   });
 });

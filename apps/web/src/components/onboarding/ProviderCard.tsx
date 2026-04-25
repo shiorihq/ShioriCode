@@ -21,12 +21,16 @@ const STATUS_DOT_STYLES: Record<ServerProvider["status"], string> = {
 const PROVIDER_DESCRIPTIONS: Record<ProviderKind, string> = {
   shiori: "Shiori hosted API",
   kimiCode: "Kimi Code CLI",
+  gemini: "Google Gemini CLI",
+  cursor: "Cursor CLI",
   codex: "OpenAI Codex CLI",
   claudeAgent: "Anthropic Claude Code CLI",
 };
 
 const PROVIDER_INSTALL_INSTRUCTIONS: Partial<Record<ProviderKind, readonly string[]>> = {
   kimiCode: ["curl -LsSf https://code.kimi.com/install.sh | bash", "kimi login"],
+  gemini: ["npm install -g @google/gemini-cli", "gemini"],
+  cursor: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"],
   codex: ["npm install -g @openai/codex", "codex login"],
   claudeAgent: ["npm install -g @anthropic-ai/claude-code", "claude auth login"],
 };

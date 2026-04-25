@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type KimiCodeModelOptions,
   type ModelCapabilities,
   type ModelSelection,
@@ -138,6 +139,23 @@ export function normalizeClaudeModelOptionsWithCapabilities(
   const nextOptions: ClaudeModelOptions = {
     ...(thinking !== undefined ? { thinking } : {}),
     ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeCursorModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CursorModelOptions | null | undefined,
+): CursorModelOptions | undefined {
+  const reasoning = resolveEffort(caps, modelOptions?.reasoning);
+  const thinking = caps.supportsThinkingToggle ? (modelOptions?.thinking ?? false) : undefined;
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const nextOptions: CursorModelOptions = {
+    ...(thinking !== undefined ? { thinking } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(fastMode !== undefined ? { fastMode } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
   };

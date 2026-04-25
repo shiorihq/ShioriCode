@@ -208,6 +208,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           archived_at AS "archivedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
+        WHERE project_id IS NOT NULL
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -357,7 +358,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
-          (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+          (SELECT COUNT(*) FROM projection_threads WHERE project_id IS NOT NULL) AS "threadCount"
       `,
   });
 

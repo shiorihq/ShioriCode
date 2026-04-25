@@ -97,6 +97,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenuAction,
   SidebarMenu,
@@ -161,6 +162,34 @@ const SIDEBAR_ROW_META_CLASS = "ml-auto font-normal text-muted-foreground/50";
 type SidebarProjectSnapshot = Project & {
   expanded: boolean;
 };
+
+const SIDEBAR_LOADING_SECTIONS = [
+  {
+    label: "Chats",
+    rows: [
+      { id: "recent-chat-1", showIcon: false },
+      { id: "recent-chat-2", showIcon: false },
+      { id: "recent-chat-3", showIcon: false },
+      { id: "recent-chat-4", showIcon: false },
+    ],
+  },
+  {
+    label: "Pinned Projects",
+    rows: [
+      { id: "pinned-project-1", showIcon: true },
+      { id: "pinned-project-2", showIcon: true },
+    ],
+  },
+  {
+    label: "Projects",
+    rows: [
+      { id: "project-1", showIcon: true },
+      { id: "project-2", showIcon: true },
+      { id: "project-3", showIcon: true },
+    ],
+  },
+] as const;
+
 interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
@@ -222,6 +251,33 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
 function SidebarThreadBrailleLoader() {
   return (
     <BrailleLoader className="inline-flex size-3 shrink-0 items-center justify-center font-normal text-sm leading-none text-current opacity-70" />
+  );
+}
+
+function SidebarLoadingSkeleton({ className }: { className?: string }) {
+  return (
+    <div aria-label="Loading sidebar" className={cn("flex flex-col gap-3", className)}>
+      {SIDEBAR_LOADING_SECTIONS.map((section) => (
+        <div key={section.label} className="min-w-0">
+          <SidebarGroupLabel className="h-6 px-2 text-xs font-medium text-muted-foreground/60">
+            {section.label}
+          </SidebarGroupLabel>
+          <SidebarMenu className="gap-0.5">
+            {section.rows.map((row, index) => (
+              <SidebarMenuItem key={row.id}>
+                <SidebarMenuSkeleton className="h-7" showIcon={row.showIcon} />
+                {section.label === "Projects" && index < 2 ? (
+                  <SidebarMenuSub className="mx-0 my-0 mt-0.5 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
+                    <SidebarMenuSkeleton className="h-6" />
+                    <SidebarMenuSkeleton className="h-6" />
+                  </SidebarMenuSub>
+                ) : null}
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1795,7 +1851,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   render={<div role="button" tabIndex={0} />}
                   data-thread-selection-safe
                   size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60"
+                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-transparent hover:text-sidebar-foreground"
                   onClick={() => {
                     expandThreadListForProject(project.id);
                   }}
@@ -1812,7 +1868,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   render={<div role="button" tabIndex={0} />}
                   data-thread-selection-safe
                   size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60"
+                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-transparent hover:text-sidebar-foreground"
                   onClick={() => {
                     collapseThreadListForProject(project.id);
                   }}
@@ -2203,17 +2259,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
               )}
 
               {!bootstrapComplete ? (
-                <SidebarMenu className={projectListTopSpacingClassName}>
-                  {Array.from({ length: 3 }, (_, i) => (
-                    <SidebarMenuItem key={i}>
-                      <SidebarMenuSkeleton showIcon />
-                      <SidebarMenuSub className="mx-0 my-0 mt-0.5 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
-                        <SidebarMenuSkeleton />
-                        <SidebarMenuSkeleton />
-                      </SidebarMenuSub>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
+                <SidebarLoadingSkeleton className={projectListTopSpacingClassName} />
               ) : (
                 <DndContext
                   sensors={projectDnDSensors}

@@ -94,6 +94,14 @@ function createBaseServerConfig(): ServerConfig {
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },
         kimiCode: { enabled: true, binaryPath: "kimi", shareDir: "", customModels: [] },
+        gemini: {
+          enabled: true,
+          binaryPath: "gemini",
+          googleCloudProject: "",
+          acpFlag: "",
+          customModels: [],
+        },
+        cursor: { enabled: true, binaryPath: "agent", apiEndpoint: "", customModels: [] },
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
       },

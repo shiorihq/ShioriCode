@@ -246,6 +246,103 @@ it.layer(
       ),
     );
 
+    it.effect("uses codex app-server model/list for the visible Codex model catalog", () =>
+      Effect.gen(function* () {
+        yield* withTempCodexHome();
+        const status = yield* checkCodexProviderStatus(() =>
+          Effect.succeed({
+            account: {
+              type: "chatgpt" as const,
+              planType: "pro" as const,
+              sparkEnabled: true,
+            },
+            models: [
+              {
+                id: "gpt-5.5",
+                model: "gpt-5.5",
+                displayName: "GPT-5.5",
+                description: "Frontier model for complex coding.",
+                hidden: false,
+                supportedReasoningEfforts: [
+                  { reasoningEffort: "low", description: "Fast responses with lighter reasoning" },
+                  {
+                    reasoningEffort: "medium",
+                    description: "Balances speed and reasoning depth",
+                  },
+                  { reasoningEffort: "high", description: "Greater reasoning depth" },
+                  { reasoningEffort: "xhigh", description: "Extra high reasoning depth" },
+                ],
+                defaultReasoningEffort: "medium",
+                inputModalities: ["text", "image"],
+                additionalSpeedTiers: ["fast"],
+                isDefault: true,
+              },
+              {
+                id: "gpt-5.4-mini",
+                model: "gpt-5.4-mini",
+                displayName: "GPT-5.4-Mini",
+                description: "Small, fast, and cost-efficient model.",
+                hidden: false,
+                supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }],
+                defaultReasoningEffort: "medium",
+                inputModalities: ["text", "image"],
+                additionalSpeedTiers: [],
+                isDefault: false,
+              },
+              {
+                id: "gpt-5.3-codex",
+                model: "gpt-5.3-codex",
+                displayName: "gpt-5.3-codex",
+                description: "Coding-optimized model.",
+                hidden: false,
+                supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }],
+                defaultReasoningEffort: "medium",
+                inputModalities: ["text", "image"],
+                additionalSpeedTiers: [],
+                isDefault: false,
+              },
+              {
+                id: "internal-preview",
+                model: "internal-preview",
+                displayName: "Internal Preview",
+                description: null,
+                hidden: true,
+                supportedReasoningEfforts: [],
+                defaultReasoningEffort: null,
+                inputModalities: ["text"],
+                additionalSpeedTiers: [],
+                isDefault: false,
+              },
+            ],
+          }),
+        );
+
+        assert.strictEqual(status.models[0]?.slug, "gpt-5.5");
+        assert.strictEqual(status.models[0]?.name, "GPT-5.5");
+        assert.strictEqual(status.models[0]?.multiModal, true);
+        assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
+        assert.strictEqual(status.models[1]?.name, "GPT-5.4 Mini");
+        assert.strictEqual(status.models[2]?.name, "GPT-5.3 Codex");
+        assert.deepStrictEqual(
+          status.models[0]?.capabilities?.reasoningEffortLevels.find((level) => level.isDefault),
+          { value: "medium", label: "Medium", isDefault: true },
+        );
+        assert.strictEqual(
+          status.models.some((model) => model.slug === "internal-preview"),
+          false,
+        );
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+            if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("hides spark from codex models for unsupported chatgpt plans", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();

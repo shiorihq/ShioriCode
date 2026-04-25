@@ -421,7 +421,7 @@ export function resolveThreadRowClassName(input: {
     "sidebar-thread-row h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none transition-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
-    return cn(baseClassName, "sidebar-thread-row--selected-active text-foreground font-medium");
+    return cn(baseClassName, "sidebar-thread-row--selected-active text-foreground");
   }
 
   if (input.isSelected) {
@@ -429,7 +429,7 @@ export function resolveThreadRowClassName(input: {
   }
 
   if (input.isActive) {
-    return cn(baseClassName, "sidebar-thread-row--active text-foreground font-medium");
+    return cn(baseClassName, "sidebar-thread-row--active text-foreground");
   }
 
   return cn(baseClassName, "text-foreground");
