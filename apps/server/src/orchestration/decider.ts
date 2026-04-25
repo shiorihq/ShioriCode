@@ -146,11 +146,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      if (command.projectId !== null) {
+        yield* requireProject({
+          readModel,
+          command,
+          projectId: command.projectId,
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -205,6 +207,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          projectlessCwd: command.projectlessCwd ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -214,6 +217,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           branch: command.branch,
           worktreePath: command.worktreePath,
           tag: command.tag ?? null,
+          pinnedAt: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -342,6 +346,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           ...(command.tag !== undefined ? { tag: command.tag } : {}),
+          ...(command.pinnedAt !== undefined ? { pinnedAt: command.pinnedAt } : {}),
           updatedAt: occurredAt,
         },
       };

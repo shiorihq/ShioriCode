@@ -7,6 +7,8 @@ import {
   GitPullRequestIcon,
   CopyIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -165,19 +167,19 @@ type SidebarProjectSnapshot = Project & {
 
 const SIDEBAR_LOADING_SECTIONS = [
   {
+    label: "Pinned",
+    rows: [
+      { id: "pinned-thread-1", showIcon: false },
+      { id: "pinned-thread-2", showIcon: false },
+    ],
+  },
+  {
     label: "Chats",
     rows: [
       { id: "recent-chat-1", showIcon: false },
       { id: "recent-chat-2", showIcon: false },
       { id: "recent-chat-3", showIcon: false },
       { id: "recent-chat-4", showIcon: false },
-    ],
-  },
-  {
-    label: "Pinned Projects",
-    rows: [
-      { id: "pinned-project-1", showIcon: true },
-      { id: "pinned-project-2", showIcon: true },
     ],
   },
   {
@@ -281,6 +283,20 @@ function SidebarLoadingSkeleton({ className }: { className?: string }) {
   );
 }
 
+function SidebarSectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <SidebarGroupLabel className="h-6 px-2 text-xs font-medium text-muted-foreground/60">
+      {children}
+    </SidebarGroupLabel>
+  );
+}
+
+function SidebarSectionEmptyState({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-6 items-center px-2 text-sm text-muted-foreground/55">{children}</div>
+  );
+}
+
 const SIDEBAR_THREAD_STATUS_GLYPH_TRANSITION_MS = 220;
 
 function SidebarThreadStatusGlyph(props: {
@@ -363,6 +379,8 @@ interface SidebarThreadRowProps {
   commitRename: (threadId: ThreadId, newTitle: string, originalTitle: string) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadId: ThreadId) => Promise<void>;
+  isPinned: boolean;
+  onSetPinned: (threadId: ThreadId, pinned: boolean) => Promise<void>;
   openPrLink: (event: MouseEvent<HTMLElement>, prUrl: string) => void;
   pr: ThreadPr | null;
   setRenamingThreadId: (threadId: ThreadId | null) => void;
@@ -401,6 +419,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
   const isThreadBusy = isThreadRunning || hasPendingDispatch;
+  const isPinned = props.isPinned;
   const prStatus = prStatusIndicator(props.pr);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const threadStatusPill = resolveThreadStatusPill({
@@ -415,7 +434,11 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     : "pointer-events-none";
   const hasSubagents = subagentRows.length > 0;
   const threadWorkspacePath =
-    thread.worktreePath ?? projects.find((p) => p.id === thread.projectId)?.cwd ?? null;
+    thread.worktreePath ??
+    (thread.projectId !== null
+      ? projects.find((p) => p.id === thread.projectId)?.cwd
+      : thread.projectlessCwd) ??
+    null;
   const actionMenuAnchor = useMemo(
     () =>
       actionMenuPosition
@@ -654,6 +677,19 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                           <SquarePenIcon className="size-4" />
                           Mark unread
                         </MenuItem>
+                        <MenuItem
+                          className="grid grid-cols-[1rem_1fr] gap-2"
+                          onClick={() => {
+                            void props.onSetPinned(thread.id, !isPinned);
+                          }}
+                        >
+                          {isPinned ? (
+                            <PinOffIcon className="size-4" />
+                          ) : (
+                            <PinIcon className="size-4" />
+                          )}
+                          {isPinned ? "Unpin" : "Pin"}
+                        </MenuItem>
                       </MenuGroup>
                       <MenuGroup>
                         <MenuItem
@@ -692,6 +728,34 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                       </MenuGroup>
                     </MenuPopup>
                   </Menu>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          data-thread-selection-safe
+                          data-testid={`thread-pin-${thread.id}`}
+                          aria-label={`${isPinned ? "Unpin" : "Pin"} ${thread.title}`}
+                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void props.onSetPinned(thread.id, !isPinned);
+                          }}
+                        >
+                          {isPinned ? (
+                            <PinOffIcon className="size-3.5" />
+                          ) : (
+                            <PinIcon className="size-3.5" />
+                          )}
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">{isPinned ? "Unpin" : "Pin"}</TooltipPopup>
+                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -1166,6 +1230,32 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
     [],
   );
 
+  const setThreadPinned = useCallback(async (threadId: ThreadId, pinned: boolean) => {
+    const api = readNativeApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Thread pinning is unavailable.",
+      });
+      return;
+    }
+
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId,
+        pinnedAt: pinned ? new Date().toISOString() : null,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: pinned ? "Failed to pin thread" : "Failed to unpin thread",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
+  }, []);
+
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -1422,7 +1512,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
           projectThreadIds
             .map((threadId) => sidebarThreadsById[threadId])
             .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-            .filter((thread) => thread.archivedAt === null),
+            .filter((thread) => thread.archivedAt === null && thread.pinnedAt === null),
           appSettings.sidebarThreadSortOrder,
         );
         const activeThreadId = routeThreadId ?? undefined;
@@ -1474,10 +1564,57 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
       threadIdsByProjectId,
     ],
   );
-  const visibleSidebarThreadIds = useMemo(
+  const pinnedThreads = useMemo(() => {
+    const threads = sortThreadsForSidebar(
+      visibleThreads.filter((thread) => thread.pinnedAt !== null),
+      appSettings.sidebarThreadSortOrder,
+    );
+    return threads.toSorted((left, right) => {
+      const leftPinnedAt = Date.parse(left.pinnedAt ?? "");
+      const rightPinnedAt = Date.parse(right.pinnedAt ?? "");
+      return (
+        (Number.isNaN(rightPinnedAt) ? 0 : rightPinnedAt) -
+        (Number.isNaN(leftPinnedAt) ? 0 : leftPinnedAt)
+      );
+    });
+  }, [appSettings.sidebarThreadSortOrder, visibleThreads]);
+  const orderedPinnedThreadIds = useMemo(
+    () => pinnedThreads.map((thread) => thread.id),
+    [pinnedThreads],
+  );
+  const chatThreads = useMemo(
+    () =>
+      sortThreadsForSidebar(
+        visibleThreads.filter((thread) => thread.projectId === null && thread.pinnedAt === null),
+        appSettings.sidebarThreadSortOrder,
+      ),
+    [appSettings.sidebarThreadSortOrder, visibleThreads],
+  );
+  const renderedChatThreadIds = useMemo(
+    () => chatThreads.slice(0, THREAD_PREVIEW_LIMIT).map((thread) => thread.id),
+    [chatThreads],
+  );
+  const orderedChatThreadIds = useMemo(() => chatThreads.map((thread) => thread.id), [chatThreads]);
+  const visibleProjectSidebarThreadIds = useMemo(
     () => getVisibleSidebarThreadIds(renderedProjects),
     [renderedProjects],
   );
+  const visibleSidebarThreadIds = useMemo(() => {
+    const seenThreadIds = new Set<ThreadId>();
+    const orderedThreadIds: ThreadId[] = [];
+    for (const threadId of [
+      ...orderedPinnedThreadIds,
+      ...renderedChatThreadIds,
+      ...visibleProjectSidebarThreadIds,
+    ]) {
+      if (seenThreadIds.has(threadId)) {
+        continue;
+      }
+      seenThreadIds.add(threadId);
+      orderedThreadIds.push(threadId);
+    }
+    return orderedThreadIds;
+  }, [orderedPinnedThreadIds, renderedChatThreadIds, visibleProjectSidebarThreadIds]);
   const visibleSidebarThreadsForGit = useMemo(
     () =>
       visibleSidebarThreadIds
@@ -1490,7 +1627,12 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
       visibleSidebarThreadsForGit.map((thread) => ({
         threadId: thread.id,
         branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+        cwd:
+          thread.worktreePath ??
+          (thread.projectId !== null
+            ? projectCwdById.get(thread.projectId)
+            : thread.projectlessCwd) ??
+          null,
       })),
     [projectCwdById, visibleSidebarThreadsForGit],
   );
@@ -1814,6 +1956,8 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   commitRename={commitRename}
                   cancelRename={cancelRename}
                   attemptArchiveThread={attemptArchiveThread}
+                  isPinned={sidebarThreadsById[threadId]?.pinnedAt != null}
+                  onSetPinned={setThreadPinned}
                   openPrLink={openPrLink}
                   pr={prByThreadId.get(threadId) ?? null}
                   setRenamingThreadId={setRenamingThreadId}
@@ -1880,6 +2024,115 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
           </SidebarMenuSub>
         </AnimatedExpandPanel>
       </>
+    );
+  }
+
+  function renderThreadRows(threadIds: readonly ThreadId[], orderedThreadIds: readonly ThreadId[]) {
+    return threadIds.map((threadId) => (
+      <SidebarThreadRow
+        key={threadId}
+        threadId={threadId}
+        orderedProjectThreadIds={orderedThreadIds}
+        routeThreadId={routeThreadId}
+        selectedThreadIds={selectedThreadIds}
+        showThreadJumpHints={showThreadJumpHints}
+        jumpLabel={threadJumpLabelById.get(threadId) ?? null}
+        renamingThreadId={renamingThreadId}
+        renamingTitle={renamingTitle}
+        setRenamingTitle={setRenamingTitle}
+        renamingInputRef={renamingInputRef}
+        renamingCommittedRef={renamingCommittedRef}
+        handleThreadClick={handleThreadClick}
+        navigateToThread={navigateToThread}
+        clearSelection={clearSelection}
+        commitRename={commitRename}
+        cancelRename={cancelRename}
+        attemptArchiveThread={attemptArchiveThread}
+        isPinned={sidebarThreadsById[threadId]?.pinnedAt != null}
+        onSetPinned={setThreadPinned}
+        openPrLink={openPrLink}
+        pr={prByThreadId.get(threadId) ?? null}
+        setRenamingThreadId={setRenamingThreadId}
+        onBranchThread={async (id: ThreadId) => {
+          try {
+            await branchThread(id);
+          } catch (error) {
+            toastManager.add({
+              type: "error",
+              title: "Could not branch thread",
+              description: error instanceof Error ? error.message : "An unknown error occurred.",
+            });
+          }
+        }}
+        onMarkThreadUnread={(id: ThreadId) => {
+          const thread = sidebarThreadsById[id];
+          if (thread) {
+            markThreadUnread(id, thread.latestTurn?.completedAt);
+          }
+        }}
+        onCopyPath={(path: string) => {
+          copyPathToClipboard(path, { path });
+        }}
+        onCopyThreadId={(id: ThreadId) => {
+          copyThreadIdToClipboard(id, { threadId: id });
+        }}
+      />
+    ));
+  }
+
+  function renderPinnedThreadsSection() {
+    if (orderedPinnedThreadIds.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="min-w-0">
+        <SidebarSectionLabel>Pinned</SidebarSectionLabel>
+        <SidebarMenu className="gap-0.5">
+          {renderThreadRows(orderedPinnedThreadIds, orderedPinnedThreadIds)}
+        </SidebarMenu>
+      </div>
+    );
+  }
+
+  function renderChatsSection() {
+    return (
+      <div className="min-w-0">
+        <SidebarSectionLabel>Chats</SidebarSectionLabel>
+        {renderedChatThreadIds.length === 0 ? (
+          <SidebarSectionEmptyState>No chats yet</SidebarSectionEmptyState>
+        ) : (
+          <SidebarMenu className="gap-0.5">
+            {renderThreadRows(renderedChatThreadIds, orderedChatThreadIds)}
+          </SidebarMenu>
+        )}
+      </div>
+    );
+  }
+
+  function renderProjectSection(
+    label: "Projects",
+    projectsToRender: typeof renderedProjects,
+    emptyLabel: string,
+  ) {
+    return (
+      <div className="min-w-0">
+        <SidebarSectionLabel>{label}</SidebarSectionLabel>
+        {projectsToRender.length === 0 ? (
+          <SidebarSectionEmptyState>{emptyLabel}</SidebarSectionEmptyState>
+        ) : (
+          <SidebarMenu className="gap-0.5">
+            {projectsToRender.map((renderedProject) => (
+              <SortableProjectItem
+                key={renderedProject.project.id}
+                projectId={renderedProject.project.id}
+              >
+                {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
+              </SortableProjectItem>
+            ))}
+          </SidebarMenu>
+        )}
+      </div>
     );
   }
 
@@ -2261,35 +2514,24 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
               {!bootstrapComplete ? (
                 <SidebarLoadingSkeleton className={projectListTopSpacingClassName} />
               ) : (
-                <DndContext
-                  sensors={projectDnDSensors}
-                  collisionDetection={projectCollisionDetection}
-                  modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                  onDragStart={handleProjectDragStart}
-                  onDragEnd={handleProjectDragEnd}
-                  onDragCancel={handleProjectDragCancel}
-                >
-                  <SidebarMenu className={projectListTopSpacingClassName}>
+                <div className={cn("flex flex-col gap-3", projectListTopSpacingClassName)}>
+                  {renderPinnedThreadsSection()}
+                  {renderChatsSection()}
+                  <DndContext
+                    sensors={projectDnDSensors}
+                    collisionDetection={projectCollisionDetection}
+                    modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                    onDragStart={handleProjectDragStart}
+                    onDragEnd={handleProjectDragEnd}
+                    onDragCancel={handleProjectDragCancel}
+                  >
                     <SortableContext
                       items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
                       strategy={verticalListSortingStrategy}
                     >
-                      {renderedProjects.map((renderedProject) => (
-                        <SortableProjectItem
-                          key={renderedProject.project.id}
-                          projectId={renderedProject.project.id}
-                        >
-                          {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
-                        </SortableProjectItem>
-                      ))}
+                      {renderProjectSection("Projects", renderedProjects, "No projects yet")}
                     </SortableContext>
-                  </SidebarMenu>
-                </DndContext>
-              )}
-
-              {bootstrapComplete && projects.length === 0 && !shouldShowProjectPathEntry && (
-                <div className="px-2 pt-4 text-center text-sm text-muted-foreground/60">
-                  No projects yet
+                  </DndContext>
                 </div>
               )}
             </SidebarGroup>

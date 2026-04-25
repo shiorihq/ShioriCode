@@ -38,7 +38,7 @@ export interface StartupThreadSelectionInput {
 }
 
 export interface StartupThreadSelection {
-  readonly projectId: ProjectId;
+  readonly projectId: ProjectId | null;
   readonly threadId: ThreadId;
 }
 

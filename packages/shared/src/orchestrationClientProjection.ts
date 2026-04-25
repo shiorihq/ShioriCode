@@ -330,6 +330,7 @@ export function mapThreadToClientThread(
     id: thread.id,
     codexThreadId: null,
     projectId: thread.projectId,
+    projectlessCwd: thread.projectlessCwd ?? null,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
@@ -341,6 +342,7 @@ export function mapThreadToClientThread(
     error: thread.session?.lastError ?? null,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
@@ -391,12 +393,14 @@ export function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary 
   return {
     id: thread.id,
     projectId: thread.projectId,
+    projectlessCwd: thread.projectlessCwd,
     title: thread.title,
     interactionMode: thread.interactionMode,
     session: thread.session,
     resumeState: thread.resumeState ?? "resumed",
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     parentThreadId: thread.parentThreadId ?? null,
@@ -421,6 +425,9 @@ export function buildThreadIdsByProjectId(
 ): Record<string, ThreadId[]> {
   const threadIdsByProjectId: Record<string, ThreadId[]> = {};
   for (const thread of threads) {
+    if (thread.projectId === null) {
+      continue;
+    }
     const existingThreadIds = threadIdsByProjectId[thread.projectId] ?? EMPTY_THREAD_IDS;
     threadIdsByProjectId[thread.projectId] = [...existingThreadIds, thread.id];
   }
@@ -454,6 +461,9 @@ export function projectReadModelToClientSnapshot(
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
+      if (thread.projectId === null) {
+        return mapThreadToClientThread(thread, options);
+      }
       const canonicalProjectId =
         canonicalProjectIdByProjectId.get(thread.projectId) ?? thread.projectId;
       return canonicalProjectId === thread.projectId

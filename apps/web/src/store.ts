@@ -128,6 +128,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     id: thread.id,
     codexThreadId: null,
     projectId: thread.projectId,
+    projectlessCwd: thread.projectlessCwd ?? null,
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
@@ -139,6 +140,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     error: thread.session?.lastError ?? null,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
+    pinnedAt: thread.pinnedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
@@ -168,12 +170,14 @@ function sidebarThreadSummariesEqual(
     left !== undefined &&
     left.id === right.id &&
     left.projectId === right.projectId &&
+    left.projectlessCwd === right.projectlessCwd &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     left.session === right.session &&
     left.resumeState === right.resumeState &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
+    left.pinnedAt === right.pinnedAt &&
     left.updatedAt === right.updatedAt &&
     left.latestTurn === right.latestTurn &&
     left.parentThreadId === right.parentThreadId &&
@@ -189,9 +193,12 @@ function sidebarThreadSummariesEqual(
 
 function appendThreadIdByProjectId(
   threadIdsByProjectId: Record<string, ThreadId[]>,
-  projectId: ProjectId,
+  projectId: ProjectId | null,
   threadId: ThreadId,
 ): Record<string, ThreadId[]> {
+  if (projectId === null) {
+    return threadIdsByProjectId;
+  }
   const existingThreadIds = threadIdsByProjectId[projectId] ?? EMPTY_THREAD_IDS;
   if (existingThreadIds.includes(threadId)) {
     return threadIdsByProjectId;
@@ -204,9 +211,12 @@ function appendThreadIdByProjectId(
 
 function removeThreadIdByProjectId(
   threadIdsByProjectId: Record<string, ThreadId[]>,
-  projectId: ProjectId,
+  projectId: ProjectId | null,
   threadId: ThreadId,
 ): Record<string, ThreadId[]> {
+  if (projectId === null) {
+    return threadIdsByProjectId;
+  }
   const existingThreadIds = threadIdsByProjectId[projectId] ?? EMPTY_THREAD_IDS;
   if (!existingThreadIds.includes(threadId)) {
     return threadIdsByProjectId;
@@ -231,6 +241,9 @@ function removeThreadIdByProjectId(
 function buildThreadIdsByProjectId(threads: ReadonlyArray<Thread>): Record<string, ThreadId[]> {
   const threadIdsByProjectId: Record<string, ThreadId[]> = {};
   for (const thread of threads) {
+    if (thread.projectId === null) {
+      continue;
+    }
     const existingThreadIds = threadIdsByProjectId[thread.projectId] ?? EMPTY_THREAD_IDS;
     threadIdsByProjectId[thread.projectId] = [...existingThreadIds, thread.id];
   }
@@ -762,6 +775,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       const createdThread = mapThread({
         id: event.payload.threadId,
         projectId: event.payload.projectId,
+        projectlessCwd: event.payload.projectlessCwd ?? null,
         title: event.payload.title,
         modelSelection: event.payload.modelSelection,
         runtimeMode: event.payload.runtimeMode,
@@ -775,6 +789,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         latestTurn: null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
+        pinnedAt: event.payload.pinnedAt ?? null,
         archivedAt: null,
         deletedAt: null,
         messages: [],
@@ -873,6 +888,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           ? { worktreePath: event.payload.worktreePath }
           : {}),
         ...(event.payload.tag !== undefined ? { tag: event.payload.tag } : {}),
+        ...(event.payload.pinnedAt !== undefined ? { pinnedAt: event.payload.pinnedAt } : {}),
         updatedAt: event.payload.updatedAt,
       }));
     }

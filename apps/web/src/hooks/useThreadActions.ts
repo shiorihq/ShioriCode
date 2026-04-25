@@ -56,10 +56,14 @@ export function useThreadActions() {
       });
 
       if (routeThreadId === threadId) {
-        await handleNewThread(thread.projectId);
+        if (thread.projectId === null) {
+          await navigate({ to: "/" });
+        } else {
+          await handleNewThread(thread.projectId);
+        }
       }
     },
-    [handleNewThread, routeThreadId],
+    [handleNewThread, navigate, routeThreadId],
   );
 
   const unarchiveThread = useCallback(async (threadId: ThreadId) => {
@@ -88,6 +92,9 @@ export function useThreadActions() {
       }
       if (thread.archivedAt !== null) {
         throw new Error("Archived threads cannot be branched.");
+      }
+      if (thread.projectId === null) {
+        throw new Error("Projectless chats cannot be branched yet.");
       }
       const threadProject = projects.find((project) => project.id === thread.projectId);
       if (!threadProject) {
@@ -168,7 +175,10 @@ export function useThreadActions() {
       const { projects, threads } = useStore.getState();
       const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) return;
-      const threadProject = projects.find((project) => project.id === thread.projectId);
+      const threadProject =
+        thread.projectId === null
+          ? undefined
+          : projects.find((project) => project.id === thread.projectId);
       const deletedIds = opts.deletedThreadIds;
       const survivingThreads =
         deletedIds && deletedIds.size > 0
@@ -221,7 +231,9 @@ export function useThreadActions() {
         threadId,
       });
       clearComposerDraftForThread(threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
+      if (thread.projectId !== null) {
+        clearProjectDraftThreadById(thread.projectId, thread.id);
+      }
       clearTerminalState(threadId);
 
       if (shouldNavigateToFallback) {

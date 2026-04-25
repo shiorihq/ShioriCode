@@ -191,7 +191,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           thread_id AS "threadId",
+          workspace_kind AS "workspaceKind",
           project_id AS "projectId",
+          projectless_cwd AS "projectlessCwd",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -205,10 +207,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          pinned_at AS "pinnedAt",
           archived_at AS "archivedAt",
           deleted_at AS "deletedAt"
         FROM projection_threads
-        WHERE project_id IS NOT NULL
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -358,7 +360,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
-          (SELECT COUNT(*) FROM projection_threads WHERE project_id IS NOT NULL) AS "threadCount"
+          (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
       `,
   });
 
@@ -672,6 +674,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
             id: row.threadId,
             projectId: row.projectId,
+            projectlessCwd: row.projectlessCwd,
             title: row.title,
             modelSelection: row.modelSelection,
             runtimeMode: row.runtimeMode,
@@ -684,6 +687,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
+            pinnedAt: row.pinnedAt,
             archivedAt: row.archivedAt,
             deletedAt: row.deletedAt,
             messages: messagesByThread.get(row.threadId) ?? [],

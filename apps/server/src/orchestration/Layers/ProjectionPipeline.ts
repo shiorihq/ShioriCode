@@ -453,7 +453,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.created":
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
+            workspaceKind: event.payload.projectId === null ? "projectless" : "project",
             projectId: event.payload.projectId,
+            projectlessCwd: event.payload.projectlessCwd,
             title: event.payload.title,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
@@ -467,6 +469,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            pinnedAt: event.payload.pinnedAt,
             archivedAt: null,
             deletedAt: null,
           });
@@ -520,6 +523,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { worktreePath: event.payload.worktreePath }
               : {}),
             ...(event.payload.tag !== undefined ? { tag: event.payload.tag } : {}),
+            ...(event.payload.pinnedAt !== undefined ? { pinnedAt: event.payload.pinnedAt } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

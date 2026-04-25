@@ -356,10 +356,6 @@ body {
   background: transparent;
 }
 
-[data-app-chat-shell-with-sidebar] {
-  border-left: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
-}
-
 [data-app-chat-shell-with-sidebar]::before {
   content: "";
   position: absolute;
@@ -373,8 +369,19 @@ body {
     inset 12px 0 18px -18px color-mix(in srgb, var(--color-black) 14%, transparent);
 }
 
-:root[data-sidebar-translucent] [data-app-chat-shell-with-sidebar] {
-  border-left-color: color-mix(in srgb, var(--foreground) 26%, transparent);
+[data-app-chat-shell-with-sidebar]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
+  border-right: 0;
+  border-radius: var(--app-sidebar-shell-radius) 0 0 var(--app-sidebar-shell-radius);
+  clip-path: inset(0 calc(100% - var(--app-sidebar-shell-radius) - 1px) 0 0);
+  pointer-events: none;
+}
+
+:root[data-sidebar-translucent] [data-app-chat-shell-with-sidebar]::after {
+  border-color: color-mix(in srgb, var(--foreground) 26%, transparent);
 }
 
 .dark [data-app-chat-shell-with-sidebar]::before {

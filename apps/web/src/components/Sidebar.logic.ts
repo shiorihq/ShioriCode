@@ -716,6 +716,9 @@ export function sortProjectsForSidebar<
 
   const threadsByProjectId = new Map<string, TThread[]>();
   for (const thread of threads) {
+    if (thread.projectId === null) {
+      continue;
+    }
     const existing = threadsByProjectId.get(thread.projectId) ?? [];
     existing.push(thread);
     threadsByProjectId.set(thread.projectId, existing);

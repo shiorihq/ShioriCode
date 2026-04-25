@@ -92,7 +92,8 @@ export interface Project {
 export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
+  projectlessCwd: string | null;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -104,6 +105,7 @@ export interface Thread {
   error: string | null;
   createdAt: string;
   archivedAt: string | null;
+  pinnedAt: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
@@ -119,13 +121,15 @@ export interface Thread {
 
 export interface SidebarThreadSummary {
   id: ThreadId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
+  projectlessCwd: string | null;
   title: string;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   resumeState: OrchestrationThreadResumeState;
   createdAt: string;
   archivedAt: string | null;
+  pinnedAt: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   parentThreadId: ThreadId | null;

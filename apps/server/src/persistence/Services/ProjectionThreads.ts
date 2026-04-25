@@ -23,7 +23,11 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 
 export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
-  projectId: ProjectId,
+  workspaceKind: Schema.Literals(["project", "projectless"]).pipe(
+    Schema.withDecodingDefault(() => "project" as const),
+  ),
+  projectId: Schema.NullOr(ProjectId),
+  projectlessCwd: Schema.NullOr(Schema.String),
   title: Schema.String,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -39,6 +43,7 @@ export const ProjectionThread = Schema.Struct({
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  pinnedAt: Schema.NullOr(IsoDateTime),
   archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
 });

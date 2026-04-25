@@ -29,7 +29,7 @@ import {
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
-type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+type ThreadPatch = Partial<Omit<OrchestrationThread, "id">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -257,6 +257,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            projectlessCwd: payload.projectlessCwd,
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
@@ -270,6 +271,7 @@ export function projectEvent(
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
+            pinnedAt: payload.pinnedAt,
             archivedAt: null,
             deletedAt: null,
             messages: [],
@@ -334,6 +336,7 @@ export function projectEvent(
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             ...(payload.tag !== undefined ? { tag: payload.tag } : {}),
+            ...(payload.pinnedAt !== undefined ? { pinnedAt: payload.pinnedAt } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
