@@ -239,12 +239,12 @@ function createSnapshotForTargetUser(options: {
     const attachments =
       isTarget && (options.targetAttachmentCount ?? 0) > 0
         ? Array.from({ length: options.targetAttachmentCount ?? 0 }, (_, attachmentIndex) => ({
-          type: "image" as const,
-          id: `attachment-${attachmentIndex + 1}`,
-          name: `attachment-${attachmentIndex + 1}.png`,
-          mimeType: "image/png",
-          sizeBytes: 128,
-        }))
+            type: "image" as const,
+            id: `attachment-${attachmentIndex + 1}`,
+            name: `attachment-${attachmentIndex + 1}.png`,
+            mimeType: "image/png",
+            sizeBytes: 128,
+          }))
         : undefined;
 
     messages.push(
@@ -525,19 +525,19 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
     threads: snapshot.threads.map((thread) =>
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
-          proposedPlans: [
-            {
-              id: "plan-browser-test",
-              turnId: null,
-              planMarkdown,
-              implementedAt: null,
-              implementationThreadId: null,
-              createdAt: isoAt(1_000),
-              updatedAt: isoAt(1_001),
-            },
-          ],
-          updatedAt: isoAt(1_001),
-        })
+            proposedPlans: [
+              {
+                id: "plan-browser-test",
+                turnId: null,
+                planMarkdown,
+                implementedAt: null,
+                implementationThreadId: null,
+                createdAt: isoAt(1_000),
+                updatedAt: isoAt(1_001),
+              },
+            ],
+            updatedAt: isoAt(1_001),
+          })
         : thread,
     ),
   };
@@ -554,59 +554,59 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
     threads: snapshot.threads.map((thread) =>
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
-          interactionMode: "plan",
-          session: {
-            ...thread.session,
-            status: "running",
-          },
-          activities: [
-            {
-              id: EventId.makeUnsafe("activity-user-input-requested"),
-              tone: "info",
-              kind: "user-input.requested",
-              summary: "User input requested",
-              payload: {
-                requestId: "req-browser-user-input",
-                questions: [
-                  {
-                    id: "scope",
-                    header: "Scope",
-                    question: "What should this change cover?",
-                    options: [
-                      {
-                        label: "Tight",
-                        description: "Touch only the footer layout logic.",
-                      },
-                      {
-                        label: "Broad",
-                        description: "Also adjust the related composer controls.",
-                      },
-                    ],
-                  },
-                  {
-                    id: "risk",
-                    header: "Risk",
-                    question: "How aggressive should the imaginary plan be?",
-                    options: [
-                      {
-                        label: "Conservative",
-                        description: "Favor reliability and low-risk changes.",
-                      },
-                      {
-                        label: "Balanced",
-                        description: "Mix quick wins with one structural improvement.",
-                      },
-                    ],
-                  },
-                ],
-              },
-              turnId: null,
-              sequence: 1,
-              createdAt: isoAt(1_000),
+            interactionMode: "plan",
+            session: {
+              ...thread.session,
+              status: "running",
             },
-          ],
-          updatedAt: isoAt(1_000),
-        })
+            activities: [
+              {
+                id: EventId.makeUnsafe("activity-user-input-requested"),
+                tone: "info",
+                kind: "user-input.requested",
+                summary: "User input requested",
+                payload: {
+                  requestId: "req-browser-user-input",
+                  questions: [
+                    {
+                      id: "scope",
+                      header: "Scope",
+                      question: "What should this change cover?",
+                      options: [
+                        {
+                          label: "Tight",
+                          description: "Touch only the footer layout logic.",
+                        },
+                        {
+                          label: "Broad",
+                          description: "Also adjust the related composer controls.",
+                        },
+                      ],
+                    },
+                    {
+                      id: "risk",
+                      header: "Risk",
+                      question: "How aggressive should the imaginary plan be?",
+                      options: [
+                        {
+                          label: "Conservative",
+                          description: "Favor reliability and low-risk changes.",
+                        },
+                        {
+                          label: "Balanced",
+                          description: "Mix quick wins with one structural improvement.",
+                        },
+                      ],
+                    },
+                  ],
+                },
+                turnId: null,
+                sequence: 1,
+                createdAt: isoAt(1_000),
+              },
+            ],
+            updatedAt: isoAt(1_000),
+          })
         : thread,
     ),
   };
@@ -623,33 +623,33 @@ function createSnapshotWithPlanFollowUpPrompt(): OrchestrationReadModel {
     threads: snapshot.threads.map((thread) =>
       thread.id === THREAD_ID
         ? Object.assign({}, thread, {
-          interactionMode: "plan",
-          latestTurn: {
-            turnId: "turn-plan-follow-up" as TurnId,
-            state: "completed",
-            requestedAt: isoAt(1_000),
-            startedAt: isoAt(1_001),
-            completedAt: isoAt(1_010),
-            assistantMessageId: null,
-          },
-          proposedPlans: [
-            {
-              id: "plan-follow-up-browser-test",
+            interactionMode: "plan",
+            latestTurn: {
               turnId: "turn-plan-follow-up" as TurnId,
-              planMarkdown: "# Follow-up plan\n\n- Keep the composer footer stable on resize.",
-              implementedAt: null,
-              implementationThreadId: null,
-              createdAt: isoAt(1_002),
-              updatedAt: isoAt(1_003),
+              state: "completed",
+              requestedAt: isoAt(1_000),
+              startedAt: isoAt(1_001),
+              completedAt: isoAt(1_010),
+              assistantMessageId: null,
             },
-          ],
-          session: {
-            ...thread.session,
-            status: "ready",
+            proposedPlans: [
+              {
+                id: "plan-follow-up-browser-test",
+                turnId: "turn-plan-follow-up" as TurnId,
+                planMarkdown: "# Follow-up plan\n\n- Keep the composer footer stable on resize.",
+                implementedAt: null,
+                implementationThreadId: null,
+                createdAt: isoAt(1_002),
+                updatedAt: isoAt(1_003),
+              },
+            ],
+            session: {
+              ...thread.session,
+              status: "ready",
+              updatedAt: isoAt(1_010),
+            },
             updatedAt: isoAt(1_010),
-          },
-          updatedAt: isoAt(1_010),
-        })
+          })
         : thread,
     ),
   };
@@ -3444,7 +3444,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
         expect(
           hitTarget instanceof Element &&
-          (collapsedToggle === hitTarget || collapsedToggle.contains(hitTarget)),
+            (collapsedToggle === hitTarget || collapsedToggle.contains(hitTarget)),
         ).toBe(true);
       });
     } finally {

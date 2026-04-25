@@ -27,7 +27,9 @@ describe("parsePullRequestReference", () => {
 
   it("accepts gh pr checkout commands with GitHub pull request URLs", () => {
     expect(
-      parsePullRequestReference("gh pr checkout https://github.com/FujiwaraChoki/shioricode/pull/42"),
+      parsePullRequestReference(
+        "gh pr checkout https://github.com/FujiwaraChoki/shioricode/pull/42",
+      ),
     ).toBe("https://github.com/FujiwaraChoki/shioricode/pull/42");
   });
 
