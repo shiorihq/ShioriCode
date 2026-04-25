@@ -209,6 +209,22 @@ export const AssistantPersonality = Schema.Literals([
 export type AssistantPersonality = typeof AssistantPersonality.Type;
 export const DEFAULT_ASSISTANT_PERSONALITY: AssistantPersonality = "default";
 
+export const ComputerUseSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  requireApproval: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+});
+export type ComputerUseSettings = typeof ComputerUseSettings.Type;
+
+export const BrowserUseSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+});
+export type BrowserUseSettings = typeof BrowserUseSettings.Type;
+
+export const MobileAppSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+});
+export type MobileAppSettings = typeof MobileAppSettings.Type;
+
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -395,6 +411,9 @@ export const ServerSettings = Schema.Struct({
     })),
   ),
   onboarding: OnboardingProgress.pipe(Schema.withDecodingDefault(() => ({}))),
+  computerUse: ComputerUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  browserUse: BrowserUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  mobileApp: MobileAppSettings.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -538,6 +557,19 @@ const OnboardingProgressPatch = Schema.Struct({
   dismissed: Schema.optionalKey(Schema.Boolean),
 });
 
+const ComputerUseSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  requireApproval: Schema.optionalKey(Schema.Boolean),
+});
+
+const BrowserUseSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+
+const MobileAppSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   generateMemories: Schema.optionalKey(Schema.Boolean),
@@ -547,6 +579,9 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(ModelSelectionPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   onboarding: Schema.optionalKey(OnboardingProgressPatch),
+  computerUse: Schema.optionalKey(ComputerUseSettingsPatch),
+  browserUse: Schema.optionalKey(BrowserUseSettingsPatch),
+  mobileApp: Schema.optionalKey(MobileAppSettingsPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

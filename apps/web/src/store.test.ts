@@ -52,9 +52,12 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 function makeState(thread: Thread): AppState {
-  const threadIdsByProjectId: AppState["threadIdsByProjectId"] = {
-    [thread.projectId]: [thread.id],
-  };
+  const threadIdsByProjectId: AppState["threadIdsByProjectId"] =
+    thread.projectId === null
+      ? {}
+      : {
+          [thread.projectId]: [thread.id],
+        };
   return {
     projects: [
       {

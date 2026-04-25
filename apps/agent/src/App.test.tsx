@@ -119,6 +119,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    projectlessCwd: null,
     title: "Thread One",
     modelSelection: {
       provider: "codex",
@@ -148,6 +149,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     error: null,
     createdAt: "2026-04-17T10:00:00.000Z",
     archivedAt: null,
+    pinnedAt: null,
     updatedAt: "2026-04-17T10:00:00.000Z",
     latestTurn: null,
     parentThreadId: null,

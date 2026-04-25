@@ -152,7 +152,12 @@ export async function main(rawArgs: string[]): Promise<void> {
         .filter((thread) => (projectId ? thread.projectId === projectId : true))
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
       for (const thread of threads) {
-        console.log(formatThreadLine(thread, projectsById.get(thread.projectId)));
+        console.log(
+          formatThreadLine(
+            thread,
+            thread.projectId === null ? undefined : projectsById.get(thread.projectId),
+          ),
+        );
       }
     });
     return;

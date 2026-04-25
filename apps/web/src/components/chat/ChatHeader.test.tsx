@@ -22,6 +22,7 @@ describe("ChatHeader", () => {
           terminalToggleShortcutLabel={null}
           browserToggleShortcutLabel={null}
           diffToggleShortcutLabel={null}
+          browserEnabled={true}
           browserOpen={false}
           diffOpen={false}
           isBranchedThread={false}
@@ -59,6 +60,7 @@ describe("ChatHeader", () => {
           terminalToggleShortcutLabel={null}
           browserToggleShortcutLabel={null}
           diffToggleShortcutLabel={null}
+          browserEnabled={true}
           browserOpen={false}
           diffOpen={false}
           isBranchedThread={false}
@@ -89,6 +91,7 @@ describe("ChatHeader", () => {
           terminalToggleShortcutLabel={null}
           browserToggleShortcutLabel={null}
           diffToggleShortcutLabel={null}
+          browserEnabled={true}
           browserOpen={false}
           diffOpen={false}
           isBranchedThread={false}
@@ -105,5 +108,37 @@ describe("ChatHeader", () => {
 
     expect(html).toContain("Browser");
     expect(html).not.toContain("View diff");
+  });
+
+  it("does not render the browser control when browser use is disabled", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <ChatHeader
+          activeThreadTitle="Thread title"
+          activeProjectPath="/tmp/workspace"
+          isGitRepo={true}
+          openInCwd="/tmp/workspace"
+          keybindings={[]}
+          availableEditors={[]}
+          terminalToggleShortcutLabel={null}
+          browserToggleShortcutLabel={null}
+          diffToggleShortcutLabel={null}
+          browserEnabled={false}
+          browserOpen={false}
+          diffOpen={false}
+          isBranchedThread={false}
+          parentThread={null}
+          missingParentThread={null}
+          childThreads={[]}
+          onBranchThread={null}
+          onNavigateToThread={() => undefined}
+          onToggleBrowser={() => undefined}
+          onToggleDiff={() => undefined}
+        />
+      </SidebarProvider>,
+    );
+
+    expect(html).not.toContain("Browser");
+    expect(html).toContain("View diff");
   });
 });

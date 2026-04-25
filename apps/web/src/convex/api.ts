@@ -79,6 +79,11 @@ export const hostedCurrentUserQuery = makeFunctionReference(
   "users:getCurrentUser",
 ) as PublicQueryReference<Record<string, never>, HostedViewer | null>;
 
+export const hostedFlagGetQuery = makeFunctionReference("flags:get") as PublicQueryReference<
+  { key: string },
+  boolean
+>;
+
 export const hostedUpdateProfileMutation = makeFunctionReference(
   "users:updateProfile",
 ) as PublicMutationReference<{ name?: string; image?: string }, { success: boolean }>;

@@ -988,8 +988,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
+  const { authToken: hostedShioriAuthToken, browserUseEnabled } = useHostedShioriState();
   const diffOpen = rawSearch.diff === "1";
-  const browserOpen = rawSearch.browser === "1";
+  const browserOpen = browserUseEnabled && rawSearch.browser === "1";
   const shouldUseBrowserSheet = useMediaQuery(BROWSER_PANEL_SHEET_MEDIA_QUERY);
   const activeThreadId = activeThread?.id ?? null;
   const { serverThreadIds, parentThread, childThreads } = useThreadRelations({
@@ -1162,7 +1163,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const serverConfig = useServerConfig();
   const providerStatuses = useMergedServerProviders(serverConfig?.providers ?? EMPTY_PROVIDERS);
   const hasRequestedBackgroundProviderRefreshRef = useRef(false);
-  const { authToken: hostedShioriAuthToken } = useHostedShioriState();
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider ?? "codex",
@@ -2156,6 +2156,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [diffOpen, isProjectThread, navigate, threadId]);
   const onToggleBrowser = useCallback(() => {
+    if (!browserUseEnabled) {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        replace: true,
+        search: (previous) => stripBrowserSearchParams(previous),
+      });
+      return;
+    }
+
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -2165,7 +2175,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return browserOpen ? rest : { ...rest, browser: "1" };
       },
     });
-  }, [browserOpen, navigate, threadId]);
+  }, [browserOpen, browserUseEnabled, navigate, threadId]);
+  useEffect(() => {
+    if (browserUseEnabled || rawSearch.browser !== "1") {
+      return;
+    }
+
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => stripBrowserSearchParams(previous),
+    });
+  }, [browserUseEnabled, navigate, rawSearch.browser, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3206,6 +3228,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       if (command === "browser.toggle") {
+        if (!browserUseEnabled) {
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         onToggleBrowser();
@@ -3222,6 +3247,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setTerminalOpen,
     splitTerminal,
     keybindings,
+    browserUseEnabled,
     onToggleBrowser,
     onToggleDiff,
     toggleInteractionMode,
@@ -3528,11 +3554,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
       return;
     }
-    if (!activeProject) return;
+    if (!isServerThread && !activeProject) return;
+    const activeProjectForSend = activeProject;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
+      activeProjectForSend && isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
         ? activeThread.branch
         : null;
 
@@ -3710,11 +3737,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
+      if (baseBranchForWorktree && activeProjectForSend) {
         beginLocalDispatch({ preparingWorktree: true });
         const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
+          cwd: activeProjectForSend.cwd,
           branch: baseBranchForWorktree,
           newBranch,
         });
@@ -3735,11 +3762,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       if (isLocalDraftThread && !hasMaterializedServerThread) {
+        if (!activeProjectForSend) {
+          return;
+        }
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: threadIdForSend,
-          projectId: activeProject.id,
+          projectId: activeProjectForSend.id,
           title,
           modelSelection: draftThreadCreateModelSelection,
           runtimeMode,
@@ -4845,6 +4875,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           browserToggleShortcutLabel={browserPanelShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
+          browserEnabled={browserUseEnabled}
           browserOpen={browserOpen}
           diffOpen={diffOpen}
           isBranchedThread={activeThread.parentThreadId !== null}
@@ -5436,7 +5467,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </div>
         {/* end chat column */}
 
-        {!shouldUseBrowserSheet && browserOpen ? (
+        {browserUseEnabled && !shouldUseBrowserSheet && browserOpen ? (
           <div
             className={cn(
               "hidden min-h-0 shrink-0 border-l border-border bg-card text-foreground md:flex",
@@ -5489,7 +5520,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         />
       ))}
 
-      {shouldUseBrowserSheet ? (
+      {browserUseEnabled && shouldUseBrowserSheet ? (
         <Sheet
           open={browserOpen}
           onOpenChange={(open) => {

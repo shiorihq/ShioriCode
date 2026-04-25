@@ -31,6 +31,7 @@ interface ChatHeaderProps {
   terminalToggleShortcutLabel: string | null;
   browserToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
+  browserEnabled: boolean;
   browserOpen: boolean;
   diffOpen: boolean;
   isBranchedThread: boolean;
@@ -53,6 +54,7 @@ export const ChatHeader = memo(function ChatHeader({
   terminalToggleShortcutLabel: _terminalToggleShortcutLabel,
   browserToggleShortcutLabel,
   diffToggleShortcutLabel,
+  browserEnabled,
   browserOpen,
   diffOpen,
   isBranchedThread,
@@ -185,28 +187,30 @@ export const ChatHeader = memo(function ChatHeader({
             <GroupSeparator />
           </>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 px-2.5"
-                pressed={browserOpen}
-                onPressedChange={onToggleBrowser}
-                aria-label="Toggle browser panel"
-                variant="outline"
-                size="xs"
-              >
-                <GlobeIcon className="size-3" />
-                Browser
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {browserToggleShortcutLabel
-              ? `Toggle browser panel (${browserToggleShortcutLabel})`
-              : "Toggle browser panel"}
-          </TooltipPopup>
-        </Tooltip>
+        {browserEnabled ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0 px-2.5"
+                  pressed={browserOpen}
+                  onPressedChange={onToggleBrowser}
+                  aria-label="Toggle browser panel"
+                  variant="outline"
+                  size="xs"
+                >
+                  <GlobeIcon className="size-3" />
+                  Browser
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {browserToggleShortcutLabel
+                ? `Toggle browser panel (${browserToggleShortcutLabel})`
+                : "Toggle browser panel"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {canShowDiffToggle && (
           <Tooltip>
             <TooltipTrigger

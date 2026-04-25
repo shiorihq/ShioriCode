@@ -51,7 +51,14 @@ import { type SidebarProjectSortOrder, type SidebarThreadSortOrder } from "contr
 import { isElectron } from "../env";
 import { APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { cn, isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import {
+  cn,
+  isLinuxPlatform,
+  isMacPlatform,
+  newCommandId,
+  newProjectId,
+  newThreadId,
+} from "../lib/utils";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -143,7 +150,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
-import type { Project } from "../types";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project } from "../types";
 import { normalizeProjectTitle } from "shared/String";
 import { ShioriWordmark } from "./ShioriWordmark";
 
@@ -164,6 +171,8 @@ const SIDEBAR_ROW_META_CLASS = "ml-auto font-normal text-muted-foreground/50";
 type SidebarProjectSnapshot = Project & {
   expanded: boolean;
 };
+
+type SidebarSectionKey = "pinned" | "chats" | "projects";
 
 const SIDEBAR_LOADING_SECTIONS = [
   {
@@ -283,11 +292,37 @@ function SidebarLoadingSkeleton({ className }: { className?: string }) {
   );
 }
 
-function SidebarSectionLabel({ children }: { children: ReactNode }) {
+function SidebarSectionHeader(props: {
+  children: ReactNode;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    props.onToggle();
+  };
+
   return (
-    <SidebarGroupLabel className="h-6 px-2 text-xs font-medium text-muted-foreground/60">
-      {children}
-    </SidebarGroupLabel>
+    <div className="flex h-6 min-w-0 items-center px-2 text-xs font-medium text-muted-foreground/60">
+      <span
+        role="button"
+        tabIndex={0}
+        aria-expanded={!props.collapsed}
+        className="group/section-header inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-sm hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={props.onToggle}
+        onKeyDown={handleKeyDown}
+      >
+        <span className="min-w-0 truncate">{props.children}</span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 opacity-0 group-hover/section-header:opacity-100 group-focus-visible/section-header:opacity-100",
+            props.collapsed ? "-rotate-90" : "rotate-0",
+          )}
+        />
+      </span>
+    </div>
   );
 }
 
@@ -430,7 +465,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     },
   });
   const threadMetaClassName = !isThreadBusy
-    ? "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
+    ? "pointer-events-none group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
     : "pointer-events-none";
   const hasSubagents = subagentRows.length > 0;
   const threadWorkspacePath =
@@ -587,7 +622,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
             )}
             <div className="flex min-w-12 justify-end">
               {!isThreadBusy ? (
-                <div className="pointer-events-none absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                <div className="pointer-events-none absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   {hasSubagents ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -602,7 +637,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                                 : `Expand subagents for ${thread.title}`
                             }
                             aria-expanded={subagentsExpanded}
-                            className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                            className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                             onPointerDown={(event) => {
                               event.stopPropagation();
                             }}
@@ -736,7 +771,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                           data-thread-selection-safe
                           data-testid={`thread-pin-${thread.id}`}
                           aria-label={`${isPinned ? "Unpin" : "Pin"} ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                           onPointerDown={(event) => {
                             event.stopPropagation();
                           }}
@@ -764,7 +799,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                           onPointerDown={(event) => {
                             event.stopPropagation();
                           }}
@@ -840,7 +875,7 @@ function ProjectSortMenu({
           render={
             <MenuTrigger
               className={cn(
-                "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-foreground transition-colors",
+                "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-foreground",
                 SIDEBAR_HOVER_SURFACE_CLASS,
               )}
             />
@@ -978,6 +1013,9 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<
+    ReadonlySet<SidebarSectionKey>
+  >(() => new Set());
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
@@ -1031,6 +1069,66 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
     () => (isMacPlatform(platform) ? "⌘K" : "Ctrl K"),
     [platform],
   );
+  const toggleSidebarSection = useCallback((section: SidebarSectionKey) => {
+    setCollapsedSidebarSections((current) => {
+      const next = new Set(current);
+      if (next.has(section)) {
+        next.delete(section);
+      } else {
+        next.add(section);
+      }
+      return next;
+    });
+  }, []);
+  const createProjectlessChat = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to create chat",
+      });
+      return;
+    }
+
+    const threadId = newThreadId();
+    const createdAt = new Date().toISOString();
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId,
+        projectId: null,
+        projectlessCwd: null,
+        title: "New Chat",
+        modelSelection: appSettings.defaultModelSelection,
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        parentThreadId: null,
+        branchSourceTurnId: null,
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      setCollapsedSidebarSections((current) => {
+        if (!current.has("chats")) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete("chats");
+        return next;
+      });
+      await navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Failed to create chat",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
+  }, [appSettings.defaultModelSelection, navigate]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1512,7 +1610,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
           projectThreadIds
             .map((threadId) => sidebarThreadsById[threadId])
             .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-            .filter((thread) => thread.archivedAt === null && thread.pinnedAt === null),
+            .filter((thread) => thread.archivedAt === null && thread.pinnedAt == null),
           appSettings.sidebarThreadSortOrder,
         );
         const activeThreadId = routeThreadId ?? undefined;
@@ -1566,7 +1664,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
   );
   const pinnedThreads = useMemo(() => {
     const threads = sortThreadsForSidebar(
-      visibleThreads.filter((thread) => thread.pinnedAt !== null),
+      visibleThreads.filter((thread) => thread.pinnedAt != null),
       appSettings.sidebarThreadSortOrder,
     );
     return threads.toSorted((left, right) => {
@@ -1585,7 +1683,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
   const chatThreads = useMemo(
     () =>
       sortThreadsForSidebar(
-        visibleThreads.filter((thread) => thread.projectId === null && thread.pinnedAt === null),
+        visibleThreads.filter((thread) => thread.projectId === null && thread.pinnedAt == null),
         appSettings.sidebarThreadSortOrder,
       ),
     [appSettings.sidebarThreadSortOrder, visibleThreads],
@@ -1595,16 +1693,25 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
     [chatThreads],
   );
   const orderedChatThreadIds = useMemo(() => chatThreads.map((thread) => thread.id), [chatThreads]);
+  const visiblePinnedSidebarThreadIds = useMemo(
+    () => (collapsedSidebarSections.has("pinned") ? [] : orderedPinnedThreadIds),
+    [collapsedSidebarSections, orderedPinnedThreadIds],
+  );
+  const visibleChatSidebarThreadIds = useMemo(
+    () => (collapsedSidebarSections.has("chats") ? [] : renderedChatThreadIds),
+    [collapsedSidebarSections, renderedChatThreadIds],
+  );
   const visibleProjectSidebarThreadIds = useMemo(
-    () => getVisibleSidebarThreadIds(renderedProjects),
-    [renderedProjects],
+    () =>
+      collapsedSidebarSections.has("projects") ? [] : getVisibleSidebarThreadIds(renderedProjects),
+    [collapsedSidebarSections, renderedProjects],
   );
   const visibleSidebarThreadIds = useMemo(() => {
     const seenThreadIds = new Set<ThreadId>();
     const orderedThreadIds: ThreadId[] = [];
     for (const threadId of [
-      ...orderedPinnedThreadIds,
-      ...renderedChatThreadIds,
+      ...visiblePinnedSidebarThreadIds,
+      ...visibleChatSidebarThreadIds,
       ...visibleProjectSidebarThreadIds,
     ]) {
       if (seenThreadIds.has(threadId)) {
@@ -1614,7 +1721,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
       orderedThreadIds.push(threadId);
     }
     return orderedThreadIds;
-  }, [orderedPinnedThreadIds, renderedChatThreadIds, visibleProjectSidebarThreadIds]);
+  }, [visibleChatSidebarThreadIds, visiblePinnedSidebarThreadIds, visibleProjectSidebarThreadIds]);
   const visibleSidebarThreadsForGit = useMemo(
     () =>
       visibleSidebarThreadIds
@@ -1830,7 +1937,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
             </span>
             <ChevronDownIcon
               aria-hidden
-              className={`pointer-events-none size-3.5 shrink-0 text-foreground/45 opacity-0 transition-[transform,opacity] duration-200 group-hover/project-name:opacity-100 group-focus-visible/project-name:opacity-100 ${
+              className={`pointer-events-none size-3.5 shrink-0 text-foreground/45 opacity-0 group-hover/project-name:opacity-100 group-focus-visible/project-name:opacity-100 ${
                 project.expanded ? "rotate-0" : "-rotate-90"
               }`}
             />
@@ -1912,7 +2019,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                   {!emptyThreadStateLabel.includes("archived") && (
                     <button
                       type="button"
-                      className="ml-auto inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground/80 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      className="ml-auto inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -2085,27 +2192,64 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
       return null;
     }
 
+    const isCollapsed = collapsedSidebarSections.has("pinned");
     return (
       <div className="min-w-0">
-        <SidebarSectionLabel>Pinned</SidebarSectionLabel>
-        <SidebarMenu className="gap-0.5">
-          {renderThreadRows(orderedPinnedThreadIds, orderedPinnedThreadIds)}
-        </SidebarMenu>
+        <SidebarSectionHeader
+          collapsed={isCollapsed}
+          onToggle={() => toggleSidebarSection("pinned")}
+        >
+          Pinned
+        </SidebarSectionHeader>
+        {!isCollapsed ? (
+          <SidebarMenu className="gap-0.5">
+            {renderThreadRows(orderedPinnedThreadIds, orderedPinnedThreadIds)}
+          </SidebarMenu>
+        ) : null}
       </div>
     );
   }
 
   function renderChatsSection() {
+    const isCollapsed = collapsedSidebarSections.has("chats");
     return (
-      <div className="min-w-0">
-        <SidebarSectionLabel>Chats</SidebarSectionLabel>
-        {renderedChatThreadIds.length === 0 ? (
+      <div className="group/chats-section min-w-0">
+        <div className="relative">
+          <SidebarSectionHeader
+            collapsed={isCollapsed}
+            onToggle={() => toggleSidebarSection("chats")}
+          >
+            Chats
+          </SidebarSectionHeader>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="New chat"
+                  data-testid="new-chat-button"
+                  className="absolute top-0 right-1 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 opacity-0 hover:bg-sidebar-hover hover:text-sidebar-hover-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring group-hover/chats-section:opacity-100"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void createProjectlessChat();
+                  }}
+                >
+                  <SquarePenIcon className="size-3.5" />
+                </button>
+              }
+            />
+            <TooltipPopup side="top">New chat</TooltipPopup>
+          </Tooltip>
+        </div>
+        {!isCollapsed && renderedChatThreadIds.length === 0 ? (
           <SidebarSectionEmptyState>No chats yet</SidebarSectionEmptyState>
-        ) : (
+        ) : null}
+        {!isCollapsed && renderedChatThreadIds.length > 0 ? (
           <SidebarMenu className="gap-0.5">
             {renderThreadRows(renderedChatThreadIds, orderedChatThreadIds)}
           </SidebarMenu>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -2115,12 +2259,19 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
     projectsToRender: typeof renderedProjects,
     emptyLabel: string,
   ) {
+    const isCollapsed = collapsedSidebarSections.has("projects");
     return (
       <div className="min-w-0">
-        <SidebarSectionLabel>{label}</SidebarSectionLabel>
-        {projectsToRender.length === 0 ? (
+        <SidebarSectionHeader
+          collapsed={isCollapsed}
+          onToggle={() => toggleSidebarSection("projects")}
+        >
+          {label}
+        </SidebarSectionHeader>
+        {!isCollapsed && projectsToRender.length === 0 ? (
           <SidebarSectionEmptyState>{emptyLabel}</SidebarSectionEmptyState>
-        ) : (
+        ) : null}
+        {!isCollapsed && projectsToRender.length > 0 ? (
           <SidebarMenu className="gap-0.5">
             {projectsToRender.map((renderedProject) => (
               <SortableProjectItem
@@ -2131,7 +2282,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
               </SortableProjectItem>
             ))}
           </SidebarMenu>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -2333,7 +2484,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
           render={
             <Link
               aria-label="Go to threads"
-              className="flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
+              className="flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md outline-hidden ring-ring hover:text-foreground focus-visible:ring-2"
               to="/"
             >
               <ShioriWordmark />
@@ -2461,7 +2612,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                     <button
                       type="button"
                       className={cn(
-                        "mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-sm text-foreground/80 transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60",
+                        "mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-sm text-foreground/80 disabled:cursor-not-allowed disabled:opacity-60",
                         SIDEBAR_HOVER_SURFACE_CLASS,
                       )}
                       onClick={() => void handlePickFolder()}
@@ -2496,7 +2647,7 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
                     />
                     <button
                       type="button"
-                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                       onClick={handleAddProject}
                       disabled={!canAddProject}
                     >

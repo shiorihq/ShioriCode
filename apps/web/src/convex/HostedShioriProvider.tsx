@@ -7,6 +7,7 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 
 import {
+  hostedFlagGetQuery,
   hostedCurrentUserQuery,
   hostedModelsListQuery,
   hostedUserWithUsageQuery,
@@ -42,6 +43,9 @@ interface HostedShioriState {
   subscriptionPlanLabel: string | null;
   authToken: string | null;
   viewer: HostedViewer | null | undefined;
+  mobileAppEnabled: boolean;
+  browserUseEnabled: boolean;
+  computerUseEnabled: boolean;
   catalogProviders: ReadonlyArray<HostedCatalogProvider> | undefined;
   signIn: ConvexAuthActionsContext["signIn"];
   signOut: ConvexAuthActionsContext["signOut"];
@@ -61,6 +65,9 @@ const HostedShioriContext = createContext<HostedShioriState>({
   subscriptionPlanLabel: null,
   authToken: null,
   viewer: null,
+  mobileAppEnabled: false,
+  browserUseEnabled: false,
+  computerUseEnabled: false,
   catalogProviders: undefined,
   signIn: noopSignIn,
   signOut: noopSignOut,
@@ -71,6 +78,18 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   const authToken = useAuthToken();
   const normalizedAuthToken = normalizeHostedShioriAuthToken(authToken);
   const viewer = useQuery(hostedCurrentUserQuery, {});
+  const mobileAppEnabledFlag = useQuery(
+    hostedFlagGetQuery,
+    isAuthenticated ? { key: "shioricode_mobile_enabled" } : "skip",
+  );
+  const browserUseEnabledFlag = useQuery(
+    hostedFlagGetQuery,
+    isAuthenticated ? { key: "shioricode_browser_use_enabled" } : "skip",
+  );
+  const computerUseEnabledFlag = useQuery(
+    hostedFlagGetQuery,
+    isAuthenticated ? { key: "shioricode_computer_use_enabled" } : "skip",
+  );
   const userWithUsage = useQuery(hostedUserWithUsageQuery, isAuthenticated ? {} : "skip");
   const subscriptionPlanId =
     !isAuthenticated || userWithUsage === undefined
@@ -89,6 +108,40 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setNativeApiWebConnectGate(isAuthenticated);
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+
+    if (
+      isAuthenticated &&
+      (mobileAppEnabledFlag === undefined ||
+        browserUseEnabledFlag === undefined ||
+        computerUseEnabledFlag === undefined)
+    ) {
+      return;
+    }
+
+    const computerUseAvailable = isAuthenticated && computerUseEnabledFlag === true;
+
+    void api.server.updateSettings({
+      browserUse: {
+        enabled: isAuthenticated && browserUseEnabledFlag === true,
+      },
+      mobileApp: {
+        enabled: isAuthenticated && mobileAppEnabledFlag === true,
+      },
+      ...(computerUseAvailable
+        ? {}
+        : {
+            computerUse: {
+              enabled: false,
+            },
+          }),
+    });
+  }, [browserUseEnabledFlag, computerUseEnabledFlag, isAuthenticated, mobileAppEnabledFlag]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -115,6 +168,9 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       subscriptionPlanLabel,
       authToken: normalizedAuthToken,
       viewer,
+      mobileAppEnabled: mobileAppEnabledFlag === true,
+      browserUseEnabled: isAuthenticated && browserUseEnabledFlag === true,
+      computerUseEnabled: isAuthenticated && computerUseEnabledFlag === true,
       catalogProviders,
       signIn,
       signOut,
@@ -126,6 +182,9 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       isPaidSubscriber,
       isSubscriptionLoading,
       normalizedAuthToken,
+      browserUseEnabledFlag,
+      computerUseEnabledFlag,
+      mobileAppEnabledFlag,
       signIn,
       signOut,
       subscriptionPlanId,
