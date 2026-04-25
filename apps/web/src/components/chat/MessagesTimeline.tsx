@@ -436,6 +436,7 @@ function MessagesTimelineView({
       const formattedEntry = formatWorkEntry(parentEntry);
       const leadingVerb = formattedEntry.action;
       const summaryRest = formattedEntry.detail ?? "";
+      const summaryLabel = summaryRest.length > 0 ? `${leadingVerb} ${summaryRest}` : leadingVerb;
       const groupItemsId = `work-group-items-${groupId}`;
       const toggleCurrentGroup = () => {
         onToggleWorkGroup(groupId, isExpanded);
@@ -448,6 +449,7 @@ function MessagesTimelineView({
             <div className="flex items-center gap-1">
               <button
                 type="button"
+                aria-label={summaryLabel}
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
                   "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
@@ -2341,6 +2343,9 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
         type="button"
         aria-controls={groupItemsId}
         aria-expanded={isExpanded}
+        aria-label={
+          summary.rest.length > 0 ? `${summary.leadingVerb} ${summary.rest}` : summary.leadingVerb
+        }
         className={cn(
           CHAT_THREAD_BODY_CLASS,
           "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
