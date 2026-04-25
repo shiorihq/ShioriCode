@@ -29,6 +29,8 @@ function makeSettings(overrides: Partial<ClientSettings> = {}): ClientSettings {
     darkThemeId: DEFAULT_DARK_THEME_ID,
     uiFontFamily: DEFAULT_UI_FONT_FAMILY,
     codeFontFamily: DEFAULT_CODE_FONT_FAMILY,
+    threadDoneNotificationSoundEnabled: false,
+    threadDoneNotificationSound: "chime",
     importedThemes: [],
     ...overrides,
   };

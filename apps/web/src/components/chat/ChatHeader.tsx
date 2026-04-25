@@ -69,6 +69,9 @@ export const ChatHeader = memo(function ChatHeader({
   const hasArchivedChildren = childThreads.some((thread) => thread.archivedAt !== null);
   const childCountLabel =
     childThreads.length === 1 ? "1 branch" : `${childThreads.length} branches`;
+  const canShowBranchButton = onBranchThread !== null;
+  const canShowOpenInPicker = Boolean(activeProjectPath);
+  const canShowBrowserToggle = browserEnabled;
   const canShowDiffToggle = Boolean(activeProjectPath);
 
   return (
@@ -155,7 +158,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <Group className="shrink-0" aria-label="Thread actions">
-        {onBranchThread && (
+        {canShowBranchButton ? (
           <>
             <Tooltip>
               <TooltipTrigger
@@ -174,42 +177,47 @@ export const ChatHeader = memo(function ChatHeader({
               />
               <TooltipPopup side="bottom">Create a linked child thread</TooltipPopup>
             </Tooltip>
-            <GroupSeparator />
+            {canShowOpenInPicker || canShowBrowserToggle || canShowDiffToggle ? (
+              <GroupSeparator />
+            ) : null}
           </>
-        )}
-        {activeProjectPath && (
+        ) : null}
+        {canShowOpenInPicker ? (
           <>
             <OpenInPicker
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={openInCwd}
             />
-            <GroupSeparator />
+            {canShowBrowserToggle || canShowDiffToggle ? <GroupSeparator /> : null}
           </>
-        )}
-        {browserEnabled ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0 px-2.5"
-                  pressed={browserOpen}
-                  onPressedChange={onToggleBrowser}
-                  aria-label="Toggle browser panel"
-                  variant="outline"
-                  size="xs"
-                >
-                  <GlobeIcon className="size-3" />
-                  Browser
-                </Toggle>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {browserToggleShortcutLabel
-                ? `Toggle browser panel (${browserToggleShortcutLabel})`
-                : "Toggle browser panel"}
-            </TooltipPopup>
-          </Tooltip>
+        ) : null}
+        {canShowBrowserToggle ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0 px-2.5"
+                    pressed={browserOpen}
+                    onPressedChange={onToggleBrowser}
+                    aria-label="Toggle browser panel"
+                    variant="outline"
+                    size="xs"
+                  >
+                    <GlobeIcon className="size-3" />
+                    Browser
+                  </Toggle>
+                }
+              />
+              <TooltipPopup side="bottom">
+                {browserToggleShortcutLabel
+                  ? `Toggle browser panel (${browserToggleShortcutLabel})`
+                  : "Toggle browser panel"}
+              </TooltipPopup>
+            </Tooltip>
+            {canShowDiffToggle ? <GroupSeparator /> : null}
+          </>
         ) : null}
         {canShowDiffToggle && (
           <Tooltip>

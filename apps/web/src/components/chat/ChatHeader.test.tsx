@@ -141,4 +141,36 @@ describe("ChatHeader", () => {
     expect(html).not.toContain("Browser");
     expect(html).toContain("View diff");
   });
+
+  it("does not render a trailing group separator when fork is the only action", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <ChatHeader
+          activeThreadTitle="Thread title"
+          activeProjectPath={undefined}
+          isGitRepo={false}
+          openInCwd={null}
+          keybindings={[]}
+          availableEditors={[]}
+          terminalToggleShortcutLabel={null}
+          browserToggleShortcutLabel={null}
+          diffToggleShortcutLabel={null}
+          browserEnabled={false}
+          browserOpen={false}
+          diffOpen={false}
+          isBranchedThread={false}
+          parentThread={null}
+          missingParentThread={null}
+          childThreads={[]}
+          onBranchThread={() => undefined}
+          onNavigateToThread={() => undefined}
+          onToggleBrowser={() => undefined}
+          onToggleDiff={() => undefined}
+        />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain("Fork");
+    expect(html).not.toContain('data-slot="separator"');
+  });
 });

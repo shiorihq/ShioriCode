@@ -176,7 +176,8 @@ export default function BrowserPanel({
 
   useEffect(() => {
     const api = readNativeApi();
-    if (!api?.browserPanel) {
+    const browserPanel = api?.browserPanel;
+    if (!browserPanel) {
       return;
     }
 
@@ -186,7 +187,7 @@ export default function BrowserPanel({
       value?: unknown,
       error?: string,
     ) => {
-      void api.browserPanel.completeCommand({
+      void browserPanel.completeCommand({
         id: request.id,
         threadId: request.threadId,
         ok,
@@ -222,7 +223,7 @@ export default function BrowserPanel({
       }
     };
 
-    return api.browserPanel.onNavigateRequest((request) => {
+    return browserPanel.onNavigateRequest((request) => {
       void executeCommand(request);
     });
   }, [threadId]);

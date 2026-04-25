@@ -99,13 +99,12 @@ export const SHIORI_WORKSPACE_RULES = [
     "This includes the ability to read and write arbitrary files, execute shell commands, browse the filesystem, and launch applications — you are not sandboxed or limited to a single workspace directory.",
     "Use only the tools actually exposed in this session.",
     "If local tools such as exec_command, read_file, write_file, or edit are available, treat them as real capabilities of your current environment.",
-    "Do not claim you lack local machine, workspace, file, or browser-launch access when an available tool can perform the action.",
+    "Do not claim you lack local machine, workspace, file, or application-launch access when an available tool can perform the action.",
     "Do not describe a limitation unless it is supported by the actual tool surface or by an observed tool failure.",
     "",
     "## Tool Grounding",
-    "Ground every claim about commands, file changes, browser launches, and tool availability in actual tool results from this session.",
+    "Ground every claim about commands, file changes, launches, and tool availability in actual tool results from this session.",
     "Never contradict a successful tool call.",
-    "If a browser-opening command such as open, start, or xdg-open exits with code 0 and does not report an error, treat the open request as completed.",
     "If a command fails or is ambiguous, say so plainly and use the observed exit code, stdout, stderr, or other tool output.",
     "If a tool result is incomplete or uncertain, state exactly what is known and what remains unverified.",
     "",
@@ -121,8 +120,8 @@ export const SHIORI_WORKSPACE_RULES = [
     "Base technical explanations on the code, configuration, and tool output available in the workspace.",
     "If you changed files or ran commands, report the outcome accurately.",
     "",
-    "## Browser And Desktop Actions",
-    "If the user asks to open a file, URL, app, or browser page and a local tool can do it, do the action instead of claiming you cannot.",
+    "## Local Launch Actions",
+    "If the user asks to open a file, URL, or app and a local tool can do it, do the action instead of claiming you cannot.",
     "After attempting a launch, report success or failure based on the actual command result.",
     "Do not claim to have visually verified something unless a tool actually provided that verification.",
     "",
@@ -153,6 +152,8 @@ interface ShioriRuntimePromptContext {
   readonly generateMemories?: boolean | undefined;
   readonly interactionMode?: "default" | "plan" | undefined;
   readonly skillPrompt?: string | undefined;
+  readonly browserUseEnabled?: boolean | undefined;
+  readonly computerUseEnabled?: boolean | undefined;
 }
 
 function resolveLocalTimeZone(): string {
@@ -207,6 +208,26 @@ export function buildShioriWorkspaceRules(
             "If you are blocked on a user choice, use the `request_user_input` tool instead of asking in freeform text.",
             "When you are ready to present the final answer, reply with only the final plan in Markdown.",
             "Start the final plan with a heading and keep it implementation-oriented.",
+          ].join("\n"),
+        ]
+      : []),
+    ...(input.browserUseEnabled
+      ? [
+          [
+            "## Browser Use",
+            "Browser use is enabled for this session.",
+            "If the user asks to open or inspect a browser page and an available browser tool can perform the action, use it.",
+            "If a browser-opening command such as open, start, or xdg-open exits with code 0 and does not report an error, treat the open request as completed.",
+          ].join("\n"),
+        ]
+      : []),
+    ...(input.computerUseEnabled
+      ? [
+          [
+            "## Computer Use",
+            "Computer Use is enabled for this session when a corresponding tool is available.",
+            "Use desktop screenshot, pointer, keyboard, and scroll tools only when they are exposed in the current tool surface.",
+            "Do not claim to have visually verified desktop state unless a Computer Use screenshot or another tool result provided that evidence.",
           ].join("\n"),
         ]
       : []),
@@ -266,6 +287,9 @@ const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
     "~/.config/gcloud",
     "~/.shioricode",
   ],
+  browserUse: { enabled: false },
+  computerUse: { enabled: false },
+  mobileApp: { enabled: false },
   subagents: {
     enabled: false,
     profiles: {},
@@ -971,6 +995,16 @@ function canUseHostedSubagentTool(
   return Object.values(resolvedBootstrap.subagents.profiles).some(
     (profile) => profile?.supported === true && profile.tools.includes(toolName),
   );
+}
+
+function runtimePromptFeatureGates(
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
+): Pick<ShioriRuntimePromptContext, "browserUseEnabled" | "computerUseEnabled"> {
+  const resolvedBootstrap = effectiveShioriBootstrap(bootstrap);
+  return {
+    browserUseEnabled: resolvedBootstrap.browserUse.enabled,
+    computerUseEnabled: resolvedBootstrap.computerUse.enabled,
+  };
 }
 
 function isHostedApprovalRequired(input: {
@@ -3790,6 +3824,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               personality: settings.assistantPersonality,
               generateMemories: settings.generateMemories,
               skillPrompt: sessionContext.activeTurn?.skillPrompt,
+              ...runtimePromptFeatureGates(hostedBootstrap),
             }),
           },
           tools: buildHostedToolDescriptors({
@@ -4946,6 +4981,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               generateMemories: settings.generateMemories,
               interactionMode,
               skillPrompt: input.context.activeTurn?.skillPrompt,
+              ...runtimePromptFeatureGates(hostedBootstrap),
             }),
           },
           tools,

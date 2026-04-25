@@ -40,6 +40,8 @@ export const DEFAULT_LIGHT_THEME_ID = "builtin:shioricode-light";
 export const DEFAULT_DARK_THEME_ID = "builtin:shioricode-dark";
 export const DEFAULT_UI_FONT_FAMILY = "system-ui";
 export const DEFAULT_CODE_FONT_FAMILY = "ui-monospace";
+export const ThreadDoneNotificationSound = Schema.Literals(["chime", "bell", "pop", "sweep"]);
+export type ThreadDoneNotificationSound = typeof ThreadDoneNotificationSound.Type;
 
 export const THEME_TOKEN_KEYS = [
   "background",
@@ -186,6 +188,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   codeFontFamily: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(() => DEFAULT_CODE_FONT_FAMILY),
+  ),
+  threadDoneNotificationSoundEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  threadDoneNotificationSound: ThreadDoneNotificationSound.pipe(
+    Schema.withDecodingDefault(() => "chime" as const),
   ),
   importedThemes: Schema.Array(ImportedTheme).pipe(Schema.withDecodingDefault(() => [])),
   sidebarTranslucent: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),

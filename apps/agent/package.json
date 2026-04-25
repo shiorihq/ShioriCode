@@ -4,7 +4,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pingdotgg/shioricode.git",
+    "url": "git+https://github.com/FujiwaraChoki/shioricode.git",
     "directory": "apps/agent"
   },
   "bin": {

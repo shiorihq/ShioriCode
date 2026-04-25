@@ -365,6 +365,19 @@ interface ChatViewProps {
   threadId: ThreadId;
 }
 
+function ProjectlessChatComposerNotice(props: { emptyThread: boolean }) {
+  return (
+    <div
+      className={cn(
+        "relative z-10 mx-auto flex w-full min-w-0 items-center justify-center px-5 text-center text-muted-foreground/55 text-xs",
+        props.emptyThread ? "mt-2 max-w-[52rem]" : "max-w-3xl pb-3 pt-1",
+      )}
+    >
+      <p>ShioriCode uses AI, so double-check important information.</p>
+    </div>
+  );
+}
+
 function useThreadRelations(input: {
   isServerThread: boolean;
   serverThreadId: ThreadId | undefined;
@@ -1037,6 +1050,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, existingOpenTerminalThreadIds, terminalState.terminalOpen]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const isProjectlessChat = activeThread?.projectId === null;
   const isProjectThread = activeProject !== undefined;
   const handleBranchActiveThread = useCallback(async () => {
     if (!isServerThread || !serverThread) {
@@ -5420,7 +5434,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               </div>
             </form>
-            {isEmptyThread && (
+            {isEmptyThread && isProjectlessChat ? (
+              <ProjectlessChatComposerNotice emptyThread />
+            ) : null}
+            {isEmptyThread && !isProjectlessChat && (
               <div className="relative z-10 mx-auto mt-2 flex w-full min-w-0 max-w-[52rem] flex-wrap items-center justify-start gap-x-0.5 gap-y-1">
                 <BranchToolbar
                   inline
@@ -5437,7 +5454,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
             )}
           </div>
 
-          {!isEmptyThread && (
+          {!isEmptyThread && isProjectlessChat ? (
+            <ProjectlessChatComposerNotice emptyThread={false} />
+          ) : null}
+          {!isEmptyThread && !isProjectlessChat && (
             <BranchToolbar
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}

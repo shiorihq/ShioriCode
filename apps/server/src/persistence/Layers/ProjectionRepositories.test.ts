@@ -74,7 +74,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       yield* threads.upsert({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
+        workspaceKind: "project",
         projectId: ProjectId.makeUnsafe("project-null-options"),
+        projectlessCwd: null,
         title: "Null options thread",
         modelSelection: {
           provider: "claudeAgent",
@@ -88,6 +90,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         worktreePath: null,
         tag: null,
         latestTurnId: null,
+        pinnedAt: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         archivedAt: null,

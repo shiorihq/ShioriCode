@@ -2,6 +2,7 @@ import { type ProviderKind, type ThreadId } from "contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
+import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
@@ -57,6 +58,23 @@ function mergeRuntimePayload(
   return next;
 }
 
+function runtimeToBinding(
+  value: ProviderSessionRuntime,
+): Effect.Effect<ProviderRuntimeBinding, ProviderSessionDirectoryPersistenceError> {
+  return decodeProviderKind(value.providerName, "ProviderSessionDirectory.runtimeToBinding").pipe(
+    Effect.map((provider) => ({
+      threadId: value.threadId,
+      provider,
+      adapterKey: value.adapterKey,
+      runtimeMode: value.runtimeMode,
+      status: value.status,
+      lastSeenAt: value.lastSeenAt,
+      resumeCursor: value.resumeCursor,
+      runtimePayload: value.runtimePayload,
+    })),
+  );
+}
+
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntimeRepository;
 
@@ -67,19 +85,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            decodeProviderKind(value.providerName, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((provider) =>
-                Option.some({
-                  threadId: value.threadId,
-                  provider,
-                  adapterKey: value.adapterKey,
-                  runtimeMode: value.runtimeMode,
-                  status: value.status,
-                  resumeCursor: value.resumeCursor,
-                  runtimePayload: value.runtimePayload,
-                }),
-              ),
-            ),
+            runtimeToBinding(value).pipe(Effect.map((binding) => Option.some(binding))),
         }),
       ),
     );
@@ -152,12 +158,21 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.threadId)),
     );
 
+  const listBindings: ProviderSessionDirectoryShape["listBindings"] = () =>
+    repository.list().pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listBindings:list")),
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) => runtimeToBinding(row), { concurrency: "unbounded" }),
+      ),
+    );
+
   return {
     upsert,
     getProvider,
     getBinding,
     remove,
     listThreadIds,
+    listBindings,
   } satisfies ProviderSessionDirectoryShape;
 });
 

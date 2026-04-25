@@ -1,4 +1,25 @@
 import type {
+  BrowserPanelCommand,
+  BrowserPanelCommandResult,
+  DesktopBrowserCaptureInput,
+  DesktopBrowserCaptureResult,
+} from "./browser";
+import type {
+  ComputerUseActionResult,
+  ComputerUseClickInput,
+  ComputerUseCloseSessionInput,
+  ComputerUseCreateSessionInput,
+  ComputerUseKeyInput,
+  ComputerUseMoveInput,
+  ComputerUsePermissionKind,
+  ComputerUsePermissionsSnapshot,
+  ComputerUseScreenshotInput,
+  ComputerUseScreenshotResult,
+  ComputerUseScrollInput,
+  ComputerUseSessionSnapshot,
+  ComputerUseTypeInput,
+} from "./computer";
+import type {
   GitCheckoutInput,
   GitCreateBranchInput,
   GitListOpenPullRequestsInput,
@@ -172,6 +193,13 @@ export interface DesktopBridge {
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   getCompanionCliState: () => Promise<DesktopCompanionCliState>;
   installCompanionCli: () => Promise<DesktopCompanionCliInstallResult>;
+  browser?: {
+    captureVisiblePage: (
+      input: typeof DesktopBrowserCaptureInput.Encoded,
+    ) => Promise<DesktopBrowserCaptureResult>;
+  };
+  getComputerUsePermissions?: () => Promise<ComputerUsePermissionsSnapshot>;
+  showComputerUsePermissionGuide?: (kind: ComputerUsePermissionKind) => Promise<boolean>;
 }
 
 export interface NativeApi {
@@ -270,5 +298,24 @@ export interface NativeApi {
   telemetry: {
     capture: (input: TelemetryCaptureInput) => Promise<void>;
     log: (input: TelemetryLogInput) => Promise<void>;
+  };
+  browserPanel?: {
+    onNavigateRequest: (callback: (request: BrowserPanelCommand) => void) => () => void;
+    completeCommand: (result: BrowserPanelCommandResult) => Promise<void>;
+  };
+  computer?: {
+    getPermissions: () => Promise<ComputerUsePermissionsSnapshot>;
+    createSession: (
+      input?: typeof ComputerUseCreateSessionInput.Encoded,
+    ) => Promise<ComputerUseSessionSnapshot>;
+    closeSession: (input: typeof ComputerUseCloseSessionInput.Encoded) => Promise<void>;
+    screenshot: (
+      input: typeof ComputerUseScreenshotInput.Encoded,
+    ) => Promise<ComputerUseScreenshotResult>;
+    click: (input: typeof ComputerUseClickInput.Encoded) => Promise<ComputerUseActionResult>;
+    move: (input: typeof ComputerUseMoveInput.Encoded) => Promise<ComputerUseActionResult>;
+    type: (input: typeof ComputerUseTypeInput.Encoded) => Promise<ComputerUseActionResult>;
+    key: (input: typeof ComputerUseKeyInput.Encoded) => Promise<ComputerUseActionResult>;
+    scroll: (input: typeof ComputerUseScrollInput.Encoded) => Promise<ComputerUseActionResult>;
   };
 }

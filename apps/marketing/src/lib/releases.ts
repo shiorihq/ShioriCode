@@ -1,4 +1,4 @@
-const REPO = "pingdotgg/shioricode";
+const REPO = "FujiwaraChoki/shioricode";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 

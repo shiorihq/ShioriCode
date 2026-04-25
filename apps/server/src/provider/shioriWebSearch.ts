@@ -1,7 +1,7 @@
 const DUCKDUCKGO_HTML_SEARCH_URL = "https://duckduckgo.com/html/";
 const DEFAULT_WEB_SEARCH_RESULT_LIMIT = 5;
 const MAX_WEB_SEARCH_RESULT_LIMIT = 10;
-const WEB_SEARCH_USER_AGENT = "ShioriCode/1.0 (+https://github.com/pingdotgg/shioricode)";
+const WEB_SEARCH_USER_AGENT = "ShioriCode/1.0 (+https://shiori.ai/code)";
 
 const HTML_ENTITY_MAP: Record<string, string> = {
   amp: "&",

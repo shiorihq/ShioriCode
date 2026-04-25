@@ -11,6 +11,10 @@ export interface ShioriCodeBootstrapToolProfile {
   readonly tools: ReadonlyArray<string>;
 }
 
+export interface ShioriCodeBootstrapFeatureGate {
+  readonly enabled: boolean;
+}
+
 export interface ShioriCodeBootstrapConfig {
   readonly approvalPolicies: {
     readonly fileWrite?: string;
@@ -21,6 +25,9 @@ export interface ShioriCodeBootstrapConfig {
     readonly outsideWorkspace?: string;
   };
   readonly protectedPaths: ReadonlyArray<string>;
+  readonly browserUse: ShioriCodeBootstrapFeatureGate;
+  readonly computerUse: ShioriCodeBootstrapFeatureGate;
+  readonly mobileApp: ShioriCodeBootstrapFeatureGate;
   readonly subagents: {
     readonly enabled: boolean;
     readonly profiles: {
@@ -58,6 +65,12 @@ function normalizeToolProfile(value: unknown): ShioriCodeBootstrapToolProfile | 
   };
 }
 
+function normalizeFeatureGate(value: unknown): ShioriCodeBootstrapFeatureGate {
+  return {
+    enabled: isRecord(value) && value.enabled === true,
+  };
+}
+
 function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeBootstrapConfig {
   const approvalPolicies = isRecord(payload.approvalPolicies) ? payload.approvalPolicies : {};
   const rawSubagents = isRecord(payload.subagents) ? payload.subagents : null;
@@ -87,6 +100,9 @@ function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeB
     protectedPaths: Array.isArray(payload.protectedPaths)
       ? payload.protectedPaths.flatMap((entry) => (typeof entry === "string" ? [entry] : []))
       : [],
+    browserUse: normalizeFeatureGate(payload.browserUse),
+    computerUse: normalizeFeatureGate(payload.computerUse),
+    mobileApp: normalizeFeatureGate(payload.mobileApp),
     subagents: rawSubagents
       ? {
           enabled: rawSubagents.enabled === true,

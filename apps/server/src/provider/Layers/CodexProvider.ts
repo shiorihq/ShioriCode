@@ -28,6 +28,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   detailFromResult,
   extractAuthBoolean,
+  formatModelSlugName,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,

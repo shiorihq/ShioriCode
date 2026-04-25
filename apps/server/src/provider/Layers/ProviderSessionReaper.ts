@@ -40,7 +40,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const lastSeenMs = Date.parse(binding.lastSeenAt);
+        const lastSeenMs = Date.parse(binding.lastSeenAt ?? "");
         if (Number.isNaN(lastSeenMs)) {
           yield* Effect.logWarning("provider.session.reaper.invalid-last-seen", {
             threadId: binding.threadId,
@@ -98,29 +98,28 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       }
     });
 
-    const start: ProviderSessionReaperShape["start"] = () =>
-      Effect.gen(function* () {
-        yield* Effect.forkScoped(
-          sweep.pipe(
-            Effect.catch((error: unknown) =>
-              Effect.logWarning("provider.session.reaper.sweep-failed", {
-                error,
-              }),
-            ),
-            Effect.catchDefect((defect: unknown) =>
-              Effect.logWarning("provider.session.reaper.sweep-defect", {
-                defect,
-              }),
-            ),
-            Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
+    const start: ProviderSessionReaperShape["start"] = Effect.fn("start")(function* () {
+      yield* Effect.forkScoped(
+        sweep.pipe(
+          Effect.catch((error: unknown) =>
+            Effect.logWarning("provider.session.reaper.sweep-failed", {
+              error,
+            }),
           ),
-        );
+          Effect.catchDefect((defect: unknown) =>
+            Effect.logWarning("provider.session.reaper.sweep-defect", {
+              defect,
+            }),
+          ),
+          Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
+        ),
+      );
 
-        yield* Effect.logInfo("provider.session.reaper.started", {
-          inactivityThresholdMs,
-          sweepIntervalMs,
-        });
+      yield* Effect.logInfo("provider.session.reaper.started", {
+        inactivityThresholdMs,
+        sweepIntervalMs,
       });
+    });
 
     return {
       start,

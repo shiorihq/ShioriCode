@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { ensureNativeApi } from "../../nativeApi";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
@@ -117,7 +118,13 @@ function CapabilityRail() {
 function ScreenshotPreview() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const screenshotMutation = useMutation({
-    mutationFn: async () => ensureNativeApi().computer.screenshot({}),
+    mutationFn: async () => {
+      const computer = ensureNativeApi().computer;
+      if (!computer) {
+        throw new Error("Computer Use is unavailable.");
+      }
+      return computer.screenshot({});
+    },
     onSuccess: (result) => setImageDataUrl(result.imageDataUrl),
     onError: (error) => {
       toastManager.add({
@@ -181,8 +188,13 @@ export function ComputerUseSettingsPanel() {
       if (window.desktopBridge?.getComputerUsePermissions) {
         return window.desktopBridge.getComputerUsePermissions();
       }
-      return ensureNativeApi().computer.getPermissions();
+      const computer = ensureNativeApi().computer;
+      if (!computer) {
+        throw new Error("Computer Use is unavailable.");
+      }
+      return computer.getPermissions();
     },
+    enabled: computerUseEnabled,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });
@@ -229,6 +241,15 @@ export function ComputerUseSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Computer Use" icon={<MonitorIcon className="size-3.5" />}>
+        {!computerUseEnabled ? (
+          <Alert variant="warning" className="m-4">
+            <MonitorIcon />
+            <AlertTitle>Computer Use disabled</AlertTitle>
+            <AlertDescription>
+              Computer Use is currently disabled for this Shiori deployment.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <SettingsRow
           title="Enable Computer Use"
           description="Expose macOS desktop screenshot, pointer, keyboard, and scroll tools to supported agents."
@@ -269,52 +290,62 @@ export function ComputerUseSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection title="macOS Permissions" icon={<ShieldCheckIcon className="size-3.5" />}>
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-foreground">
-                {ready ? "Desktop control is ready" : "Permission checklist"}
-              </h3>
-              {ready ? <CheckCircle2Icon className="size-4 text-success" /> : null}
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {permissionsQuery.data?.message ??
-                `${grantedCount}/${totalCount} required permissions granted.`}
-            </p>
-          </div>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={permissionsQuery.isFetching}
-            onClick={() =>
-              void queryClient.invalidateQueries({ queryKey: COMPUTER_PERMISSIONS_QUERY_KEY })
-            }
-            aria-label="Refresh Computer Use permissions"
+      {computerUseEnabled ? (
+        <>
+          <SettingsSection
+            title="macOS Permissions"
+            icon={<ShieldCheckIcon className="size-3.5" />}
           >
-            <RefreshCwIcon
-              className={`size-3.5 ${permissionsQuery.isFetching ? "animate-spin" : ""}`}
-            />
-          </Button>
-        </div>
-        {permissionsQuery.data?.permissions.map((permission) => (
-          <PermissionCard
-            key={permission.kind}
-            permission={permission}
-            guidePending={guideKind === permission.kind}
-            onGuide={showPermissionGuide}
-          />
-        ))}
-      </SettingsSection>
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-foreground">
+                    {ready ? "Desktop control is ready" : "Permission checklist"}
+                  </h3>
+                  {ready ? <CheckCircle2Icon className="size-4 text-success" /> : null}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {permissionsQuery.data?.message ??
+                    `${grantedCount}/${totalCount} required permissions granted.`}
+                </p>
+              </div>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={permissionsQuery.isFetching}
+                onClick={() =>
+                  void queryClient.invalidateQueries({ queryKey: COMPUTER_PERMISSIONS_QUERY_KEY })
+                }
+                aria-label="Refresh Computer Use permissions"
+              >
+                <RefreshCwIcon
+                  className={`size-3.5 ${permissionsQuery.isFetching ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
+            {permissionsQuery.data?.permissions.map((permission) => (
+              <PermissionCard
+                key={permission.kind}
+                permission={permission}
+                guidePending={guideKind === permission.kind}
+                onGuide={showPermissionGuide}
+              />
+            ))}
+          </SettingsSection>
 
-      <SettingsSection title="Capabilities" icon={<MousePointerClickIcon className="size-3.5" />}>
-        <SettingsRow
-          title="macOS desktop controls"
-          description="The runtime can inspect the main display and operate the currently focused desktop target."
-        >
-          <CapabilityRail />
-        </SettingsRow>
-      </SettingsSection>
+          <SettingsSection
+            title="Capabilities"
+            icon={<MousePointerClickIcon className="size-3.5" />}
+          >
+            <SettingsRow
+              title="macOS desktop controls"
+              description="The runtime can inspect the main display and operate the currently focused desktop target."
+            >
+              <CapabilityRail />
+            </SettingsRow>
+          </SettingsSection>
+        </>
+      ) : null}
 
       {computerUseEnabled && settings.computerUse.enabled ? <ScreenshotPreview /> : null}
     </SettingsPageContainer>

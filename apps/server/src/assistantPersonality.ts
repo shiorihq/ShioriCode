@@ -26,6 +26,14 @@ const ASSISTANT_PERSONALITY_APPENDICES: Record<
   ],
 };
 
+export function buildResponseRenderingAppendix(): string {
+  return [
+    "## Response Rendering",
+    "The client supports Markdown with KaTeX math support.",
+    "Use `$...$` for inline math and `$$...$$` for display math when math notation is helpful.",
+  ].join("\n");
+}
+
 export function buildAssistantPersonalityAppendix(
   personality: AssistantPersonality | null | undefined,
 ): string | undefined {
@@ -63,6 +71,7 @@ export function buildAssistantSettingsAppendix(input: {
   generateMemories: boolean | null | undefined;
 }): string | undefined {
   const appendices = [
+    buildResponseRenderingAppendix(),
     buildAssistantPersonalityAppendix(input.personality),
     buildMemoryGenerationAppendix(input.generateMemories),
   ].filter((value): value is string => typeof value === "string" && value.length > 0);

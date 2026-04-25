@@ -2201,11 +2201,11 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
         >
           Pinned
         </SidebarSectionHeader>
-        {!isCollapsed ? (
+        <AnimatedExpandPanel open={!isCollapsed} fade className="w-full">
           <SidebarMenu className="gap-0.5">
             {renderThreadRows(orderedPinnedThreadIds, orderedPinnedThreadIds)}
           </SidebarMenu>
-        ) : null}
+        </AnimatedExpandPanel>
       </div>
     );
   }
@@ -2242,14 +2242,15 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
             <TooltipPopup side="top">New chat</TooltipPopup>
           </Tooltip>
         </div>
-        {!isCollapsed && renderedChatThreadIds.length === 0 ? (
-          <SidebarSectionEmptyState>No chats yet</SidebarSectionEmptyState>
-        ) : null}
-        {!isCollapsed && renderedChatThreadIds.length > 0 ? (
-          <SidebarMenu className="gap-0.5">
-            {renderThreadRows(renderedChatThreadIds, orderedChatThreadIds)}
-          </SidebarMenu>
-        ) : null}
+        <AnimatedExpandPanel open={!isCollapsed} fade className="w-full">
+          {renderedChatThreadIds.length === 0 ? (
+            <SidebarSectionEmptyState>No chats yet</SidebarSectionEmptyState>
+          ) : (
+            <SidebarMenu className="gap-0.5">
+              {renderThreadRows(renderedChatThreadIds, orderedChatThreadIds)}
+            </SidebarMenu>
+          )}
+        </AnimatedExpandPanel>
       </div>
     );
   }
@@ -2268,21 +2269,22 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
         >
           {label}
         </SidebarSectionHeader>
-        {!isCollapsed && projectsToRender.length === 0 ? (
-          <SidebarSectionEmptyState>{emptyLabel}</SidebarSectionEmptyState>
-        ) : null}
-        {!isCollapsed && projectsToRender.length > 0 ? (
-          <SidebarMenu className="gap-0.5">
-            {projectsToRender.map((renderedProject) => (
-              <SortableProjectItem
-                key={renderedProject.project.id}
-                projectId={renderedProject.project.id}
-              >
-                {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
-              </SortableProjectItem>
-            ))}
-          </SidebarMenu>
-        ) : null}
+        <AnimatedExpandPanel open={!isCollapsed} fade className="w-full">
+          {projectsToRender.length === 0 ? (
+            <SidebarSectionEmptyState>{emptyLabel}</SidebarSectionEmptyState>
+          ) : (
+            <SidebarMenu className="gap-0.5">
+              {projectsToRender.map((renderedProject) => (
+                <SortableProjectItem
+                  key={renderedProject.project.id}
+                  projectId={renderedProject.project.id}
+                >
+                  {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
+                </SortableProjectItem>
+              ))}
+            </SidebarMenu>
+          )}
+        </AnimatedExpandPanel>
       </div>
     );
   }

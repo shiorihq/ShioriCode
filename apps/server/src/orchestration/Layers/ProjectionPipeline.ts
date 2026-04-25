@@ -455,7 +455,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             workspaceKind: event.payload.projectId === null ? "projectless" : "project",
             projectId: event.payload.projectId,
-            projectlessCwd: event.payload.projectlessCwd,
+            projectlessCwd: event.payload.projectlessCwd ?? null,
             title: event.payload.title,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
@@ -469,7 +469,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
-            pinnedAt: event.payload.pinnedAt,
+            pinnedAt: event.payload.pinnedAt ?? null,
             archivedAt: null,
             deletedAt: null,
           });

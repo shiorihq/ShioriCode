@@ -6,14 +6,10 @@ import {
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 
-type SearchableSlashCommandItem = Extract<
-  ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" }
->;
+type SearchableSlashCommandItem = Extract<ComposerCommandItem, { type: "slash-command" }>;
 
 function scoreSlashCommandItem(item: SearchableSlashCommandItem, query: string): number | null {
-  const primaryValue =
-    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
+  const primaryValue = item.command.toLowerCase();
   const description = item.description.toLowerCase();
 
   const scores = [
@@ -70,10 +66,7 @@ export function searchSlashCommandItems(
       {
         item,
         score,
-        tieBreaker:
-          item.type === "slash-command"
-            ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
+        tieBreaker: `0\u0000${item.command}`,
       },
       Number.POSITIVE_INFINITY,
     );

@@ -86,6 +86,9 @@ const defaultBootstrapProbe = () =>
         "~/.config/gcloud",
         "~/.shioricode",
       ],
+      browserUse: { enabled: false },
+      computerUse: { enabled: false },
+      mobileApp: { enabled: false },
       subagents: {
         enabled: true,
         profiles: {
@@ -3856,11 +3859,13 @@ describe("hosted tools", () => {
     assert.match(prompt, /^## Tool Grounding\n/m);
     assert.match(prompt, /^## Tool Use Policy\n/m);
     assert.match(prompt, /^## Coding Behavior\n/m);
-    assert.match(prompt, /^## Browser And Desktop Actions\n/m);
+    assert.match(prompt, /^## Local Launch Actions\n/m);
     assert.match(prompt, /^## Uncertainty And Honesty\n/m);
     assert.match(prompt, /^## Response Style\n/m);
     assert.match(prompt, /You are ShioriCode/);
     assert.match(prompt, /You are not Codex/);
+    assert.ok(!prompt.includes("browser-launch"));
+    assert.ok(!prompt.includes("browser page"));
     assert.ok(prompt.includes("Never contradict a successful tool call"));
     assert.ok(prompt.includes("Do not ask the user to manually perform an action"));
     assert.ok(
@@ -3871,6 +3876,28 @@ describe("hosted tools", () => {
         "Prefer real Markdown structure such as headings, bullets, numbered lists, tables, and fenced code blocks instead of plain-text pseudo-formatting.",
       ),
     );
+  });
+
+  it("adds browser and computer prompt sections only when their gates are enabled", () => {
+    const disabledRules = buildShioriWorkspaceRules({
+      cwd: "/tmp/project",
+      browserUseEnabled: false,
+      computerUseEnabled: false,
+    });
+
+    assert.ok(disabledRules.every((rule) => !rule.includes("## Browser Use")));
+    assert.ok(disabledRules.every((rule) => !rule.includes("## Computer Use")));
+    assert.ok(disabledRules.every((rule) => !rule.includes("browser-opening command")));
+
+    const enabledRules = buildShioriWorkspaceRules({
+      cwd: "/tmp/project",
+      browserUseEnabled: true,
+      computerUseEnabled: true,
+    });
+
+    assert.ok(enabledRules.some((rule) => rule.includes("## Browser Use")));
+    assert.ok(enabledRules.some((rule) => rule.includes("## Computer Use")));
+    assert.ok(enabledRules.some((rule) => rule.includes("browser-opening command")));
   });
 
   it("builds runtime context rules with machine and local time details", () => {

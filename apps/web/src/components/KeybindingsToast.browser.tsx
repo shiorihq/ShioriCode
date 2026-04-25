@@ -90,6 +90,9 @@ function createBaseServerConfig(): ServerConfig {
         ...DEFAULT_ONBOARDING_PROGRESS,
         completedStepIds: [...ONBOARDING_STEP_IDS],
       },
+      computerUse: { enabled: false, requireApproval: true },
+      browserUse: { enabled: false },
+      mobileApp: { enabled: false },
       mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },

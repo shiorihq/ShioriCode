@@ -43,6 +43,24 @@ const isomorphicLocalStorage: Storage = isStorageLike(
 const decodeClientSettings = Schema.decodeSync(Schema.fromJsonString(ClientSettingsSchema));
 const encodeClientSettings = Schema.encodeSync(Schema.fromJsonString(ClientSettingsSchema));
 
+export function resolveBlurPersonalDataSetting(input: {
+  fallbackValue: boolean;
+  hostedBlurPersonalData?: boolean | undefined;
+  hostedBlurPersonalDataLoading?: boolean | undefined;
+  isAuthenticated: boolean;
+}): boolean {
+  if (!input.isAuthenticated) {
+    return input.fallbackValue;
+  }
+  if (input.hostedBlurPersonalData !== undefined) {
+    return input.hostedBlurPersonalData;
+  }
+  if (input.hostedBlurPersonalDataLoading) {
+    return true;
+  }
+  return input.fallbackValue;
+}
+
 export function readStoredClientSettings(): ClientSettings {
   const raw = isomorphicLocalStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
   const settings = (() => {

@@ -87,6 +87,10 @@
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
+    },
+    "./searchRanking": {
+      "types": "./src/searchRanking.ts",
+      "import": "./src/searchRanking.ts"
     }
   },
   "scripts": {

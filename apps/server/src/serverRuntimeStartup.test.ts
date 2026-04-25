@@ -205,7 +205,7 @@ it.effect("autoBootstrapWelcome renames existing projects to the workspace folde
     const threadId = ThreadId.makeUnsafe("thread-1");
     const existingProject: OrchestrationProject = {
       id: projectId,
-      title: "pingdotgg/shioricode",
+      title: "FujiwaraChoki/shioricode",
       workspaceRoot: cwd,
       defaultModelSelection: DEFAULT_SERVER_SETTINGS.defaultModelSelection,
       scripts: [],
