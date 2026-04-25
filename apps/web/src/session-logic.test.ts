@@ -2378,20 +2378,27 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("advertises Claude as available while keeping Cursor as a placeholder", () => {
+  it("advertises available providers in picker order", () => {
     const kimi = PROVIDER_OPTIONS.find((option) => option.value === "kimiCode");
+    const gemini = PROVIDER_OPTIONS.find((option) => option.value === "gemini");
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "shiori", label: "Shiori", available: true },
       { value: "kimiCode", label: "Kimi", available: true },
+      { value: "gemini", label: "Gemini", available: true },
+      { value: "cursor", label: "Cursor", available: true },
       { value: "codex", label: "Codex", available: true },
       { value: "claudeAgent", label: "Claude", available: true },
-      { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(kimi).toEqual({
       value: "kimiCode",
       label: "Kimi",
+      available: true,
+    });
+    expect(gemini).toEqual({
+      value: "gemini",
+      label: "Gemini",
       available: true,
     });
     expect(claude).toEqual({
@@ -2402,7 +2409,7 @@ describe("PROVIDER_OPTIONS", () => {
     expect(cursor).toEqual({
       value: "cursor",
       label: "Cursor",
-      available: false,
+      available: true,
     });
   });
 });

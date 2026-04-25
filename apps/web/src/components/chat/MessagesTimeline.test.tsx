@@ -1425,7 +1425,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("shimmer shimmer-spread-200");
     expect(markup).toContain("text-muted-foreground/80");
-    expect(markup).toContain("hover:text-foreground/70");
+    expect(markup).toContain("group-hover:text-foreground");
   });
 
   it("keeps expanded in-progress groups in a capped scroll viewport instead of hiding later entries", async () => {
