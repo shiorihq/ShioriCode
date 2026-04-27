@@ -867,6 +867,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingUserScrollUpIntentRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
+  const pendingAutoScrollSettleFramesRef = useRef(0);
   const pendingInteractionAnchorRef = useRef<{
     element: HTMLElement;
     top: number;
@@ -2680,6 +2681,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     shouldAutoScrollRef.current = true;
   }, []);
   const cancelPendingStickToBottom = useCallback(() => {
+    pendingAutoScrollSettleFramesRef.current = 0;
     const pendingFrame = pendingAutoScrollFrameRef.current;
     if (pendingFrame === null) return;
     pendingAutoScrollFrameRef.current = null;
@@ -2693,11 +2695,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
   const scheduleStickToBottom = useCallback(() => {
     if (pendingAutoScrollFrameRef.current !== null) return;
-    pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
+    const stickToBottomFrame = () => {
       pendingAutoScrollFrameRef.current = null;
       scrollMessagesToBottom();
-    });
+      if (pendingAutoScrollSettleFramesRef.current <= 0 || !shouldAutoScrollRef.current) {
+        pendingAutoScrollSettleFramesRef.current = 0;
+        return;
+      }
+      pendingAutoScrollSettleFramesRef.current -= 1;
+      pendingAutoScrollFrameRef.current = window.requestAnimationFrame(stickToBottomFrame);
+    };
+    pendingAutoScrollFrameRef.current = window.requestAnimationFrame(stickToBottomFrame);
   }, [scrollMessagesToBottom]);
+  const scheduleStickToBottomSettlement = useCallback(
+    (settleFrames = 2) => {
+      pendingAutoScrollSettleFramesRef.current = Math.max(
+        pendingAutoScrollSettleFramesRef.current,
+        settleFrames,
+      );
+      scheduleStickToBottom();
+    },
+    [scheduleStickToBottom],
+  );
   const onMessagesClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const scrollContainer = messagesScrollRef.current;
@@ -2824,17 +2843,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
     shouldAutoScrollRef.current = true;
-    scheduleStickToBottom();
+    scheduleStickToBottomSettlement();
     const timeout = window.setTimeout(() => {
       const scrollContainer = messagesScrollRef.current;
       if (!scrollContainer) return;
       if (isScrollContainerNearBottom(scrollContainer)) return;
-      scheduleStickToBottom();
+      scheduleStickToBottomSettlement();
     }, 96);
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeThread?.id, scheduleStickToBottom]);
+  }, [activeThread?.id, scheduleStickToBottomSettlement]);
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
@@ -2914,10 +2933,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scheduleStickToBottom();
   }, [messageCount, scheduleStickToBottom]);
   useEffect(() => {
-    if (!isTurnRunning) return;
     if (!shouldAutoScrollRef.current) return;
-    scheduleStickToBottom();
-  }, [isTurnRunning, scheduleStickToBottom, timelineEntries]);
+    if (isTurnRunning) {
+      scheduleStickToBottom();
+      return;
+    }
+    scheduleStickToBottomSettlement();
+  }, [isTurnRunning, scheduleStickToBottom, scheduleStickToBottomSettlement, timelineEntries]);
   // Clear scroll masks when the content no longer overflows the container.
   useEffect(() => {
     const el = messagesScrollElement;
@@ -2928,12 +2950,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setShowScrollToBottom(false);
         setIsScrolledFromTop(false);
       }
+      if (shouldAutoScrollRef.current) {
+        scheduleStickToBottomSettlement(1);
+      }
     });
     observer.observe(el);
-    // Also observe the inner content size (first child, if any).
-    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    const timelineRoot = el.querySelector<HTMLElement>('[data-timeline-root="true"]');
+    if (timelineRoot) observer.observe(timelineRoot);
     return () => observer.disconnect();
-  }, [messagesScrollElement]);
+  }, [messagesScrollElement, messagesTimelineRenderKey, scheduleStickToBottomSettlement]);
 
   useEffect(() => {
     setExpandedWorkGroups({});

@@ -338,6 +338,10 @@ export function isFileChangeWorkEntry(entry: WorkLogEntry): boolean {
   return classifyFileChangeOperation(entry) !== null;
 }
 
+export function isSkillWorkEntry(entry: WorkLogEntry): boolean {
+  return getEntryToolName(entry) === "skill";
+}
+
 function actionForFileChangeOperation(input: {
   operation: FileChangeOperation;
   running: boolean;
@@ -411,6 +415,36 @@ function coalesceRedundantDetail(action: string, detail: string | null): string 
   return normalizeRedundantDetailText(action) === normalizeRedundantDetailText(detail)
     ? null
     : detail;
+}
+
+function stripFileChangeDetailPrefix(detail: string): string | null {
+  const trimmed = detail.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const stripped = trimmed
+    .replace(/^(?:write file|file write|str replace file|edit file|apply patch)\s*:\s*/iu, "")
+    .replace(/^(?:write|edit|replace)\s+(?=\d+\s+files?\b)/iu, "")
+    .trim();
+
+  if (stripped.length === 0 || normalizeRedundantDetailText(stripped) === "file") {
+    return null;
+  }
+
+  return stripped;
+}
+
+function fileChangeDetailFallback(input: {
+  action: string;
+  explicitDetail: string | null;
+  providerToolPath: string | null;
+}): string | null {
+  if (input.providerToolPath) {
+    return input.providerToolPath;
+  }
+  const coalesced = coalesceRedundantDetail(input.action, input.explicitDetail);
+  return coalesced ? stripFileChangeDetailPrefix(coalesced) : null;
 }
 
 function normalizeWorkEntryCommand(entry: WorkLogEntry): string {
@@ -1016,14 +1050,15 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   }
 
   if (fileChangeOperation) {
+    const action = actionForFileChangeOperation({
+      operation: fileChangeOperation,
+      running,
+      providerToolName,
+    });
     return {
       kind: "edit",
-      action: actionForFileChangeOperation({
-        operation: fileChangeOperation,
-        running,
-        providerToolName,
-      }),
-      detail: providerToolPath ?? explicitDetail,
+      action,
+      detail: fileChangeDetailFallback({ action, explicitDetail, providerToolPath }),
       monospace: true,
       dedupeKey: null,
     };

@@ -525,10 +525,10 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Used Skill");
     expect(markup).toContain("dogfood");
     expect(markup).toContain(`href="${skillPath}"`);
-    expect(markup).toContain("tool_abc123");
-    expect(markup).toContain("<h1>Dogfood</h1>");
-    expect(markup).toContain("Use evidence first.");
-    expect(markup).toContain("text-xs");
+    // Skill entries are non-expandable minimal entries
+    expect(markup).not.toContain("tool_abc123");
+    expect(markup).not.toContain("<h1>Dogfood</h1>");
+    expect(markup).not.toContain("Use evidence first.");
     expect(markup).not.toContain("Skill workflow");
     expect(markup).not.toContain("&quot;skill&quot;");
   });
@@ -592,7 +592,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&quot;subagent_type&quot;");
   });
 
-  it("renders a copy button for generic tool calls that fall back to raw JSON output", async () => {
+  it("renders Kimi StrReplaceFile tool calls as inline edit diffs", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -621,6 +621,22 @@ describe("MessagesTimeline", () => {
                     new: "const MAC_ICON_PAD_SIZE = 1320;",
                   },
                 },
+                result: {
+                  isError: false,
+                  output: "",
+                  message:
+                    "File successfully edited. Applied 1 edit(s) with 1 total replacement(s).",
+                  display: [
+                    {
+                      type: "diff",
+                      path: "scripts/build-desktop-artifact.ts",
+                      old_text:
+                        "const MAC_ICON_PAD_SIZE = 1480;\nconst MAC_ICON_OUTPUT_SIZE = 1024;",
+                      new_text:
+                        "const MAC_ICON_PAD_SIZE = 1320;\nconst MAC_ICON_OUTPUT_SIZE = 1024;",
+                    },
+                  ],
+                },
               },
             },
           },
@@ -643,9 +659,12 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Copy JSON output");
-    expect(markup).toContain("&quot;toolName&quot;: &quot;StrReplaceFile&quot;");
-    expect(markup).toContain("&quot;path&quot;: &quot;scripts/build-desktop-artifact.ts&quot;");
+    expect(markup).toContain('data-inline-diff="true"');
+    expect(markup).toContain("build-desktop-artifact.ts");
+    expect(markup).toContain("const MAC_ICON_PAD_SIZE = 1480;");
+    expect(markup).toContain("const MAC_ICON_PAD_SIZE = 1320;");
+    expect(markup).toContain("const MAC_ICON_OUTPUT_SIZE = 1024;");
+    expect(markup).not.toContain("Copy JSON output");
   });
 
   it("renders Codex webSearch items as a non-expandable minimal entry", async () => {
@@ -892,7 +911,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Wrote 22 bytes to apps/web/src/index.css");
   });
 
-  it("renders read details in monospace within work log rows", async () => {
+  it("renders read details as basename file links within work log rows", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -910,7 +929,7 @@ describe("MessagesTimeline", () => {
               id: "work-read-style",
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Read file",
-              detail: "README.md",
+              detail: "/Users/choki/Developer/shiori/src/components/studio/StudioDetail.tsx",
               tone: "tool",
               toolTitle: "read_file",
               itemType: "dynamic_tool_call",
@@ -937,8 +956,12 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Read");
-    expect(markup).toContain("font-mono");
-    expect(markup).toContain("README.md");
+    expect(markup).toContain(">StudioDetail.tsx</a>");
+    expect(markup).toContain(
+      'href="/Users/choki/Developer/shiori/src/components/studio/StudioDetail.tsx"',
+    );
+    expect(markup).not.toContain("> /Users/choki/Developer/shiori/src/components/studio");
+    expect(markup).not.toContain("font-mono");
   });
 
   it("renders read_file output as file contents instead of raw JSON", async () => {

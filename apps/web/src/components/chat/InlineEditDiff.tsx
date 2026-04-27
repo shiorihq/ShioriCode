@@ -143,6 +143,31 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function firstDisplayDiffPair(
+  value: unknown,
+): { oldText: string; newText: string; path: string | null } | null {
+  const record = asRecord(value);
+  const display = Array.isArray(record?.display) ? record.display : null;
+  if (!display) return null;
+
+  for (const entry of display) {
+    const diff = asRecord(entry);
+    if (diff?.type !== "diff") continue;
+
+    const oldText = asString(diff.old_text);
+    const newText = asString(diff.new_text);
+    if (oldText != null && newText != null) {
+      return {
+        oldText,
+        newText,
+        path: asString(diff.path),
+      };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Resolve the most specific nested data container.
  * Claude adapter wraps as `{ toolName, input, result }` where `result`
@@ -318,6 +343,7 @@ function diffFromStructuredPatch(
 
 const MAX_DIFF_LINES = 80;
 const WRITE_TOOL_NAME_ALIASES = new Set(["write", "write_file", "writefile"]);
+const KIMI_STR_REPLACE_TOOL_NAME = "strreplacefile";
 
 function normalizeToolName(value: string): string {
   return value
@@ -370,7 +396,10 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
   if (!data) return storeParsedDiff(null);
   const input = asRecord(data.input);
   const topInput = asRecord(top?.input);
-  const topToolName = asString(top?.toolName) ?? null;
+  const inputEdit = asRecord(input?.edit);
+  const topInputEdit = asRecord(topInput?.edit);
+  const topToolName = asString(top?.toolName) ?? asString(data.toolName) ?? null;
+  const normalizedTopToolName = topToolName !== null ? normalizeToolName(topToolName) : null;
 
   // Extract file path from various locations
   const filePath =
@@ -378,8 +407,10 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     asString(data.path) ??
     asString(data.relativePath) ??
     asString(data.filename) ??
+    asString(topInput?.path) ??
     asString(topInput?.file_path) ??
     asString(input?.file_path) ??
+    asString(input?.path) ??
     detail ??
     null;
 
@@ -419,15 +450,34 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     }
   }
 
-  // Strategy 5: old_string / new_string from input (Claude Edit tool)
+  // Strategy 5: Kimi StrReplaceFile result display entries include contextual diff blocks.
+  // Kimi write tools may also emit display diffs; keep those on the normal write-file path.
+  const displayDiff =
+    normalizedTopToolName === KIMI_STR_REPLACE_TOOL_NAME
+      ? (firstDisplayDiffPair(data) ??
+        firstDisplayDiffPair(top?.result) ??
+        firstDisplayDiffPair(top))
+      : null;
+  if (displayDiff) {
+    const lines = diffFromOldNew(displayDiff.oldText, displayDiff.newText);
+    if (lines.length > 0) {
+      return storeParsedDiff(buildResult(filePath ?? displayDiff.path, lines));
+    }
+  }
+
+  // Strategy 6: old_string / new_string from input (Claude Edit and Kimi StrReplaceFile tools)
   const oldString =
     asString(input?.old_string) ??
     asString(topInput?.old_string) ??
+    asString(inputEdit?.old) ??
+    asString(topInputEdit?.old) ??
     asString(data.oldString) ??
     asString(top?.oldString);
   const newString =
     asString(input?.new_string) ??
     asString(topInput?.new_string) ??
+    asString(inputEdit?.new) ??
+    asString(topInputEdit?.new) ??
     asString(data.newString) ??
     asString(top?.newString);
   if (oldString != null && newString != null) {
@@ -437,10 +487,10 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     }
   }
 
-  // Strategy 6: bytes-only file writes — show the attempted file contents as a full write diff
+  // Strategy 7: bytes-only file writes — show the attempted file contents as a full write diff
   // whenever the input content survived lifecycle collapsing, even if the tool name is absent.
   const isWriteTool =
-    topToolName !== null && WRITE_TOOL_NAME_ALIASES.has(normalizeToolName(topToolName));
+    normalizedTopToolName !== null && WRITE_TOOL_NAME_ALIASES.has(normalizedTopToolName);
   const writeContent = asString(topInput?.content) ?? asString(input?.content);
   if (writeContent != null && (isWriteTool || filePath !== null)) {
     const lines = diffFromOldNew("", writeContent);
@@ -449,7 +499,7 @@ export function parseEditDiff(output: unknown, detail?: string): ParsedEditDiff 
     }
   }
 
-  // Strategy 7: Codex fileChange format — item.changes[] with unified diffs
+  // Strategy 8: Codex fileChange format — item.changes[] with unified diffs
   const item = asRecord(data.item);
   if (item && Array.isArray(item.changes)) {
     for (const change of item.changes) {

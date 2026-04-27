@@ -206,13 +206,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 <FastModeBoltIcon
                   aria-hidden="true"
                   data-chat-provider-model-picker-fast-icon="true"
-                  className="size-4 shrink-0 text-muted-foreground/70 transition-opacity duration-150 group-hover/provider-model-picker:opacity-0 group-focus-visible/provider-model-picker:opacity-0"
+                  className="size-4 shrink-0 text-muted-foreground/70 group-hover/provider-model-picker:opacity-0 group-focus-visible/provider-model-picker:opacity-0"
                 />
                 <ProviderIcon
                   aria-hidden="true"
                   data-chat-provider-model-picker-provider-icon="true"
                   className={cn(
-                    "absolute inset-0 size-4 shrink-0 opacity-0 transition-opacity duration-150 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
+                    "absolute inset-0 size-4 shrink-0 opacity-0 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
                     providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
                     props.activeProviderIconClassName,
                   )}

@@ -22,6 +22,7 @@ describe("providerTool", () => {
       "FileWrite",
       "MultiEdit",
       "NotebookEdit",
+      "StrReplaceFile",
     ]) {
       expect(classifyProviderToolLifecycleItemType(toolName)).toBe("file_change");
       expect(classifyProviderToolRequestKind(toolName)).toBe("file-change");
@@ -64,6 +65,7 @@ describe("providerTool", () => {
 
   it("formats provider titles and summaries consistently for notebook and write tools", () => {
     expect(providerToolTitle("NotebookEdit")).toBe("Edit notebook");
+    expect(providerToolTitle("StrReplaceFile")).toBe("Edit file");
     expect(providerToolTitle("FileWrite")).toBe("Write file");
     expect(
       summarizeProviderToolInvocation("NotebookEdit", {

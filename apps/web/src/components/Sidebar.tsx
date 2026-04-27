@@ -166,7 +166,8 @@ const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
 };
 const SIDEBAR_HOVER_SURFACE_CLASS = "hover:bg-sidebar-hover hover:text-sidebar-hover-foreground";
 const SIDEBAR_ROW_LABEL_CLASS = "min-w-0 flex-1 truncate font-normal";
-const SIDEBAR_ROW_META_CLASS = "ml-auto font-normal text-muted-foreground/50";
+const SIDEBAR_ROW_META_CLASS =
+  "ml-auto font-normal text-muted-foreground/50 opacity-0 transition-none! group-hover/menu-item:opacity-100";
 
 type SidebarProjectSnapshot = Project & {
   expanded: boolean;
@@ -439,9 +440,18 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
   const subagentRows = useSidebarBackgroundSubagentRows(props.threadId);
   const [subagentsExpanded, setSubagentsExpanded] = useState(false);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [isConfirmingArchive, setIsConfirmingArchive] = useState(false);
   const [actionMenuPosition, setActionMenuPosition] = useState<{ x: number; y: number } | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!isConfirmingArchive) return;
+    const timeoutId = window.setTimeout(() => {
+      setIsConfirmingArchive(false);
+    }, 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [isConfirmingArchive]);
 
   if (!thread) {
     return null;
@@ -752,7 +762,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                       <MenuGroup>
                         <MenuItem
                           data-testid={`thread-context-archive-${thread.id}`}
-                          className="grid grid-cols-[1rem_1fr] gap-2 text-destructive"
+                          className="grid grid-cols-[1rem_1fr] gap-2"
                           onClick={() => {
                             void props.attemptArchiveThread(thread.id);
                           }}
@@ -798,22 +808,42 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                           type="button"
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
-                          aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          aria-label={
+                            isConfirmingArchive
+                              ? `Confirm archive ${thread.title}`
+                              : `Archive ${thread.title}`
+                          }
+                          className={cn(
+                            "inline-flex h-5 cursor-pointer items-center justify-center focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+                            isConfirmingArchive
+                              ? "rounded-full bg-destructive/12 px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/18"
+                              : "w-5 text-muted-foreground hover:text-foreground",
+                          )}
                           onPointerDown={(event) => {
                             event.stopPropagation();
                           }}
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
+                            if (!isConfirmingArchive) {
+                              setIsConfirmingArchive(true);
+                              return;
+                            }
+                            setIsConfirmingArchive(false);
                             void props.attemptArchiveThread(thread.id);
                           }}
                         >
-                          <ArchiveIcon className="size-3.5" />
+                          {isConfirmingArchive ? (
+                            <span>Confirm</span>
+                          ) : (
+                            <ArchiveIcon className="size-3.5" />
+                          )}
                         </button>
                       }
                     />
-                    <TooltipPopup side="top">Archive</TooltipPopup>
+                    <TooltipPopup side="top">
+                      {isConfirmingArchive ? "Confirm archive" : "Archive"}
+                    </TooltipPopup>
                   </Tooltip>
                 </div>
               ) : null}
@@ -2098,34 +2128,28 @@ export default function Sidebar(props: { onSearchClick?: () => void }) {
 
             {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<div role="button" tabIndex={0} />}
+                <span
                   data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-transparent hover:text-sidebar-foreground"
+                  className="flex h-6 w-full cursor-pointer items-center pl-7 text-xs text-muted-foreground/60 hover:text-sidebar-foreground"
                   onClick={() => {
                     expandThreadListForProject(project.id);
                   }}
                 >
-                  <span className="flex min-w-0 flex-1 items-center gap-2 pl-5">
-                    <span>Show more</span>
-                  </span>
-                </SidebarMenuSubButton>
+                  Show more
+                </span>
               </SidebarMenuSubItem>
             )}
             {project.expanded && hasHiddenThreads && isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<div role="button" tabIndex={0} />}
+                <span
                   data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-muted-foreground/60 hover:bg-transparent hover:text-sidebar-foreground"
+                  className="flex h-6 w-full cursor-pointer items-center pl-7 text-xs text-muted-foreground/60 hover:text-sidebar-foreground"
                   onClick={() => {
                     collapseThreadListForProject(project.id);
                   }}
                 >
-                  <span className="pl-5">Show less</span>
-                </SidebarMenuSubButton>
+                  Show less
+                </span>
               </SidebarMenuSubItem>
             )}
           </SidebarMenuSub>

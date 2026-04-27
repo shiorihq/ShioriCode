@@ -53,6 +53,7 @@ import {
   getDisplayedWorkEntries,
   isFileChangeWorkEntry,
   isRuntimeDiagnosticWorkEntry,
+  isSkillWorkEntry,
   isWorkRowExpanded,
   isWorkRowInProgress,
   type DelegatedAgentWorkflowCard,
@@ -544,7 +545,7 @@ function MessagesTimelineView({
         );
       }
       if (!singleEntry.running) {
-        if (singleEntry.itemType === "web_search") {
+        if (singleEntry.itemType === "web_search" || isSkillWorkEntry(singleEntry)) {
           return (
             <div className={wrapperClassName}>
               <MinimalWorkEntry workEntry={singleEntry} indented={false} cwd={markdownCwd} />
@@ -1442,6 +1443,7 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
   const skillWorkflowCard = useMemo(() => extractSkillWorkflowCard(workEntry), [workEntry]);
   const detailUsesMono = formattedEntry.monospace;
   const isFileChange = formattedEntry.kind === "edit";
+  const isFilePathEntry = isFileChange || formattedEntry.kind === "read";
   const linkedSkillPath =
     detail && skillWorkflowCard?.skillName === detail ? skillWorkflowCard.skillPath : null;
   const Component = asListItem ? "li" : "p";
@@ -1460,7 +1462,7 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
     >
       <span>{action}</span>
       {detail &&
-        (isFileChange ? (
+        (isFilePathEntry ? (
           <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
         ) : linkedSkillPath ? (
           <>
@@ -1876,6 +1878,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
   const expandedContentId = `work-entry-details-${workEntry.id}`;
 
   const isFileChange = formattedEntry.kind === "edit";
+  const isFilePathEntry = isFileChange || formattedEntry.kind === "read";
   const parsedDiff = useMemo(
     () => (isFileChange ? parseEditDiff(workEntry.output, workEntry.detail) : null),
     [isFileChange, workEntry.output, workEntry.detail],
@@ -1922,7 +1925,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           <span className="truncate" title={detail ? `${action} ${detail}` : action}>
             <span>{action}</span>
             {detail &&
-              (isFileChange ? (
+              (isFilePathEntry ? (
                 <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
               ) : linkedSkillPath ? (
                 <>

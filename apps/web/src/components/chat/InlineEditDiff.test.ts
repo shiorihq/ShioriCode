@@ -83,6 +83,106 @@ describe("parseEditDiff", () => {
     ]);
   });
 
+  it("parses Kimi StrReplaceFile payloads using nested input.edit old/new strings", () => {
+    const parsed = parseEditDiff({
+      toolName: "StrReplaceFile",
+      input: {
+        path: "/Users/choki/Developer/shiori-code/apps/web/src/components/chat/ProviderModelPicker.tsx",
+        edit: {
+          old: 'className="opacity-0 transition-opacity duration-150"',
+          new: 'className="opacity-0"',
+        },
+      },
+      result: {
+        isError: false,
+        message: "File successfully edited. Applied 1 edit(s) with 1 total replacement(s).",
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.filePath).toBe(
+      "/Users/choki/Developer/shiori-code/apps/web/src/components/chat/ProviderModelPicker.tsx",
+    );
+    expect(parsed?.additions).toBe(1);
+    expect(parsed?.deletions).toBe(1);
+    expect(parsed?.lines).toEqual([
+      {
+        type: "removed",
+        content: 'className="opacity-0 transition-opacity duration-150"',
+        oldLineNo: 1,
+        newLineNo: null,
+      },
+      {
+        type: "added",
+        content: 'className="opacity-0"',
+        oldLineNo: null,
+        newLineNo: 1,
+      },
+    ]);
+  });
+
+  it("parses Kimi StrReplaceFile payloads using result display diff blocks", () => {
+    const parsed = parseEditDiff({
+      toolName: "StrReplaceFile",
+      input: {
+        path: "apps/web/src/components/chat/ProviderModelPicker.tsx",
+        edit: {
+          old: 'const label = "old";',
+          new: 'const label = "new";',
+        },
+      },
+      result: {
+        isError: false,
+        display: [
+          {
+            type: "diff",
+            path: "apps/web/src/components/chat/ProviderModelPicker.tsx",
+            old_text: '<span title="old">\n  const label = "old";',
+            new_text: '<span title="new">\n  const label = "new";',
+          },
+        ],
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.filePath).toBe("apps/web/src/components/chat/ProviderModelPicker.tsx");
+    expect(parsed?.additions).toBe(2);
+    expect(parsed?.deletions).toBe(2);
+    expect(parsed?.lines.at(0)?.content).toBe('<span title="old">');
+  });
+
+  it("keeps Kimi WriteFile payloads on the write-content diff path even when display diffs exist", () => {
+    const parsed = parseEditDiff({
+      toolName: "WriteFile",
+      input: {
+        path: "apps/web/src/index.css",
+        content: "body {\n  color: red;\n}",
+      },
+      result: {
+        isError: false,
+        display: [
+          {
+            type: "diff",
+            path: "apps/web/src/index.css",
+            old_text: "body {\n  color: blue;\n}",
+            new_text: "body {\n  color: red;\n}",
+          },
+        ],
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.filePath).toBe("apps/web/src/index.css");
+    expect(parsed?.additions).toBe(3);
+    expect(parsed?.deletions).toBe(1);
+    expect(parsed?.lines).toEqual([
+      { type: "removed", content: "", oldLineNo: 1, newLineNo: null },
+      { type: "added", content: "body {", oldLineNo: null, newLineNo: 1 },
+      { type: "added", content: "  color: red;", oldLineNo: null, newLineNo: 2 },
+      { type: "added", content: "}", oldLineNo: null, newLineNo: 3 },
+    ]);
+  });
+
   it("parses bytes-only file changes using input.content even when the write tool name is missing", () => {
     const parsed = parseEditDiff({
       input: {

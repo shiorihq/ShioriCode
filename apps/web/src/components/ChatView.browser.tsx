@@ -127,6 +127,7 @@ interface UserRowMeasurement {
 
 interface MountedChatView {
   [Symbol.asyncDispose]: () => Promise<void>;
+  host: HTMLElement;
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
@@ -1086,6 +1087,7 @@ async function mountChatView(options: {
 
   return {
     [Symbol.asyncDispose]: cleanup,
+    host,
     cleanup,
     measureUserRow: async (targetMessageId: MessageId) => measureUserRow({ host, targetMessageId }),
     setViewport: async (viewport: ViewportSpec) => {
@@ -1191,6 +1193,132 @@ describe("ChatView timeline estimator parity (full app)", () => {
   afterEach(() => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
+  });
+
+  it("opens long threads at the bottom and stays there when streaming settles", async () => {
+    const targetTurnId = "turn-scroll-settle" as TurnId;
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-scroll-settle-target" as MessageId,
+      targetText: "scroll settle target",
+      sessionStatus: "running",
+    });
+    const thread = snapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Missing thread fixture for scroll settle test.");
+    }
+    const streamingAssistantId = "msg-assistant-64" as MessageId;
+    const runningSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: targetTurnId,
+            state: "running",
+            requestedAt: isoAt(390),
+            startedAt: isoAt(391),
+            completedAt: null,
+            assistantMessageId: streamingAssistantId,
+            sourceProposedPlan: undefined,
+          },
+          session: {
+            ...thread.session,
+            status: "running",
+            activeTurnId: targetTurnId,
+            updatedAt: isoAt(391),
+          },
+          messages: thread.messages.map((message) =>
+            message.id === streamingAssistantId
+              ? {
+                  ...message,
+                  turnId: targetTurnId,
+                  streaming: true,
+                  updatedAt: isoAt(392),
+                }
+              : message,
+          ),
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: { ...DEFAULT_VIEWPORT, height: 720 },
+      snapshot: runningSnapshot,
+    });
+
+    try {
+      const scrollContainer = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLDivElement>("div.overflow-y-auto.overscroll-y-contain"),
+        "Unable to find ChatView message scroll container.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
+          ).toBeLessThanOrEqual(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForWsClient();
+      sendOrchestrationDomainEvent({
+        sequence: 2,
+        eventId: EventId.makeUnsafe("event-scroll-settle-final-message"),
+        aggregateKind: "thread",
+        aggregateId: THREAD_ID,
+        occurredAt: isoAt(400),
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: THREAD_ID,
+          messageId: streamingAssistantId,
+          role: "assistant",
+          text: "assistant filler 64\n\nDone.",
+          attachments: [],
+          turnId: targetTurnId,
+          streaming: false,
+          createdAt: isoAt(384),
+          updatedAt: isoAt(400),
+        },
+      });
+      sendOrchestrationDomainEvent({
+        sequence: 3,
+        eventId: EventId.makeUnsafe("event-scroll-settle-session-ready"),
+        aggregateKind: "thread",
+        aggregateId: THREAD_ID,
+        occurredAt: isoAt(401),
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.session-set",
+        payload: {
+          threadId: THREAD_ID,
+          session: {
+            ...thread.session,
+            status: "ready",
+            activeTurnId: null,
+            updatedAt: isoAt(401),
+          },
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(
+            scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
+          ).toBeLessThanOrEqual(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(

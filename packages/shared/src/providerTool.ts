@@ -26,6 +26,7 @@ const FILE_CHANGE_TOOL_NAMES = new Set([
   "notebook edit",
   "notebookedit",
   "replace",
+  "str replace file",
   "update file",
   "write",
   "write file",
@@ -407,6 +408,7 @@ export function providerToolTitle(toolName: string | null | undefined): string {
     case "list directory":
       return "List directory";
     case "multi edit":
+    case "str replace file":
       return "Edit file";
     case "notebook edit":
       return "Edit notebook";

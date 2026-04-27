@@ -539,6 +539,50 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("does not repeat Kimi write verbs in running file-change details", () => {
+    expect(
+      formatWorkEntry({
+        id: "kimi-write-running",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Write file",
+        tone: "tool",
+        itemType: "file_change",
+        detail: "Write 1 file",
+        running: true,
+        output: {
+          toolName: "WriteFile",
+          input: {},
+        },
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Writing",
+      detail: "1 file",
+      monospace: true,
+    });
+
+    expect(
+      formatWorkEntry({
+        id: "kimi-write-running-path-summary",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Write file",
+        tone: "tool",
+        itemType: "file_change",
+        detail: "Write file: apps/web/src/index.css",
+        running: true,
+        output: {
+          toolName: "WriteFile",
+          input: {},
+        },
+      }),
+    ).toMatchObject({
+      kind: "edit",
+      action: "Writing",
+      detail: "apps/web/src/index.css",
+      monospace: true,
+    });
+  });
+
   it("formats create and delete file tool calls with file-change specific actions", () => {
     expect(
       formatWorkEntry({
