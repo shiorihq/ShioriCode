@@ -4,7 +4,11 @@ import {
   useAuthToken,
 } from "@convex-dev/auth/react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
+import {
+  decodeHostedShioriAuthTokenClaims,
+  hostedShioriAuthTokenMatchesConvexUrl,
+} from "shared/hostedShioriConvex";
 
 import {
   hostedFlagGetQuery,
@@ -20,16 +24,26 @@ import {
   normalizeHostedSubscriptionPlanId,
 } from "./hostedSubscriptionPlan";
 import { readNativeApi, setNativeApiWebConnectGate } from "../nativeApi";
+import { convexDeploymentUrl } from "./config";
 
 function normalizeHostedShioriAuthToken(token: string | null): string | null {
   const trimmed = token?.trim() ?? "";
-  return /^[^.]+\.[^.]+\.[^.]+$/.test(trimmed) ? trimmed : null;
+  return hostedShioriAuthTokenMatchesConvexUrl({
+    token: trimmed,
+    convexUrl: convexDeploymentUrl,
+  })
+    ? trimmed
+    : null;
 }
 
 function describeHostedShioriAuthToken(token: string | null) {
+  const claims = decodeHostedShioriAuthTokenClaims(token);
   return {
     present: token !== null,
     jwtLike: token !== null,
+    issuer: claims?.iss ?? null,
+    audience: claims?.aud ?? null,
+    subject: claims?.sub ?? null,
   };
 }
 
@@ -104,6 +118,14 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
     isAuthenticated && isPaidSubscriber ? {} : "skip",
   );
   const { signIn, signOut } = useAuthActions();
+  const signOutAndClearDesktopToken = useCallback<ConvexAuthActionsContext["signOut"]>(
+    async (...args) => {
+      await signOut(...args);
+      const api = readNativeApi();
+      await api?.server.setShioriAuthToken(null);
+    },
+    [signOut],
+  );
 
   useEffect(() => {
     setNativeApiWebConnectGate(isAuthenticated);
@@ -152,11 +174,19 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (normalizedAuthToken === null) {
+      console.info("[shiori-auth] skipping empty Shiori account token sync", {
+        isAuthenticated,
+        isLoading,
+      });
+      return;
+    }
+
     console.info("[shiori-auth] syncing Shiori account token to desktop server", {
       token: describeHostedShioriAuthToken(normalizedAuthToken),
     });
     void api.server.setShioriAuthToken(normalizedAuthToken);
-  }, [isAuthenticated, normalizedAuthToken]);
+  }, [isAuthenticated, isLoading, normalizedAuthToken]);
 
   const value = useMemo(
     () => ({
@@ -173,7 +203,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       computerUseEnabled: isAuthenticated && computerUseEnabledFlag === true,
       catalogProviders,
       signIn,
-      signOut,
+      signOut: signOutAndClearDesktopToken,
     }),
     [
       catalogProviders,
@@ -186,7 +216,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       computerUseEnabledFlag,
       mobileAppEnabledFlag,
       signIn,
-      signOut,
+      signOutAndClearDesktopToken,
       subscriptionPlanId,
       subscriptionPlanLabel,
       viewer,

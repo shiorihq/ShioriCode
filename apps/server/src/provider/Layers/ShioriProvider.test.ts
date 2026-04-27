@@ -8,7 +8,15 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ShioriProvider } from "../Services/ShioriProvider.ts";
 import { ShioriProviderLive } from "./ShioriProvider.ts";
 
-const jwtToken = "header.payload.signature";
+function encodeBase64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+const jwtToken = `${encodeBase64UrlJson({ alg: "RS256" })}.${encodeBase64UrlJson({
+  iss: "https://cautious-puma-129.convex.site",
+  aud: "convex",
+  sub: "user|session",
+})}.signature`;
 
 const hostedShioriAuthTokenStoreTestLayer = Layer.effect(
   HostedShioriAuthTokenStore,

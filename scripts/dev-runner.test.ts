@@ -93,6 +93,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.SHIORICODE_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_HOST, "127.0.0.1");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
+        assert.equal(env.VITE_CONVEX_URL, "https://modest-guanaco-471.convex.cloud");
       }),
     );
 
@@ -191,6 +192,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.ELECTRON_RENDERER_PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_HOST, "127.0.0.1");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
+        assert.equal(env.VITE_CONVEX_URL, "https://modest-guanaco-471.convex.cloud");
         assert.equal(env.SHIORICODE_PORT, undefined);
         assert.equal(env.SHIORICODE_AUTH_TOKEN, undefined);
         assert.equal(env.SHIORICODE_MODE, undefined);

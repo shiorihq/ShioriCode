@@ -32,7 +32,12 @@ import {
   resetOnboardingProgress,
   resolveOnboardingState,
 } from "shared/onboarding";
-import { resolveHostedShioriConvexUrl } from "shared/hostedShioriConvex";
+import {
+  decodeHostedShioriAuthTokenClaims,
+  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
+  hostedShioriAuthTokenMatchesConvexUrl,
+  resolveHostedShioriConvexUrl,
+} from "shared/hostedShioriConvex";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
@@ -172,7 +177,18 @@ type ConvexHostedAuthResponse =
 
 const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
   process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
+  process.env.VITE_DEV_SERVER_URL ? HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL : undefined,
 );
+
+function describeHostedShioriAuthToken(token: string | null) {
+  const claims = decodeHostedShioriAuthTokenClaims(token);
+  return {
+    present: token !== null,
+    issuer: claims?.iss ?? null,
+    audience: claims?.aud ?? null,
+    subject: claims?.sub ?? null,
+  };
+}
 
 function toHostedAuthMessage(cause: unknown, fallback: string): string {
   if (cause instanceof Error && cause.message.trim().length > 0) {
@@ -460,8 +476,21 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         }).pipe(Effect.as({})),
       [WS_METHODS.serverSetShioriAuthToken]: ({ token }) =>
         Effect.gen(function* () {
+          if (
+            token !== null &&
+            !hostedShioriAuthTokenMatchesConvexUrl({
+              token,
+              convexUrl: hostedShioriConvexUrl,
+            })
+          ) {
+            yield* Effect.logWarning("ignored shiori account auth token for wrong deployment", {
+              expectedConvexUrl: hostedShioriConvexUrl,
+              token: describeHostedShioriAuthToken(token),
+            });
+            return {};
+          }
           yield* Effect.logInfo("shiori account auth token updated", {
-            present: token !== null,
+            token: describeHostedShioriAuthToken(token),
           });
           yield* hostedShioriAuthTokenStore.setToken(token);
           yield* analytics.record("server.shiori_auth.updated", {
@@ -560,7 +589,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               Effect.flatMap((result) => {
                 const tokens = result.tokens ?? null;
                 const persistToken =
-                  tokens?.token !== undefined
+                  tokens?.token !== undefined &&
+                  hostedShioriAuthTokenMatchesConvexUrl({
+                    token: tokens.token,
+                    convexUrl: hostedShioriConvexUrl,
+                  })
                     ? hostedShioriAuthTokenStore.setToken(tokens.token)
                     : Effect.void;
 

@@ -6,6 +6,11 @@ import type {
   ServerProviderState,
 } from "contracts";
 import { Effect, Layer, Ref, Stream } from "effect";
+import {
+  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
+  hostedShioriAuthTokenMatchesConvexUrl,
+  resolveHostedShioriConvexUrl,
+} from "shared/hostedShioriConvex";
 
 import {
   buildPendingServerProvider,
@@ -21,6 +26,10 @@ import { fetchShioriCodeEntitlements } from "../shioriCodeEntitlements";
 const PROVIDER = "shiori" as const;
 const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
 const ENTITLEMENT_AUTH_FAILURE_GRACE_MS = 2 * 60 * 1_000;
+const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
+  process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
+  process.env.VITE_DEV_SERVER_URL ? HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL : undefined,
+);
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -98,7 +107,14 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 function hasHostedShioriAuthToken(token: string | null): token is string {
-  return typeof token === "string" && JWT_LIKE_TOKEN_PATTERN.test(token.trim());
+  return (
+    typeof token === "string" &&
+    JWT_LIKE_TOKEN_PATTERN.test(token.trim()) &&
+    hostedShioriAuthTokenMatchesConvexUrl({
+      token,
+      convexUrl: hostedShioriConvexUrl,
+    })
+  );
 }
 
 function buildShioriAuth(settings: {

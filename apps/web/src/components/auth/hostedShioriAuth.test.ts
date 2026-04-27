@@ -24,6 +24,7 @@ vi.mock("../../nativeApi", () => ({
 import {
   resolveHostedShioriDesktopRedirectTarget,
   resolveHostedShioriRedirectTarget,
+  signInWithHostedPasswordDesktop,
   signInWithHostedOAuthDesktop,
   toHostedShioriAuthErrorMessage,
   withHostedShioriRedirect,
@@ -44,9 +45,21 @@ const localStorageMock = {
   },
 };
 
+function encodeBase64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function makeHostedToken(issuer: string): string {
+  return `${encodeBase64UrlJson({ alg: "RS256" })}.${encodeBase64UrlJson({
+    iss: issuer,
+    aud: "convex",
+    sub: "user|session",
+  })}.signature`;
+}
+
 beforeEach(() => {
   Object.defineProperty(globalThis, "window", {
-    value: { localStorage: localStorageMock },
+    value: { localStorage: localStorageMock, location: { reload: vi.fn() } },
     configurable: true,
     writable: true,
   });
@@ -169,5 +182,48 @@ describe("signInWithHostedOAuthDesktop", () => {
       }),
     ).rejects.toThrow("Unable to determine the desktop OAuth callback URL.");
     expect(hostedOAuthStartMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("signInWithHostedPasswordDesktop", () => {
+  it("stores matching deployment tokens and syncs the desktop server", async () => {
+    const token = makeHostedToken("https://modest-guanaco-471.convex.site");
+    hostedPasswordAuthMock.mockResolvedValue({
+      signingIn: true,
+      token,
+      refreshToken: "refresh-token",
+    });
+
+    await expect(
+      signInWithHostedPasswordDesktop({
+        flow: "signIn",
+        email: "user@example.com",
+        password: "password",
+      }),
+    ).resolves.toEqual({ signingIn: true });
+
+    expect(
+      window.localStorage.getItem(convexStorageKey("__convexAuthJWT", convexDeploymentUrl)),
+    ).toBe(token);
+    expect(setShioriAuthTokenMock).toHaveBeenCalledWith(token);
+    expect(window.location.reload).toHaveBeenCalled();
+  });
+
+  it("rejects tokens from a different Convex deployment", async () => {
+    hostedPasswordAuthMock.mockResolvedValue({
+      signingIn: true,
+      token: makeHostedToken("https://cautious-puma-129.convex.site"),
+      refreshToken: "refresh-token",
+    });
+
+    await expect(
+      signInWithHostedPasswordDesktop({
+        flow: "signIn",
+        email: "user@example.com",
+        password: "password",
+      }),
+    ).rejects.toThrow("different deployment");
+
+    expect(setShioriAuthTokenMock).not.toHaveBeenCalled();
   });
 });

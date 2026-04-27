@@ -1,4 +1,5 @@
 import type { HostedOAuthProvider, HostedPasswordAuthInput } from "contracts";
+import { hostedShioriAuthTokenMatchesConvexUrl } from "shared/hostedShioriConvex";
 
 import { convexDeploymentUrl, convexStorageKey } from "../../convex/config";
 import { ensureNativeApi } from "../../nativeApi";
@@ -156,6 +157,14 @@ export async function signInWithHostedPasswordDesktop(
 
   if (!result.signingIn || !result.token || !result.refreshToken) {
     return { signingIn: false };
+  }
+  if (
+    !hostedShioriAuthTokenMatchesConvexUrl({
+      token: result.token,
+      convexUrl: convexDeploymentUrl,
+    })
+  ) {
+    throw new Error("Hosted Shiori sign-in returned a token for a different deployment.");
   }
 
   writeConvexAuthTokens({

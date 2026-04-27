@@ -1,7 +1,10 @@
-import { HOSTED_SHIORI_PRODUCTION_CONVEX_URL } from "shared/hostedShioriConvex";
+import {
+  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
+  HOSTED_SHIORI_PRODUCTION_CONVEX_URL,
+} from "shared/hostedShioriConvex";
 
 const DEVELOPMENT_CONVEX_URL =
-  import.meta.env.VITE_CONVEX_URL?.trim() || "https://modest-guanaco-471.convex.cloud";
+  import.meta.env.VITE_CONVEX_URL?.trim() || HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL;
 
 export const convexDeploymentUrl = import.meta.env.PROD
   ? HOSTED_SHIORI_PRODUCTION_CONVEX_URL

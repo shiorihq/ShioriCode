@@ -14,6 +14,7 @@ const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DEFAULT_WEB_DEV_HOST = "127.0.0.1";
+const DEFAULT_DEV_CONVEX_URL = "https://modest-guanaco-471.convex.cloud";
 
 export const DEFAULT_SHIORICODE_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".shiori"),
@@ -156,6 +157,8 @@ export function createDevRunnerEnv({
       ELECTRON_RENDERER_PORT: String(webPort),
       VITE_DEV_SERVER_HOST: DEFAULT_WEB_DEV_HOST,
       VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://${DEFAULT_WEB_DEV_HOST}:${webPort}`,
+      VITE_CONVEX_URL:
+        baseEnv.VITE_CONVEX_URL ?? baseEnv.NEXT_PUBLIC_CONVEX_URL ?? DEFAULT_DEV_CONVEX_URL,
       SHIORICODE_HOME: resolvedBaseDir,
     };
 
