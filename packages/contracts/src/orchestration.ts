@@ -13,6 +13,9 @@ import {
   CommandId,
   EventId,
   IsoDateTime,
+  KanbanItemAssigneeId,
+  KanbanItemId,
+  KanbanItemNoteId,
   MessageId,
   NonNegativeInt,
   ProjectId,
@@ -211,6 +214,83 @@ export const OrchestrationProject = Schema.Struct({
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
 
+export const KanbanItemStatus = Schema.Literals(["backlog", "todo", "in_progress", "done"]);
+export type KanbanItemStatus = typeof KanbanItemStatus.Type;
+
+export const KanbanItemPromptStatus = Schema.Literals(["idle", "generating", "ready", "failed"]);
+export type KanbanItemPromptStatus = typeof KanbanItemPromptStatus.Type;
+
+export const KanbanItemAssigneeRole = Schema.Literals([
+  "owner",
+  "reviewer",
+  "researcher",
+  "tester",
+]);
+export type KanbanItemAssigneeRole = typeof KanbanItemAssigneeRole.Type;
+
+export const KanbanItemAssigneeStatus = Schema.Literals([
+  "assigned",
+  "claimed",
+  "working",
+  "blocked",
+  "done",
+]);
+export type KanbanItemAssigneeStatus = typeof KanbanItemAssigneeStatus.Type;
+
+export const KanbanItemPullRequestLink = Schema.Struct({
+  number: NonNegativeInt,
+  url: Schema.optional(TrimmedNonEmptyString),
+  repositoryFullName: Schema.optional(TrimmedNonEmptyString),
+  title: Schema.optional(TrimmedNonEmptyString),
+});
+export type KanbanItemPullRequestLink = typeof KanbanItemPullRequestLink.Type;
+
+export const KanbanItemAssignee = Schema.Struct({
+  id: KanbanItemAssigneeId,
+  provider: ProviderKind,
+  model: Schema.optional(TrimmedNonEmptyString),
+  role: KanbanItemAssigneeRole,
+  status: KanbanItemAssigneeStatus,
+  threadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(Schema.withDecodingDefault(() => null)),
+  assignedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type KanbanItemAssignee = typeof KanbanItemAssignee.Type;
+
+export const KanbanItemNoteAuthorKind = Schema.Literals(["client", "server", "provider"]);
+export type KanbanItemNoteAuthorKind = typeof KanbanItemNoteAuthorKind.Type;
+
+export const KanbanItemNote = Schema.Struct({
+  id: KanbanItemNoteId,
+  body: TrimmedNonEmptyString,
+  authorKind: KanbanItemNoteAuthorKind,
+  authorName: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type KanbanItemNote = typeof KanbanItemNote.Type;
+
+export const KanbanItem = Schema.Struct({
+  id: KanbanItemId,
+  projectId: ProjectId,
+  pullRequest: Schema.NullOr(KanbanItemPullRequestLink),
+  title: TrimmedNonEmptyString,
+  description: Schema.String,
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(() => "")),
+  generatedPrompt: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  promptStatus: KanbanItemPromptStatus.pipe(Schema.withDecodingDefault(() => "idle" as const)),
+  promptError: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(() => null)),
+  status: KanbanItemStatus,
+  sortKey: Schema.String,
+  blockedReason: Schema.NullOr(TrimmedNonEmptyString),
+  assignees: Schema.Array(KanbanItemAssignee),
+  notes: Schema.Array(KanbanItemNote),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+  deletedAt: Schema.NullOr(IsoDateTime),
+});
+export type KanbanItem = typeof KanbanItem.Type;
+
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
@@ -391,6 +471,7 @@ export type OrchestrationThread = typeof OrchestrationThread.Type;
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
+  kanbanItems: Schema.optional(Schema.Array(KanbanItem)).pipe(Schema.withDecodingDefault(() => [])),
   threads: Schema.Array(OrchestrationThread),
   updatedAt: IsoDateTime,
 });
@@ -420,6 +501,101 @@ const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
+});
+
+const KanbanItemCreateCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.create"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  projectId: ProjectId,
+  pullRequest: Schema.optional(Schema.NullOr(KanbanItemPullRequestLink)),
+  title: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.String),
+  prompt: Schema.optional(Schema.String),
+  generatedPrompt: Schema.optional(Schema.NullOr(Schema.String)),
+  promptStatus: Schema.optional(KanbanItemPromptStatus),
+  promptError: Schema.optional(Schema.NullOr(Schema.String)),
+  status: KanbanItemStatus.pipe(Schema.withDecodingDefault(() => "backlog" as const)),
+  sortKey: Schema.String,
+  assignees: Schema.optional(Schema.Array(KanbanItemAssignee)),
+  createdAt: IsoDateTime,
+});
+
+const KanbanItemUpdateCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.update"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(Schema.String),
+  prompt: Schema.optional(Schema.String),
+  generatedPrompt: Schema.optional(Schema.NullOr(Schema.String)),
+  promptStatus: Schema.optional(KanbanItemPromptStatus),
+  promptError: Schema.optional(Schema.NullOr(Schema.String)),
+  pullRequest: Schema.optional(Schema.NullOr(KanbanItemPullRequestLink)),
+  updatedAt: IsoDateTime,
+});
+
+const KanbanItemMoveCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.move"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  status: KanbanItemStatus,
+  sortKey: Schema.String,
+  movedAt: IsoDateTime,
+});
+
+const KanbanItemAssignCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.assign"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  assignee: KanbanItemAssignee,
+  createdAt: IsoDateTime,
+});
+
+const KanbanItemUnassignCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.unassign"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  assigneeId: KanbanItemAssigneeId,
+  createdAt: IsoDateTime,
+});
+
+const KanbanItemBlockCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.block"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  reason: TrimmedNonEmptyString,
+  blockedAt: IsoDateTime,
+});
+
+const KanbanItemUnblockCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.unblock"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  unblockedAt: IsoDateTime,
+});
+
+const KanbanItemCompleteCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.complete"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  sortKey: Schema.optional(Schema.String),
+  completedAt: IsoDateTime,
+});
+
+const KanbanItemNoteAddCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.note.add"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  note: KanbanItemNote,
+  createdAt: IsoDateTime,
+});
+
+const KanbanItemDeleteCommand = Schema.Struct({
+  type: Schema.Literal("kanbanItem.delete"),
+  commandId: CommandId,
+  itemId: KanbanItemId,
+  deletedAt: IsoDateTime,
 });
 
 const ThreadCreateCommand = Schema.Struct({
@@ -587,6 +763,16 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  KanbanItemCreateCommand,
+  KanbanItemUpdateCommand,
+  KanbanItemMoveCommand,
+  KanbanItemAssignCommand,
+  KanbanItemUnassignCommand,
+  KanbanItemBlockCommand,
+  KanbanItemUnblockCommand,
+  KanbanItemCompleteCommand,
+  KanbanItemNoteAddCommand,
+  KanbanItemDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -610,6 +796,16 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  KanbanItemCreateCommand,
+  KanbanItemUpdateCommand,
+  KanbanItemMoveCommand,
+  KanbanItemAssignCommand,
+  KanbanItemUnassignCommand,
+  KanbanItemBlockCommand,
+  KanbanItemUnblockCommand,
+  KanbanItemCompleteCommand,
+  KanbanItemNoteAddCommand,
+  KanbanItemDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -723,6 +919,16 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "kanbanItem.created",
+  "kanbanItem.updated",
+  "kanbanItem.moved",
+  "kanbanItem.assigned",
+  "kanbanItem.unassigned",
+  "kanbanItem.blocked",
+  "kanbanItem.unblocked",
+  "kanbanItem.completed",
+  "kanbanItem.note-added",
+  "kanbanItem.deleted",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -748,7 +954,7 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "kanbanItem"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -773,6 +979,69 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
+  deletedAt: IsoDateTime,
+});
+
+export const KanbanItemCreatedPayload = Schema.Struct({
+  item: KanbanItem,
+});
+
+export const KanbanItemUpdatedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(Schema.String),
+  prompt: Schema.optional(Schema.String),
+  generatedPrompt: Schema.optional(Schema.NullOr(Schema.String)),
+  promptStatus: Schema.optional(KanbanItemPromptStatus),
+  promptError: Schema.optional(Schema.NullOr(Schema.String)),
+  pullRequest: Schema.optional(Schema.NullOr(KanbanItemPullRequestLink)),
+  updatedAt: IsoDateTime,
+});
+
+export const KanbanItemMovedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  status: KanbanItemStatus,
+  sortKey: Schema.String,
+  movedAt: IsoDateTime,
+});
+
+export const KanbanItemAssignedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  assignee: KanbanItemAssignee,
+  updatedAt: IsoDateTime,
+});
+
+export const KanbanItemUnassignedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  assigneeId: KanbanItemAssigneeId,
+  updatedAt: IsoDateTime,
+});
+
+export const KanbanItemBlockedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  reason: TrimmedNonEmptyString,
+  blockedAt: IsoDateTime,
+});
+
+export const KanbanItemUnblockedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  unblockedAt: IsoDateTime,
+});
+
+export const KanbanItemCompletedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  sortKey: Schema.optional(Schema.String),
+  completedAt: IsoDateTime,
+});
+
+export const KanbanItemNoteAddedPayload = Schema.Struct({
+  itemId: KanbanItemId,
+  note: KanbanItemNote,
+  updatedAt: IsoDateTime,
+});
+
+export const KanbanItemDeletedPayload = Schema.Struct({
+  itemId: KanbanItemId,
   deletedAt: IsoDateTime,
 });
 
@@ -957,7 +1226,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, KanbanItemId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -980,6 +1249,56 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.created"),
+    payload: KanbanItemCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.updated"),
+    payload: KanbanItemUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.moved"),
+    payload: KanbanItemMovedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.assigned"),
+    payload: KanbanItemAssignedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.unassigned"),
+    payload: KanbanItemUnassignedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.blocked"),
+    payload: KanbanItemBlockedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.unblocked"),
+    payload: KanbanItemUnblockedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.completed"),
+    payload: KanbanItemCompletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.note-added"),
+    payload: KanbanItemNoteAddedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("kanbanItem.deleted"),
+    payload: KanbanItemDeletedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

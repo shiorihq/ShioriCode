@@ -1,5 +1,6 @@
 import {
   type OrchestrationEvent,
+  type KanbanItem,
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
   type ProjectId,
@@ -40,6 +41,7 @@ import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread 
 
 export interface AppState {
   projects: Project[];
+  kanbanItems?: KanbanItem[];
   threads: Thread[];
   threadIndexById: Record<string, number>;
   sidebarThreadsById: Record<string, SidebarThreadSummary>;
@@ -50,6 +52,7 @@ export interface AppState {
 
 const initialState: AppState = {
   projects: [],
+  kanbanItems: [],
   threads: [],
   threadIndexById: {},
   sidebarThreadsById: {},
@@ -81,6 +84,25 @@ function updateProject(
     return updated;
   });
   return changed ? next : projects;
+}
+
+function updateKanbanItem(
+  kanbanItems: KanbanItem[],
+  itemId: KanbanItem["id"],
+  updater: (item: KanbanItem) => KanbanItem,
+): KanbanItem[] {
+  let changed = false;
+  const next = kanbanItems.map((item) => {
+    if (item.id !== itemId) {
+      return item;
+    }
+    const updated = updater(item);
+    if (updated !== item) {
+      changed = true;
+    }
+    return updated;
+  });
+  return changed ? next : kanbanItems;
 }
 
 function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
@@ -387,7 +409,7 @@ function rebindTurnDiffSummariesForAssistantMessage(
       assistantMessageId: assistantMessageId ?? undefined,
     };
   });
-  return changed ? nextSummaries : [...turnDiffSummaries];
+  return changed ? nextSummaries : (turnDiffSummaries as Thread["turnDiffSummaries"]);
 }
 
 function retainThreadMessagesAfterRevert(
@@ -768,6 +790,132 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
     case "project.deleted": {
       const projects = state.projects.filter((project) => project.id !== event.payload.projectId);
       return projects.length === state.projects.length ? state : { ...state, projects };
+    }
+
+    case "kanbanItem.created": {
+      const existingItems = state.kanbanItems ?? [];
+      const existing = existingItems.find((item) => item.id === event.payload.item.id);
+      const kanbanItems = existing
+        ? existingItems.map((item) =>
+            item.id === event.payload.item.id ? event.payload.item : item,
+          )
+        : [...existingItems, event.payload.item];
+      return { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.updated": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+        ...(event.payload.description !== undefined
+          ? { description: event.payload.description }
+          : {}),
+        ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
+        ...(event.payload.generatedPrompt !== undefined
+          ? { generatedPrompt: event.payload.generatedPrompt }
+          : {}),
+        ...(event.payload.promptStatus !== undefined
+          ? { promptStatus: event.payload.promptStatus }
+          : {}),
+        ...(event.payload.promptError !== undefined
+          ? { promptError: event.payload.promptError }
+          : {}),
+        ...(event.payload.pullRequest !== undefined
+          ? { pullRequest: event.payload.pullRequest }
+          : {}),
+        updatedAt: event.payload.updatedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.moved": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        status: event.payload.status,
+        sortKey: event.payload.sortKey,
+        completedAt: event.payload.status === "done" ? event.payload.movedAt : null,
+        updatedAt: event.payload.movedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.assigned": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        assignees: [
+          ...item.assignees.filter((assignee) => assignee.id !== event.payload.assignee.id),
+          event.payload.assignee,
+        ],
+        updatedAt: event.payload.updatedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.unassigned": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        assignees: item.assignees.filter((assignee) => assignee.id !== event.payload.assigneeId),
+        updatedAt: event.payload.updatedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.blocked": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        blockedReason: event.payload.reason,
+        updatedAt: event.payload.blockedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.unblocked": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        blockedReason: null,
+        updatedAt: event.payload.unblockedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.completed": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        status: "done",
+        ...(event.payload.sortKey !== undefined ? { sortKey: event.payload.sortKey } : {}),
+        completedAt: event.payload.completedAt,
+        updatedAt: event.payload.completedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.note-added": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+        ...item,
+        notes: [
+          ...item.notes.filter((note) => note.id !== event.payload.note.id),
+          event.payload.note,
+        ].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        ),
+        updatedAt: event.payload.updatedAt,
+      }));
+      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+    }
+
+    case "kanbanItem.deleted": {
+      const existingItems = state.kanbanItems ?? [];
+      const kanbanItems = existingItems.filter((item) => item.id !== event.payload.itemId);
+      return kanbanItems.length === existingItems.length ? state : { ...state, kanbanItems };
     }
 
     case "thread.created": {

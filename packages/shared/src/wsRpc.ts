@@ -232,6 +232,10 @@ export interface WsRpcClient {
     readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
     readonly onDomainEvent: RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>;
   };
+  readonly browserPanel: {
+    readonly completeCommand: RpcUnaryMethod<typeof WS_METHODS.browserPanelCompleteCommand>;
+    readonly onNavigateRequest: RpcStreamMethod<typeof WS_METHODS.subscribeBrowserPanelCommands>;
+  };
 }
 
 export function createWsRpcClient(options: {
@@ -358,6 +362,15 @@ export function createWsRpcClient(options: {
       onDomainEvent: (listener) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
+          listener,
+        ),
+    },
+    browserPanel: {
+      completeCommand: (input) =>
+        transport.request((client) => client[WS_METHODS.browserPanelCompleteCommand](input)),
+      onNavigateRequest: (listener) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeBrowserPanelCommands]({}),
           listener,
         ),
     },

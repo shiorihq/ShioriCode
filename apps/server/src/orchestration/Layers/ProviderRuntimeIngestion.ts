@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  type KanbanItem,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationProposedPlanId,
@@ -35,6 +36,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
+const newKanbanSortKey = () => `${Date.now().toString().padStart(13, "0")}_${crypto.randomUUID()}`;
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
@@ -233,6 +235,12 @@ function normalizeRuntimeTurnState(
   }
 }
 
+function kanbanItemHasAssignedThread(item: KanbanItem, threadId: ThreadId): boolean {
+  return item.assignees.some(
+    (assignee) => assignee.threadId !== null && String(assignee.threadId) === String(threadId),
+  );
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -422,6 +430,24 @@ function runtimeEventToActivities(
             ...(event.payload.explanation !== undefined
               ? { explanation: event.payload.explanation }
               : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "turn.tasks.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.tasks.updated",
+          summary: "Todo list updated",
+          payload: {
+            source: event.payload.source,
+            items: event.payload.items,
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1244,6 +1270,30 @@ const make = Effect.fn("make")(function* () {
     });
   });
 
+  const completeKanbanItemsAssignedToThread = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    completedAt: string,
+    event: ProviderRuntimeEvent,
+  ) {
+    const currentReadModel = yield* orchestrationEngine.getReadModel();
+    const linkedItems = (currentReadModel.kanbanItems ?? []).filter(
+      (item) =>
+        item.deletedAt === null &&
+        item.status !== "done" &&
+        kanbanItemHasAssignedThread(item, threadId),
+    );
+
+    for (const item of linkedItems) {
+      yield* orchestrationEngine.dispatch({
+        type: "kanbanItem.complete",
+        commandId: providerCommandId(event, "kanban-thread-complete"),
+        itemId: item.id,
+        sortKey: newKanbanSortKey(),
+        completedAt,
+      });
+    }
+  });
+
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     event: ProviderRuntimeEvent,
   ) {
@@ -1411,6 +1461,21 @@ const make = Effect.fn("make")(function* () {
           resumeState: nextResumeState,
           createdAt: now,
         });
+
+        if (
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "completed"
+        ) {
+          yield* completeKanbanItemsAssignedToThread(thread.id, now, event).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider runtime ingestion failed to complete kanban items", {
+                eventId: event.eventId,
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }
       }
     }
 

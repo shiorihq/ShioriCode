@@ -75,6 +75,15 @@ export type RuntimeTurnState = typeof RuntimeTurnState.Type;
 const RuntimePlanStepStatus = Schema.Literals(["pending", "inProgress", "completed"]);
 export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
 
+const RuntimeTaskListItemStatus = Schema.Literals([
+  "pending",
+  "inProgress",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type RuntimeTaskListItemStatus = typeof RuntimeTaskListItemStatus.Type;
+
 const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
 export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
 
@@ -163,6 +172,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "turn.completed",
   "turn.aborted",
   "turn.plan.updated",
+  "turn.tasks.updated",
   "turn.proposed.delta",
   "turn.proposed.completed",
   "turn.diff.updated",
@@ -213,6 +223,7 @@ const TurnStartedType = Schema.Literal("turn.started");
 const TurnCompletedType = Schema.Literal("turn.completed");
 const TurnAbortedType = Schema.Literal("turn.aborted");
 const TurnPlanUpdatedType = Schema.Literal("turn.plan.updated");
+const TurnTasksUpdatedType = Schema.Literal("turn.tasks.updated");
 const TurnProposedDeltaType = Schema.Literal("turn.proposed.delta");
 const TurnProposedCompletedType = Schema.Literal("turn.proposed.completed");
 const TurnDiffUpdatedType = Schema.Literal("turn.diff.updated");
@@ -380,6 +391,21 @@ const TurnPlanUpdatedPayload = Schema.Struct({
   plan: Schema.Array(RuntimePlanStep),
 });
 export type TurnPlanUpdatedPayload = typeof TurnPlanUpdatedPayload.Type;
+
+const RuntimeTaskListItem = Schema.Struct({
+  id: TrimmedNonEmptyStringSchema,
+  title: TrimmedNonEmptyStringSchema,
+  status: RuntimeTaskListItemStatus,
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  source: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type RuntimeTaskListItem = typeof RuntimeTaskListItem.Type;
+
+const TurnTasksUpdatedPayload = Schema.Struct({
+  source: TrimmedNonEmptyStringSchema,
+  items: Schema.Array(RuntimeTaskListItem),
+});
+export type TurnTasksUpdatedPayload = typeof TurnTasksUpdatedPayload.Type;
 
 const TurnProposedDeltaPayload = Schema.Struct({
   delta: Schema.String,
@@ -728,6 +754,13 @@ const ProviderRuntimeTurnPlanUpdatedEvent = Schema.Struct({
 });
 export type ProviderRuntimeTurnPlanUpdatedEvent = typeof ProviderRuntimeTurnPlanUpdatedEvent.Type;
 
+const ProviderRuntimeTurnTasksUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: TurnTasksUpdatedType,
+  payload: TurnTasksUpdatedPayload,
+});
+export type ProviderRuntimeTurnTasksUpdatedEvent = typeof ProviderRuntimeTurnTasksUpdatedEvent.Type;
+
 const ProviderRuntimeTurnProposedDeltaEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TurnProposedDeltaType,
@@ -963,6 +996,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeTurnCompletedEvent,
   ProviderRuntimeTurnAbortedEvent,
   ProviderRuntimeTurnPlanUpdatedEvent,
+  ProviderRuntimeTurnTasksUpdatedEvent,
   ProviderRuntimeTurnProposedDeltaEvent,
   ProviderRuntimeTurnProposedCompletedEvent,
   ProviderRuntimeTurnDiffUpdatedEvent,

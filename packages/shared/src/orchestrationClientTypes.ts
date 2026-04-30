@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  KanbanItem,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -88,6 +89,8 @@ export interface Project {
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
 }
+
+export type ClientKanbanItem = KanbanItem;
 
 export interface Thread {
   id: ThreadId;

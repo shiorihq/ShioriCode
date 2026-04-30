@@ -1,5 +1,6 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "contracts";
+import type { KanbanItemId, OrchestrationEvent, OrchestrationReadModel, ThreadId } from "contracts";
 import {
+  KanbanItem,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -11,6 +12,16 @@ import { normalizeProjectTitle } from "shared/String";
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
   MessageSentPayloadSchema,
+  KanbanItemAssignedPayload,
+  KanbanItemBlockedPayload,
+  KanbanItemCompletedPayload,
+  KanbanItemCreatedPayload,
+  KanbanItemDeletedPayload,
+  KanbanItemMovedPayload,
+  KanbanItemNoteAddedPayload,
+  KanbanItemUnassignedPayload,
+  KanbanItemUnblockedPayload,
+  KanbanItemUpdatedPayload,
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
@@ -30,6 +41,7 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id">>;
+type KanbanItemPatch = Partial<Omit<KanbanItem, "id">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -45,6 +57,14 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function updateKanbanItem(
+  items: ReadonlyArray<KanbanItem>,
+  itemId: KanbanItemId,
+  patch: KanbanItemPatch,
+): KanbanItem[] {
+  return items.map((item) => (item.id === itemId ? { ...item, ...patch } : item));
 }
 
 function decodeForEvent<A>(
@@ -161,6 +181,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
+    kanbanItems: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -170,8 +191,9 @@ export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
-  const nextBase: OrchestrationReadModel = {
+  const nextBase: OrchestrationReadModel & { kanbanItems: ReadonlyArray<KanbanItem> } = {
     ...model,
+    kanbanItems: model.kanbanItems ?? [],
     snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
   };
@@ -241,6 +263,162 @@ export function projectEvent(
                 }
               : project,
           ),
+        })),
+      );
+
+    case "kanbanItem.created":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          KanbanItemCreatedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const item = yield* decodeForEvent(KanbanItem, payload.item, event.type, "item");
+        const existing = nextBase.kanbanItems.find((entry) => entry.id === item.id);
+        return {
+          ...nextBase,
+          kanbanItems: existing
+            ? nextBase.kanbanItems.map((entry) => (entry.id === item.id ? item : entry))
+            : [...nextBase.kanbanItems, item],
+        };
+      });
+
+    case "kanbanItem.updated":
+      return decodeForEvent(KanbanItemUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.description !== undefined ? { description: payload.description } : {}),
+            ...(payload.prompt !== undefined ? { prompt: payload.prompt } : {}),
+            ...(payload.generatedPrompt !== undefined
+              ? { generatedPrompt: payload.generatedPrompt }
+              : {}),
+            ...(payload.promptStatus !== undefined ? { promptStatus: payload.promptStatus } : {}),
+            ...(payload.promptError !== undefined ? { promptError: payload.promptError } : {}),
+            ...(payload.pullRequest !== undefined ? { pullRequest: payload.pullRequest } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "kanbanItem.moved":
+      return decodeForEvent(KanbanItemMovedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            status: payload.status,
+            sortKey: payload.sortKey,
+            completedAt: payload.status === "done" ? payload.movedAt : null,
+            updatedAt: payload.movedAt,
+          }),
+        })),
+      );
+
+    case "kanbanItem.assigned":
+      return decodeForEvent(KanbanItemAssignedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: nextBase.kanbanItems.map((item) =>
+            item.id === payload.itemId
+              ? {
+                  ...item,
+                  assignees: [
+                    ...item.assignees.filter((assignee) => assignee.id !== payload.assignee.id),
+                    payload.assignee,
+                  ],
+                  updatedAt: payload.updatedAt,
+                }
+              : item,
+          ),
+        })),
+      );
+
+    case "kanbanItem.unassigned":
+      return decodeForEvent(KanbanItemUnassignedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: nextBase.kanbanItems.map((item) =>
+            item.id === payload.itemId
+              ? {
+                  ...item,
+                  assignees: item.assignees.filter(
+                    (assignee) => assignee.id !== payload.assigneeId,
+                  ),
+                  updatedAt: payload.updatedAt,
+                }
+              : item,
+          ),
+        })),
+      );
+
+    case "kanbanItem.blocked":
+      return decodeForEvent(KanbanItemBlockedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            blockedReason: payload.reason,
+            updatedAt: payload.blockedAt,
+          }),
+        })),
+      );
+
+    case "kanbanItem.unblocked":
+      return decodeForEvent(KanbanItemUnblockedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            blockedReason: null,
+            updatedAt: payload.unblockedAt,
+          }),
+        })),
+      );
+
+    case "kanbanItem.completed":
+      return decodeForEvent(KanbanItemCompletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            status: "done",
+            ...(payload.sortKey !== undefined ? { sortKey: payload.sortKey } : {}),
+            completedAt: payload.completedAt,
+            updatedAt: payload.completedAt,
+          }),
+        })),
+      );
+
+    case "kanbanItem.note-added":
+      return decodeForEvent(KanbanItemNoteAddedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: nextBase.kanbanItems.map((item) =>
+            item.id === payload.itemId
+              ? {
+                  ...item,
+                  notes: [
+                    ...item.notes.filter((note) => note.id !== payload.note.id),
+                    payload.note,
+                  ].toSorted(
+                    (left, right) =>
+                      left.createdAt.localeCompare(right.createdAt) ||
+                      left.id.localeCompare(right.id),
+                  ),
+                  updatedAt: payload.updatedAt,
+                }
+              : item,
+          ),
+        })),
+      );
+
+    case "kanbanItem.deleted":
+      return decodeForEvent(KanbanItemDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          kanbanItems: updateKanbanItem(nextBase.kanbanItems, payload.itemId, {
+            deletedAt: payload.deletedAt,
+            updatedAt: payload.deletedAt,
+          }),
         })),
       );
 

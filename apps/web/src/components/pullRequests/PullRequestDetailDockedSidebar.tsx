@@ -58,6 +58,7 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useSettings } from "~/hooks/useSettings";
 import { useRenderedDiffReady } from "~/hooks/useRenderedDiffReady";
 import { useTheme } from "~/hooks/useTheme";
 import { buildPatchCacheKey, resolveDiffThemeName } from "~/lib/diffRendering";
@@ -73,6 +74,7 @@ import { cn } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { useStore } from "~/store";
 import { Sheet, SheetPopup } from "~/components/ui/sheet";
+import { PrKanbanBoard } from "~/components/kanban/PrKanbanBoard";
 
 const DOCKED_SIDEBAR_WIDTH_STORAGE_KEY = "pull_requests_detail_sidebar_width";
 const DOCKED_SIDEBAR_MIN_WIDTH = 28 * 16;
@@ -298,6 +300,7 @@ function PullRequestDetailContent({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
+  const kanbanEnabled = useSettings().kanban.enabled;
   const diffContentRef = useRef<HTMLDivElement | null>(null);
 
   const project = useStore(
@@ -353,8 +356,14 @@ function PullRequestDetailContent({
     gitPullRequestConversationQueryOptions({ cwd: projectCwd, number }),
   );
 
-  const [activeTab, setActiveTab] = useState<"files" | "conversation">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "conversation" | "kanban">("files");
   const summary = summaryQuery.data?.summary ?? null;
+
+  useEffect(() => {
+    if (!kanbanEnabled && activeTab === "kanban") {
+      setActiveTab("files");
+    }
+  }, [activeTab, kanbanEnabled]);
 
   const preparePullRequestMutation = useMutation(
     gitPreparePullRequestThreadMutationOptions({ cwd: projectCwd, queryClient }),
@@ -568,7 +577,11 @@ function PullRequestDetailContent({
           value={[activeTab]}
           onValueChange={(values) => {
             const next = values[0];
-            if (next === "files" || next === "conversation") {
+            if (
+              next === "files" ||
+              next === "conversation" ||
+              (kanbanEnabled && next === "kanban")
+            ) {
               setActiveTab(next);
             }
           }}
@@ -589,10 +602,39 @@ function PullRequestDetailContent({
                 })()
               : null}
           </Toggle>
+          {kanbanEnabled ? (
+            <Toggle value="kanban" className="h-6 px-2 text-xs">
+              Kanban
+            </Toggle>
+          ) : null}
         </ToggleGroup>
       </div>
 
-      {activeTab === "conversation" ? (
+      {activeTab === "kanban" ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {project && pullRequest ? (
+            <PrKanbanBoard
+              projectId={project.id as ProjectId}
+              pullRequest={{
+                number: pullRequest.number,
+                title: pullRequest.title,
+                url: pullRequest.url,
+              }}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center p-6">
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle className="text-pretty">Kanban unavailable</EmptyTitle>
+                  <EmptyDescription className="text-pretty">
+                    Select a project pull request to manage tasks.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
+          )}
+        </div>
+      ) : activeTab === "conversation" ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           <PullRequestConversationView
             query={conversationQuery}

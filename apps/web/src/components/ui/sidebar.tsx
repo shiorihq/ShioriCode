@@ -30,7 +30,7 @@ const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 const SIDEBAR_MENU_TEXT_SIZE_CLASS = "text-sm";
 const SIDEBAR_HOVER_SURFACE_CLASS = "hover:bg-sidebar-hover hover:text-sidebar-hover-foreground";
 const SIDEBAR_ACTIVE_SURFACE_CLASS =
-  "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground";
+  "data-[active=true]:bg-sidebar-hover data-[active=true]:text-sidebar-hover-foreground";
 const SIDEBAR_OPEN_HOVER_SURFACE_CLASS =
   "data-[state=open]:hover:bg-sidebar-hover data-[state=open]:hover:text-sidebar-hover-foreground";
 
@@ -746,7 +746,7 @@ function SidebarGroupContent({ className, ...props }: React.ComponentProps<"div"
 function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
-      className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+      className={cn("flex w-full min-w-0 flex-col gap-0.5", className)}
       data-sidebar="menu"
       data-slot="sidebar-menu"
       {...props}
@@ -766,7 +766,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  `peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left ${SIDEBAR_MENU_TEXT_SIZE_CLASS} outline-hidden ring-ring transition-[width,height,padding] ${SIDEBAR_HOVER_SURFACE_CLASS} focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 ${SIDEBAR_ACTIVE_SURFACE_CLASS} data-[active=true]:font-medium ${SIDEBAR_OPEN_HOVER_SURFACE_CLASS} group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0`,
+  `peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left ${SIDEBAR_MENU_TEXT_SIZE_CLASS} outline-hidden ring-ring transition-[width,height,padding] ${SIDEBAR_HOVER_SURFACE_CLASS} focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 ${SIDEBAR_ACTIVE_SURFACE_CLASS} ${SIDEBAR_OPEN_HOVER_SURFACE_CLASS} group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>span:last-child]:transition-opacity [&>span:last-child]:duration-200 [&>span:last-child]:ease-linear group-data-[collapsible=icon]:[&>span:last-child]:opacity-0 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0`,
   {
     defaultVariants: {
       size: "default",

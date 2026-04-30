@@ -3,10 +3,61 @@
 
 @custom-variant dark (&:is(.dark, .dark *));
 
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-extraleicht.woff2") format("woff2");
+  font-weight: 200;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-leicht.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-buch.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-kraftig.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-halbfett.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Söhne";
+  src: url("/fonts/soehne-fett.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/geist-mono-variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --font-sans: "Söhne", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:
+    "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -59,8 +110,17 @@
     @apply border-border outline-ring/50;
   }
 
+  html {
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
     @apply bg-background text-foreground relative;
+    font-kerning: normal;
+    font-optical-sizing: auto;
     user-select: none;
     -webkit-user-select: none;
   }
@@ -123,6 +183,79 @@
   }
 }
 
+/* Frosted-glass surface for user messages.
+ * Layers: translucent gradient fill, backdrop blur+saturation,
+ * a thin specular highlight at the top edge, a hairline rim border,
+ * and a soft drop shadow with an inner top highlight for depth. */
+.glass-user-message {
+  position: relative;
+  border-radius: var(--radius-2xl, 1rem);
+  padding: 0.75rem 1rem;
+  isolation: isolate;
+  border: 1px solid color-mix(in srgb, var(--color-black) 10%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-white) 62%, transparent) 0%,
+    color-mix(in srgb, var(--color-white) 38%, transparent) 55%,
+    color-mix(in srgb, var(--color-white) 22%, transparent) 100%
+  );
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 75%, transparent),
+    inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 4%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-black) 2%, transparent),
+    0 0 10px 0 color-mix(in srgb, var(--color-black) 4%, transparent),
+    0 0 24px 0 color-mix(in srgb, var(--color-black) 6%, transparent);
+}
+
+.glass-user-message::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-white) 90%, transparent) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+}
+
+.dark .glass-user-message {
+  border-color: color-mix(in srgb, var(--color-white) 16%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-white) 11%, transparent) 0%,
+    color-mix(in srgb, var(--color-white) 6%, transparent) 55%,
+    color-mix(in srgb, var(--color-white) 3%, transparent) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 14%, transparent),
+    inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 30%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-black) 12%, transparent),
+    0 0 12px 0 color-mix(in srgb, var(--color-black) 18%, transparent),
+    0 0 28px 0 color-mix(in srgb, var(--color-black) 24%, transparent);
+}
+
+.dark .glass-user-message::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-white) 18%, transparent) 50%,
+    transparent 100%
+  );
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-user-message {
+    background: var(--secondary);
+  }
+}
+
 .assistant-text-selectable,
 .assistant-text-selectable * {
   user-select: text;
@@ -144,11 +277,11 @@
     var(--color-white) 55%,
     transparent
   );
-  --app-sidebar-shell-border: color-mix(in srgb, var(--color-black) 10%, transparent);
+  --app-sidebar-shell-border: color-mix(in srgb, var(--foreground) 17%, transparent);
   --app-sidebar-shell-border-translucent: color-mix(
     in srgb,
-    var(--color-white) 16%,
-    var(--color-black) 8%
+    var(--color-white) 15%,
+    var(--color-black) 9%
   );
   --sidebar-interactive-surface: color-mix(
     in srgb,
@@ -169,7 +302,7 @@
     var(--primary) 26%,
     transparent
   );
-  --background: var(--color-white);
+  --background: oklch(0.992 0.003 95);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -189,8 +322,8 @@
   --accent: --alpha(var(--color-black) / 4%);
   --accent-foreground: var(--color-neutral-800);
   --destructive: var(--color-red-500);
-  --border: --alpha(var(--color-black) / 8%);
-  --input: --alpha(var(--color-black) / 10%);
+  --border: --alpha(var(--color-black) / 6%);
+  --input: --alpha(var(--color-black) / 8%);
   --ring: oklch(0.671 0.101 241.4);
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
@@ -211,8 +344,12 @@
       var(--background) 42%,
       transparent
     );
-    --app-sidebar-shell-border: color-mix(in srgb, var(--color-white) 9%, transparent);
-    --app-sidebar-shell-border-translucent: color-mix(in srgb, var(--color-white) 12%, transparent);
+    --app-sidebar-shell-border: color-mix(in srgb, var(--color-white) 8.5%, transparent);
+    --app-sidebar-shell-border-translucent: color-mix(
+      in srgb,
+      var(--color-white) 11.5%,
+      transparent
+    );
     --sidebar-interactive-surface: color-mix(
       in srgb,
       var(--background) 72%,
@@ -232,7 +369,7 @@
       var(--primary) 36%,
       transparent
     );
-    --background: #101010;
+    --background: oklch(0.158 0.004 75);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
@@ -248,8 +385,8 @@
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --border: --alpha(var(--color-white) / 6%);
-    --input: --alpha(var(--color-white) / 8%);
+    --border: --alpha(var(--color-white) / 5%);
+    --input: --alpha(var(--color-white) / 7%);
     --ring: oklch(0.771 0.101 241.4);
     --destructive-foreground: var(--color-red-400);
     --info: var(--color-blue-500);
@@ -368,15 +505,15 @@ body {
   width: 18px;
   pointer-events: none;
   box-shadow:
-    inset 1px 0 0 color-mix(in srgb, var(--color-white) 28%, transparent),
-    inset 12px 0 18px -18px color-mix(in srgb, var(--color-black) 14%, transparent);
+    inset 1px 0 0 color-mix(in srgb, var(--color-white) 25%, transparent),
+    inset 12px 0 18px -18px color-mix(in srgb, var(--color-black) 13%, transparent);
 }
 
 [data-app-chat-shell-with-sidebar]::after {
   content: "";
   position: absolute;
   inset: 0;
-  border: 1px solid color-mix(in srgb, var(--foreground) 18%, transparent);
+  border: 1px solid var(--app-sidebar-shell-border);
   border-right: 0;
   border-radius: var(--app-sidebar-shell-radius) 0 0 var(--app-sidebar-shell-radius);
   clip-path: inset(0 calc(100% - var(--app-sidebar-shell-radius) - 1px) 0 0);
@@ -384,7 +521,7 @@ body {
 }
 
 :root[data-sidebar-translucent] [data-app-chat-shell-with-sidebar]::after {
-  border-color: color-mix(in srgb, var(--foreground) 26%, transparent);
+  border-color: var(--app-sidebar-shell-border-translucent);
 }
 
 .dark [data-app-chat-shell-with-sidebar]::before {
@@ -447,13 +584,13 @@ body {
 
 .sidebar-thread-row.sidebar-thread-row--active,
 .sidebar-thread-row.sidebar-thread-row--active:focus-visible {
-  background-color: var(--sidebar-thread-surface-active);
-  color: var(--color-foreground);
+  background-color: var(--sidebar-hover-surface);
+  color: var(--sidebar-hover-surface-foreground);
 }
 
 .sidebar-thread-row.sidebar-thread-row--active:hover {
-  background-color: var(--sidebar-thread-surface-active-hover);
-  color: var(--color-foreground);
+  background-color: var(--sidebar-hover-surface);
+  color: var(--sidebar-hover-surface-foreground);
 }
 
 .sidebar-thread-row.sidebar-thread-row--selected,
@@ -529,22 +666,6 @@ body,
   overscroll-behavior-y: none;
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 256px 256px;
-}
-
-/* Hide noise overlay over the sidebar area so vibrancy is unobstructed */
-:root[data-sidebar-translucent] body::after {
-  display: none;
-}
-
 pre,
 code,
 kbd,
@@ -556,6 +677,13 @@ samp {
 .drag-region {
   -webkit-app-region: drag;
   background-color: inherit;
+}
+
+.app-titlebar-window-controls-inset {
+  padding-left: max(
+    var(--app-titlebar-base-left-padding, 1rem),
+    var(--app-titlebar-window-controls-left-inset, 0px)
+  );
 }
 
 .drag-region button,
@@ -618,13 +746,9 @@ samp {
   left: 0 !important;
 }
 
-/* ── Messages timeline: enforce one font-size for everything ──────── */
+/* ── Messages timeline: base font-size (headings excluded so markdown h1–h6 render) ── */
 [data-timeline-root] {
   font-size: 0.875rem; /* text-sm – the canonical chat body size */
-}
-
-[data-timeline-root] * {
-  font-size: inherit;
 }
 
 /* Tool UI: make monospace values visually muted (paths, filenames, ids, commands) */
@@ -647,6 +771,46 @@ samp {
 
 .chat-markdown > :last-child {
   margin-bottom: 0;
+}
+
+.chat-markdown-reveal-blocks
+  > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(-n + 24) {
+  animation: chat-markdown-block-ease-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.chat-markdown-reveal-blocks
+  > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(2) {
+  animation-delay: 35ms;
+}
+
+.chat-markdown-reveal-blocks
+  > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(3) {
+  animation-delay: 70ms;
+}
+
+.chat-markdown-reveal-blocks
+  > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(n + 4):nth-child(
+    -n + 24
+  ) {
+  animation-delay: 105ms;
+}
+
+@keyframes chat-markdown-block-ease-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-markdown-reveal-blocks
+    > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(-n + 24) {
+    animation: none;
+  }
 }
 
 .chat-markdown p,
@@ -690,14 +854,50 @@ samp {
 
 .chat-markdown a {
   color: color-mix(in srgb, var(--primary) 78%, var(--foreground));
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-decoration-line: none;
+  text-decoration-color: transparent;
+  text-decoration-style: dotted;
   text-underline-offset: 0.14em;
 }
 
 .chat-markdown a:hover {
   color: color-mix(in srgb, var(--primary) 90%, var(--foreground));
+  text-decoration-line: underline;
   text-decoration-color: currentColor;
+}
+
+.app-file-href-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.24em;
+  vertical-align: baseline;
+  background-image: radial-gradient(circle, currentColor 0.55px, transparent 0.7px);
+  background-position: 0 calc(100% - 0.08em);
+  background-repeat: repeat-x;
+  background-size: 3px 1px;
+  background-origin: content-box;
+  background-clip: content-box;
+  text-decoration-line: none;
+}
+
+.app-file-href-link:hover,
+.app-file-href-link:focus-visible {
+  text-decoration-line: none;
+}
+
+.app-file-href-link:not(:hover, :focus-visible) {
+  background-image: none;
+}
+
+.app-file-href-icon {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  transform: translateY(0.1em);
+}
+
+.chat-markdown a.app-file-href-link:hover {
+  text-decoration-line: none;
 }
 
 .chat-markdown blockquote {
@@ -1013,5 +1213,72 @@ samp {
 @media (prefers-reduced-motion: reduce) {
   .empty-thread-ambient {
     display: none;
+  }
+}
+
+/* ── Glass language ──────────────────────────────────────────────────────
+   Minimal glass treatment: floating surfaces become translucent with a
+   real backdrop blur and a single hairline inner highlight. Solid
+   surfaces (cards in flow) stay solid — glass is reserved for elements
+   that visually float above the page. */
+
+:root {
+  --glass-blur: 18px;
+  --glass-saturate: 1.5;
+  --glass-tint: color-mix(in srgb, var(--background) 72%, transparent);
+  --glass-tint-strong: color-mix(in srgb, var(--background) 84%, transparent);
+  --glass-highlight: color-mix(in srgb, var(--color-white) 38%, transparent);
+  --glass-edge: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --glass-shadow:
+    0 1px 0 0 var(--glass-highlight) inset, 0 0 0 1px var(--glass-edge),
+    0 12px 32px -16px color-mix(in srgb, var(--color-black) 28%, transparent),
+    0 4px 10px -6px color-mix(in srgb, var(--color-black) 20%, transparent);
+
+  @variant dark {
+    --glass-tint: color-mix(in srgb, var(--background) 60%, transparent);
+    --glass-tint-strong: color-mix(in srgb, var(--background) 76%, transparent);
+    --glass-highlight: color-mix(in srgb, var(--color-white) 10%, transparent);
+    --glass-edge: color-mix(in srgb, var(--color-white) 8%, transparent);
+    --glass-shadow:
+      0 1px 0 0 var(--glass-highlight) inset, 0 0 0 1px var(--glass-edge),
+      0 16px 40px -18px color-mix(in srgb, var(--color-black) 70%, transparent),
+      0 4px 12px -6px color-mix(in srgb, var(--color-black) 50%, transparent);
+  }
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass,
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="select-content"],
+  [data-slot="menubar-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="hover-card-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="command-dialog"],
+  [data-slot="dialog-content"] {
+    background-color: var(--glass-tint-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    border-color: transparent;
+    box-shadow: var(--glass-shadow);
+  }
+
+  .glass-thin {
+    background-color: var(--glass-tint);
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(1.3);
+    backdrop-filter: blur(calc(var(--glass-blur) * 0.6)) saturate(1.3);
+    box-shadow:
+      0 1px 0 0 var(--glass-highlight) inset,
+      0 0 0 1px var(--glass-edge);
+  }
+
+  /* Tooltips read better with a touch less blur and tighter shadow */
+  [data-slot="tooltip-content"] {
+    --glass-blur: 12px;
+    box-shadow:
+      0 1px 0 0 var(--glass-highlight) inset,
+      0 0 0 1px var(--glass-edge),
+      0 6px 18px -10px color-mix(in srgb, var(--color-black) 40%, transparent);
   }
 }

@@ -15,10 +15,15 @@ import { resolveApiModelId } from "shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "shared/git";
 
 import { TextGenerationError } from "contracts";
-import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
+import {
+  type KanbanTaskPromptGenerationResult,
+  type TextGenerationShape,
+  TextGeneration,
+} from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildKanbanTaskPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
@@ -77,7 +82,8 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateKanbanTaskPrompt";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -328,11 +334,42 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     };
   });
 
+  const generateKanbanTaskPrompt: TextGenerationShape["generateKanbanTaskPrompt"] = Effect.fn(
+    "ClaudeTextGeneration.generateKanbanTaskPrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildKanbanTaskPrompt({
+      title: input.title,
+      description: input.description,
+      prompt: input.prompt,
+      pullRequest: input.pullRequest ?? null,
+    });
+
+    if (input.modelSelection.provider !== "claudeAgent") {
+      return yield* new TextGenerationError({
+        operation: "generateKanbanTaskPrompt",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const generated = yield* runClaudeJson({
+      operation: "generateKanbanTaskPrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    } satisfies KanbanTaskPromptGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateKanbanTaskPrompt,
   } satisfies TextGenerationShape;
 });
 

@@ -152,6 +152,7 @@ function buildShioriProviderStatus(
       readonly status: string | null;
     } | null;
     readonly message: string | null;
+    readonly authFailure: boolean;
   },
 ): ServerProvider {
   const checkedAt = new Date().toISOString();
@@ -161,23 +162,24 @@ function buildShioriProviderStatus(
     entitlementPlan: entitlementProbe.entitlements?.plan ?? null,
   });
   const accessRequiresPaidPlan = entitlementProbe.entitlements?.allowed === false;
+  const accessWarningMessage =
+    accessRequiresPaidPlan || entitlementProbe.authFailure
+      ? (entitlementProbe.message ??
+        "ShioriCode requires an active paid Shiori subscription for hosted access.")
+      : null;
   const probe = {
     installed: true,
     version: null,
     status: (settings.apiBaseUrl
-      ? accessRequiresPaidPlan || entitlementProbe.message
+      ? accessWarningMessage
         ? "warning"
         : "ready"
       : "warning") as Exclude<ServerProviderState, "disabled">,
     auth,
     ...(settings.apiBaseUrl
-      ? accessRequiresPaidPlan
-        ? {
-            message: "ShioriCode requires an active paid Shiori subscription for hosted access.",
-          }
-        : entitlementProbe.message
-          ? { message: entitlementProbe.message }
-          : {}
+      ? accessWarningMessage
+        ? { message: accessWarningMessage }
+        : {}
       : {
           message: "Configure settings.providers.shiori.apiBaseUrl to enable Shiori API requests.",
         }),

@@ -2,6 +2,16 @@ import {
   ProjectCreatedPayload as ContractsProjectCreatedPayloadSchema,
   ProjectMetaUpdatedPayload as ContractsProjectMetaUpdatedPayloadSchema,
   ProjectDeletedPayload as ContractsProjectDeletedPayloadSchema,
+  KanbanItemCreatedPayload as ContractsKanbanItemCreatedPayloadSchema,
+  KanbanItemUpdatedPayload as ContractsKanbanItemUpdatedPayloadSchema,
+  KanbanItemMovedPayload as ContractsKanbanItemMovedPayloadSchema,
+  KanbanItemAssignedPayload as ContractsKanbanItemAssignedPayloadSchema,
+  KanbanItemUnassignedPayload as ContractsKanbanItemUnassignedPayloadSchema,
+  KanbanItemBlockedPayload as ContractsKanbanItemBlockedPayloadSchema,
+  KanbanItemUnblockedPayload as ContractsKanbanItemUnblockedPayloadSchema,
+  KanbanItemCompletedPayload as ContractsKanbanItemCompletedPayloadSchema,
+  KanbanItemNoteAddedPayload as ContractsKanbanItemNoteAddedPayloadSchema,
+  KanbanItemDeletedPayload as ContractsKanbanItemDeletedPayloadSchema,
   ThreadCreatedPayload as ContractsThreadCreatedPayloadSchema,
   ThreadArchivedPayload as ContractsThreadArchivedPayloadSchema,
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
@@ -27,6 +37,16 @@ import {
 export const ProjectCreatedPayload = ContractsProjectCreatedPayloadSchema;
 export const ProjectMetaUpdatedPayload = ContractsProjectMetaUpdatedPayloadSchema;
 export const ProjectDeletedPayload = ContractsProjectDeletedPayloadSchema;
+export const KanbanItemCreatedPayload = ContractsKanbanItemCreatedPayloadSchema;
+export const KanbanItemUpdatedPayload = ContractsKanbanItemUpdatedPayloadSchema;
+export const KanbanItemMovedPayload = ContractsKanbanItemMovedPayloadSchema;
+export const KanbanItemAssignedPayload = ContractsKanbanItemAssignedPayloadSchema;
+export const KanbanItemUnassignedPayload = ContractsKanbanItemUnassignedPayloadSchema;
+export const KanbanItemBlockedPayload = ContractsKanbanItemBlockedPayloadSchema;
+export const KanbanItemUnblockedPayload = ContractsKanbanItemUnblockedPayloadSchema;
+export const KanbanItemCompletedPayload = ContractsKanbanItemCompletedPayloadSchema;
+export const KanbanItemNoteAddedPayload = ContractsKanbanItemNoteAddedPayloadSchema;
+export const KanbanItemDeletedPayload = ContractsKanbanItemDeletedPayloadSchema;
 
 export const ThreadCreatedPayload = ContractsThreadCreatedPayloadSchema;
 export const ThreadArchivedPayload = ContractsThreadArchivedPayloadSchema;

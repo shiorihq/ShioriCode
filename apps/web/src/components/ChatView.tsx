@@ -52,6 +52,7 @@ import {
   deriveVisibleTimelineMessages,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveActiveTaskListState,
   findSidebarProposedPlan,
   findLatestProposedPlan,
   deriveWorkLogEntries,
@@ -172,6 +173,7 @@ import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
+import { ComposerContextPanel } from "./chat/ComposerContextPanel";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
 import {
   getComposerProviderState,
@@ -189,6 +191,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildAssistantSelectionComposerInsertion,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
@@ -218,6 +221,7 @@ import {
 import { Sheet, SheetPopup } from "./ui/sheet";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
+const BUFFERED_ASSISTANT_REVEAL_DURATION_MS = 420;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -362,6 +366,7 @@ const terminalContextIdListsEqual = (
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
 interface ChatViewProps {
+  isFocusedPane?: boolean;
   threadId: ThreadId;
 }
 
@@ -370,7 +375,7 @@ function ProjectlessChatComposerNotice(props: { emptyThread: boolean }) {
     <div
       className={cn(
         "relative z-10 mx-auto flex w-full min-w-0 items-center justify-center px-5 text-center text-muted-foreground/55 text-xs",
-        props.emptyThread ? "mt-2 max-w-[52rem]" : "max-w-3xl pb-3 pt-1",
+        props.emptyThread ? "mt-2 max-w-[50rem]" : "max-w-3xl pb-3 pt-1",
       )}
     >
       <p>ShioriCode uses AI, so double-check important information.</p>
@@ -732,7 +737,7 @@ function PersistentThreadTerminalDrawer({
   );
 }
 
-export default function ChatView({ threadId }: ChatViewProps) {
+export default function ChatView({ isFocusedPane = true, threadId }: ChatViewProps) {
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
@@ -751,6 +756,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
   });
+  const scopedSearch = isFocusedPane
+    ? rawSearch
+    : rawSearch.panes
+      ? { panes: rawSearch.panes }
+      : {};
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
@@ -814,6 +824,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const promptRef = useRef(prompt);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isScrolledFromTop, setIsScrolledFromTop] = useState(false);
+  const scrollChromeStateRef = useRef({
+    showScrollToBottom: false,
+    isScrolledFromTop: false,
+  });
+  const pendingScrollChromeFrameRef = useRef<number | null>(null);
+  const bufferedAssistantRevealThreadIdRef = useRef<ThreadId | null>(null);
+  const revealedBufferedAssistantMessageIdsRef = useRef<Set<MessageId>>(new Set());
+  const bufferedAssistantRevealTimerByMessageIdRef = useRef<Map<MessageId, number>>(new Map());
+  const [revealingBufferedAssistantMessageIds, setRevealingBufferedAssistantMessageIds] = useState<
+    ReadonlySet<MessageId>
+  >(() => new Set());
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -840,6 +861,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerTaskListOpen, setIsComposerTaskListOpen] = useState(true);
   const [isBackgroundSubagentsPanelOpen, setIsBackgroundSubagentsPanelOpen] = useState(true);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1003,8 +1025,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const { authToken: hostedShioriAuthToken, browserUseEnabled } = useHostedShioriState();
-  const diffOpen = rawSearch.diff === "1";
-  const browserOpen = browserUseEnabled && rawSearch.browser === "1";
+  const diffOpen = scopedSearch.diff === "1";
+  const browserOpen = browserUseEnabled && scopedSearch.browser === "1";
   const shouldUseBrowserSheet = useMediaQuery(BROWSER_PANEL_SHEET_MEDIA_QUERY);
   const activeThreadId = activeThread?.id ?? null;
   const { serverThreadIds, parentThread, childThreads } = useThreadRelations({
@@ -1453,6 +1475,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const activeTaskList = useMemo(
+    () => deriveActiveTaskListState(threadActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, threadActivities],
+  );
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -1486,6 +1512,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
+  const timelineActiveTurnStartedAt = activeLatestTurn?.startedAt ?? activeWorkStartedAt;
   const isComposerApprovalState = activePendingApproval !== null;
 
   const [planSuggestionDismissed, setPlanSuggestionDismissed] = useState(false);
@@ -1708,6 +1735,89 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ),
     [activeThread?.proposedPlans, reasoningEntries, timelineMessages, workLogEntries],
   );
+  useLayoutEffect(() => {
+    const bufferedAssistantMessageIds = timelineEntries.flatMap((entry) =>
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming &&
+      entry.message.text.trim().length > 0
+        ? [entry.message.id]
+        : [],
+    );
+
+    const clearRevealTimers = () => {
+      for (const timerId of bufferedAssistantRevealTimerByMessageIdRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      bufferedAssistantRevealTimerByMessageIdRef.current.clear();
+    };
+
+    const markCurrentMessagesAsSeen = () => {
+      revealedBufferedAssistantMessageIdsRef.current = new Set(bufferedAssistantMessageIds);
+      setRevealingBufferedAssistantMessageIds((current) =>
+        current.size > 0 ? new Set() : current,
+      );
+    };
+
+    const currentThreadId = activeThread?.id ?? null;
+
+    if (settings.enableAssistantStreaming) {
+      bufferedAssistantRevealThreadIdRef.current = currentThreadId;
+      clearRevealTimers();
+      markCurrentMessagesAsSeen();
+      return;
+    }
+
+    if (bufferedAssistantRevealThreadIdRef.current !== currentThreadId) {
+      bufferedAssistantRevealThreadIdRef.current = currentThreadId;
+      clearRevealTimers();
+      markCurrentMessagesAsSeen();
+      return;
+    }
+
+    const newlyBufferedMessageIds = bufferedAssistantMessageIds.filter(
+      (messageId) => !revealedBufferedAssistantMessageIdsRef.current.has(messageId),
+    );
+    if (newlyBufferedMessageIds.length === 0) return;
+
+    for (const messageId of newlyBufferedMessageIds) {
+      revealedBufferedAssistantMessageIdsRef.current.add(messageId);
+    }
+
+    setRevealingBufferedAssistantMessageIds((current) => {
+      const next = new Set(current);
+      for (const messageId of newlyBufferedMessageIds) {
+        next.add(messageId);
+      }
+      return next;
+    });
+
+    for (const messageId of newlyBufferedMessageIds) {
+      const existingTimerId = bufferedAssistantRevealTimerByMessageIdRef.current.get(messageId);
+      if (existingTimerId !== undefined) {
+        window.clearTimeout(existingTimerId);
+      }
+      const timerId = window.setTimeout(() => {
+        bufferedAssistantRevealTimerByMessageIdRef.current.delete(messageId);
+        setRevealingBufferedAssistantMessageIds((current) => {
+          if (!current.has(messageId)) return current;
+          const next = new Set(current);
+          next.delete(messageId);
+          return next;
+        });
+      }, BUFFERED_ASSISTANT_REVEAL_DURATION_MS);
+      bufferedAssistantRevealTimerByMessageIdRef.current.set(messageId, timerId);
+    }
+  }, [activeThread?.id, settings.enableAssistantStreaming, timelineEntries]);
+  useEffect(
+    () => () => {
+      for (const timerId of bufferedAssistantRevealTimerByMessageIdRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      bufferedAssistantRevealTimerByMessageIdRef.current.clear();
+    },
+    [],
+  );
   const activeTurnId = activeThread?.session?.activeTurnId ?? activeLatestTurn?.turnId ?? null;
   const isAwaitingSendAck = !isRevertingCheckpoint && (isSendBusy || isConnecting);
   const isEmptyThread = timelineEntries.length === 0 && !isWorking;
@@ -1775,16 +1885,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const messagesTimelineRenderKey = useMemo(() => {
-    const threadId = activeThread?.id ?? "no-thread";
-    const turnId = activeLatestTurn?.turnId ?? "no-turn";
-    const turnPhase = latestTurnSettled ? (activeLatestTurn?.completedAt ?? "settled") : "live";
-    return `${threadId}:${turnId}:${turnPhase}`;
-  }, [
-    activeLatestTurn?.completedAt,
-    activeLatestTurn?.turnId,
-    activeThread?.id,
-    latestTurnSettled,
-  ]);
+    return activeThread?.id ?? "no-thread";
+  }, [activeThread?.id]);
   const gitCwd = activeProject ? (activeThread?.worktreePath ?? activeProject.cwd) : null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
@@ -2192,7 +2294,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [browserOpen, browserUseEnabled, navigate, threadId]);
   useEffect(() => {
-    if (browserUseEnabled || rawSearch.browser !== "1") {
+    if (browserUseEnabled || scopedSearch.browser !== "1") {
       return;
     }
 
@@ -2202,7 +2304,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       replace: true,
       search: (previous) => stripBrowserSearchParams(previous),
     });
-  }, [browserUseEnabled, navigate, rawSearch.browser, threadId]);
+  }, [browserUseEnabled, navigate, scopedSearch.browser, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2693,6 +2795,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingInteractionAnchorFrameRef.current = null;
     window.cancelAnimationFrame(pendingFrame);
   }, []);
+  const cancelPendingScrollChromeUpdate = useCallback(() => {
+    const pendingFrame = pendingScrollChromeFrameRef.current;
+    if (pendingFrame === null) return;
+    pendingScrollChromeFrameRef.current = null;
+    window.cancelAnimationFrame(pendingFrame);
+  }, []);
+  const setScrollChromeState = useCallback(
+    (nextState: { showScrollToBottom: boolean; isScrolledFromTop: boolean }) => {
+      const currentState = scrollChromeStateRef.current;
+      if (
+        currentState.showScrollToBottom === nextState.showScrollToBottom &&
+        currentState.isScrolledFromTop === nextState.isScrolledFromTop
+      ) {
+        return;
+      }
+
+      scrollChromeStateRef.current = nextState;
+      if (pendingScrollChromeFrameRef.current !== null) {
+        return;
+      }
+      pendingScrollChromeFrameRef.current = window.requestAnimationFrame(() => {
+        pendingScrollChromeFrameRef.current = null;
+        const scheduledState = scrollChromeStateRef.current;
+        setShowScrollToBottom(scheduledState.showScrollToBottom);
+        setIsScrolledFromTop(scheduledState.isScrolledFromTop);
+      });
+    },
+    [],
+  );
   const scheduleStickToBottom = useCallback(() => {
     if (pendingAutoScrollFrameRef.current !== null) return;
     const stickToBottomFrame = () => {
@@ -2752,11 +2883,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [cancelPendingInteractionAnchorAdjustment],
   );
-  const forceStickToBottom = useCallback(() => {
-    cancelPendingStickToBottom();
-    scrollMessagesToBottom();
-    scheduleStickToBottom();
-  }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
   const pauseTimelineAutoScroll = useCallback(() => {
     shouldAutoScrollRef.current = false;
     pendingUserScrollUpIntentRef.current = false;
@@ -2764,12 +2890,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const scrollContainer = messagesScrollRef.current;
     const canScroll =
       scrollContainer !== null && scrollContainer.scrollHeight > scrollContainer.clientHeight;
-    setShowScrollToBottom(canScroll);
-  }, []);
+    setScrollChromeState({
+      showScrollToBottom: canScroll,
+      isScrolledFromTop: scrollContainer ? scrollContainer.scrollTop > 8 : false,
+    });
+  }, [setScrollChromeState]);
   const autoScrollOnSend = useCallback(() => {
     shouldAutoScrollRef.current = true;
-    forceStickToBottom();
-  }, [forceStickToBottom]);
+    pendingUserScrollUpIntentRef.current = false;
+    cancelPendingStickToBottom();
+    scheduleStickToBottomSettlement(3);
+  }, [cancelPendingStickToBottom, scheduleStickToBottomSettlement]);
   const onMessagesScroll = useCallback(() => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
@@ -2799,10 +2930,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     const canScroll = scrollContainer.scrollHeight > scrollContainer.clientHeight;
-    setShowScrollToBottom(!shouldAutoScrollRef.current && canScroll);
-    setIsScrolledFromTop(currentScrollTop > 8);
+    setScrollChromeState({
+      showScrollToBottom: !shouldAutoScrollRef.current && canScroll,
+      isScrolledFromTop: currentScrollTop > 8,
+    });
     lastKnownScrollTopRef.current = currentScrollTop;
-  }, []);
+  }, [setScrollChromeState]);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       pendingUserScrollUpIntentRef.current = true;
@@ -2838,8 +2971,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => {
       cancelPendingStickToBottom();
       cancelPendingInteractionAnchorAdjustment();
+      cancelPendingScrollChromeUpdate();
     };
-  }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
+  }, [
+    cancelPendingInteractionAnchorAdjustment,
+    cancelPendingScrollChromeUpdate,
+    cancelPendingStickToBottom,
+  ]);
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
     shouldAutoScrollRef.current = true;
@@ -2947,8 +3085,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const observer = new ResizeObserver(() => {
       const canScroll = el.scrollHeight > el.clientHeight;
       if (!canScroll) {
-        setShowScrollToBottom(false);
-        setIsScrolledFromTop(false);
+        setScrollChromeState({ showScrollToBottom: false, isScrolledFromTop: false });
       }
       if (shouldAutoScrollRef.current) {
         scheduleStickToBottomSettlement(1);
@@ -2958,7 +3095,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const timelineRoot = el.querySelector<HTMLElement>('[data-timeline-root="true"]');
     if (timelineRoot) observer.observe(timelineRoot);
     return () => observer.disconnect();
-  }, [messagesScrollElement, messagesTimelineRenderKey, scheduleStickToBottomSettlement]);
+  }, [
+    messagesScrollElement,
+    messagesTimelineRenderKey,
+    scheduleStickToBottomSettlement,
+    setScrollChromeState,
+  ]);
 
   useEffect(() => {
     setExpandedWorkGroups({});
@@ -3200,6 +3342,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (!isFocusedPane) return;
       if (!activeThreadId || event.defaultPrevented) return;
 
       // Meta+Shift+P (Ctrl+Shift+P on non-Mac) toggles plan mode
@@ -3278,6 +3421,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
+    isFocusedPane,
     terminalState.terminalOpen,
     terminalState.activeTerminalId,
     activeThreadId,
@@ -3624,9 +3768,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    flushSync(() => {
-      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
-    });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -3679,7 +3820,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }));
 
     if (isTurnRunning) {
-      autoScrollOnSend();
       const queuedImageSnapshots = await queuedImageSnapshotPromise;
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -3693,31 +3833,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      enqueueQueuedTurn({
-        id: randomUUID(),
-        threadId: threadIdForSend,
-        messageId: String(messageIdForSend),
-        text: outgoingMessageText,
-        attachments: queuedImageSnapshots.map((snapshot) => snapshot.uploadAttachment),
-        modelSelection: selectedModelSelection,
-        runtimeMode,
-        interactionMode,
-        titleSeed: activeThread.title.trim() || "New Thread",
-        createdAt: messageCreatedAt,
-        composerSnapshot: {
-          prompt: promptForSend,
-          persistedAttachments: queuedImageSnapshots.map(
-            (snapshot) => snapshot.persistedAttachment,
-          ),
-          terminalContexts: composerTerminalContextsSnapshot,
-        },
+      flushSync(() => {
+        enqueueQueuedTurn({
+          id: randomUUID(),
+          threadId: threadIdForSend,
+          messageId: String(messageIdForSend),
+          text: outgoingMessageText,
+          attachments: queuedImageSnapshots.map((snapshot) => snapshot.uploadAttachment),
+          modelSelection: selectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          titleSeed: activeThread.title.trim() || "New Thread",
+          createdAt: messageCreatedAt,
+          composerSnapshot: {
+            prompt: promptForSend,
+            persistedAttachments: queuedImageSnapshots.map(
+              (snapshot) => snapshot.persistedAttachment,
+            ),
+            terminalContexts: composerTerminalContextsSnapshot,
+          },
+        });
+        promptRef.current = "";
+        clearComposerDraftContent(threadIdForSend);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        setThreadError(threadIdForSend, null);
       });
-      promptRef.current = "";
-      clearComposerDraftContent(threadIdForSend);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      setThreadError(threadIdForSend, null);
+      autoScrollOnSend();
       toastManager.add({
         type: "info",
         title: "Message queued",
@@ -3728,21 +3871,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
 
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    // Sending a message should always bring the latest user turn into view.
+    flushSync(() => {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      setThreadError(threadIdForSend, null);
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForSend);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+    });
+    // Sending a message should always bring the latest user turn into view after
+    // the optimistic row and composer reset have committed.
     autoScrollOnSend();
 
-    setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
         expiredTerminalContextCount,
@@ -3754,11 +3906,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         description: toastCopy.description,
       });
     }
-    promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
-    setComposerHighlightedItemId(null);
-    setComposerCursor(0);
-    setComposerTrigger(null);
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
@@ -4515,6 +4662,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [composerCursor, composerTerminalContexts]);
 
+  const onAddAssistantSelectionToChat = useCallback(
+    (selectedText: string) => {
+      const snapshot = readComposerSnapshot();
+      const cursor = clampCollapsedComposerCursor(promptRef.current, snapshot.cursor);
+      const insertion = buildAssistantSelectionComposerInsertion({
+        prompt: promptRef.current,
+        cursor,
+        selectedText,
+      });
+      if (insertion.length === 0) {
+        return;
+      }
+      applyPromptReplacement(cursor, cursor, insertion);
+    },
+    [applyPromptReplacement, readComposerSnapshot],
+  );
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -4901,7 +5065,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <header
         className={cn(
           "px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          isElectron
+            ? "app-titlebar-window-controls-inset drag-region flex h-[52px] items-center [--app-titlebar-base-left-padding:1.25rem]"
+            : "py-2 sm:py-3",
         )}
       >
         <ChatHeader
@@ -4992,8 +5158,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isWorking={isWorking}
                   showWorkingIndicator={isWorking && !isAwaitingSendAck}
                   activeTurnInProgress={isWorking || !latestTurnSettled}
-                  activeTurnStartedAt={activeWorkStartedAt}
+                  activeTurnStartedAt={timelineActiveTurnStartedAt}
                   activeTurnId={activeTurnId}
+                  revealingBufferedAssistantMessageIds={revealingBufferedAssistantMessageIds}
                   scrollContainer={messagesScrollElement}
                   timelineEntries={timelineEntries}
                   completionDividerBeforeEntryId={completionDividerBeforeEntryId}
@@ -5012,6 +5179,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   resolvedTheme={resolvedTheme}
                   timestampFormat={timestampFormat}
                   workspaceRoot={activeProject?.cwd ?? undefined}
+                  {...(isComposerApprovalState ? {} : { onAddAssistantSelectionToChat })}
                 />
               </div>
 
@@ -5042,14 +5210,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           >
             {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
             {isEmptyThread && (
-              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[52rem]">
+              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[50rem]">
                 <EmptyThreadHeading projectName={activeProject?.name} />
               </div>
             )}
             <form
               ref={composerFormRef}
               onSubmit={onSend}
-              className="relative z-10 mx-auto w-full min-w-0 max-w-[52rem]"
+              className="relative z-10 mx-auto w-full min-w-0 max-w-[50rem]"
               data-chat-composer-form="true"
             >
               {showPlanSuggestion && (
@@ -5063,6 +5231,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 activities={activeThread.activities}
                 open={isBackgroundSubagentsPanelOpen}
                 onOpenChange={setIsBackgroundSubagentsPanelOpen}
+              />
+              <ComposerContextPanel
+                taskList={activeTaskList}
+                taskListOpen={isComposerTaskListOpen}
+                backgroundSubagents={[]}
+                backgroundSubagentsOpen={false}
+                queuedTurns={[]}
+                queuedOpen={false}
+                onTaskListOpenChange={setIsComposerTaskListOpen}
+                onBackgroundSubagentsOpenChange={() => undefined}
+                onQueuedOpenChange={() => undefined}
+                onDeleteQueuedTurn={() => undefined}
+                onEditQueuedTurn={() => undefined}
               />
               <div className="relative">
                 {composerMenuOpen && !isComposerApprovalState && (
@@ -5463,7 +5644,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               <ProjectlessChatComposerNotice emptyThread />
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
-              <div className="relative z-10 mx-auto mt-2 flex w-full min-w-0 max-w-[52rem] flex-wrap items-center justify-start gap-x-0.5 gap-y-1">
+              <div className="relative z-10 mx-auto mt-2 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center justify-start gap-x-0.5 gap-y-1">
                 <BranchToolbar
                   inline
                   threadId={activeThread.id}

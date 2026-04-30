@@ -5,6 +5,7 @@ import {
   deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveActiveTaskListState,
   deriveVisibleTimelineMessages,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
@@ -334,6 +335,50 @@ describe("deriveActivePlanState", () => {
       turnId: "turn-1",
       explanation: "Refined plan",
       steps: [{ step: "Implement Codex user input", status: "inProgress" }],
+    });
+  });
+});
+
+describe("deriveActiveTaskListState", () => {
+  it("returns the latest task list update for the active turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tasks-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.tasks.updated",
+        summary: "Todo list updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          source: "SetTodoList",
+          items: [{ id: "todo-1", title: "Inspect code", status: "pending" }],
+        },
+      }),
+      makeActivity({
+        id: "tasks-latest",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "turn.tasks.updated",
+        summary: "Todo list updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          source: "SetTodoList",
+          items: [
+            { id: "todo-1", title: "Inspect code", status: "completed" },
+            { id: "todo-2", title: "Implement task projection", status: "in_progress" },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveActiveTaskListState(activities, TurnId.makeUnsafe("turn-1"))).toEqual({
+      createdAt: "2026-02-23T00:00:02.000Z",
+      turnId: "turn-1",
+      source: "SetTodoList",
+      items: [
+        { id: "todo-1", title: "Inspect code", status: "completed" },
+        { id: "todo-2", title: "Implement task projection", status: "inProgress" },
+      ],
     });
   });
 });

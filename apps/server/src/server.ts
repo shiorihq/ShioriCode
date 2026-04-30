@@ -3,6 +3,11 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/serverInstance";
 
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
+import {
+  BrowserPanelRequestsLive,
+  browserPanelCommandRouteLayer,
+  browserPanelRequestRouteLayer,
+} from "./browserPanelRequests";
 import { type ServerConfigShape, ServerConfig } from "./config";
 import { attachmentsRouteLayer, projectFaviconRouteLayer, staticAndDevRouteLayer } from "./http";
 import { fixPath } from "./os-jank";
@@ -38,6 +43,7 @@ import { KeybindingsLive } from "./keybindings";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
+import { KanbanPromptReactorLive } from "./orchestration/Layers/KanbanPromptReactor";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
@@ -105,6 +111,7 @@ const ReactorLayerLive = OrchestrationReactorLive.pipe(
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(KanbanPromptReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -218,6 +225,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
   avatarUploadRouteLayer,
   avatarDeleteRouteLayer,
+  browserPanelRequestRouteLayer,
+  browserPanelCommandRouteLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
@@ -258,7 +267,7 @@ export const makeServerLayer = Layer.unwrap(
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
         disableLogger: !config.logWebSocketEvents,
-      }),
+      }).pipe(Layer.provide(BrowserPanelRequestsLive)),
       httpListeningLayer,
     );
 

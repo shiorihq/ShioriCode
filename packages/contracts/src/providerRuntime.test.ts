@@ -32,6 +32,31 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.plan[1]?.status).toBe("inProgress");
   });
 
+  it("decodes turn.tasks.updated for task list rendering", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "turn.tasks.updated",
+      eventId: "event-tasks-1",
+      provider: "kimiCode",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        source: "SetTodoList",
+        items: [
+          { id: "todo-1", title: "Inspect Kimi stream", status: "completed" },
+          { id: "todo-2", title: "Wire composer tasks", status: "inProgress" },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("turn.tasks.updated");
+    if (parsed.type !== "turn.tasks.updated") {
+      throw new Error("expected turn.tasks.updated");
+    }
+    expect(parsed.payload.source).toBe("SetTodoList");
+    expect(parsed.payload.items[1]?.status).toBe("inProgress");
+  });
+
   it("decodes proposed-plan completion events", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.proposed.completed",

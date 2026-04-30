@@ -30,10 +30,11 @@ import {
   TurnId,
   type UserInputQuestion,
 } from "contracts";
-import { Effect, FileSystem, Layer, PubSub, Ref, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, PubSub, Ref, Stream } from "effect";
 import {
   classifyProviderToolLifecycleItemType,
   classifyProviderToolRequestKind,
+  isTodoListToolName,
   providerToolTitle,
   summarizeProviderToolInvocation,
 } from "shared/providerTool";
@@ -41,6 +42,8 @@ import {
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { makeKanbanProviderToolRuntime } from "../../kanban/providerTools.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
@@ -126,6 +129,10 @@ type ActiveTurnState = {
   readonly reasoningItemId: string;
   readonly items: Array<unknown>;
   readonly toolCalls: Map<string, ToolInFlight>;
+  readonly lastToolCallIdByParent: Map<string, string>;
+  pendingAssistantText: string;
+  commentaryItemIndex: number;
+  toolCallSeen: boolean;
   assistantStarted: boolean;
   assistantCompleted: boolean;
   assistantTextSeen: boolean;
@@ -267,9 +274,10 @@ async function buildKimiAgentFileContents(input: {
   readonly personalityAppendix?: string;
   readonly skillPrompt?: string;
   readonly externalTools: ReadonlyArray<ExternalTool>;
+  readonly agents?: ReadonlyArray<{ path: string; content: string }>;
 }): Promise<string> {
   const now = new Date();
-  const agents = await readWorkspaceAgentsFiles(input.cwd);
+  const agents = input.agents ?? (await readWorkspaceAgentsFiles(input.cwd));
   const toolList =
     input.externalTools.length > 0
       ? [
@@ -359,6 +367,17 @@ function parseResumeCursor(value: unknown): string | undefined {
 
 function buildResumeCursor(sessionId: string): KimiResumeCursor {
   return { sessionId };
+}
+
+function appendBufferedKimiText(previous: string, next: string): string {
+  return `${previous}${next}`;
+}
+
+export function shouldFlushKimiPendingTextAsAssistantAnswer(input: {
+  readonly turnFinished: boolean;
+  readonly toolCallSeen: boolean;
+}): boolean {
+  return input.turnFinished || !input.toolCallSeen;
 }
 
 function mapRequestKindToCanonical(
@@ -465,17 +484,20 @@ function buildSession(
   };
 }
 
-function turnSnapshotFromEvents(
+export function turnSnapshotFromEvents(
   threadId: ThreadId,
+  sessionId: string,
   events: ReadonlyArray<StreamEvent>,
 ): ProviderThreadSnapshot {
   const turns: Array<{ id: TurnId; items: Array<unknown> }> = [];
   let currentTurn: { id: TurnId; items: Array<unknown> } | null = null;
+  let turnIndex = 0;
 
   for (const event of events) {
     if (event.type === "TurnBegin") {
+      turnIndex += 1;
       currentTurn = {
-        id: TurnId.makeUnsafe(randomUUID()),
+        id: TurnId.makeUnsafe(`kimi:${sessionId}:turn:${turnIndex}`),
         items: [event],
       };
       turns.push(currentTurn);
@@ -494,6 +516,10 @@ function turnSnapshotFromEvents(
     threadId,
     turns,
   };
+}
+
+function toolParentKey(parentToolCallId: string | undefined): string {
+  return parentToolCallId ?? "__root__";
 }
 
 function isKimiModelConfigEqual(input: {
@@ -524,6 +550,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
   const serverConfig = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const serverSettingsService = yield* ServerSettingsService;
+  const orchestrationEngineOption = yield* Effect.serviceOption(OrchestrationEngineService);
   const runtimeEvents = yield* Effect.acquireRelease(
     PubSub.unbounded<ProviderRuntimeEvent>(),
     PubSub.shutdown,
@@ -636,6 +663,36 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           cause,
         }),
     });
+    const kanbanRuntime = settings.kanban.enabled
+      ? Option.match(orchestrationEngineOption, {
+          onSome: (orchestrationEngine) =>
+            makeKanbanProviderToolRuntime({
+              orchestrationEngine,
+              provider: PROVIDER,
+              threadId: input.threadId,
+            }),
+          onNone: () =>
+            ({
+              descriptors: [],
+              executors: new Map(),
+              warnings: [],
+              close: async () => undefined,
+            }) satisfies ProviderMcpToolRuntime,
+        })
+      : ({
+          descriptors: [],
+          executors: new Map(),
+          warnings: [],
+          close: async () => undefined,
+        } satisfies ProviderMcpToolRuntime);
+    const mergedMcpRuntime: ProviderMcpToolRuntime = {
+      descriptors: [...mcpRuntime.descriptors, ...kanbanRuntime.descriptors],
+      executors: new Map([...mcpRuntime.executors, ...kanbanRuntime.executors]),
+      warnings: [...mcpRuntime.warnings, ...kanbanRuntime.warnings],
+      close: async () => {
+        await Promise.allSettled([mcpRuntime.close(), kanbanRuntime.close()]);
+      },
+    };
 
     const skillRuntime = yield* Effect.tryPromise({
       try: () => buildShioriSkillToolRuntime({ cwd: input.cwd }),
@@ -649,12 +706,12 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     });
 
     const externalTools: ExternalTool[] = [
-      ...mcpRuntime.descriptors.map((descriptor) => ({
+      ...mergedMcpRuntime.descriptors.map((descriptor) => ({
         name: descriptor.name,
         description: descriptor.description,
         parameters: descriptor.inputSchema,
         handler: async (params: Record<string, unknown>) => {
-          const executor = mcpRuntime.executors.get(descriptor.name);
+          const executor = mergedMcpRuntime.executors.get(descriptor.name);
           if (!executor) {
             return {
               output: `Missing executor for tool ${descriptor.name}`,
@@ -693,6 +750,16 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       personality: settings.assistantPersonality,
       generateMemories: settings.generateMemories,
     });
+    const agents = yield* Effect.tryPromise({
+      try: () => readWorkspaceAgentsFiles(input.cwd),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail: toMessage(cause, "Failed to read Kimi workspace instructions."),
+          cause,
+        }),
+    });
     const agentFileContents = yield* Effect.tryPromise({
       try: () =>
         buildKimiAgentFileContents({
@@ -700,6 +767,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           ...(personalityAppendix ? { personalityAppendix } : {}),
           ...(skillRuntime.skillPrompt ? { skillPrompt: skillRuntime.skillPrompt } : {}),
           externalTools,
+          agents,
         }),
       catch: (cause) =>
         new ProviderAdapterProcessError({
@@ -752,17 +820,21 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
 
     const signature = JSON.stringify({
       cwd: input.cwd,
-      tools: externalTools.map((tool) => tool.name),
+      tools: externalTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
       personalityAppendix: personalityAppendix ?? "",
       skillPrompt: skillRuntime.skillPrompt ?? "",
-      agentFileContents,
+      agents,
     });
 
     return {
       agentFilePath,
       externalTools,
       toolRuntime: {
-        mcp: mcpRuntime,
+        mcp: mergedMcpRuntime,
         skill: skillRuntime,
         signature,
       },
@@ -1056,18 +1128,108 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     });
   });
 
+  const emitAssistantText = Effect.fn("emitAssistantText")(function* (
+    context: KimiSessionContext,
+    turn: ActiveTurnState,
+    text: string,
+  ) {
+    const trimmed = trimOrUndefined(text);
+    if (!trimmed) {
+      return;
+    }
+    yield* emitReasoningCompleted(context, turn);
+    yield* emitAssistantStarted(context, turn);
+    turn.assistantTextSeen = true;
+    yield* publish({
+      type: "content.delta",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: context.session.threadId,
+      createdAt: nowIso(),
+      turnId: turn.turnId,
+      itemId: RuntimeItemId.makeUnsafe(turn.assistantItemId),
+      payload: {
+        streamKind: "assistant_text",
+        delta: text,
+      },
+      providerRefs: {
+        providerItemId: ProviderItemId.makeUnsafe(turn.assistantItemId),
+      },
+      raw: rawEvent("ContentPart", { type: "text", text }),
+    });
+  });
+
+  const flushPendingAssistantTextAsCommentary = Effect.fn("flushPendingAssistantTextAsCommentary")(
+    function* (context: KimiSessionContext, turn: ActiveTurnState) {
+      const text = trimOrUndefined(turn.pendingAssistantText);
+      turn.pendingAssistantText = "";
+      if (!text) {
+        return;
+      }
+
+      turn.commentaryItemIndex += 1;
+      const itemId = `commentary:${turn.turnId}:${turn.commentaryItemIndex}`;
+      yield* publish({
+        type: "item.completed",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        createdAt: nowIso(),
+        turnId: turn.turnId,
+        itemId: RuntimeItemId.makeUnsafe(itemId),
+        payload: {
+          itemType: "assistant_message",
+          title: "Status update",
+          detail: text,
+          data: {
+            item: {
+              id: itemId,
+              phase: "commentary",
+              text,
+            },
+          },
+        },
+        providerRefs: {
+          providerItemId: ProviderItemId.makeUnsafe(itemId),
+        },
+        raw: rawEvent("ContentPart", {
+          type: "text",
+          text,
+          item: {
+            id: itemId,
+            phase: "commentary",
+            text,
+          },
+        }),
+      });
+    },
+  );
+
+  const flushPendingAssistantTextAsAnswer = Effect.fn("flushPendingAssistantTextAsAnswer")(
+    function* (context: KimiSessionContext, turn: ActiveTurnState) {
+      const text = turn.pendingAssistantText;
+      turn.pendingAssistantText = "";
+      yield* emitAssistantText(context, turn, text);
+    },
+  );
+
   const emitToolCallStarted = Effect.fn("emitToolCallStarted")(function* (input: {
     readonly context: KimiSessionContext;
     readonly turn: ActiveTurnState;
     readonly payload: ToolCall;
     readonly parentToolCallId?: string;
   }) {
+    if (!input.parentToolCallId) {
+      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
+    }
+    input.turn.toolCallSeen = true;
     const toolName = input.payload.function.name;
-    const itemType =
-      classifyProviderToolLifecycleItemType(toolName) ??
-      (toolName.toLowerCase() === "agent" || toolName.toLowerCase() === "task"
-        ? "collab_agent_tool_call"
-        : "dynamic_tool_call");
+    const itemType = isTodoListToolName(toolName)
+      ? "plan"
+      : (classifyProviderToolLifecycleItemType(toolName) ??
+        (toolName.toLowerCase() === "agent" || toolName.toLowerCase() === "task"
+          ? "collab_agent_tool_call"
+          : "dynamic_tool_call"));
     const title = providerToolTitle(toolName);
     const itemId = input.payload.id;
     const toolInFlight: ToolInFlight = {
@@ -1079,6 +1241,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       argumentsJson: input.payload.function.arguments ?? "",
     };
     input.turn.toolCalls.set(itemId, toolInFlight);
+    input.turn.lastToolCallIdByParent.set(toolParentKey(input.parentToolCallId), itemId);
     const parsedArguments = parseJsonMaybe(input.payload.function.arguments);
     const summaryInput = asRecord(parsedArguments);
     const summary = summarizeProviderToolInvocation(toolName, summaryInput);
@@ -1135,24 +1298,24 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     const todoBlock = input.payload.return_value.display.find(isKimiTodoBlock);
     if (todoBlock) {
       yield* publish({
-        type: "turn.plan.updated",
+        type: "turn.tasks.updated",
         eventId: nextEventId(),
         provider: PROVIDER,
         threadId: input.context.session.threadId,
         createdAt: nowIso(),
         turnId: input.turn.turnId,
         payload: {
-          ...(trimOrUndefined(input.payload.return_value.message)
-            ? { explanation: trimOrUndefined(input.payload.return_value.message) }
-            : {}),
-          plan: todoBlock.items.map((item: KimiTodoItem) => ({
-            step: item.title,
+          source: toolName,
+          items: todoBlock.items.map((item: KimiTodoItem, index: number) => ({
+            id: `${input.payload.tool_call_id}:${index}`,
+            title: item.title,
             status:
               item.status === "in_progress"
                 ? "inProgress"
                 : item.status === "done"
                   ? "completed"
                   : "pending",
+            source: toolName,
           })),
         },
         providerRefs: {},
@@ -1378,25 +1541,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     }
 
     yield* emitReasoningCompleted(input.context, input.turn);
-    yield* emitAssistantStarted(input.context, input.turn);
-    input.turn.assistantTextSeen = true;
-    yield* publish({
-      type: "content.delta",
-      eventId: nextEventId(),
-      provider: PROVIDER,
-      threadId: input.context.session.threadId,
-      createdAt: nowIso(),
-      turnId: input.turn.turnId,
-      itemId: RuntimeItemId.makeUnsafe(input.turn.assistantItemId),
-      payload: {
-        streamKind: "assistant_text",
-        delta: payload.text,
-      },
-      providerRefs: {
-        providerItemId: ProviderItemId.makeUnsafe(input.turn.assistantItemId),
-      },
-      raw: rawEvent("ContentPart", payload),
-    });
+    input.turn.pendingAssistantText = appendBufferedKimiText(
+      input.turn.pendingAssistantText,
+      payload.text,
+    );
   });
 
   const handleStreamEvent: (input: {
@@ -1426,7 +1574,8 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         });
         break;
       case "ToolCallPart": {
-        const lastTool = Array.from(turn.toolCalls.values()).at(-1);
+        const lastToolId = turn.lastToolCallIdByParent.get(toolParentKey(parentToolCallId));
+        const lastTool = lastToolId ? turn.toolCalls.get(lastToolId) : undefined;
         if (lastTool && event.payload.arguments_part) {
           lastTool.argumentsJson += event.payload.arguments_part;
         }
@@ -1530,6 +1679,16 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     readonly result: RunResult;
   }) {
     yield* emitReasoningCompleted(input.context, input.turn);
+    if (
+      shouldFlushKimiPendingTextAsAssistantAnswer({
+        turnFinished: input.result.status === "finished",
+        toolCallSeen: input.turn.toolCallSeen,
+      })
+    ) {
+      yield* flushPendingAssistantTextAsAnswer(input.context, input.turn);
+    } else {
+      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
+    }
     if (input.turn.assistantTextSeen) {
       yield* emitAssistantCompleted(input.context, input.turn);
     }
@@ -1582,6 +1741,16 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
   }) {
     const message = toMessage(input.cause, "Kimi Code turn failed.");
     yield* emitReasoningCompleted(input.context, input.turn);
+    if (
+      shouldFlushKimiPendingTextAsAssistantAnswer({
+        turnFinished: false,
+        toolCallSeen: input.turn.toolCallSeen,
+      })
+    ) {
+      yield* flushPendingAssistantTextAsAnswer(input.context, input.turn);
+    } else {
+      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
+    }
     if (input.turn.assistantTextSeen) {
       yield* emitAssistantCompleted(input.context, input.turn);
     }
@@ -1864,6 +2033,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       reasoningItemId: `reasoning:${turnId}`,
       items: [],
       toolCalls: new Map(),
+      lastToolCallIdByParent: new Map(),
+      pendingAssistantText: "",
+      commentaryItemIndex: 0,
+      toolCallSeen: false,
       assistantStarted: false,
       assistantCompleted: false,
       assistantTextSeen: false,
@@ -2102,7 +2275,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             cause,
           }),
       });
-      return turnSnapshotFromEvents(threadId, events);
+      return turnSnapshotFromEvents(threadId, context.sessionId, events);
     });
 
   const rollbackThread: KimiCodeAdapterShape["rollbackThread"] = (threadId, numTurns) =>

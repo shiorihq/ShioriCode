@@ -59,6 +59,7 @@ const defaultDarkFileIconDefinition = manifest.file ?? "_file";
 const defaultLightFileIconDefinition = manifest.light.file ?? defaultDarkFileIconDefinition;
 const defaultDarkFolderIconDefinition = manifest.folder ?? "_folder";
 const defaultLightFolderIconDefinition = manifest.light.folder ?? defaultDarkFolderIconDefinition;
+const PATH_POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 
 function toLowercaseLookup(source: Record<string, string>): Record<string, string> {
   const entries = Object.entries(source);
@@ -70,9 +71,10 @@ function toLowercaseLookup(source: Record<string, string>): Record<string, strin
 }
 
 export function basenameOfPath(pathValue: string): string {
-  const slashIndex = pathValue.lastIndexOf("/");
-  if (slashIndex === -1) return pathValue;
-  return pathValue.slice(slashIndex + 1);
+  const normalizedPathValue = pathValue.replace(PATH_POSITION_SUFFIX_PATTERN, "");
+  const slashIndex = normalizedPathValue.lastIndexOf("/");
+  if (slashIndex === -1) return normalizedPathValue;
+  return normalizedPathValue.slice(slashIndex + 1);
 }
 
 export function inferEntryKindFromPath(pathValue: string): "file" | "directory" {

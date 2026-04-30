@@ -1,4 +1,9 @@
-import { ApprovalRequestId, type ChatAttachment, type OrchestrationEvent } from "contracts";
+import {
+  ApprovalRequestId,
+  type ChatAttachment,
+  type KanbanItemId,
+  type OrchestrationEvent,
+} from "contracts";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { normalizeProjectTitle } from "shared/String";
@@ -6,6 +11,7 @@ import { normalizeProjectTitle } from "shared/String";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionKanbanItemRepository } from "../../persistence/Services/ProjectionKanbanItems.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -25,6 +31,7 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionKanbanItemRepositoryLive } from "../../persistence/Layers/ProjectionKanbanItems.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
@@ -56,6 +63,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  kanbanItems: "projection.kanban-items",
 } as const;
 
 type ProjectorName =
@@ -380,6 +388,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionKanbanItemRepository = yield* ProjectionKanbanItemRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1215,6 +1224,173 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyKanbanItemsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyKanbanItemsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      const getExisting = (itemId: KanbanItemId) =>
+        projectionKanbanItemRepository.getById({ itemId });
+
+      switch (event.type) {
+        case "kanbanItem.created":
+          yield* projectionKanbanItemRepository.upsert({
+            itemId: event.payload.item.id,
+            projectId: event.payload.item.projectId,
+            pullRequest: event.payload.item.pullRequest,
+            title: event.payload.item.title,
+            description: event.payload.item.description,
+            prompt: event.payload.item.prompt,
+            generatedPrompt: event.payload.item.generatedPrompt,
+            promptStatus: event.payload.item.promptStatus,
+            promptError: event.payload.item.promptError,
+            status: event.payload.item.status,
+            sortKey: event.payload.item.sortKey,
+            blockedReason: event.payload.item.blockedReason,
+            assignees: event.payload.item.assignees,
+            notes: event.payload.item.notes,
+            createdAt: event.payload.item.createdAt,
+            updatedAt: event.payload.item.updatedAt,
+            completedAt: event.payload.item.completedAt,
+            deletedAt: event.payload.item.deletedAt,
+          });
+          return;
+
+        case "kanbanItem.updated": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.description !== undefined
+              ? { description: event.payload.description }
+              : {}),
+            ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
+            ...(event.payload.generatedPrompt !== undefined
+              ? { generatedPrompt: event.payload.generatedPrompt }
+              : {}),
+            ...(event.payload.promptStatus !== undefined
+              ? { promptStatus: event.payload.promptStatus }
+              : {}),
+            ...(event.payload.promptError !== undefined
+              ? { promptError: event.payload.promptError }
+              : {}),
+            ...(event.payload.pullRequest !== undefined
+              ? { pullRequest: event.payload.pullRequest }
+              : {}),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.moved": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            status: event.payload.status,
+            sortKey: event.payload.sortKey,
+            completedAt: event.payload.status === "done" ? event.payload.movedAt : null,
+            updatedAt: event.payload.movedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.assigned": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            assignees: [
+              ...existing.value.assignees.filter(
+                (assignee) => assignee.id !== event.payload.assignee.id,
+              ),
+              event.payload.assignee,
+            ],
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.unassigned": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            assignees: existing.value.assignees.filter(
+              (assignee) => assignee.id !== event.payload.assigneeId,
+            ),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.blocked": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            blockedReason: event.payload.reason,
+            updatedAt: event.payload.blockedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.unblocked": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            blockedReason: null,
+            updatedAt: event.payload.unblockedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.completed": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            status: "done",
+            ...(event.payload.sortKey !== undefined ? { sortKey: event.payload.sortKey } : {}),
+            completedAt: event.payload.completedAt,
+            updatedAt: event.payload.completedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.note-added": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            notes: [
+              ...existing.value.notes.filter((note) => note.id !== event.payload.note.id),
+              event.payload.note,
+            ].toSorted(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+            ),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "kanbanItem.deleted": {
+          const existing = yield* getExisting(event.payload.itemId);
+          if (Option.isNone(existing)) return;
+          yield* projectionKanbanItemRepository.upsert({
+            ...existing.value,
+            deletedAt: event.payload.deletedAt,
+            updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1224,6 +1400,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           "project.deleted",
         ),
         apply: applyProjectsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.kanbanItems,
+        eventTypes: makeProjectorEventTypes(
+          "kanbanItem.created",
+          "kanbanItem.updated",
+          "kanbanItem.moved",
+          "kanbanItem.assigned",
+          "kanbanItem.unassigned",
+          "kanbanItem.blocked",
+          "kanbanItem.unblocked",
+          "kanbanItem.completed",
+          "kanbanItem.note-added",
+          "kanbanItem.deleted",
+        ),
+        apply: applyKanbanItemsProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
@@ -1416,6 +1608,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline(),
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionKanbanItemRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

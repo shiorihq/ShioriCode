@@ -8,6 +8,8 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  KanbanItemAssigneeId,
+  KanbanItemId,
   MessageId,
   ProjectId,
   ProviderItemId,
@@ -161,8 +163,33 @@ async function waitForThread(
   return poll();
 }
 
+async function waitForKanbanItem(
+  engine: OrchestrationEngineShape,
+  itemId: KanbanItemId,
+  predicate: (item: ProviderRuntimeTestKanbanItem) => boolean,
+  timeoutMs = 2000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<ProviderRuntimeTestKanbanItem> => {
+    const readModel = await Effect.runPromise(engine.getReadModel());
+    const item = (readModel.kanbanItems ?? []).find((entry) => entry.id === itemId);
+    if (item && predicate(item)) {
+      return item;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for kanban item state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
+type ProviderRuntimeTestKanbanItem = NonNullable<
+  ProviderRuntimeTestReadModel["kanbanItems"]
+>[number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
@@ -329,6 +356,64 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("moves assigned Kanban items to Done when the provider turn completes successfully", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const itemId = KanbanItemId.makeUnsafe("kanban-item-1");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "kanbanItem.create",
+        commandId: CommandId.makeUnsafe("cmd-kanban-create"),
+        itemId,
+        projectId: asProjectId("project-1"),
+        pullRequest: null,
+        title: "Finish this thread",
+        description: "",
+        status: "in_progress",
+        sortKey: "001",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "kanbanItem.assign",
+        commandId: CommandId.makeUnsafe("cmd-kanban-assign"),
+        itemId,
+        assignee: {
+          id: KanbanItemAssigneeId.makeUnsafe("kanban-assignee-1"),
+          provider: "codex",
+          model: "gpt-5.4",
+          role: "owner",
+          status: "assigned",
+          threadId: asThreadId("thread-1"),
+          assignedAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-kanban"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-kanban"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const item = await waitForKanbanItem(
+      harness.engine,
+      itemId,
+      (entry) => entry.status === "done",
+    );
+    expect(item.completedAt).toBe(now);
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

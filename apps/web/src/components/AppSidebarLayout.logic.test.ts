@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ResolvedKeybindingsConfig } from "contracts";
 
-import { resolveAppSidebarShortcutCommand } from "./AppSidebarLayout.logic";
+import {
+  resolveAppSidebarShortcutCommand,
+  resolveAppTitlebarWindowControlsLeftInset,
+} from "./AppSidebarLayout.logic";
 
 const APP_SIDEBAR_BINDINGS = [
   {
@@ -138,5 +141,49 @@ describe("resolveAppSidebarShortcutCommand", () => {
         },
       ),
     ).toBeNull();
+  });
+});
+
+describe("resolveAppTitlebarWindowControlsLeftInset", () => {
+  it("does not reserve content space while the sidebar is open", () => {
+    expect(
+      resolveAppTitlebarWindowControlsLeftInset({
+        isElectron: true,
+        isMac: true,
+        sidebarOpen: true,
+        windowControlsInset: 90,
+      }),
+    ).toBe(0);
+  });
+
+  it("reserves only the titlebar inset when the desktop mac sidebar is closed", () => {
+    expect(
+      resolveAppTitlebarWindowControlsLeftInset({
+        isElectron: true,
+        isMac: true,
+        sidebarOpen: false,
+        windowControlsInset: 90,
+      }),
+    ).toBe(90);
+  });
+
+  it("does not reserve titlebar space outside desktop mac", () => {
+    expect(
+      resolveAppTitlebarWindowControlsLeftInset({
+        isElectron: false,
+        isMac: true,
+        sidebarOpen: false,
+        windowControlsInset: 90,
+      }),
+    ).toBe(0);
+
+    expect(
+      resolveAppTitlebarWindowControlsLeftInset({
+        isElectron: true,
+        isMac: false,
+        sidebarOpen: false,
+        windowControlsInset: 90,
+      }),
+    ).toBe(0);
   });
 });

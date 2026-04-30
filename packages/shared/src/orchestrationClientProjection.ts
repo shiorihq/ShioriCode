@@ -1,5 +1,6 @@
 import type {
   OrchestrationCheckpointSummary,
+  KanbanItem,
   OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProposedPlan,
@@ -42,6 +43,7 @@ export interface ClientProjectionOptions {
 
 export interface ClientProjectionSnapshot {
   readonly projects: Project[];
+  readonly kanbanItems?: KanbanItem[];
   readonly threads: Thread[];
   readonly threadIndexById: Record<string, number>;
   readonly sidebarThreadsById: Record<string, SidebarThreadSummary>;
@@ -458,6 +460,15 @@ export function projectReadModelToClientSnapshot(
     readModel.projects,
   );
   const projects = canonicalProjects.map(mapProjectToClientProject);
+  const kanbanItems = (readModel.kanbanItems ?? [])
+    .filter((item) => item.deletedAt === null)
+    .map((item) => {
+      const canonicalProjectId =
+        canonicalProjectIdByProjectId.get(item.projectId) ?? item.projectId;
+      return canonicalProjectId === item.projectId
+        ? item
+        : Object.assign({}, item, { projectId: canonicalProjectId });
+    });
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
@@ -473,6 +484,7 @@ export function projectReadModelToClientSnapshot(
 
   return {
     projects,
+    kanbanItems,
     threads,
     threadIndexById: buildThreadIndexById(threads),
     sidebarThreadsById: buildSidebarThreadsById(threads),

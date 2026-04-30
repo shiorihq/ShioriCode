@@ -108,6 +108,62 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
   }),
 );
 
+it.effect("decodes Kanban item commands and events", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "kanbanItem.create",
+      commandId: "cmd-kanban-create",
+      itemId: "kanban-item-1",
+      projectId: "project-1",
+      pullRequest: {
+        number: 42,
+        title: "Add Kanban",
+        url: "https://github.com/acme/repo/pull/42",
+      },
+      title: "Track review fixes",
+      description: "Keep the agent work visible.",
+      status: "todo",
+      sortKey: "001",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "kanbanItem.create");
+    assert.strictEqual(command.status, "todo");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-kanban-created",
+      aggregateKind: "kanbanItem",
+      aggregateId: "kanban-item-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-kanban-create",
+      causationEventId: null,
+      correlationId: "cmd-kanban-create",
+      metadata: {},
+      type: "kanbanItem.created",
+      payload: {
+        item: {
+          id: "kanban-item-1",
+          projectId: "project-1",
+          pullRequest: { number: 42 },
+          title: "Track review fixes",
+          description: "",
+          status: "backlog",
+          sortKey: "001",
+          blockedReason: null,
+          assignees: [],
+          notes: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+          deletedAt: null,
+        },
+      },
+    });
+    assert.strictEqual(event.type, "kanbanItem.created");
+    assert.strictEqual(event.payload.item.pullRequest?.number, 42);
+  }),
+);
+
 it.effect("decodes historical project.created payloads with a default provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({

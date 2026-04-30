@@ -14,6 +14,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  type OrchestrationEvent,
   type HostedOAuthStartResult,
   type HostedPasswordAuthInput,
   type HostedPasswordAuthResult,
@@ -63,6 +64,7 @@ import { ServerSettingsService } from "./serverSettings";
 import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore";
 import { HostedBillingService } from "./hostedBilling";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { BrowserPanelRequests } from "./browserPanelRequests.ts";
 import {
   summarizeClientCommand,
   summarizeSettingsPatch,
@@ -72,6 +74,26 @@ import { TerminalManager } from "./terminal/Services/Manager";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
+
+const ORCHESTRATION_WS_LIVE_EVENT_BUFFER_CAPACITY = 2_048;
+
+function makeBufferedLiveOrchestrationEventStream(
+  source: Stream.Stream<OrchestrationEvent>,
+): Stream.Stream<OrchestrationEvent> {
+  return Stream.scoped(
+    Stream.fromEffect(
+      Effect.gen(function* () {
+        const queue = yield* Queue.sliding<OrchestrationEvent>(
+          ORCHESTRATION_WS_LIVE_EVENT_BUFFER_CAPACITY,
+        );
+        yield* Effect.forkScoped(
+          Stream.runForEach(source, (event) => Queue.offer(queue, event).pipe(Effect.asVoid)),
+        );
+        return queue;
+      }),
+    ).pipe(Stream.flatMap((queue) => Stream.fromQueue(queue))),
+  );
+}
 
 function toServerProviderUsageSnapshot(
   usage: CodexUsageSnapshot | ClaudeUsageSnapshot,
@@ -237,6 +259,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const analytics = yield* AnalyticsService;
+    const browserPanelRequests = yield* BrowserPanelRequests;
     const latestProvidersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
 
     const readProvidersForConfig = Effect.gen(function* () {
@@ -358,7 +381,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
         ),
       [WS_METHODS.subscribeOrchestrationDomainEvents]: (_input) =>
-        orchestrationEngine.streamDomainEvents,
+        makeBufferedLiveOrchestrationEventStream(orchestrationEngine.streamDomainEvents),
+      [WS_METHODS.subscribeBrowserPanelCommands]: (_input) => browserPanelRequests.stream,
+      [WS_METHODS.browserPanelCompleteCommand]: (input) =>
+        browserPanelRequests.completeCommand(input).pipe(Effect.as({})),
       [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig,
       [WS_METHODS.serverRefreshProviders]: (_input) =>
         providerRegistry.refresh().pipe(

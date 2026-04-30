@@ -32,7 +32,7 @@ import {
   type UIMessageChunk,
   uiMessageChunkSchema,
 } from "ai";
-import { Duration, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
+import { Duration, Effect, Layer, Option, PubSub, Ref, Schema, Stream } from "effect";
 import {
   classifyProviderToolLifecycleItemType,
   classifyProviderToolRequestKind,
@@ -45,6 +45,8 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
+import { makeKanbanProviderToolRuntime } from "../../kanban/providerTools.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
@@ -269,6 +271,7 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "agent",
   "send_message",
 ]);
+const KANBAN_TOOL_PREFIX = "kanban_";
 const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   approvalPolicies: {
     fileWrite: "ask",
@@ -290,6 +293,7 @@ const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   browserUse: { enabled: false },
   computerUse: { enabled: false },
   mobileApp: { enabled: false },
+  kanban: { enabled: false },
   subagents: {
     enabled: false,
     profiles: {},
@@ -997,6 +1001,10 @@ function canUseHostedSubagentTool(
   );
 }
 
+function canUseHostedKanbanTools(bootstrap: ShioriCodeBootstrapConfig | null | undefined): boolean {
+  return effectiveShioriBootstrap(bootstrap).kanban.enabled;
+}
+
 function runtimePromptFeatureGates(
   bootstrap: ShioriCodeBootstrapConfig | null | undefined,
 ): Pick<ShioriRuntimePromptContext, "browserUseEnabled" | "computerUseEnabled"> {
@@ -1472,9 +1480,13 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
 
   if (input.mcpToolDescriptors && input.mcpToolDescriptors.length > 0) {
     descriptors.push(
-      ...input.mcpToolDescriptors.map((descriptor) =>
-        withHostedToolApproval(descriptor, input.hostedBootstrap),
-      ),
+      ...input.mcpToolDescriptors
+        .filter(
+          (descriptor) =>
+            canUseHostedKanbanTools(input.hostedBootstrap) ||
+            !descriptor.name.startsWith(KANBAN_TOOL_PREFIX),
+        )
+        .map((descriptor) => withHostedToolApproval(descriptor, input.hostedBootstrap)),
     );
   }
 
@@ -2710,6 +2722,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const hostedAuthTokenStore = yield* HostedShioriAuthTokenStore;
+      const orchestrationEngineOption = yield* Effect.serviceOption(OrchestrationEngineService);
       const directory = yield* ProviderSessionDirectory;
       const workspaceEntries = yield* WorkspaceEntries;
       const sessionsRef = yield* Ref.make(new Map<string, ShioriSessionContext>());
@@ -2977,9 +2990,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         close: async () => undefined,
       } satisfies ProviderSkillRuntime;
 
-      const buildMcpRuntimeForCwd = Effect.fn("buildMcpRuntimeForCwd")(function* (
-        cwd: string | undefined,
-      ) {
+      const buildMcpRuntimeForCwd = Effect.fn("buildMcpRuntimeForCwd")(function* (input: {
+        readonly threadId: ThreadId;
+        readonly cwd: string | undefined;
+      }) {
         const currentSettings = yield* serverSettings.getSettings.pipe(
           Effect.mapError((error) =>
             requestError(
@@ -2994,19 +3008,19 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           loadEffectiveMcpServersForProvider({
             provider: PROVIDER,
             settings: currentSettings,
-            ...(cwd ? { cwd } : {}),
+            ...(input.cwd ? { cwd: input.cwd } : {}),
           }).then(async (effectiveServers) => {
             const runtime = options?.buildMcpToolRuntime
               ? await options.buildMcpToolRuntime({
                   provider: PROVIDER,
                   servers: effectiveServers.servers,
-                  ...(cwd ? { cwd } : {}),
+                  ...(input.cwd ? { cwd: input.cwd } : {}),
                 })
               : await buildProviderMcpToolRuntime(
                   {
                     provider: PROVIDER,
                     servers: effectiveServers.servers,
-                    ...(cwd ? { cwd } : {}),
+                    ...(input.cwd ? { cwd: input.cwd } : {}),
                   },
                   {
                     oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
@@ -3032,10 +3046,27 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }),
           ),
         );
+        const kanbanRuntime = Option.match(orchestrationEngineOption, {
+          onSome: (orchestrationEngine) =>
+            makeKanbanProviderToolRuntime({
+              orchestrationEngine,
+              provider: PROVIDER,
+              threadId: input.threadId,
+            }),
+          onNone: () => emptyToolRuntime satisfies ProviderMcpToolRuntime,
+        });
+        const mergedMcpRuntime: ProviderMcpToolRuntime = {
+          descriptors: [...mcpRuntime.descriptors, ...kanbanRuntime.descriptors],
+          executors: new Map([...mcpRuntime.executors, ...kanbanRuntime.executors]),
+          warnings: [...mcpRuntime.warnings, ...kanbanRuntime.warnings],
+          close: async () => {
+            await Promise.allSettled([mcpRuntime.close(), kanbanRuntime.close()]);
+          },
+        };
 
         const skillRuntime = yield* Effect.tryPromise(() =>
-          cwd
-            ? (options?.buildSkillToolRuntime ?? buildShioriSkillToolRuntime)({ cwd })
+          input.cwd
+            ? (options?.buildSkillToolRuntime ?? buildShioriSkillToolRuntime)({ cwd: input.cwd })
             : (options?.buildSkillToolRuntime ?? buildShioriSkillToolRuntime)({}),
         ).pipe(
           Effect.catch((error) =>
@@ -3054,18 +3085,18 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         );
 
         const runtime = {
-          descriptors: [...mcpRuntime.descriptors, ...skillRuntime.descriptors],
-          executors: new Map([...mcpRuntime.executors, ...skillRuntime.executors]),
-          warnings: [...mcpRuntime.warnings, ...skillRuntime.warnings],
+          descriptors: [...mergedMcpRuntime.descriptors, ...skillRuntime.descriptors],
+          executors: new Map([...mergedMcpRuntime.executors, ...skillRuntime.executors]),
+          warnings: [...mergedMcpRuntime.warnings, ...skillRuntime.warnings],
           skillPrompt: skillRuntime.skillPrompt,
           close: async () => {
-            await Promise.allSettled([mcpRuntime.close(), skillRuntime.close()]);
+            await Promise.allSettled([mergedMcpRuntime.close(), skillRuntime.close()]);
           },
         } satisfies ProviderSkillRuntime;
 
         for (const warning of runtime.warnings) {
           yield* Effect.logWarning("shiori tool runtime warning", {
-            cwd,
+            cwd: input.cwd,
             warning,
           });
         }
@@ -3080,7 +3111,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           return existing;
         }
 
-        const load = Effect.runPromise(buildMcpRuntimeForCwd(input.cwd))
+        const load = Effect.runPromise(
+          buildMcpRuntimeForCwd({ threadId: input.threadId, cwd: input.cwd }),
+        )
           .then(async (runtime) => {
             const shouldClose = await Effect.runPromise(
               Ref.modify(sessionsRef, (sessions) => {
@@ -5444,35 +5477,43 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               continue;
             }
 
-            const execution = mcpTool
-              ? yield* Effect.tryPromise({
-                  try: async () => ({
-                    state: "output-available" as const,
-                    output: await mcpTool.execute(toolInput),
-                  }),
-                  catch: (error) => ({
+            const execution =
+              mcpTool &&
+              toolName.startsWith(KANBAN_TOOL_PREFIX) &&
+              !canUseHostedKanbanTools(input.context.activeTurn?.hostedBootstrap)
+                ? {
                     state: "output-error" as const,
-                    errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
-                  }),
-                })
-              : isSubagentToolName(toolName)
-                ? yield* executeSubagentToolForTurn({
-                    threadId: input.context.session.threadId,
-                    turnId: input.turnId,
-                    toolCallId: chunk.toolCallId,
-                    toolName,
-                    toolInput,
-                    selectedModel: input.selectedModel,
-                    hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
-                    signal: input.controller.signal,
-                  })
-                : yield* executeLocalToolForTurn({
-                    toolName,
-                    toolInput,
-                    cwd: input.context.session.cwd,
-                    hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
-                    signal: input.controller.signal,
-                  });
+                    errorText: "Kanban tools are disabled for this ShioriCode deployment.",
+                  }
+                : mcpTool
+                  ? yield* Effect.tryPromise({
+                      try: async () => ({
+                        state: "output-available" as const,
+                        output: await mcpTool.execute(toolInput),
+                      }),
+                      catch: (error) => ({
+                        state: "output-error" as const,
+                        errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
+                      }),
+                    })
+                  : isSubagentToolName(toolName)
+                    ? yield* executeSubagentToolForTurn({
+                        threadId: input.context.session.threadId,
+                        turnId: input.turnId,
+                        toolCallId: chunk.toolCallId,
+                        toolName,
+                        toolInput,
+                        selectedModel: input.selectedModel,
+                        hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
+                        signal: input.controller.signal,
+                      })
+                    : yield* executeLocalToolForTurn({
+                        toolName,
+                        toolInput,
+                        cwd: input.context.session.cwd,
+                        hostedBootstrap: input.context.activeTurn?.hostedBootstrap,
+                        signal: input.controller.signal,
+                      });
 
             toolParts.push(
               buildAssistantToolPart({
@@ -6129,7 +6170,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           const toolRuntime =
             restoredState.activeTurnSnapshot &&
             (pendingApprovals.size > 0 || pendingUserInputs.size > 0)
-              ? yield* buildMcpRuntimeForCwd(provisionalSession.cwd)
+              ? yield* buildMcpRuntimeForCwd({
+                  threadId: provisionalSession.threadId,
+                  cwd: provisionalSession.cwd,
+                })
               : null;
           const activeTurn =
             restoredState.activeTurnSnapshot &&

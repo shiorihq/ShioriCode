@@ -1,4 +1,11 @@
-import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "contracts";
+import {
+  CommandId,
+  EventId,
+  KanbanItemId,
+  ProjectId,
+  ThreadId,
+  type OrchestrationEvent,
+} from "contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -21,7 +28,9 @@ function makeEvent(input: {
     aggregateId:
       input.aggregateKind === "project"
         ? ProjectId.makeUnsafe(input.aggregateId)
-        : ThreadId.makeUnsafe(input.aggregateId),
+        : input.aggregateKind === "kanbanItem"
+          ? KanbanItemId.makeUnsafe(input.aggregateId)
+          : ThreadId.makeUnsafe(input.aggregateId),
     occurredAt: input.occurredAt,
     commandId: input.commandId === null ? null : CommandId.makeUnsafe(input.commandId),
     causationEventId: null,
@@ -98,6 +107,66 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("projects Kanban lifecycle events", async () => {
+    const now = new Date().toISOString();
+    const model = createEmptyReadModel(now);
+
+    const created = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "kanbanItem.created",
+          aggregateKind: "kanbanItem",
+          aggregateId: "kanban-item-1",
+          occurredAt: now,
+          commandId: "cmd-kanban-create",
+          payload: {
+            item: {
+              id: "kanban-item-1",
+              projectId: "project-1",
+              pullRequest: { number: 42 },
+              title: "Fix review comment",
+              description: "",
+              status: "backlog",
+              sortKey: "001",
+              blockedReason: null,
+              assignees: [],
+              notes: [],
+              createdAt: now,
+              updatedAt: now,
+              completedAt: null,
+              deletedAt: null,
+            },
+          },
+        }),
+      ),
+    );
+
+    const moved = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "kanbanItem.moved",
+          aggregateKind: "kanbanItem",
+          aggregateId: "kanban-item-1",
+          occurredAt: now,
+          commandId: "cmd-kanban-move",
+          payload: {
+            itemId: "kanban-item-1",
+            status: "in_progress",
+            sortKey: "002",
+            movedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(moved.kanbanItems?.[0]?.status).toBe("in_progress");
+    expect(moved.kanbanItems?.[0]?.sortKey).toBe("002");
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

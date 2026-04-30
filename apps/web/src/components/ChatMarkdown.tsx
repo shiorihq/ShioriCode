@@ -29,6 +29,7 @@ import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
 import { CHAT_THREAD_BODY_CLASS } from "../chatTypography";
 import { cn } from "~/lib/utils";
+import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -55,6 +56,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  revealBlocks?: boolean;
   className?: string;
   allowHtml?: boolean;
 }
@@ -252,6 +254,7 @@ function ChatMarkdown({
   text,
   cwd,
   isStreaming = false,
+  revealBlocks = false,
   className,
   allowHtml = false,
 }: ChatMarkdownProps) {
@@ -259,16 +262,21 @@ function ChatMarkdown({
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
     () => ({
-      a({ node: _node, href, ...props }) {
+      a({ node: _node, href, children, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          return (
+            <a {...props} href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          );
         }
 
         return (
           <a
             {...props}
             href={href}
+            className={cn("app-file-href-link chat-markdown-file-link", props.className)}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -279,7 +287,15 @@ function ChatMarkdown({
                 console.warn("Native API not found. Unable to open file in editor.");
               }
             }}
-          />
+          >
+            <VscodeEntryIcon
+              pathValue={targetPath}
+              kind="file"
+              theme={resolvedTheme}
+              className="app-file-href-icon"
+            />
+            <span>{children}</span>
+          </a>
         );
       },
       pre({ node: _node, children, ...props }) {
@@ -304,7 +320,7 @@ function ChatMarkdown({
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName, isStreaming, resolvedTheme],
   );
 
   return (
@@ -312,6 +328,7 @@ function ChatMarkdown({
       className={cn(
         "assistant-text-selectable chat-markdown w-full min-w-0 text-foreground",
         CHAT_THREAD_BODY_CLASS,
+        revealBlocks && "chat-markdown-reveal-blocks",
         className,
       )}
     >

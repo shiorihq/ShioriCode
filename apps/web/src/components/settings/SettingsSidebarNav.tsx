@@ -51,7 +51,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };
-  const itemClassName = "gap-2 px-2 py-2 text-left text-sm transition-none";
+  const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
 
   return (
     <SidebarContent className="overflow-x-hidden">

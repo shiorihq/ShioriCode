@@ -66,6 +66,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { rememberSettingsReturnPath } from "../lib/settingsNavigation";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
+import { coalesceOrchestrationUiEvents, createFrameBatcher } from "../orchestrationEventBatching";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 import { logTelemetryErrorOnce, recordTelemetry } from "../telemetry";
 import { getWsRpcClient } from "~/wsRpcClient";
@@ -523,43 +524,6 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function coalesceOrchestrationUiEvents(
-  events: ReadonlyArray<OrchestrationEvent>,
-): OrchestrationEvent[] {
-  if (events.length < 2) {
-    return [...events];
-  }
-
-  const coalesced: OrchestrationEvent[] = [];
-  for (const event of events) {
-    const previous = coalesced.at(-1);
-    if (
-      previous?.type === "thread.message-sent" &&
-      event.type === "thread.message-sent" &&
-      previous.payload.threadId === event.payload.threadId &&
-      previous.payload.messageId === event.payload.messageId
-    ) {
-      coalesced[coalesced.length - 1] = {
-        ...event,
-        payload: {
-          ...event.payload,
-          attachments: event.payload.attachments ?? previous.payload.attachments,
-          createdAt: previous.payload.createdAt,
-          text:
-            !event.payload.streaming && event.payload.text.length > 0
-              ? event.payload.text
-              : previous.payload.text + event.payload.text,
-        },
-      };
-      continue;
-    }
-
-    coalesced.push(event);
-  }
-
-  return coalesced;
-}
-
 function ServerStateBootstrap() {
   useEffect(() => {
     return startServerStateSync(getWsRpcClient().server);
@@ -666,8 +630,6 @@ function EventRouter() {
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
     let needsProviderInvalidation = false;
-    const pendingDomainEvents: OrchestrationEvent[] = [];
-    let flushPendingDomainEventsScheduled = false;
 
     const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
@@ -761,23 +723,15 @@ function EventRouter() {
         removeTerminalState(threadId);
       }
     };
-    const flushPendingDomainEvents = () => {
-      flushPendingDomainEventsScheduled = false;
-      if (disposed || pendingDomainEvents.length === 0) {
-        return;
-      }
-
-      const events = pendingDomainEvents.splice(0, pendingDomainEvents.length);
-      applyEventBatch(events);
-    };
-    const schedulePendingDomainEventFlush = () => {
-      if (flushPendingDomainEventsScheduled) {
-        return;
-      }
-
-      flushPendingDomainEventsScheduled = true;
-      queueMicrotask(flushPendingDomainEvents);
-    };
+    const domainEventBatcher = createFrameBatcher<OrchestrationEvent>({
+      flush: (events) => {
+        if (!disposed) {
+          applyEventBatch(events);
+        }
+      },
+      maxDelayMs: 100,
+      maxItems: 500,
+    });
 
     const recoverFromSequenceGap = async (): Promise<void> => {
       if (!recovery.beginReplayRecovery("sequence-gap")) {
@@ -856,12 +810,11 @@ function EventRouter() {
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
-        pendingDomainEvents.push(event);
-        schedulePendingDomainEventFlush();
+        domainEventBatcher.push(event);
         return;
       }
       if (action === "recover") {
-        flushPendingDomainEvents();
+        domainEventBatcher.flushNow();
         void recoverFromSequenceGap();
       }
     });
@@ -887,8 +840,7 @@ function EventRouter() {
       disposed = true;
       disposedRef.current = true;
       needsProviderInvalidation = false;
-      flushPendingDomainEventsScheduled = false;
-      pendingDomainEvents.length = 0;
+      domainEventBatcher.dispose();
       queryInvalidationThrottler.cancel();
       unsubDomainEvent();
       unsubTerminalEvent();

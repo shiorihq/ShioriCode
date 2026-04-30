@@ -51,7 +51,7 @@ describe("BackgroundSubagentsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("background agents");
+    expect(markup).toContain("Background agents");
     expect(markup).toContain("Harvey");
     expect(markup).toContain("explorer");
     expect(markup).toContain("is awaiting instruction");
@@ -100,7 +100,7 @@ describe("BackgroundSubagentsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("background agents");
+    expect(markup).toContain("Background agents");
     expect(markup).toContain("code-reviewer");
     expect(markup).toContain("Review the database layer");
   });
@@ -138,7 +138,7 @@ describe("BackgroundSubagentsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("background agents");
+    expect(markup).toContain("Background agents");
     expect(markup).toContain("Harvey");
     expect(markup).toContain("explorer");
   });

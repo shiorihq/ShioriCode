@@ -12,6 +12,8 @@ import {
   type ServerConfigShape,
 } from "./config";
 import { readBootstrapEnvelope } from "./bootstrap";
+import { runBrowserPanelMcpServer } from "./browserPanelMcpServer";
+import { runComputerUseMcpServer } from "./computer/mcpServer";
 import { resolveBaseDir } from "./os-jank";
 import { runServer } from "./server";
 
@@ -290,6 +292,16 @@ const rootCommand = Command.make("shioricode", commandFlags).pipe(
       return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
     }),
   ),
+  Command.withSubcommands([
+    Command.make("browser-panel-mcp").pipe(
+      Command.withDescription("Run the built-in browser panel MCP server over stdio."),
+      Command.withHandler(() => Effect.promise(() => runBrowserPanelMcpServer())),
+    ),
+    Command.make("computer-use-mcp").pipe(
+      Command.withDescription("Run the macOS Computer Use MCP server over stdio."),
+      Command.withHandler(() => Effect.promise(() => runComputerUseMcpServer())),
+    ),
+  ]),
 );
 
 export const cli = rootCommand;

@@ -11,6 +11,7 @@ import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "contracts";
 import {
   type BranchNameGenerationInput,
+  type KanbanTaskPromptGenerationResult,
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
   TextGeneration,
@@ -18,6 +19,7 @@ import {
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildKanbanTaskPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
@@ -91,7 +93,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateKanbanTaskPrompt",
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -135,7 +138,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateKanbanTaskPrompt";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -410,11 +414,42 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateKanbanTaskPrompt: TextGenerationShape["generateKanbanTaskPrompt"] = Effect.fn(
+    "CodexTextGeneration.generateKanbanTaskPrompt",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildKanbanTaskPrompt({
+      title: input.title,
+      description: input.description,
+      prompt: input.prompt,
+      pullRequest: input.pullRequest ?? null,
+    });
+
+    if (input.modelSelection.provider !== "codex") {
+      return yield* new TextGenerationError({
+        operation: "generateKanbanTaskPrompt",
+        detail: "Invalid model selection.",
+      });
+    }
+
+    const generated = yield* runCodexJson({
+      operation: "generateKanbanTaskPrompt",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    } satisfies KanbanTaskPromptGenerationResult;
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateKanbanTaskPrompt,
   } satisfies TextGenerationShape;
 });
 

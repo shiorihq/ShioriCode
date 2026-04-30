@@ -60,6 +60,7 @@ interface HostedShioriState {
   mobileAppEnabled: boolean;
   browserUseEnabled: boolean;
   computerUseEnabled: boolean;
+  kanbanEnabled: boolean;
   catalogProviders: ReadonlyArray<HostedCatalogProvider> | undefined;
   signIn: ConvexAuthActionsContext["signIn"];
   signOut: ConvexAuthActionsContext["signOut"];
@@ -82,6 +83,7 @@ const HostedShioriContext = createContext<HostedShioriState>({
   mobileAppEnabled: false,
   browserUseEnabled: false,
   computerUseEnabled: false,
+  kanbanEnabled: false,
   catalogProviders: undefined,
   signIn: noopSignIn,
   signOut: noopSignOut,
@@ -103,6 +105,10 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   const computerUseEnabledFlag = useQuery(
     hostedFlagGetQuery,
     isAuthenticated ? { key: "shioricode_computer_use_enabled" } : "skip",
+  );
+  const kanbanEnabledFlag = useQuery(
+    hostedFlagGetQuery,
+    isAuthenticated ? { key: "shioricode_kanban_enabled" } : "skip",
   );
   const userWithUsage = useQuery(hostedUserWithUsageQuery, isAuthenticated ? {} : "skip");
   const subscriptionPlanId =
@@ -141,7 +147,8 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       isAuthenticated &&
       (mobileAppEnabledFlag === undefined ||
         browserUseEnabledFlag === undefined ||
-        computerUseEnabledFlag === undefined)
+        computerUseEnabledFlag === undefined ||
+        kanbanEnabledFlag === undefined)
     ) {
       return;
     }
@@ -155,6 +162,9 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       mobileApp: {
         enabled: isAuthenticated && mobileAppEnabledFlag === true,
       },
+      kanban: {
+        enabled: isAuthenticated && kanbanEnabledFlag === true,
+      },
       ...(computerUseAvailable
         ? {}
         : {
@@ -163,7 +173,13 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
             },
           }),
     });
-  }, [browserUseEnabledFlag, computerUseEnabledFlag, isAuthenticated, mobileAppEnabledFlag]);
+  }, [
+    browserUseEnabledFlag,
+    computerUseEnabledFlag,
+    isAuthenticated,
+    kanbanEnabledFlag,
+    mobileAppEnabledFlag,
+  ]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -201,6 +217,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       mobileAppEnabled: mobileAppEnabledFlag === true,
       browserUseEnabled: isAuthenticated && browserUseEnabledFlag === true,
       computerUseEnabled: isAuthenticated && computerUseEnabledFlag === true,
+      kanbanEnabled: isAuthenticated && kanbanEnabledFlag === true,
       catalogProviders,
       signIn,
       signOut: signOutAndClearDesktopToken,
@@ -214,6 +231,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       normalizedAuthToken,
       browserUseEnabledFlag,
       computerUseEnabledFlag,
+      kanbanEnabledFlag,
       mobileAppEnabledFlag,
       signIn,
       signOutAndClearDesktopToken,

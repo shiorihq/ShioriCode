@@ -36,9 +36,7 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarNewThreadEnvMode,
 } from "~/components/Sidebar.logic";
-import { shouldToggleCommandK } from "~/components/CommandKModal.logic";
 import { useSettings } from "~/hooks/useSettings";
-import { isTerminalFocused } from "~/lib/terminalFocus";
 import { useUiStateStore } from "~/uiStateStore";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -318,19 +316,5 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
 
 export function useCommandK() {
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldToggleCommandK(event, { terminalFocused: isTerminalFocused() })) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      setOpen((prev) => !prev);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   return { open, setOpen };
 }

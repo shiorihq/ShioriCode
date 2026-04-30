@@ -224,7 +224,7 @@ export function BackgroundSubagentsPanel(props: BackgroundSubagentsPanelProps) {
 
   return (
     <div
-      className="relative z-0 mx-auto w-[calc(100%-1rem)] max-w-[49rem] min-w-0 sm:w-[calc(100%-2rem)]"
+      className="relative z-0 mx-auto w-[calc(100%-1rem)] max-w-[47rem] min-w-0 sm:w-[calc(100%-2rem)]"
       data-chat-background-subagents-panel="true"
     >
       <div className="relative overflow-hidden rounded-t-[19px] border border-b-0 border-border/65 bg-muted/15 px-4 py-1.5 backdrop-blur-sm">
@@ -235,7 +235,7 @@ export function BackgroundSubagentsPanel(props: BackgroundSubagentsPanelProps) {
           aria-expanded={open}
           aria-label={open ? "Hide background agents" : "Show background agents"}
         >
-          <span>background agents</span>
+          <span>Background agents</span>
           <span className="text-[11px] font-normal text-muted-foreground/55 tabular-nums">
             {rows.length}
           </span>

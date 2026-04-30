@@ -98,6 +98,23 @@ export interface ActivePlanState {
   }>;
 }
 
+export type TaskListItemStatus = "pending" | "inProgress" | "completed" | "failed" | "stopped";
+
+export interface ActiveTaskListItem {
+  id: string;
+  title: string;
+  status: TaskListItemStatus;
+  detail?: string;
+  source?: string;
+}
+
+export interface ActiveTaskListState {
+  createdAt: string;
+  turnId: TurnId | null;
+  source: string;
+  items: ReadonlyArray<ActiveTaskListItem>;
+}
+
 export interface LatestProposedPlanState {
   id: OrchestrationProposedPlanId;
   createdAt: string;
@@ -455,6 +472,90 @@ export function deriveActivePlanState(
       ? { explanation: payload.explanation as string | null }
       : {}),
     steps,
+  };
+}
+
+function normalizeTaskListItemStatus(value: unknown): TaskListItemStatus {
+  switch (value) {
+    case "inProgress":
+    case "in_progress":
+      return "inProgress";
+    case "completed":
+    case "done":
+      return "completed";
+    case "failed":
+    case "error":
+      return "failed";
+    case "stopped":
+    case "cancelled":
+    case "canceled":
+      return "stopped";
+    case "pending":
+    default:
+      return "pending";
+  }
+}
+
+export function deriveActiveTaskListState(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: TurnId | undefined,
+): ActiveTaskListState | null {
+  const ordered = getOrderedActivities(activities);
+  const candidates = ordered.filter((activity) => {
+    if (activity.kind !== "turn.tasks.updated") {
+      return false;
+    }
+    if (!latestTurnId) {
+      return true;
+    }
+    return activity.turnId === latestTurnId;
+  });
+  const latest = candidates.at(-1);
+  if (!latest) {
+    return null;
+  }
+  const payload =
+    latest.payload && typeof latest.payload === "object"
+      ? (latest.payload as Record<string, unknown>)
+      : null;
+  const rawItems = payload?.items;
+  if (!Array.isArray(rawItems)) {
+    return null;
+  }
+  const items = rawItems
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const record = entry as Record<string, unknown>;
+      if (typeof record.title !== "string" || record.title.trim().length === 0) {
+        return null;
+      }
+      const item: ActiveTaskListItem = {
+        id:
+          typeof record.id === "string" && record.id.trim().length > 0
+            ? record.id
+            : `${latest.id}:${index}`,
+        title: record.title,
+        status: normalizeTaskListItemStatus(record.status),
+      };
+      if (typeof record.detail === "string" && record.detail.trim().length > 0) {
+        item.detail = record.detail;
+      }
+      if (typeof record.source === "string" && record.source.trim().length > 0) {
+        item.source = record.source;
+      }
+      return item;
+    })
+    .filter((item): item is ActiveTaskListItem => item !== null);
+  if (items.length === 0) {
+    return null;
+  }
+  return {
+    createdAt: latest.createdAt,
+    turnId: latest.turnId,
+    source: typeof payload?.source === "string" ? payload.source : "tasks",
+    items,
   };
 }
 

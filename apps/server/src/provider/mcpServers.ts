@@ -31,7 +31,9 @@ import type {
   McpServerEntry,
   ProviderKind,
   ServerSettings,
+  ThreadId,
 } from "contracts";
+import type { ServerConfigShape } from "../config";
 
 export interface ProviderMcpDescriptor {
   readonly name: string;
@@ -778,7 +780,12 @@ export function toAcpMcpServers(
   provider: ProviderKind,
   settings: ServerSettings,
   cwd?: string,
-  _options?: unknown,
+  options?: {
+    readonly browserPanel?: {
+      readonly config: ServerConfigShape;
+      readonly threadId: ThreadId;
+    };
+  },
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   const acpServers: EffectAcpSchema.McpServer[] = [];
   for (const server of filterMcpServersForProvider(provider, settings.mcpServers.servers)) {
@@ -828,7 +835,49 @@ export function toAcpMcpServers(
       }
     }
   }
+  if (settings.browserUse.enabled && options?.browserPanel) {
+    acpServers.push(
+      makeBuiltInStdioMcpServer("shioricode-browser", "browser-panel-mcp", {
+        SHIORICODE_BROWSER_CONTROL_URL: browserPanelControlUrl(options.browserPanel.config),
+        SHIORICODE_BROWSER_THREAD_ID: options.browserPanel.threadId,
+        ...(options.browserPanel.config.authToken
+          ? { SHIORICODE_BROWSER_CONTROL_TOKEN: options.browserPanel.config.authToken }
+          : {}),
+      }),
+    );
+  }
+  if (settings.computerUse.enabled) {
+    acpServers.push(makeBuiltInStdioMcpServer("shioricode-computer", "computer-use-mcp"));
+  }
   return acpServers;
+}
+
+function makeBuiltInStdioMcpServer(
+  name: string,
+  subcommand: string,
+  env?: Record<string, string>,
+): EffectAcpSchema.McpServer {
+  return {
+    name,
+    command: process.execPath,
+    args: [...serverEntrypointArgs(), subcommand],
+    env: Object.entries(env ?? {}).map(([envName, value]) => ({
+      name: envName,
+      value,
+    })),
+  };
+}
+
+function serverEntrypointArgs(): ReadonlyArray<string> {
+  return process.argv[1] ? [process.argv[1]] : [];
+}
+
+function browserPanelControlUrl(config: ServerConfigShape): string {
+  const configHost = config.host ?? "127.0.0.1";
+  const host =
+    configHost === "0.0.0.0" || configHost === "::" || configHost === "" ? "127.0.0.1" : configHost;
+  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${urlHost}:${config.port}/api/browser-panel/command`;
 }
 
 function sanitizeIdentifier(value: string, fallback: string): string {

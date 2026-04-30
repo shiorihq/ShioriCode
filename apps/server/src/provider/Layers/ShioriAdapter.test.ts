@@ -89,6 +89,7 @@ const defaultBootstrapProbe = () =>
       browserUse: { enabled: false },
       computerUse: { enabled: false },
       mobileApp: { enabled: false },
+      kanban: { enabled: false },
       subagents: {
         enabled: true,
         profiles: {
@@ -4053,6 +4054,7 @@ describe("hosted tools", () => {
       hostedBootstrap: {
         approvalPolicies: {},
         protectedPaths: [],
+        kanban: { enabled: false },
         subagents: {
           enabled: false,
           profiles: {},
@@ -4062,6 +4064,54 @@ describe("hosted tools", () => {
 
     assert.ok(!tools.some((tool) => tool.name === "spawn_agent"));
     assert.ok(!tools.some((tool) => tool.name === "agent"));
+  });
+
+  it("honors hosted bootstrap Kanban gating for MCP tool descriptors", () => {
+    const baseInput = {
+      allowedRequestKinds: new Set<never>(),
+      session: {
+        runtimeMode: "approval-required",
+      } satisfies Pick<ProviderSession, "runtimeMode">,
+      mcpToolDescriptors: [
+        {
+          name: "kanban_list",
+          title: "Kanban · List tasks",
+          description: "List tasks.",
+          inputSchema: { type: "object", additionalProperties: false },
+        },
+        {
+          name: "project_status",
+          title: "Project status",
+          description: "Read project status.",
+          inputSchema: { type: "object", additionalProperties: false },
+        },
+      ],
+    };
+
+    const disabledTools = buildHostedToolDescriptors({
+      ...baseInput,
+      hostedBootstrap: {
+        approvalPolicies: {},
+        protectedPaths: [],
+        kanban: { enabled: false },
+        subagents: null,
+      },
+    });
+
+    assert.ok(!disabledTools.some((tool) => tool.name === "kanban_list"));
+    assert.ok(disabledTools.some((tool) => tool.name === "project_status"));
+
+    const enabledTools = buildHostedToolDescriptors({
+      ...baseInput,
+      hostedBootstrap: {
+        approvalPolicies: {},
+        protectedPaths: [],
+        kanban: { enabled: true },
+        subagents: null,
+      },
+    });
+
+    assert.ok(enabledTools.some((tool) => tool.name === "kanban_list"));
   });
 
   it("fails closed when hosted bootstrap is unavailable", () => {
@@ -4092,6 +4142,7 @@ describe("hosted tools", () => {
           outsideWorkspace: "ask",
         },
         protectedPaths: [],
+        kanban: { enabled: false },
         subagents: null,
       },
     });

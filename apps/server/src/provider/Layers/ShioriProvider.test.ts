@@ -115,5 +115,83 @@ it.layer(shioriProviderTestLayer)("ShioriProviderLive", (it) => {
           assert.strictEqual(refreshed.message, initial.message);
         }),
     );
+
+    it.effect(
+      "keeps authenticated Shiori ready when entitlement verification is inconclusive",
+      () =>
+        Effect.gen(function* () {
+          vi.stubGlobal("fetch", vi.fn().mockResolvedValue(null));
+
+          const provider = yield* ShioriProvider;
+          const authTokenStore = yield* HostedShioriAuthTokenStore;
+
+          yield* authTokenStore.setToken(jwtToken);
+
+          const refreshed = yield* provider.refresh;
+          assert.strictEqual(refreshed.status, "ready");
+          assert.strictEqual(refreshed.auth.status, "authenticated");
+          assert.strictEqual(refreshed.message, undefined);
+        }),
+    );
+
+    it.effect("blocks Shiori when entitlement verification confirms access is denied", () =>
+      Effect.gen(function* () {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(
+              JSON.stringify({
+                allowed: false,
+                plan: "free",
+                status: "active",
+              }),
+              { status: 200 },
+            ),
+          ),
+        );
+
+        const provider = yield* ShioriProvider;
+        const authTokenStore = yield* HostedShioriAuthTokenStore;
+
+        yield* authTokenStore.setToken(jwtToken);
+
+        const refreshed = yield* provider.refresh;
+        assert.strictEqual(refreshed.status, "warning");
+        assert.strictEqual(
+          refreshed.message,
+          "ShioriCode requires an active paid Shiori subscription for hosted access.",
+        );
+      }),
+    );
+
+    it.effect("surfaces deployment-disabled entitlements instead of generic paid-plan copy", () =>
+      Effect.gen(function* () {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(
+              JSON.stringify({
+                allowed: false,
+                plan: "pro",
+                status: "active",
+              }),
+              { status: 200 },
+            ),
+          ),
+        );
+
+        const provider = yield* ShioriProvider;
+        const authTokenStore = yield* HostedShioriAuthTokenStore;
+
+        yield* authTokenStore.setToken(jwtToken);
+
+        const refreshed = yield* provider.refresh;
+        assert.strictEqual(refreshed.status, "warning");
+        assert.strictEqual(
+          refreshed.message,
+          "ShioriCode is disabled for this Shiori deployment. Enable the `code_enabled` feature flag in Convex.",
+        );
+      }),
+    );
   });
 });

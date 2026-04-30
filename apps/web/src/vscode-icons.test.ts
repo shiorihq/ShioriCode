@@ -28,6 +28,7 @@ describe("getVscodeIconUrlForEntry", () => {
 
   it("falls back to language-based mappings for path-only cases", () => {
     const tsxUrl = getVscodeIconUrlForEntry("checkbox.tsx", "file", "light");
+    const tsxWithPositionUrl = getVscodeIconUrlForEntry("src/Sidebar.tsx:54", "file", "light");
     const dockerfileUrl = getVscodeIconUrlForEntry("Dockerfile", "file", "dark");
     const shellUrl = getVscodeIconUrlForEntry("entrypoint.sh", "file", "dark");
     const htmlUrl = getVscodeIconUrlForEntry("index.html", "file", "dark");
@@ -35,6 +36,7 @@ describe("getVscodeIconUrlForEntry", () => {
     const githubWorkflowUrl = getVscodeIconUrlForEntry(".github/workflows/ci.yml", "file", "light");
 
     assert.isTrue(tsxUrl.endsWith("/file_type_reactts.svg"));
+    assert.isTrue(tsxWithPositionUrl.endsWith("/file_type_reactts.svg"));
     assert.isTrue(dockerfileUrl.endsWith("/file_type_docker.svg"));
     assert.isTrue(shellUrl.endsWith("/file_type_shell.svg"));
     assert.isTrue(htmlUrl.endsWith("/file_type_html.svg"));

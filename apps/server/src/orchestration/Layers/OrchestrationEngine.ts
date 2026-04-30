@@ -1,4 +1,10 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ProjectId, ThreadId } from "contracts";
+import type {
+  KanbanItemId,
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ProjectId,
+  ThreadId,
+} from "contracts";
 import { OrchestrationCommand } from "contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -26,8 +32,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "project" | "thread" | "kanbanItem";
+  readonly aggregateId: ProjectId | ThreadId | KanbanItemId;
 } {
   switch (command.type) {
     case "project.create":
@@ -36,6 +42,20 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "kanbanItem.create":
+    case "kanbanItem.update":
+    case "kanbanItem.move":
+    case "kanbanItem.assign":
+    case "kanbanItem.unassign":
+    case "kanbanItem.block":
+    case "kanbanItem.unblock":
+    case "kanbanItem.complete":
+    case "kanbanItem.note.add":
+    case "kanbanItem.delete":
+      return {
+        aggregateKind: "kanbanItem",
+        aggregateId: command.itemId,
       };
     default:
       return {

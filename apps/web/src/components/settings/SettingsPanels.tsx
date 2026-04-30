@@ -288,15 +288,15 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+    <section className="space-y-2.5">
+      <div className="flex min-h-7 items-center justify-between gap-3">
+        <h2 className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           {icon}
-          {title}
+          <span className="truncate">{title}</span>
         </h2>
-        {headerAction}
+        {headerAction ? <div className="shrink-0">{headerAction}</div> : null}
       </div>
-      <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
+      <div className="relative overflow-hidden rounded-lg border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
         {children}
       </div>
     </section>
@@ -319,25 +319,25 @@ export function SettingsRow({
   children?: ReactNode;
 }) {
   return (
-    <div className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-1">
+    <div className="min-h-[4.75rem] border-t border-border px-4 py-3.5 first:border-t-0 sm:px-5">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,auto)] sm:items-center">
+        <div className="min-w-0 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <h3 className="min-w-0 text-sm font-medium text-foreground">{title}</h3>
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
               {resetAction}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground">{description}</p>
+          <p className="max-w-[42rem] text-xs leading-5 text-muted-foreground">{description}</p>
           {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
         </div>
         {control ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 sm:min-w-48 sm:justify-end">
             {control}
           </div>
         ) : null}
       </div>
-      {children}
+      {children ? <div className="mt-3 min-w-0">{children}</div> : null}
     </div>
   );
 }
@@ -368,8 +368,10 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
 
 export function SettingsPageContainer({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">{children}</div>
+    <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div className="mx-auto flex w-full max-w-[56rem] flex-col gap-5 px-4 py-5 sm:px-6 sm:py-6">
+        {children}
+      </div>
     </div>
   );
 }
@@ -675,6 +677,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.generateMemories !== DEFAULT_UNIFIED_SETTINGS.generateMemories
         ? ["Memories"]
         : []),
+      ...(settings.kanban.enabled &&
+      settings.autoGenerateKanbanTaskPrompts !==
+        DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts
+        ? ["Kanban prompts"]
+        : []),
       ...(settings.assistantPersonality !== DEFAULT_ASSISTANT_PERSONALITY
         ? ["Assistant personality"]
         : []),
@@ -705,6 +712,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.kanban.enabled,
+      settings.autoGenerateKanbanTaskPrompts,
       settings.generateMemories,
       settings.importedThemes.length,
       settings.lightThemeId,
@@ -1099,6 +1108,36 @@ export function GeneralSettingsPanel() {
             runtimes that support persistent memories.
           </p>
         </SettingsRow>
+
+        {settings.kanban.enabled ? (
+          <SettingsRow
+            title="Kanban prompts"
+            description="Generate a suggested agent prompt in the background when a Kanban task is created."
+            resetAction={
+              settings.autoGenerateKanbanTaskPrompts !==
+              DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts ? (
+                <SettingResetButton
+                  label="Kanban prompts"
+                  onClick={() =>
+                    updateSettings({
+                      autoGenerateKanbanTaskPrompts:
+                        DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.autoGenerateKanbanTaskPrompts}
+                onCheckedChange={(checked) =>
+                  updateSettings({ autoGenerateKanbanTaskPrompts: Boolean(checked) })
+                }
+                aria-label="Generate Kanban task prompts"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           title="Assistant personality"

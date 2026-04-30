@@ -82,8 +82,8 @@ export function ProviderCard({
     : !provider.installed
       ? "Not installed"
       : provider.auth.status === "unauthenticated"
-        ? "Authentication required"
-        : "Checking...";
+        ? "Sign in required"
+        : "Checking";
 
   const showInstructions = !isReady && instructions;
   const showShioriDetail = kind === "shiori" && isReady && viewerEmail;
@@ -91,17 +91,18 @@ export function ProviderCard({
   return (
     <LazyMotion features={domAnimation}>
       <m.div
-        initial={skip ? false : { opacity: 0, y: 12 }}
+        initial={skip ? false : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: index * 0.08, ease: EASE }}
+        transition={{ duration: 0.35, delay: index * 0.05, ease: EASE }}
         className={cn(
           "rounded-xl border border-border/70 bg-background/40 p-4 transition-colors",
+          "hover:border-foreground/15 hover:bg-background/70",
           justConnected && "provider-card-connected",
         )}
       >
         {/* Header row */}
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex min-w-0 items-center gap-2.5">
             <div
               className={cn(
                 "size-2 shrink-0 rounded-full transition-colors duration-300",
@@ -110,12 +111,12 @@ export function ProviderCard({
             />
             <span className="text-sm font-medium text-foreground">{displayName}</span>
             {provider.version ? (
-              <span className="text-[11px] font-mono text-muted-foreground/60">
+              <span className="font-mono text-[11px] text-muted-foreground/60">
                 v{provider.version}
               </span>
             ) : null}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
             <span
               className={cn(
                 "text-xs",
@@ -129,21 +130,22 @@ export function ProviderCard({
         </div>
 
         {/* Description */}
-        <p className="mt-1.5 pl-[18px] text-xs text-muted-foreground/60">{description}</p>
-
-        {/* Shiori authenticated detail */}
-        {showShioriDetail ? (
-          <p className="mt-1 pl-[18px] text-xs text-muted-foreground/50">
-            Authenticated as{" "}
-            <span className={getPersonalDetailsBlurClass(blurPersonalData)}>{viewerEmail}</span>
-          </p>
-        ) : null}
+        <p className="mt-1.5 pl-[18px] text-xs text-muted-foreground/60">
+          {showShioriDetail ? (
+            <>
+              Authenticated as{" "}
+              <span className={getPersonalDetailsBlurClass(blurPersonalData)}>{viewerEmail}</span>
+            </>
+          ) : (
+            description
+          )}
+        </p>
 
         {/* Install instructions for CLI providers */}
         {showInstructions ? (
-          <div className="mt-3 pl-[18px] space-y-2">
+          <div className="mt-3 space-y-2 pl-[18px]">
             <p className="text-xs text-muted-foreground/70">Install the CLI, then authenticate:</p>
-            <div className="rounded-lg border border-border/50 bg-muted/40 px-3 py-2.5 font-mono text-[12px] leading-[1.7] text-foreground/60 select-text">
+            <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2.5 font-mono text-[12px] leading-[1.7] text-foreground/65 select-text">
               {instructions.map((cmd) => (
                 <div key={cmd}>
                   <span className="text-muted-foreground/40">$ </span>

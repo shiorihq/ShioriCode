@@ -1,7 +1,24 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    children,
+    preload: _preload,
+    replace: _replace,
+    to,
+    ...props
+  }: {
+    children: ReactNode;
+    preload?: string;
+    replace?: boolean;
+    to: string;
+  }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
   useNavigate: () => vi.fn(),
 }));
 

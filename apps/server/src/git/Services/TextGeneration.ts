@@ -73,6 +73,20 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface KanbanTaskPromptGenerationInput {
+  cwd: string;
+  title: string;
+  description: string;
+  prompt: string;
+  pullRequest?: { number: number; title?: string | undefined; url?: string | undefined } | null;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface KanbanTaskPromptGenerationResult {
+  prompt: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -80,6 +94,9 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateKanbanTaskPrompt(
+    input: KanbanTaskPromptGenerationInput,
+  ): Promise<KanbanTaskPromptGenerationResult>;
 }
 
 /**
@@ -113,6 +130,13 @@ export interface TextGenerationShape {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate or improve an executable agent prompt from a Kanban task.
+   */
+  readonly generateKanbanTaskPrompt: (
+    input: KanbanTaskPromptGenerationInput,
+  ) => Effect.Effect<KanbanTaskPromptGenerationResult, TextGenerationError>;
 }
 
 /**

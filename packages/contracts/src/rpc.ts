@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { BrowserPanelCommand, BrowserPanelCommandResult } from "./browser";
 import { OpenError, OpenInEditorInput } from "./editor";
 import {
   GitCheckoutInput,
@@ -166,6 +167,10 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeBrowserPanelCommands: "subscribeBrowserPanelCommands",
+
+  // Browser panel
+  browserPanelCompleteCommand: "browserPanel.completeCommand",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -503,6 +508,20 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
+export const WsSubscribeBrowserPanelCommandsRpc = Rpc.make(
+  WS_METHODS.subscribeBrowserPanelCommands,
+  {
+    payload: Schema.Struct({}),
+    success: BrowserPanelCommand,
+    stream: true,
+  },
+);
+
+export const WsBrowserPanelCompleteCommandRpc = Rpc.make(WS_METHODS.browserPanelCompleteCommand, {
+  payload: BrowserPanelCommandResult,
+  success: Schema.Struct({}),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -552,6 +571,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsSubscribeBrowserPanelCommandsRpc,
+  WsBrowserPanelCompleteCommandRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

@@ -3,6 +3,8 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  requireKanbanItem,
+  requireKanbanItemAbsent,
   requireProject,
   requireProjectAbsent,
   requireProjectWorkspaceRootAvailable,
@@ -42,6 +44,18 @@ function withEventBase(
     correlationId: input.commandId,
     metadata: input.metadata ?? {},
   };
+}
+
+function withKanbanItemEventBase(
+  command: Extract<OrchestrationCommand, { itemId: OrchestrationEvent["aggregateId"] }>,
+  occurredAt: string,
+): Omit<OrchestrationEvent, "sequence" | "type" | "payload"> {
+  return withEventBase({
+    aggregateKind: "kanbanItem",
+    aggregateId: command.itemId,
+    occurredAt,
+    commandId: command.commandId,
+  });
 }
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
@@ -141,6 +155,161 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           deletedAt: occurredAt,
+        },
+      };
+    }
+
+    case "kanbanItem.create": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      yield* requireKanbanItemAbsent({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.createdAt),
+        type: "kanbanItem.created",
+        payload: {
+          item: {
+            id: command.itemId,
+            projectId: command.projectId,
+            pullRequest: command.pullRequest ?? null,
+            title: command.title,
+            description: command.description ?? "",
+            prompt: command.prompt ?? "",
+            generatedPrompt: command.generatedPrompt ?? null,
+            promptStatus: command.promptStatus ?? "idle",
+            promptError: command.promptError ?? null,
+            status: command.status,
+            sortKey: command.sortKey,
+            blockedReason: null,
+            assignees: command.assignees ?? [],
+            notes: [],
+            createdAt: command.createdAt,
+            updatedAt: command.createdAt,
+            completedAt: command.status === "done" ? command.createdAt : null,
+            deletedAt: null,
+          },
+        },
+      };
+    }
+
+    case "kanbanItem.update": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.updatedAt),
+        type: "kanbanItem.updated",
+        payload: {
+          itemId: command.itemId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.description !== undefined ? { description: command.description } : {}),
+          ...(command.prompt !== undefined ? { prompt: command.prompt } : {}),
+          ...(command.generatedPrompt !== undefined
+            ? { generatedPrompt: command.generatedPrompt }
+            : {}),
+          ...(command.promptStatus !== undefined ? { promptStatus: command.promptStatus } : {}),
+          ...(command.promptError !== undefined ? { promptError: command.promptError } : {}),
+          ...(command.pullRequest !== undefined ? { pullRequest: command.pullRequest } : {}),
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "kanbanItem.move": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.movedAt),
+        type: "kanbanItem.moved",
+        payload: {
+          itemId: command.itemId,
+          status: command.status,
+          sortKey: command.sortKey,
+          movedAt: command.movedAt,
+        },
+      };
+    }
+
+    case "kanbanItem.assign": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.createdAt),
+        type: "kanbanItem.assigned",
+        payload: {
+          itemId: command.itemId,
+          assignee: command.assignee,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "kanbanItem.unassign": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.createdAt),
+        type: "kanbanItem.unassigned",
+        payload: {
+          itemId: command.itemId,
+          assigneeId: command.assigneeId,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "kanbanItem.block": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.blockedAt),
+        type: "kanbanItem.blocked",
+        payload: {
+          itemId: command.itemId,
+          reason: command.reason,
+          blockedAt: command.blockedAt,
+        },
+      };
+    }
+
+    case "kanbanItem.unblock": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.unblockedAt),
+        type: "kanbanItem.unblocked",
+        payload: {
+          itemId: command.itemId,
+          unblockedAt: command.unblockedAt,
+        },
+      };
+    }
+
+    case "kanbanItem.complete": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.completedAt),
+        type: "kanbanItem.completed",
+        payload: {
+          itemId: command.itemId,
+          ...(command.sortKey !== undefined ? { sortKey: command.sortKey } : {}),
+          completedAt: command.completedAt,
+        },
+      };
+    }
+
+    case "kanbanItem.note.add": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.createdAt),
+        type: "kanbanItem.note-added",
+        payload: {
+          itemId: command.itemId,
+          note: command.note,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "kanbanItem.delete": {
+      yield* requireKanbanItem({ readModel, command, itemId: command.itemId });
+      return {
+        ...withKanbanItemEventBase(command, command.deletedAt),
+        type: "kanbanItem.deleted",
+        payload: {
+          itemId: command.itemId,
+          deletedAt: command.deletedAt,
         },
       };
     }

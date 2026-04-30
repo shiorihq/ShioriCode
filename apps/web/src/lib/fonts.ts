@@ -5,9 +5,44 @@ import {
 } from "contracts/settings";
 import { normalizeUserFacingFontFamily } from "shared/fontFamily";
 
-const SYSTEM_SANS_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const SYSTEM_MONO_STACK =
-  'ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace';
+type CssFontFamily = {
+  name: string;
+  quoted?: boolean;
+};
+
+const SYSTEM_SANS_FONT_FAMILIES: readonly CssFontFamily[] = [
+  { name: "Söhne", quoted: true },
+  { name: "system-ui" },
+  { name: "-apple-system" },
+  { name: "BlinkMacSystemFont" },
+  { name: "Segoe UI", quoted: true },
+  { name: "sans-serif" },
+];
+const SYSTEM_MONO_FONT_FAMILIES: readonly CssFontFamily[] = [
+  { name: "Geist Mono", quoted: true },
+  { name: "ui-monospace" },
+  { name: "SFMono-Regular", quoted: true },
+  { name: "Consolas" },
+  { name: "Liberation Mono", quoted: true },
+  { name: "Menlo" },
+  { name: "monospace" },
+];
+
+const SYSTEM_SANS_STACK = formatCssFontFamilyStack(SYSTEM_SANS_FONT_FAMILIES);
+const SYSTEM_MONO_STACK = formatCssFontFamilyStack(SYSTEM_MONO_FONT_FAMILIES);
+
+const CSS_FONT_FAMILY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "Apple SD Gothic Neo": ["AppleSDGothicNeo-Regular"],
+  Avenir: ["Avenir-Roman"],
+  "Avenir Next": ["AvenirNext-Regular"],
+  "Avenir Next Condensed": ["AvenirNextCondensed-Regular"],
+  "Geeza Pro": ["GeezaProInterface"],
+  "Helvetica Neue": ["HelveticaNeue"],
+  "Lucida Grande": ["LucidaGrandeUI"],
+  "SF Compact": ["SF Compact Text", "SF Compact Display"],
+  "SF Mono": ["SFMono-Regular"],
+  "SF Pro": ["SF Pro Text", "SF Pro Display"],
+};
 
 type LocalFontData = {
   family: string;
@@ -40,6 +75,39 @@ function dedupeFontFamilies(fontFamilies: readonly string[]): string[] {
 
 function escapeFontFamily(fontFamily: string): string {
   return `"${fontFamily.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function formatCssFontFamily(fontFamily: CssFontFamily): string {
+  return fontFamily.quoted ? escapeFontFamily(fontFamily.name) : fontFamily.name;
+}
+
+function formatCssFontFamilyStack(fontFamilies: readonly CssFontFamily[]): string {
+  return fontFamilies.map(formatCssFontFamily).join(", ");
+}
+
+function getFontFamilyStackWithAliases(
+  fontFamily: string,
+  fallbackFontFamilies: readonly CssFontFamily[],
+): string {
+  const aliases = CSS_FONT_FAMILY_ALIASES[fontFamily] ?? [];
+  const fontFamilies: CssFontFamily[] = [
+    { name: fontFamily, quoted: true },
+    ...aliases.map((alias) => ({ name: alias, quoted: true })),
+    ...fallbackFontFamilies,
+  ];
+  const seen = new Set<string>();
+
+  return fontFamilies
+    .filter((candidate) => {
+      const key = candidate.name.toLocaleLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .map(formatCssFontFamily)
+    .join(", ");
 }
 
 function measureTextWidth(context: CanvasRenderingContext2D, fontFamily: string, sample: string) {
@@ -125,7 +193,9 @@ export function getUiFontFamilyCssValue(fontFamily: string): string {
   }
 
   const normalized = normalizeUserFacingFontFamily(fontFamily);
-  return normalized ? `${escapeFontFamily(normalized)}, ${SYSTEM_SANS_STACK}` : SYSTEM_SANS_STACK;
+  return normalized
+    ? getFontFamilyStackWithAliases(normalized, SYSTEM_SANS_FONT_FAMILIES)
+    : SYSTEM_SANS_STACK;
 }
 
 export function getCodeFontFamilyCssValue(fontFamily: string): string {
@@ -134,7 +204,9 @@ export function getCodeFontFamilyCssValue(fontFamily: string): string {
   }
 
   const normalized = normalizeUserFacingFontFamily(fontFamily);
-  return normalized ? `${escapeFontFamily(normalized)}, ${SYSTEM_MONO_STACK}` : SYSTEM_MONO_STACK;
+  return normalized
+    ? getFontFamilyStackWithAliases(normalized, SYSTEM_MONO_FONT_FAMILIES)
+    : SYSTEM_MONO_STACK;
 }
 
 export function applyFontSettingsToDocument(

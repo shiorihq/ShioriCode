@@ -26,7 +26,7 @@ export function LaunchStep({ pendingStepId, onStartCoding }: LaunchStepProps) {
       <div className="flex flex-col items-center text-center">
         {/* Icon */}
         <m.div
-          className="mb-6 flex size-[72px] items-center justify-center rounded-2xl border border-border/60 bg-card/80 text-foreground/20 shadow-sm"
+          className="mb-6 flex size-[72px] items-center justify-center rounded-2xl border border-border/60 bg-card/80 text-primary shadow-sm"
           initial={skip ? false : { opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={skip ? { duration: 0 } : { type: "spring", stiffness: 200, damping: 20 }}

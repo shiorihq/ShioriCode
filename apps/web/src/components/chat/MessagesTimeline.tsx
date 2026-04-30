@@ -24,8 +24,27 @@ import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "..
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
-import { ChevronDownIcon, RefreshCwIcon, Undo2Icon } from "lucide-react";
+import {
+  BotIcon,
+  BoxIcon,
+  ChevronDownIcon,
+  FileTextIcon,
+  FolderIcon,
+  Globe2Icon,
+  ListChecksIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PencilLineIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  SparklesIcon,
+  SquareTerminalIcon,
+  ToolboxIcon,
+  Undo2Icon,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clamp } from "effect/Number";
 import {
   classifyProviderToolRequestKind,
@@ -41,9 +60,13 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
 import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
 import { useScrollFadeOverlays } from "../ui/useScrollFadeOverlays";
-import type { WorkGroupSummaryParts } from "./MessagesTimeline.logic";
+import { useTheme } from "../../hooks/useTheme";
+import type { WorkGroupIconKind, WorkGroupSummaryParts } from "./MessagesTimeline.logic";
 import {
   buildWorkGroupSummaryParts,
+  DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT,
+  deriveWorkGroupIconKind,
+  deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
   extractDelegatedAgentWorkflowCard,
@@ -52,15 +75,18 @@ import {
   getGroupedWorkEntryExpansionKey,
   getDisplayedWorkEntries,
   isFileChangeWorkEntry,
+  isMcpToolWorkEntry,
   isRuntimeDiagnosticWorkEntry,
   isSkillWorkEntry,
   isWorkRowExpanded,
   isWorkRowInProgress,
+  shouldRenderFlatWorkRowAsGroup,
   type DelegatedAgentWorkflowCard,
   type MessagesTimelineRow,
   type SkillWorkflowCard,
   type WorkTimelineRow,
 } from "./MessagesTimeline.logic";
+import { AssistantSelectionAddToChatButton } from "./AssistantSelectionAddToChatButton";
 import { summarizeToolOutput } from "./toolOutput";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
@@ -80,11 +106,12 @@ import { openInPreferredEditor } from "../../editorPreferences";
 import { readNativeApi } from "~/nativeApi";
 
 const COLLAPSED_WORK_OUTPUT_LINE_THRESHOLD = 10;
-const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const MIN_ROWS_FOR_VIRTUALIZATION = 120;
+const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
 const TIMELINE_ROW_GAP_CLASS = "pb-2";
 const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
 const EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID = new Map<MessageId, TurnDiffSummary>();
+const EMPTY_REVEALING_BUFFERED_ASSISTANT_MESSAGE_IDS = new Set<MessageId>();
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
@@ -93,6 +120,7 @@ interface MessagesTimelineProps {
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   activeTurnId?: TurnId | null;
+  revealingBufferedAssistantMessageIds?: ReadonlySet<MessageId>;
   scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
@@ -111,6 +139,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  onAddAssistantSelectionToChat?: (selectedText: string) => void;
   onVirtualizerSnapshot?: (snapshot: {
     totalSize: number;
     measurements: ReadonlyArray<{
@@ -131,6 +160,7 @@ function MessagesTimelineView({
   activeTurnInProgress,
   activeTurnStartedAt,
   activeTurnId = null,
+  revealingBufferedAssistantMessageIds = EMPTY_REVEALING_BUFFERED_ASSISTANT_MESSAGE_IDS,
   scrollContainer,
   timelineEntries,
   completionDividerBeforeEntryId,
@@ -149,6 +179,7 @@ function MessagesTimelineView({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  onAddAssistantSelectionToChat,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -194,41 +225,12 @@ function MessagesTimelineView({
   );
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
-    const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
-    if (!activeTurnInProgress) return firstTailRowIndex;
-
-    const turnStartedAtMs =
-      typeof activeTurnStartedAt === "string" ? Date.parse(activeTurnStartedAt) : Number.NaN;
-    let firstCurrentTurnRowIndex = -1;
-    if (!Number.isNaN(turnStartedAtMs)) {
-      firstCurrentTurnRowIndex = rows.findIndex((row) => {
-        if (row.kind === "working") return true;
-        if (!row.createdAt) return false;
-        const rowCreatedAtMs = Date.parse(row.createdAt);
-        return !Number.isNaN(rowCreatedAtMs) && rowCreatedAtMs >= turnStartedAtMs;
-      });
-    }
-
-    if (firstCurrentTurnRowIndex < 0) {
-      firstCurrentTurnRowIndex = rows.findIndex(
-        (row) => row.kind === "message" && row.message.streaming,
-      );
-    }
-
-    if (firstCurrentTurnRowIndex < 0) return firstTailRowIndex;
-
-    for (let index = firstCurrentTurnRowIndex - 1; index >= 0; index -= 1) {
-      const previousRow = rows[index];
-      if (!previousRow || previousRow.kind !== "message") continue;
-      if (previousRow.message.role === "user") {
-        return Math.min(index, firstTailRowIndex);
-      }
-      if (previousRow.message.role === "assistant" && !previousRow.message.streaming) {
-        break;
-      }
-    }
-
-    return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
+    return deriveFirstUnvirtualizedTimelineRowIndex({
+      rows,
+      activeTurnInProgress,
+      activeTurnStartedAt,
+      tailRowCount: DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT,
+    });
   }, [activeTurnInProgress, activeTurnStartedAt, rows]);
 
   const shouldVirtualizeRows = rows.length >= MIN_ROWS_FOR_VIRTUALIZATION;
@@ -438,6 +440,9 @@ function MessagesTimelineView({
       const leadingVerb = formattedEntry.action;
       const summaryRest = formattedEntry.detail ?? "";
       const summaryLabel = summaryRest.length > 0 ? `${leadingVerb} ${summaryRest}` : leadingVerb;
+      const iconKind = deriveWorkGroupIconKind(entries);
+      const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
+      const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
       const groupItemsId = `work-group-items-${groupId}`;
       const toggleCurrentGroup = () => {
         onToggleWorkGroup(groupId, isExpanded);
@@ -453,13 +458,20 @@ function MessagesTimelineView({
                 aria-label={summaryLabel}
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
-                  "group flex min-w-0 flex-1 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+                  "group flex min-w-0 flex-1 items-center gap-2 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
                   "cursor-pointer focus-visible:text-foreground",
-                  !isInProgress && "hover:text-foreground",
+                  shouldHoverWholeHeader && "hover:text-foreground",
                 )}
                 onClick={toggleCurrentGroup}
               >
-                <span className={cn("truncate", isInProgress && "shimmer shimmer-spread-200")}>
+                <WorkGroupIcon
+                  kind={iconKind}
+                  className={cn(
+                    "text-muted-foreground/75 transition-colors duration-150",
+                    "group-hover:text-foreground",
+                  )}
+                />
+                <span className="truncate">
                   <span
                     className={cn(
                       "transition-colors duration-150",
@@ -468,7 +480,12 @@ function MessagesTimelineView({
                   >
                     {leadingVerb}
                   </span>
-                  {summaryRest.length > 0 ? ` ${summaryRest}` : null}
+                  {summaryRest.length > 0 ? (
+                    <span className={cn(shouldShimmerSummaryRest && "shimmer shimmer-spread-200")}>
+                      {" "}
+                      {summaryRest}
+                    </span>
+                  ) : null}
                 </span>
               </button>
               <button
@@ -508,7 +525,6 @@ function MessagesTimelineView({
 
     if (entries.length === 1) {
       const singleEntry = entries[0]!;
-      const hasInlineEntries = (row.inlineEntries?.length ?? 0) > 0;
       const rowIsInProgress = isWorkRowInProgress(row);
       if (isStatusUpdateEntry(singleEntry)) {
         return (
@@ -517,7 +533,7 @@ function MessagesTimelineView({
           </div>
         );
       }
-      if (hasInlineEntries || rowIsInProgress) {
+      if (shouldRenderFlatWorkRowAsGroup(row)) {
         const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
         const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
         const isEditGroup = entries.every(isFileChangeWorkEntry);
@@ -620,7 +636,7 @@ function MessagesTimelineView({
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="group rounded-2xl border border-border/60 bg-secondary/80 px-4 py-3 shadow-sm">
+            <div className="glass-user-message group">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   {userImages.length > 0 && (
@@ -717,86 +733,21 @@ function MessagesTimelineView({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  revealBlocks={revealingBufferedAssistantMessageIds.has(row.message.id)}
                 />
                 {(() => {
                   const turnSummary = visibleTurnDiffSummaryByAssistantMessageId.get(
                     row.message.id,
                   );
                   if (!turnSummary) return null;
-                  const checkpointFiles = turnSummary.files;
-                  if (checkpointFiles.length === 0) return null;
-                  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-                  const changedFileCountLabel = String(checkpointFiles.length);
+                  if (turnSummary.files.length === 0) return null;
                   return (
-                    <div className="mt-3 overflow-hidden rounded-xl border border-border/50 bg-background/40">
-                      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3.5">
-                        <p
-                          className={cn(
-                            CHAT_THREAD_BODY_CLASS,
-                            "flex min-w-0 items-baseline gap-2 text-foreground",
-                          )}
-                        >
-                          <span className="text-[15px] font-medium tracking-tight">
-                            {changedFileCountLabel}{" "}
-                            {checkpointFiles.length === 1 ? "file" : "files"} changed
-                          </span>
-                          {hasNonZeroStat(summaryStat) && (
-                            <span className="font-mono text-[13px] tabular-nums">
-                              <DiffStatLabel
-                                additions={summaryStat.additions}
-                                deletions={summaryStat.deletions}
-                              />
-                            </span>
-                          )}
-                        </p>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          className={cn(
-                            CHAT_THREAD_BODY_CLASS,
-                            "h-auto min-h-0 shrink-0 px-2 py-1 text-muted-foreground/80 hover:bg-foreground/5 hover:text-foreground",
-                          )}
-                          onClick={() =>
-                            onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
-                          }
-                        >
-                          View diff
-                        </Button>
-                      </div>
-                      <div className="border-t border-border/40 py-1">
-                        {checkpointFiles.map((file) => {
-                          const additions = file.additions ?? 0;
-                          const deletions = file.deletions ?? 0;
-                          return (
-                            <button
-                              key={`changed-file:${turnSummary.turnId}:${file.path}`}
-                              type="button"
-                              onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
-                              className={cn(
-                                CHAT_THREAD_BODY_CLASS,
-                                "group flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-foreground/5",
-                              )}
-                            >
-                              <VscodeEntryIcon
-                                pathValue={file.path}
-                                kind="file"
-                                theme={resolvedTheme}
-                                className="size-3.5 shrink-0 text-muted-foreground/70"
-                              />
-                              <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted-foreground/85 group-hover:text-foreground">
-                                {file.path}
-                              </span>
-                              {(additions > 0 || deletions > 0) && (
-                                <span className="shrink-0 font-mono text-[12px] tabular-nums">
-                                  <DiffStatLabel additions={additions} deletions={deletions} />
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <ChangedFilesCard
+                      turnSummary={turnSummary}
+                      resolvedTheme={resolvedTheme}
+                      onOpenTurnDiff={onOpenTurnDiff}
+                      onHeightChange={scheduleTimelineMeasure}
+                    />
                   );
                 })()}
               </div>
@@ -879,8 +830,15 @@ function MessagesTimelineView({
       <div
         ref={timelineRootRef}
         data-timeline-root="true"
-        className="mx-auto w-full min-w-0 max-w-[52rem] overflow-x-hidden"
+        className="mx-auto w-full min-w-0 max-w-[50rem]"
       >
+        {onAddAssistantSelectionToChat ? (
+          <AssistantSelectionAddToChatButton
+            containerRef={timelineRootRef}
+            onAddSelectedText={onAddAssistantSelectionToChat}
+          />
+        ) : null}
+
         {virtualizedRowCount > 0 && (
           <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
             {virtualRows.map((virtualRow: VirtualItem) => {
@@ -916,11 +874,171 @@ function MessagesTimelineView({
 
 export const MessagesTimeline = memo(MessagesTimelineView) as typeof MessagesTimelineView;
 
+const CHANGED_FILES_COLLAPSED_LIMIT = 5;
+
+const ChangedFilesCard = memo(function ChangedFilesCard(props: {
+  turnSummary: TurnDiffSummary;
+  resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onHeightChange: () => void;
+}) {
+  const { turnSummary, resolvedTheme, onOpenTurnDiff, onHeightChange } = props;
+  const checkpointFiles = turnSummary.files;
+  const [isFileListCollapsed, setIsFileListCollapsed] = useState(false);
+  const [isShowingAllFiles, setIsShowingAllFiles] = useState(false);
+  const ExpandToggleIcon = isFileListCollapsed ? Maximize2Icon : Minimize2Icon;
+  const expandToggleLabel = isFileListCollapsed ? "Show changed files" : "Hide changed files";
+  const canPaginate = checkpointFiles.length > CHANGED_FILES_COLLAPSED_LIMIT;
+  const visibleFiles =
+    canPaginate && !isShowingAllFiles
+      ? checkpointFiles.slice(0, CHANGED_FILES_COLLAPSED_LIMIT)
+      : checkpointFiles;
+  const hiddenCount = checkpointFiles.length - visibleFiles.length;
+
+  useEffect(() => {
+    onHeightChange();
+  }, [isFileListCollapsed, isShowingAllFiles, onHeightChange]);
+
+  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-border/50 bg-background/40">
+      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3.5">
+        <p
+          className={cn(
+            CHAT_THREAD_BODY_CLASS,
+            "flex min-w-0 items-baseline gap-2 text-foreground",
+          )}
+        >
+          <span className="text-[15px] font-medium tracking-tight">
+            {checkpointFiles.length} {checkpointFiles.length === 1 ? "file" : "files"} changed
+          </span>
+          {hasNonZeroStat(summaryStat) && (
+            <span className="font-mono text-[13px] tabular-nums">
+              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
+            </span>
+          )}
+        </p>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className={cn(
+              CHAT_THREAD_BODY_CLASS,
+              "h-auto min-h-0 px-2 py-1 text-muted-foreground/80 hover:bg-foreground/5 hover:text-foreground",
+            )}
+            onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
+          >
+            View diff
+          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-expanded={!isFileListCollapsed}
+                  aria-label={expandToggleLabel}
+                  aria-pressed={isFileListCollapsed}
+                  className="text-muted-foreground/80 hover:bg-foreground/5 hover:text-foreground"
+                  onClick={() => setIsFileListCollapsed((prev) => !prev)}
+                >
+                  <ExpandToggleIcon className="size-3.5" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">{expandToggleLabel}</TooltipPopup>
+          </Tooltip>
+        </div>
+      </div>
+      {!isFileListCollapsed && (
+        <div className="border-t border-border/40 py-1">
+          {visibleFiles.map((file) => {
+            const additions = file.additions ?? 0;
+            const deletions = file.deletions ?? 0;
+            return (
+              <button
+                key={`changed-file:${turnSummary.turnId}:${file.path}`}
+                type="button"
+                onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+                className={cn(
+                  CHAT_THREAD_BODY_CLASS,
+                  "group flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-foreground/5",
+                )}
+              >
+                <VscodeEntryIcon
+                  pathValue={file.path}
+                  kind="file"
+                  theme={resolvedTheme}
+                  className="size-3.5 shrink-0 text-muted-foreground/70"
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted-foreground/85 group-hover:text-foreground">
+                  {file.path}
+                </span>
+                {(additions > 0 || deletions > 0) && (
+                  <span className="shrink-0 font-mono text-[12px] tabular-nums">
+                    <DiffStatLabel additions={additions} deletions={deletions} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {canPaginate && (
+            <button
+              type="button"
+              onClick={() => setIsShowingAllFiles((prev) => !prev)}
+              className={cn(
+                CHAT_THREAD_BODY_CLASS,
+                "flex w-full items-center gap-2 px-3 py-1 text-left text-[12.5px] text-muted-foreground/80 hover:bg-foreground/5 hover:text-foreground",
+              )}
+            >
+              {isShowingAllFiles ? "Show fewer files" : `Show all Files (${hiddenCount} more)`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineReasoning = Extract<TimelineEntry, { kind: "reasoning" }>["reasoning"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+type WorkGroupInlineEntry = NonNullable<WorkTimelineRow["inlineEntries"]>[number];
+
+const WORK_GROUP_ICON_BY_KIND: Record<WorkGroupIconKind, LucideIcon> = {
+  agent: BotIcon,
+  command: SquareTerminalIcon,
+  edit: PencilLineIcon,
+  file: FileTextIcon,
+  list: FolderIcon,
+  search: SearchIcon,
+  skill: SparklesIcon,
+  todo: ListChecksIcon,
+  tool: ToolboxIcon,
+  "web-search": Globe2Icon,
+  work: BoxIcon,
+};
+
+const WorkGroupIcon = memo(function WorkGroupIcon(props: {
+  kind: WorkGroupIconKind;
+  className?: string | undefined;
+}) {
+  const Icon = WORK_GROUP_ICON_BY_KIND[props.kind] ?? BoxIcon;
+  return <Icon aria-hidden="true" className={cn("size-3.5 shrink-0", props.className)} />;
+});
+
+const McpToolboxIcon = memo(function McpToolboxIcon() {
+  return (
+    <WorkGroupIcon
+      kind="tool"
+      className="mr-2 inline-block align-[-0.16em] text-muted-foreground/75"
+    />
+  );
+});
 
 function workEntryTextClass(workEntry: TimelineWorkEntry): string {
   return workEntry.tone === "tool" ? "text-foreground/60" : "text-foreground";
@@ -980,6 +1098,10 @@ function formatDurationParts(parts: ReadonlyArray<readonly [number, string]>): s
 
 function formatDurationUnit(value: number, unit: string): string {
   return `${value} ${value === 1 ? unit : `${unit}s`}`;
+}
+
+function formatHiddenWorkGroupItemCount(count: number): string {
+  return `${count} older ${count === 1 ? "entry" : "entries"} hidden`;
 }
 
 function formatMessageMeta(
@@ -1213,20 +1335,12 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
   onHeightChange?: () => void;
 }) {
   const { reasoning, markdownCwd, onHeightChange } = props;
-  const [isExpanded, setIsExpanded] = useState(reasoning.streaming);
+  const [isExpanded, setIsExpanded] = useState(false);
   const reasoningViewportRef = useRef<HTMLDivElement | null>(null);
   const hasContent = reasoning.text.trim().length > 0;
   const placeholderText = reasoning.streaming
     ? "Reasoning is in progress. Details may remain hidden for this provider."
     : "No visible reasoning details were provided for this step.";
-
-  useEffect(() => {
-    if (reasoning.streaming) {
-      setIsExpanded(true);
-    } else {
-      setIsExpanded(false);
-    }
-  }, [reasoning.streaming]);
 
   useLayoutEffect(() => {
     onHeightChange?.();
@@ -1378,8 +1492,10 @@ const WorkEntryPathLink = memo(function WorkEntryPathLink(props: {
   path: string;
   cwd: string | undefined;
   title?: string;
+  showFileIcon?: boolean;
 }) {
-  const { label, path, cwd, title } = props;
+  const { label, path, cwd, title, showFileIcon = false } = props;
+  const { resolvedTheme } = useTheme();
   const resolvedPath = resolveFilePathForOpen(path, cwd);
   const handleClick = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -1398,10 +1514,23 @@ const WorkEntryPathLink = memo(function WorkEntryPathLink(props: {
     <a
       href={resolvedPath}
       onClick={handleClick}
-      className="cursor-pointer rounded-sm text-primary underline-offset-[3px] hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+      className={cn(
+        "cursor-pointer rounded-sm text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+        showFileIcon
+          ? "app-file-href-link"
+          : "underline-offset-[3px] hover:underline focus-visible:underline",
+      )}
       title={title ?? `Open ${path} in preferred editor`}
     >
-      {label}
+      {showFileIcon && (
+        <VscodeEntryIcon
+          pathValue={resolvedPath}
+          kind="file"
+          theme={resolvedTheme}
+          className="app-file-href-icon"
+        />
+      )}
+      <span>{label}</span>
     </a>
   );
 });
@@ -1426,6 +1555,7 @@ const WorkEntryFileLink = memo(function WorkEntryFileLink(props: {
         path={path}
         cwd={cwd}
         title={`Open ${path} in preferred editor`}
+        showFileIcon
       />
     </>
   );
@@ -1436,8 +1566,9 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
   indented?: boolean;
   asListItem?: boolean;
   cwd?: string | undefined;
+  showMcpToolboxIcon?: boolean;
 }) {
-  const { workEntry, indented = true, asListItem = false, cwd } = props;
+  const { workEntry, indented = true, asListItem = false, cwd, showMcpToolboxIcon = true } = props;
   const { action, detail } = formatMinimalEntry(workEntry);
   const formattedEntry = formatWorkEntry(workEntry);
   const skillWorkflowCard = useMemo(() => extractSkillWorkflowCard(workEntry), [workEntry]);
@@ -1446,6 +1577,7 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
   const isFilePathEntry = isFileChange || formattedEntry.kind === "read";
   const linkedSkillPath =
     detail && skillWorkflowCard?.skillName === detail ? skillWorkflowCard.skillPath : null;
+  const shouldShowMcpToolboxIcon = showMcpToolboxIcon && isMcpToolWorkEntry(workEntry);
   const Component = asListItem ? "li" : "p";
 
   return (
@@ -1460,6 +1592,7 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
       )}
       title={detail ? `${action} ${detail}` : action}
     >
+      {shouldShowMcpToolboxIcon && <McpToolboxIcon />}
       <span>{action}</span>
       {detail &&
         (isFilePathEntry ? (
@@ -1762,7 +1895,7 @@ const SkillWorkflowCardView = memo(function SkillWorkflowCardView(props: {
       ) : null}
       {card.skillPath && !card.skillMarkdown && (
         <div className="mt-1 font-mono text-xs text-foreground/55">
-          <WorkEntryPathLink label={card.skillPath} path={card.skillPath} cwd={cwd} />
+          <WorkEntryPathLink label={card.skillPath} path={card.skillPath} cwd={cwd} showFileIcon />
         </div>
       )}
     </div>
@@ -1823,12 +1956,13 @@ interface ExpandableWorkEntryProps {
   onToggle: () => void;
   onHeightChange?: (() => void) | undefined;
   cwd?: string | undefined;
+  showMcpToolboxIcon?: boolean;
 }
 
 export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
   props: ExpandableWorkEntryProps,
 ) {
-  const { workEntry, isExpanded, onToggle, onHeightChange, cwd } = props;
+  const { workEntry, isExpanded, onToggle, onHeightChange, cwd, showMcpToolboxIcon = true } = props;
   const { action, detail } = formatMinimalEntry(workEntry);
   const formattedEntry = formatWorkEntry(workEntry);
   const commandExecutionSummary = useMemo(
@@ -1878,7 +2012,12 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
   const expandedContentId = `work-entry-details-${workEntry.id}`;
 
   const isFileChange = formattedEntry.kind === "edit";
-  const isFilePathEntry = isFileChange || formattedEntry.kind === "read";
+  const isReadEntry = formattedEntry.kind === "read";
+  const isSearchEntry = formattedEntry.kind === "search";
+  const isCommandEntry =
+    formattedEntry.kind === "command" || workEntry.itemType === "command_execution";
+  const shouldShowMcpToolboxIcon = showMcpToolboxIcon && isMcpToolWorkEntry(workEntry);
+  const isFilePathEntry = isFileChange || isReadEntry;
   const parsedDiff = useMemo(
     () => (isFileChange ? parseEditDiff(workEntry.output, workEntry.detail) : null),
     [isFileChange, workEntry.output, workEntry.detail],
@@ -1902,6 +2041,46 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
     onHeightChange?.();
   }, [isExpanded, isOutputExpanded, onHeightChange]);
 
+  const headerLabel = (
+    <span className="truncate" title={detail ? `${action} ${detail}` : action}>
+      {shouldShowMcpToolboxIcon && <McpToolboxIcon />}
+      <span>{action}</span>
+      {detail &&
+        (isFilePathEntry ? (
+          <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
+        ) : linkedSkillPath ? (
+          <>
+            {" "}
+            <WorkEntryPathLink label={detail} path={linkedSkillPath} cwd={cwd} />
+          </>
+        ) : (
+          <WorkEntryDetail detail={detail} monospace={detailUsesMono} />
+        ))}
+      {parsedDiff && hasNonZeroStat(parsedDiff) && (
+        <span className={cn(CHAT_THREAD_BODY_CLASS, "ml-1 tabular-nums")}>
+          <DiffStatLabel additions={parsedDiff.additions} deletions={parsedDiff.deletions} />
+        </span>
+      )}
+    </span>
+  );
+
+  if ((isReadEntry || isSearchEntry) && !isExpanded && !outputText && !toolErrorText) {
+    return (
+      <div className="tool-ui-mono-muted">
+        <div
+          className={cn(
+            CHAT_THREAD_BODY_CLASS,
+            "flex min-w-0 items-center gap-1 rounded-sm py-0.5 transition-colors duration-150 hover:text-foreground",
+            workEntryTextClass(workEntry),
+            workEntrySelectableClass(workEntry),
+          )}
+        >
+          {headerLabel}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="tool-ui-mono-muted">
       <div className="group/entry flex items-center gap-1">
@@ -1922,25 +2101,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
             }
           }}
         >
-          <span className="truncate" title={detail ? `${action} ${detail}` : action}>
-            <span>{action}</span>
-            {detail &&
-              (isFilePathEntry ? (
-                <WorkEntryFileLink basename={extractBasename(detail)} path={detail} cwd={cwd} />
-              ) : linkedSkillPath ? (
-                <>
-                  {" "}
-                  <WorkEntryPathLink label={detail} path={linkedSkillPath} cwd={cwd} />
-                </>
-              ) : (
-                <WorkEntryDetail detail={detail} monospace={detailUsesMono} />
-              ))}
-            {parsedDiff && hasNonZeroStat(parsedDiff) && (
-              <span className={cn(CHAT_THREAD_BODY_CLASS, "ml-1 tabular-nums")}>
-                <DiffStatLabel additions={parsedDiff.additions} deletions={parsedDiff.deletions} />
-              </span>
-            )}
-          </span>
+          {headerLabel}
         </div>
         <button
           type="button"
@@ -2125,7 +2286,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           )}
 
           {!parsedDiff && !toolErrorText && commandOutputText && (
-            <div className="mt-0.5 pl-4">
+            <div className="mt-0.5">
               <pre
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
@@ -2139,7 +2300,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
 
           {/* Fallback: raw text output */}
           {!parsedDiff && !toolErrorText && outputText && (
-            <div className="mt-0.5 pl-4">
+            <div className={cn("mt-0.5", !isCommandEntry && !isSearchEntry && "pl-4")}>
               {showsRawJsonOutput && (
                 <div className="mb-1 flex justify-end">
                   <MessageCopyButton text={outputText} title="Copy JSON output" />
@@ -2228,7 +2389,11 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
   } = props;
   const entriesViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickWorkEntriesToBottomRef = useRef(true);
+  const [showAllRenderedItems, setShowAllRenderedItems] = useState(false);
   const displayedEntries = useMemo(() => getDisplayedWorkEntries(entries), [entries]);
+  const iconKind = useMemo(() => deriveWorkGroupIconKind(entries), [entries]);
+  const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
+  const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
   const shouldUseScrollViewport = isExpanded && !isEditGroup;
   const shouldAutoStickScrollViewport = shouldUseScrollViewport && (isInProgress || nested);
   const {
@@ -2302,9 +2467,36 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
     };
   }, [isExpanded, shouldUseScrollViewport, updateEntriesFade]);
 
+  const renderedItems = useMemo<ReadonlyArray<WorkGroupInlineEntry>>(
+    () =>
+      inlineEntries ??
+      displayedEntries.map((entry) => ({ kind: "work" as const, id: entry.id, entry })),
+    [displayedEntries, inlineEntries],
+  );
+  const visibleRenderedItems = useMemo(
+    () =>
+      !showAllRenderedItems && renderedItems.length > MAX_RENDERED_WORK_GROUP_ITEMS
+        ? renderedItems.slice(-MAX_RENDERED_WORK_GROUP_ITEMS)
+        : renderedItems,
+    [renderedItems, showAllRenderedItems],
+  );
+  const hiddenRenderedItemCount = renderedItems.length - visibleRenderedItems.length;
+
+  useEffect(() => {
+    if (renderedItems.length <= MAX_RENDERED_WORK_GROUP_ITEMS && showAllRenderedItems) {
+      setShowAllRenderedItems(false);
+    }
+  }, [renderedItems.length, showAllRenderedItems]);
+
   useLayoutEffect(() => {
     onHeightChange?.();
-  }, [displayedEntries.length, isExpanded, onHeightChange, shouldUseScrollViewport]);
+  }, [
+    hiddenRenderedItemCount,
+    isExpanded,
+    onHeightChange,
+    shouldUseScrollViewport,
+    visibleRenderedItems.length,
+  ]);
 
   useLayoutEffect(() => {
     if (!shouldUseScrollViewport || !isExpanded) {
@@ -2324,7 +2516,13 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [displayedEntries.length, isExpanded, shouldUseScrollViewport, updateEntriesFade]);
+  }, [
+    hiddenRenderedItemCount,
+    isExpanded,
+    shouldUseScrollViewport,
+    updateEntriesFade,
+    visibleRenderedItems.length,
+  ]);
 
   useLayoutEffect(() => {
     if (!shouldAutoStickScrollViewport || !isExpanded) {
@@ -2338,7 +2536,13 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
 
     entriesViewport.scrollTop = entriesViewport.scrollHeight;
     updateEntriesFade(entriesViewport);
-  }, [displayedEntries.length, isExpanded, shouldAutoStickScrollViewport, updateEntriesFade]);
+  }, [
+    hiddenRenderedItemCount,
+    isExpanded,
+    shouldAutoStickScrollViewport,
+    updateEntriesFade,
+    visibleRenderedItems.length,
+  ]);
 
   return (
     <div>
@@ -2351,15 +2555,22 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
         }
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "group flex w-full min-w-0 items-center gap-1 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+          "group flex w-full min-w-0 items-center gap-2 rounded-sm border-0 bg-transparent py-0.5 text-left text-muted-foreground/80 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
           "cursor-pointer focus-visible:text-foreground",
-          !isInProgress && "hover:text-foreground",
+          shouldHoverWholeHeader && "hover:text-foreground",
         )}
         onClick={() => {
           onToggleGroup();
         }}
       >
-        <span className={cn(isInProgress && "shimmer shimmer-spread-200")}>
+        <WorkGroupIcon
+          kind={iconKind}
+          className={cn(
+            "text-muted-foreground/75 transition-colors duration-150",
+            "group-hover:text-foreground",
+          )}
+        />
+        <span className="truncate">
           <span
             className={cn(
               "transition-colors duration-150",
@@ -2368,7 +2579,12 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
           >
             {summary.leadingVerb}
           </span>
-          {summary.rest.length > 0 ? ` ${summary.rest}` : null}
+          {summary.rest.length > 0 ? (
+            <span className={cn(shouldShimmerSummaryRest && "shimmer shimmer-spread-200")}>
+              {" "}
+              {summary.rest}
+            </span>
+          ) : null}
         </span>
         <ChevronDownIcon
           className={cn(
@@ -2396,9 +2612,30 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
             onScroll={handleEntriesViewportScroll}
           >
             <ul>
-              {(
-                inlineEntries ?? displayedEntries.map((entry) => ({ kind: "work" as const, entry }))
-              ).map((item) => {
+              {hiddenRenderedItemCount > 0 && (
+                <li className="list-none py-0.5">
+                  <div
+                    className={cn(
+                      CHAT_THREAD_BODY_CLASS,
+                      "flex items-center gap-2",
+                      "text-muted-foreground/60",
+                      "assistant-text-selectable",
+                    )}
+                  >
+                    <span>{formatHiddenWorkGroupItemCount(hiddenRenderedItemCount)}</span>
+                    <button
+                      type="button"
+                      className="rounded-sm text-[12px] font-medium text-muted-foreground/80 underline-offset-[3px] transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+                      onClick={() => {
+                        setShowAllRenderedItems(true);
+                      }}
+                    >
+                      Show
+                    </button>
+                  </div>
+                </li>
+              )}
+              {visibleRenderedItems.map((item) => {
                 if (item.kind === "reasoning") {
                   return (
                     <li key={`work-row:${item.id}`} className="list-none py-0.5">
@@ -2421,6 +2658,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
                         asListItem
                         indented={false}
                         cwd={markdownCwd}
+                        showMcpToolboxIcon={false}
                       />
                     </li>
                   );
@@ -2434,6 +2672,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
                         asListItem
                         indented={false}
                         cwd={markdownCwd}
+                        showMcpToolboxIcon={false}
                       />
                     </li>
                   );
@@ -2449,6 +2688,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
                       isExpanded={isEntryExpanded}
                       onToggle={() => onToggleWorkGroup(entryExpansionKey, isEntryExpanded)}
                       cwd={markdownCwd}
+                      showMcpToolboxIcon={false}
                       {...(onHeightChange ? { onHeightChange } : {})}
                     />
                   </li>

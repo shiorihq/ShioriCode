@@ -184,6 +184,45 @@ export function deriveComposerSendState(options: {
   };
 }
 
+export function formatAssistantSelectedTextForComposer(selectedText: string): string {
+  const normalized = selectedText.replace(/\r\n?/g, "\n").trim();
+  if (normalized.length === 0) {
+    return "";
+  }
+
+  return normalized
+    .split("\n")
+    .map((line) => (line.length > 0 ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+export function buildAssistantSelectionComposerInsertion(input: {
+  prompt: string;
+  cursor: number;
+  selectedText: string;
+}): string {
+  const quotedSelection = formatAssistantSelectedTextForComposer(input.selectedText);
+  if (quotedSelection.length === 0) {
+    return "";
+  }
+
+  const cursor = Math.min(Math.max(0, input.cursor), input.prompt.length);
+  const before = input.prompt.slice(0, cursor);
+  const after = input.prompt.slice(cursor);
+  const leadingGap =
+    before.length === 0 ? "" : before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const trailingGap =
+    after.length === 0
+      ? "\n\n"
+      : after.startsWith("\n\n")
+        ? ""
+        : after.startsWith("\n")
+          ? "\n"
+          : "\n\n";
+
+  return `${leadingGap}${quotedSelection}${trailingGap}`;
+}
+
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",

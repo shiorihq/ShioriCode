@@ -169,6 +169,11 @@ export function createWsNativeApi(): NativeApi {
       capture: (input) => rpcClient.telemetry.capture(input),
       log: (input) => rpcClient.telemetry.log(input),
     },
+    browserPanel: {
+      onNavigateRequest: (callback) => rpcClient.browserPanel.onNavigateRequest(callback),
+      completeCommand: (result) =>
+        rpcClient.browserPanel.completeCommand(result).then(() => undefined),
+    },
   };
 
   instance = { api };

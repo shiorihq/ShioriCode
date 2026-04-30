@@ -8,6 +8,7 @@ import {
   getProviderToolInputActionValue,
   getProviderToolInputPath,
   getProviderToolInputQuery,
+  isTodoListToolName,
   providerToolTitle,
   summarizeProviderToolInvocation,
 } from "./providerTool";
@@ -43,6 +44,7 @@ describe("providerTool", () => {
   });
 
   it("formats wait-style subagent tool summaries consistently", () => {
+    expect(providerToolTitle("Agent")).toBe("Subagent task");
     expect(providerToolTitle("wait")).toBe("Wait for subagent");
     expect(
       summarizeProviderToolInvocation("wait", {
@@ -54,6 +56,19 @@ describe("providerTool", () => {
         target: "agent-2",
       }),
     ).toBe("Close subagent: agent-2");
+  });
+
+  it("recognizes Kimi SetTodoList as a todo-list tool", () => {
+    expect(isTodoListToolName("SetTodoList")).toBe(true);
+    expect(providerToolTitle("SetTodoList")).toBe("Update todo list");
+    expect(
+      summarizeProviderToolInvocation("SetTodoList", {
+        todos: [
+          { title: "Investigate re-render on stop response", status: "in_progress" },
+          { title: "Implement fix to prevent scroll jump on stop", status: "pending" },
+        ],
+      }),
+    ).toBe("Update todo list: 2 tasks");
   });
 
   it("extracts notebook paths from structured tool input", () => {

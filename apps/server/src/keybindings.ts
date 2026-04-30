@@ -59,6 +59,9 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
   { key: "mod+o", command: "project.add", when: "!terminalFocus" },
   { key: "meta+p", command: "pullRequests.open" },
+  { key: "meta+k", command: "kanban.open" },
+  { key: "n", command: "kanban.newTask", when: "kanbanView && !inputFocus" },
+  { key: "meta+g", command: "kanban.search", when: "kanbanView" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
@@ -396,6 +399,14 @@ function migrateLegacyDefaultKeybindings(keybindings: readonly KeybindingRule[])
         command: "project.add" as const,
         key: "mod+o",
       };
+    }
+    if (
+      rule.command === "kanban.open" &&
+      rule.key === "mod+shift+k" &&
+      (rule.when ?? undefined) === undefined
+    ) {
+      migratedLegacyDefaults = true;
+      return { ...rule, key: "meta+k" };
     }
     return rule;
   });

@@ -171,20 +171,20 @@ export const AssistantSelectionAddToChatButton = memo(function AssistantSelectio
           selectionOverlay.placement === "above" ? "translate(-50%, -100%)" : "translate(-50%, 0)",
       }}
     >
-      <div className="pointer-events-auto rounded-full border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md">
+      <div className="pointer-events-auto rounded-full border border-border/70 bg-popover/95 p-0.5 shadow-md backdrop-blur-md">
         <Button
           type="button"
           variant="ghost"
           size="sm"
           className={cn(
-            "h-8 rounded-full px-3 text-sm before:rounded-full",
+            "h-6 gap-1 rounded-full px-2 text-xs before:rounded-full",
             "text-foreground hover:bg-foreground/10",
           )}
           data-assistant-selection-add-to-chat="true"
           onPointerDown={handlePointerDown}
           onClick={handleAddSelectedText}
         >
-          <MessageCircleIcon className="size-4" aria-hidden="true" />
+          <MessageCircleIcon className="size-3" aria-hidden="true" />
           Add to chat
         </Button>
       </div>

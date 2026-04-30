@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerKeybindings } from "~/rpc/serverState";
 import { useDesktopWindowControlsInset } from "~/hooks/useDesktopWindowControlsInset";
@@ -10,7 +10,10 @@ import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 
 import ThreadSidebar from "./Sidebar";
-import { resolveAppSidebarShortcutCommand } from "./AppSidebarLayout.logic";
+import {
+  resolveAppSidebarShortcutCommand,
+  resolveAppTitlebarWindowControlsLeftInset,
+} from "./AppSidebarLayout.logic";
 import { CommandKModal, useCommandK } from "./CommandKModal";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 
@@ -22,6 +25,7 @@ function AppSidebarKeyboardShortcuts() {
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
   const navigate = useNavigate();
+  const kanbanEnabled = useSettings().kanban.enabled;
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const terminalOpen = useTerminalStateStore((state) =>
     Object.values(state.terminalStateByThreadId).some(
@@ -52,6 +56,16 @@ function AppSidebarKeyboardShortcuts() {
         return;
       }
 
+      if (command === "kanban.open") {
+        if (!kanbanEnabled) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void navigate({ to: "/kanban", search: {} });
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
       toggleSidebar();
@@ -63,7 +77,7 @@ function AppSidebarKeyboardShortcuts() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown, { capture: true });
     };
-  }, [keybindings, navigate, requestProjectAdd, terminalOpen, toggleSidebar]);
+  }, [kanbanEnabled, keybindings, navigate, requestProjectAdd, terminalOpen, toggleSidebar]);
 
   return null;
 }
@@ -71,9 +85,19 @@ function AppSidebarKeyboardShortcuts() {
 function AppSidebarContent({ children }: { children: ReactNode }) {
   const { isMobile, open: sidebarOpen } = useSidebar();
   const macWindowControlsInset = useDesktopWindowControlsInset();
-  const applyClosedSidebarMacPadding =
-    isElectron && isMacPlatform(navigator.platform) && !sidebarOpen;
+  const titlebarWindowControlsLeftInset = resolveAppTitlebarWindowControlsLeftInset({
+    isElectron,
+    isMac: typeof navigator !== "undefined" && isMacPlatform(navigator.platform),
+    sidebarOpen: sidebarOpen || isMobile,
+    windowControlsInset: macWindowControlsInset,
+  });
   const showCurvedSidebarEdge = sidebarOpen && !isMobile;
+  const titlebarStyle =
+    titlebarWindowControlsLeftInset > 0
+      ? ({
+          "--app-titlebar-window-controls-left-inset": `${titlebarWindowControlsLeftInset}px`,
+        } as CSSProperties)
+      : undefined;
 
   return (
     <div
@@ -81,9 +105,7 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
         "flex min-h-0 min-w-0 flex-1 flex-col",
         showCurvedSidebarEdge ? "bg-transparent" : "bg-background",
       )}
-      style={
-        applyClosedSidebarMacPadding ? { paddingLeft: `${macWindowControlsInset}px` } : undefined
-      }
+      style={titlebarStyle}
     >
       <div
         className={cn(
@@ -129,7 +151,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
     const unsubscribe = onMenuAction((action) => {
       if (action !== "open-settings") return;
-      void navigate({ to: "/settings" });
+      void navigate({ to: "/settings/general" });
     });
 
     return () => {

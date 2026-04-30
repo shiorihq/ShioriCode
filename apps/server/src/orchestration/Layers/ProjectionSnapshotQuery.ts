@@ -1,6 +1,10 @@
 import {
   ChatAttachment,
   IsoDateTime,
+  KanbanItem,
+  KanbanItemAssignee,
+  KanbanItemNote,
+  KanbanItemPullRequestLink,
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
@@ -52,6 +56,13 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+  }),
+);
+const ProjectionKanbanItemDbRowSchema = KanbanItem.mapFields(
+  Struct.assign({
+    pullRequest: Schema.NullOr(Schema.fromJsonString(KanbanItemPullRequestLink)),
+    assignees: Schema.fromJsonString(Schema.Array(KanbanItemAssignee)),
+    notes: Schema.fromJsonString(Schema.Array(KanbanItemNote)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -116,6 +127,7 @@ const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.projects,
+  ORCHESTRATION_PROJECTOR_NAMES.kanbanItems,
   ORCHESTRATION_PROJECTOR_NAMES.threads,
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
@@ -181,6 +193,35 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  const listKanbanItemRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionKanbanItemDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          item_id AS "id",
+          project_id AS "projectId",
+          pull_request_json AS "pullRequest",
+          title,
+          description,
+          prompt,
+          generated_prompt AS "generatedPrompt",
+          prompt_status AS "promptStatus",
+          prompt_error AS "promptError",
+          status,
+          sort_key AS "sortKey",
+          blocked_reason AS "blockedReason",
+          assignees_json AS "assignees",
+          notes_json AS "notes",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          completed_at AS "completedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_kanban_items
+        ORDER BY status ASC, sort_key ASC, created_at ASC, item_id ASC
       `,
   });
 
@@ -447,6 +488,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.gen(function* () {
           const [
             projectRows,
+            kanbanItemRows,
             threadRows,
             messageRows,
             proposedPlanRows,
@@ -461,6 +503,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.getSnapshot:listProjects:query",
                   "ProjectionSnapshotQuery.getSnapshot:listProjects:decodeRows",
+                ),
+              ),
+            ),
+            listKanbanItemRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listKanbanItems:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listKanbanItems:decodeRows",
                 ),
               ),
             ),
@@ -540,6 +590,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           let updatedAt: string | null = null;
 
           for (const row of projectRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+          }
+          for (const row of kanbanItemRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
           }
           for (const row of threadRows) {
@@ -700,6 +753,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const snapshot = {
             snapshotSequence: computeSnapshotSequence(stateRows),
             projects,
+            kanbanItems: kanbanItemRows,
             threads,
             updatedAt: updatedAt ?? new Date(0).toISOString(),
           };

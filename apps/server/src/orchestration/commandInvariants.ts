@@ -1,5 +1,6 @@
 import type {
   OrchestrationCommand,
+  KanbanItemId,
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
@@ -9,6 +10,8 @@ import type {
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+
+type OrchestrationKanbanItem = NonNullable<OrchestrationReadModel["kanbanItems"]>[number];
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -22,6 +25,13 @@ export function findThreadById(
   threadId: ThreadId,
 ): OrchestrationThread | undefined {
   return readModel.threads.find((thread) => thread.id === threadId);
+}
+
+export function findKanbanItemById(
+  readModel: OrchestrationReadModel,
+  itemId: KanbanItemId,
+): OrchestrationKanbanItem | undefined {
+  return (readModel.kanbanItems ?? []).find((item) => item.id === itemId);
 }
 
 export function findProjectById(
@@ -66,6 +76,40 @@ export function requireProject(input: {
     invariantError(
       input.command.type,
       `Project '${input.projectId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireKanbanItem(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly itemId: KanbanItemId;
+}): Effect.Effect<OrchestrationKanbanItem, OrchestrationCommandInvariantError> {
+  const item = findKanbanItemById(input.readModel, input.itemId);
+  if (item && item.deletedAt === null) {
+    return Effect.succeed(item);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Kanban item '${input.itemId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireKanbanItemAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly itemId: KanbanItemId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const item = findKanbanItemById(input.readModel, input.itemId);
+  if (!item || item.deletedAt !== null) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Kanban item '${input.itemId}' already exists and cannot be created twice.`,
     ),
   );
 }

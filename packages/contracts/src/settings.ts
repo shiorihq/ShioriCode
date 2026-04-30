@@ -231,6 +231,11 @@ export const MobileAppSettings = Schema.Struct({
 });
 export type MobileAppSettings = typeof MobileAppSettings.Type;
 
+export const KanbanSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+});
+export type KanbanSettings = typeof KanbanSettings.Type;
+
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -397,6 +402,7 @@ export type EffectiveSkillsResult = typeof EffectiveSkillsResult.Type;
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   generateMemories: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  autoGenerateKanbanTaskPrompts: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   quitWithoutConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_PERSONALITY),
@@ -420,6 +426,7 @@ export const ServerSettings = Schema.Struct({
   computerUse: ComputerUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   browserUse: BrowserUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   mobileApp: MobileAppSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  kanban: KanbanSettings.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -576,9 +583,14 @@ const MobileAppSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
+const KanbanSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   generateMemories: Schema.optionalKey(Schema.Boolean),
+  autoGenerateKanbanTaskPrompts: Schema.optionalKey(Schema.Boolean),
   quitWithoutConfirmation: Schema.optionalKey(Schema.Boolean),
   assistantPersonality: Schema.optionalKey(AssistantPersonality),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -588,6 +600,7 @@ export const ServerSettingsPatch = Schema.Struct({
   computerUse: Schema.optionalKey(ComputerUseSettingsPatch),
   browserUse: Schema.optionalKey(BrowserUseSettingsPatch),
   mobileApp: Schema.optionalKey(MobileAppSettingsPatch),
+  kanban: Schema.optionalKey(KanbanSettingsPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

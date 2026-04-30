@@ -4,12 +4,107 @@ import { MessageId } from "contracts";
 
 import {
   buildWorkGroupSummary,
+  deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
+  deriveWorkGroupIconKind,
   formatWorkEntry,
   getDisplayedWorkEntries,
   isWorkRowInProgress,
+  shouldRenderFlatWorkRowAsGroup,
+  type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 import type { TimelineEntry } from "../../session-logic";
+
+function makeMessageRow(input: {
+  id: string;
+  role: "user" | "assistant";
+  createdAt: string;
+  streaming?: boolean;
+}): MessagesTimelineRow {
+  return {
+    kind: "message",
+    id: input.id,
+    createdAt: input.createdAt,
+    durationStart: input.createdAt,
+    showCompletionDivider: false,
+    message: {
+      id: MessageId.makeUnsafe(input.id),
+      role: input.role,
+      text: input.id,
+      createdAt: input.createdAt,
+      streaming: input.streaming ?? false,
+    },
+  };
+}
+
+describe("deriveFirstUnvirtualizedTimelineRowIndex", () => {
+  it("keeps the latest turn unvirtualized after it has settled", () => {
+    const rows: MessagesTimelineRow[] = [
+      ...Array.from({ length: 40 }, (_, index) =>
+        makeMessageRow({
+          id: `history-${index}`,
+          role: index % 2 === 0 ? "user" : "assistant",
+          createdAt: `2026-04-30T10:${String(index).padStart(2, "0")}:00.000Z`,
+        }),
+      ),
+      makeMessageRow({
+        id: "latest-user",
+        role: "user",
+        createdAt: "2026-04-30T11:00:00.000Z",
+      }),
+      ...Array.from({ length: 12 }, (_, index): MessagesTimelineRow => {
+        const id = `latest-work-${index}`;
+        return {
+          kind: "work",
+          id,
+          expansionId: id,
+          createdAt: `2026-04-30T11:00:${String(index + 1).padStart(2, "0")}.000Z`,
+          groupedEntries: [
+            {
+              id,
+              createdAt: `2026-04-30T11:00:${String(index + 1).padStart(2, "0")}.000Z`,
+              label: "Read file completed",
+              tone: "tool",
+            },
+          ],
+          stickyInProgress: false,
+          childRows: [],
+        };
+      }),
+      makeMessageRow({
+        id: "latest-assistant",
+        role: "assistant",
+        createdAt: "2026-04-30T11:00:20.000Z",
+      }),
+    ];
+
+    expect(
+      deriveFirstUnvirtualizedTimelineRowIndex({
+        rows,
+        activeTurnInProgress: false,
+        activeTurnStartedAt: "2026-04-30T11:00:00.000Z",
+      }),
+    ).toBe(40);
+  });
+
+  it("falls back to the fixed tail when there is no active turn start", () => {
+    const rows = Array.from({ length: 40 }, (_, index) =>
+      makeMessageRow({
+        id: `history-${index}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        createdAt: `2026-04-30T10:${String(index).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+
+    expect(
+      deriveFirstUnvirtualizedTimelineRowIndex({
+        rows,
+        activeTurnInProgress: false,
+        activeTurnStartedAt: null,
+      }),
+    ).toBe(32);
+  });
+});
 
 describe("deriveMessagesTimelineRows", () => {
   it("groups contiguous exploratory reads and search commands into a single work row", () => {
@@ -115,6 +210,35 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary([todoWriteEntry], false)).toBe("Updated todo list (1 task)");
   });
 
+  it("renders Kimi SetTodoList with title-based todos as a todo-list update", () => {
+    const setTodoListEntry = {
+      id: "set-todo-list-entry",
+      createdAt: "2026-04-30T20:24:56.000Z",
+      label: "Update todo list",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail: "Todo list updated",
+      output: {
+        toolName: "SetTodoList",
+        input: {
+          todos: [
+            { title: "Investigate re-render on stop response", status: "in_progress" },
+            { title: "Implement fix to prevent scroll jump on stop", status: "pending" },
+            { title: "Verify fix with typecheck/lint/fmt", status: "pending" },
+          ],
+        },
+      },
+    };
+
+    expect(formatWorkEntry(setTodoListEntry)).toMatchObject({
+      kind: "other",
+      action: "Updated",
+      detail: "todo list (3 tasks)",
+      monospace: false,
+    });
+    expect(buildWorkGroupSummary([setTodoListEntry], false)).toBe("Updated todo list (3 tasks)");
+  });
+
   it("dedupes repeated file reads when summarizing exploration work groups", () => {
     const entries = [
       {
@@ -177,6 +301,31 @@ describe("deriveMessagesTimelineRows", () => {
       monospace: false,
     });
     expect(buildWorkGroupSummary([claudeSearchEntry], false)).toBe("Explored 1 search");
+  });
+
+  it("uses the toolbox icon kind for MCP tool calls even when the tool name looks specific", () => {
+    const mcpBrowserEntry = {
+      id: "mcp-browser-navigate",
+      createdAt: "2026-04-30T20:57:23.000Z",
+      label: "MCP tool call",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail: 'MCP tool call: {"url":"https://youtube.com"}',
+      output: {
+        toolName: "mcp__shioricode-browser-panel__browser_navigate",
+        input: {
+          url: "https://youtube.com",
+        },
+      },
+    };
+
+    expect(deriveWorkGroupIconKind([mcpBrowserEntry])).toBe("tool");
+    expect(formatWorkEntry(mcpBrowserEntry)).toMatchObject({
+      kind: "other",
+      action: "Used MCP",
+      detail: "browser navigate",
+      monospace: false,
+    });
   });
 
   it("renders Codex webSearch open_page items with action-specific copy", () => {
@@ -995,6 +1144,38 @@ describe("deriveMessagesTimelineRows", () => {
     expect(workRows).toHaveLength(1);
     expect(workRows[0]?.stickyInProgress).toBe(true);
     expect(isWorkRowInProgress(workRows[0]!)).toBe(true);
+  });
+
+  it("does not promote a sticky single work entry into a grouped panel", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "work-read",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "work-read",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          requestKind: "file-read",
+          detail: "README.md",
+          itemId: "tool-call-read",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnStartedAt: "2026-02-23T00:00:02.000Z",
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.stickyInProgress).toBe(true);
+    expect(shouldRenderFlatWorkRowAsGroup(workRows[0]!)).toBe(false);
   });
 
   it("keeps reasoning entries as dedicated rows", () => {

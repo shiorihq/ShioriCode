@@ -200,3 +200,49 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Kanban task prompt
+// ---------------------------------------------------------------------------
+
+export interface KanbanTaskPromptInput {
+  title: string;
+  description: string;
+  prompt: string;
+  pullRequest?: { number: number; title?: string | undefined; url?: string | undefined } | null;
+}
+
+export function buildKanbanTaskPrompt(input: KanbanTaskPromptInput) {
+  const prompt = [
+    "You write implementation prompts for coding agents.",
+    "Return a JSON object with key: prompt.",
+    "Rules:",
+    "- Write a direct prompt that can be pasted as the first message in a new coding thread.",
+    "- Include clear objective, relevant context, constraints, and expected verification.",
+    "- Do not add markdown frontmatter, signatures, or meta commentary.",
+    "- If the user supplied a prompt, improve it without changing the intent.",
+    "- Keep it focused and actionable.",
+    "",
+    `Task title: ${input.title}`,
+    "",
+    "Description:",
+    limitSection(input.description.trim() || "(none)", 8_000),
+    "",
+    "User prompt:",
+    limitSection(input.prompt.trim() || "(none)", 8_000),
+    ...(input.pullRequest
+      ? [
+          "",
+          `Pull request: #${input.pullRequest.number}`,
+          `PR title: ${input.pullRequest.title ?? "(unknown)"}`,
+          `PR URL: ${input.pullRequest.url ?? "(unknown)"}`,
+        ]
+      : []),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    prompt: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

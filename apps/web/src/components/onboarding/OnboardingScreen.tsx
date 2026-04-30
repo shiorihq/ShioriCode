@@ -1,7 +1,6 @@
 import { AnimatePresence, LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 import type { OnboardingState, OnboardingStepId } from "contracts";
 
-import { APP_DISPLAY_NAME } from "../../branding";
 import { LoadingText } from "../ui/loading-text";
 import { OnboardingStepIndicator } from "./OnboardingStepIndicator";
 import { ConnectProviderStep } from "./ConnectProviderStep";
@@ -51,16 +50,6 @@ export function OnboardingScreen({
 
         {/* ── Content ── */}
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-10">
-          {/* Brand micro-label */}
-          <m.p
-            className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground/50 uppercase"
-            initial={skip ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, ease: EASE }}
-          >
-            {APP_DISPLAY_NAME}
-          </m.p>
-
           {/* Step indicator */}
           <OnboardingStepIndicator onboardingState={onboardingState} />
 

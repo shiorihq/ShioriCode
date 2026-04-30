@@ -20,6 +20,7 @@ import {
   loadCodexManagedMcpServers,
   prepareCodexHomeWithManagedMcpServers,
   removeExternalMcpServer,
+  toAcpMcpServers,
 } from "./mcpServers.ts";
 
 const TEMP_DIRS = new Set<string>();
@@ -105,6 +106,71 @@ describe("filterMcpServersForProvider", () => {
     expect(filterMcpServersForProvider("codex", servers).map((server) => server.name)).toEqual([
       "global",
     ]);
+  });
+});
+
+describe("toAcpMcpServers", () => {
+  it("adds built-in browser and computer MCP servers when enabled", () => {
+    const servers = toAcpMcpServers(
+      "gemini",
+      {
+        browserUse: { enabled: true },
+        computerUse: { enabled: true, requireApproval: true },
+        mcpServers: { servers: [] },
+      } as never,
+      undefined,
+      {
+        browserPanel: {
+          config: {
+            host: "0.0.0.0",
+            port: 4321,
+            authToken: "secret-token",
+          } as never,
+          threadId: "thread-browser" as never,
+        },
+      },
+    );
+
+    expect(servers.map((server) => server.name)).toEqual([
+      "shioricode-browser",
+      "shioricode-computer",
+    ]);
+    expect(servers[0]).toMatchObject({
+      command: process.execPath,
+      args: expect.arrayContaining(["browser-panel-mcp"]),
+      env: expect.arrayContaining([
+        {
+          name: "SHIORICODE_BROWSER_CONTROL_URL",
+          value: "http://127.0.0.1:4321/api/browser-panel/command",
+        },
+        { name: "SHIORICODE_BROWSER_THREAD_ID", value: "thread-browser" },
+        { name: "SHIORICODE_BROWSER_CONTROL_TOKEN", value: "secret-token" },
+      ]),
+    });
+    expect(servers[1]).toMatchObject({
+      command: process.execPath,
+      args: expect.arrayContaining(["computer-use-mcp"]),
+    });
+  });
+
+  it("does not expose built-in MCP servers when their settings are disabled", () => {
+    const servers = toAcpMcpServers(
+      "cursor",
+      {
+        browserUse: { enabled: false },
+        computerUse: { enabled: false, requireApproval: true },
+        mcpServers: { servers: [] },
+      } as never,
+      undefined,
+      {
+        browserPanel: {
+          config: { host: "127.0.0.1", port: 4321 } as never,
+          threadId: "thread-browser" as never,
+        },
+      },
+    );
+
+    expect(servers).toEqual([]);
   });
 });
 

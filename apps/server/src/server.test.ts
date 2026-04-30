@@ -62,6 +62,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore.ts";
 import { HostedBillingService, type HostedBillingShape } from "./hostedBilling.ts";
+import { BrowserPanelRequestsLive } from "./browserPanelRequests.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -299,6 +300,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.hostedBilling,
         }),
       ),
+      Layer.provide(BrowserPanelRequestsLive),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provide(HostedShioriAuthTokenStoreLive),
       Layer.provide(layerConfig),

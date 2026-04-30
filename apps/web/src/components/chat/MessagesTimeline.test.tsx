@@ -12,6 +12,21 @@ function matchMedia() {
   };
 }
 
+function makeMcpBrowserToolEntry(id: string, url: string) {
+  return {
+    id,
+    createdAt: "2026-04-30T21:02:09.000Z",
+    label: "MCP tool call",
+    tone: "tool" as const,
+    itemType: "dynamic_tool_call" as const,
+    detail: `MCP tool call: {"url":"${url}"}`,
+    output: {
+      toolName: "mcp__shioricode-browser-panel__browser_navigate",
+      input: { url },
+    },
+  };
+}
+
 beforeAll(() => {
   const classList = {
     add: () => {},
@@ -284,6 +299,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show more");
+    expect(markup).toContain('class="relative"');
+    expect(markup).toContain("<pre");
+    expect(markup).not.toContain('<div class="mt-0.5 pl-4"><pre');
     expect(markup).toContain(
       "mask-image:linear-gradient(to bottom, black calc(100% - 3rem), transparent 100%)",
     );
@@ -462,6 +480,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Copy command");
     expect(markup).toContain("Typecheck passed");
     expect(markup).toContain("Warning: generated files skipped");
+    expect(markup).toContain('<div class="mt-0.5"><pre');
+    expect(markup).not.toContain('<div class="mt-0.5 pl-4"><pre');
     expect(markup).not.toContain(">unknown</span>");
     expect(markup).not.toContain("&quot;commandActions&quot;");
     expect(markup).not.toContain("&quot;processId&quot;");
@@ -911,6 +931,106 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Wrote 22 bytes to apps/web/src/index.css");
   });
 
+  it("renders single MCP tool calls with a toolbox icon", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-mcp-browser",
+            kind: "work",
+            createdAt: "2026-04-30T21:02:09.000Z",
+            entry: {
+              id: "work-mcp-browser",
+              createdAt: "2026-04-30T21:02:09.000Z",
+              label: "MCP tool call",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              detail: 'MCP tool call: {"url":"https://youtube.com"}',
+              output: {
+                toolName: "mcp__shioricode-browser-panel__browser_navigate",
+                input: {
+                  url: "https://youtube.com",
+                },
+              },
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Used MCP");
+    expect(markup).toContain("browser navigate");
+    expect(markup).not.toContain("MCP tool call: {&quot;url&quot;");
+    expect(markup).toContain("lucide-toolbox");
+  });
+
+  it("does not repeat the MCP toolbox icon on MCP calls inside workgroups", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-mcp-browser-1",
+            kind: "work",
+            createdAt: "2026-04-30T21:02:09.000Z",
+            entry: makeMcpBrowserToolEntry("work-mcp-browser-1", "https://youtube.com"),
+          },
+          {
+            id: "entry-mcp-browser-2",
+            kind: "work",
+            createdAt: "2026-04-30T21:02:10.000Z",
+            entry: makeMcpBrowserToolEntry("work-mcp-browser-2", "https://openai.com"),
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-mcp-browser-1": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/lucide-toolbox/g)?.length).toBe(1);
+    expect(markup).toContain("Used MCP");
+    expect(markup).toContain("browser navigate");
+  });
+
   it("renders read details as basename file links within work log rows", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -956,7 +1076,10 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Read");
-    expect(markup).toContain(">StudioDetail.tsx</a>");
+    expect(markup).toContain("app-file-href-link");
+    expect(markup).toContain("app-file-href-icon");
+    expect(markup).toContain("file_type_reactts.svg");
+    expect(markup).toContain("StudioDetail.tsx");
     expect(markup).toContain(
       'href="/Users/choki/Developer/shiori/src/components/studio/StudioDetail.tsx"',
     );
@@ -1401,7 +1524,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Show 1 more");
   });
 
-  it("shimmers a sticky single-entry workgroup header while the turn is still active", async () => {
+  it("keeps a sticky single-entry tail as a normal work entry while the turn is still active", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1444,11 +1567,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Exploring 1 file");
-    expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain("shimmer shimmer-spread-200");
-    expect(markup).toContain("text-muted-foreground/80");
-    expect(markup).toContain("group-hover:text-foreground");
+    expect(markup).toContain("Read");
+    expect(markup).toContain("package.json");
+    expect(markup).not.toContain("Exploring 1 file");
+    expect(markup).not.toContain("work-group-items-work-sticky-read");
   });
 
   it("keeps expanded in-progress groups in a capped scroll viewport instead of hiding later entries", async () => {
@@ -1576,6 +1698,61 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("[scrollbar-width:none]");
     expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
     expect(markup).not.toContain("Show 1 more");
+  });
+
+  it("renders only the recent slice of massive expanded work groups", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const timelineEntries = Array.from({ length: 100 }, (_, index) => {
+      const commandNumber = String(index + 1).padStart(3, "0");
+      return {
+        id: `entry-massive-${commandNumber}`,
+        kind: "work" as const,
+        createdAt: `2026-03-17T19:12:${String(index % 60).padStart(2, "0")}.000Z`,
+        entry: {
+          id: `work-massive-${commandNumber}`,
+          createdAt: `2026-03-17T19:12:${String(index % 60).padStart(2, "0")}.000Z`,
+          label: "exec_command started",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          command: `command-${commandNumber}`,
+          detail: `command-${commandNumber}`,
+          running: true,
+        },
+      };
+    });
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={timelineEntries}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-massive-001": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Running 100 commands");
+    expect(markup).toContain("20 older entries hidden");
+    expect(markup).toContain(">Show</button>");
+    expect(markup).not.toContain("command-001");
+    expect(markup).toContain("command-021");
+    expect(markup).toContain("command-100");
   });
 
   it("caps completed groups with internal scrolling instead of a show-more affordance", async () => {
@@ -2324,9 +2501,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(streamingMarkup).toContain("Thinking");
-    expect(streamingMarkup).toContain("<strong>Inspecting project details</strong>");
-    expect(streamingMarkup).toContain("max-h-48");
-    expect(streamingMarkup).toContain("overflow-y-auto");
+    expect(streamingMarkup).not.toContain("<strong>Inspecting project details</strong>");
+    expect(streamingMarkup).not.toContain("max-h-48");
+    expect(streamingMarkup).not.toContain("overflow-y-auto");
     expect(completedMarkup).toContain("Thought");
     expect(completedMarkup).not.toContain("max-h-48");
     expect(completedMarkup).not.toContain("overflow-y-auto");
@@ -2416,7 +2593,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Explored 1 file, 1 search");
     expect(markup).toContain("Thinking");
-    expect(markup).toContain("<strong>Inspecting project details</strong>");
+    expect(markup).not.toContain("<strong>Inspecting project details</strong>");
   });
 
   it("does not leave reasoning as separate top-level rows when adjacent extreme workgroups exist", async () => {
@@ -2504,7 +2681,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Edited 1 file");
     expect(markup).toContain("Ran 1 command");
-    expect(markup).toContain("Running the verification suite");
+    expect(markup).toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="reasoning"');
   });
 

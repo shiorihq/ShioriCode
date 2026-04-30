@@ -53,18 +53,10 @@ export function PullRequestsView({ search }: PullRequestsViewProps) {
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:paint]">
           {isElectron ? (
-            <div className="drag-region flex h-[52px] shrink-0 items-center">
-              <div className={cn(columnClass, "flex h-full items-center")}>
-                <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
-                  Pull Requests
-                </span>
-              </div>
-            </div>
+            <div className="drag-region flex h-[52px] shrink-0 items-center" />
           ) : (
             <header className="flex h-12 shrink-0 items-center">
-              <div className={cn(columnClass, "flex h-full items-center")}>
-                <span className="text-sm font-medium text-foreground">Pull Requests</span>
-              </div>
+              <div className={cn(columnClass, "flex h-full items-center")} />
             </header>
           )}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

@@ -12,11 +12,24 @@ import {
   getProviderToolInputPath,
   getProviderToolInputQuery,
   isSubagentToolName,
+  isTodoListToolName,
   isUserInputToolName,
   normalizeProviderToolName,
 } from "shared/providerTool";
 
 export type WorkEntryDisplayKind = "read" | "list" | "search" | "edit" | "command" | "other";
+export type WorkGroupIconKind =
+  | "agent"
+  | "command"
+  | "edit"
+  | "file"
+  | "list"
+  | "search"
+  | "skill"
+  | "todo"
+  | "tool"
+  | "web-search"
+  | "work";
 
 export interface FormattedWorkEntry {
   kind: WorkEntryDisplayKind;
@@ -95,6 +108,17 @@ export function isWorkRowExpanded(
   return isWorkRowInProgress(row);
 }
 
+export function shouldRenderFlatWorkRowAsGroup(
+  row: Pick<WorkTimelineRow, "groupedEntries" | "inlineEntries">,
+): boolean {
+  if (row.groupedEntries.length > 1 || (row.inlineEntries?.length ?? 0) > 0) {
+    return true;
+  }
+
+  const singleEntry = row.groupedEntries[0];
+  return Boolean(singleEntry?.running && !isExplorationWorkEntry(singleEntry));
+}
+
 export function getGroupedWorkEntryExpansionKey(entryId: string): string {
   return `work-entry:${entryId}`;
 }
@@ -122,6 +146,56 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | { kind: "working"; id: string; createdAt: string | null };
+
+export const DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT = 8;
+
+export function deriveFirstUnvirtualizedTimelineRowIndex(input: {
+  rows: ReadonlyArray<MessagesTimelineRow>;
+  activeTurnInProgress: boolean;
+  activeTurnStartedAt: string | null;
+  tailRowCount?: number;
+}): number {
+  const tailRowCount = Math.max(0, input.tailRowCount ?? DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT);
+  const firstTailRowIndex = Math.max(input.rows.length - tailRowCount, 0);
+  const activeTurnStartedAtMs =
+    typeof input.activeTurnStartedAt === "string"
+      ? Date.parse(input.activeTurnStartedAt)
+      : Number.NaN;
+  let firstCurrentTurnRowIndex = -1;
+
+  if (!Number.isNaN(activeTurnStartedAtMs)) {
+    firstCurrentTurnRowIndex = input.rows.findIndex((row) => {
+      if (row.kind === "working") return true;
+      if (!row.createdAt) return false;
+      const rowCreatedAtMs = Date.parse(row.createdAt);
+      return !Number.isNaN(rowCreatedAtMs) && rowCreatedAtMs >= activeTurnStartedAtMs;
+    });
+  }
+
+  if (firstCurrentTurnRowIndex < 0 && input.activeTurnInProgress) {
+    firstCurrentTurnRowIndex = input.rows.findIndex((row) => {
+      if (row.kind === "working") return true;
+      return row.kind === "message" && row.message.streaming;
+    });
+  }
+
+  if (firstCurrentTurnRowIndex < 0) {
+    return firstTailRowIndex;
+  }
+
+  for (let index = firstCurrentTurnRowIndex - 1; index >= 0; index -= 1) {
+    const previousRow = input.rows[index];
+    if (!previousRow || previousRow.kind !== "message") continue;
+    if (previousRow.message.role === "user") {
+      return Math.min(index, firstTailRowIndex);
+    }
+    if (previousRow.message.role === "assistant" && !previousRow.message.streaming) {
+      break;
+    }
+  }
+
+  return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
+}
 
 export function computeMessageDurationStart(
   messages: ReadonlyArray<TimelineDurationMessage>,
@@ -212,12 +286,17 @@ function asTrimmedString(value: unknown): string | null {
 }
 
 function parseToolNameFromDetail(detail: string | undefined): string | null {
+  const rawToolName = parseRawToolNameFromDetail(detail);
+  return normalizeProviderToolName(rawToolName);
+}
+
+function parseRawToolNameFromDetail(detail: string | undefined): string | null {
   if (!detail) {
     return null;
   }
 
   const match = /^([A-Za-z][A-Za-z0-9 _-]{1,48}):\s*[[{"]/u.exec(detail.trim());
-  return normalizeProviderToolName(match?.[1] ?? null);
+  return asTrimmedString(match?.[1]);
 }
 
 function parseToolInputFromDetail(detail: string | undefined): Record<string, unknown> | null {
@@ -238,14 +317,19 @@ function parseToolInputFromDetail(detail: string | undefined): Record<string, un
 }
 
 function getEntryToolName(entry: WorkLogEntry): string | null {
-  const directToolName = normalizeProviderToolName(
-    extractStructuredProviderToolData(entry.output)?.toolName ?? null,
-  );
+  const directToolName = normalizeProviderToolName(getEntryRawToolName(entry));
   if (directToolName) {
     return directToolName;
   }
 
   return parseToolNameFromDetail(entry.detail);
+}
+
+function getEntryRawToolName(entry: WorkLogEntry): string | null {
+  return (
+    asTrimmedString(extractStructuredProviderToolData(entry.output)?.toolName) ??
+    parseRawToolNameFromDetail(entry.detail)
+  );
 }
 
 function getEntryToolInput(entry: WorkLogEntry): Record<string, unknown> | null {
@@ -255,6 +339,46 @@ function getEntryToolInput(entry: WorkLogEntry): Record<string, unknown> | null 
   }
 
   return parseToolInputFromDetail(entry.detail);
+}
+
+function isMcpToolEntry(entry: WorkLogEntry, normalizedToolName: string | null): boolean {
+  return (
+    entry.itemType === "mcp_tool_call" ||
+    normalizedToolName?.startsWith("mcp ") === true ||
+    normalizeWorkEntryTitle(entry) === "mcp tool call"
+  );
+}
+
+export function isMcpToolWorkEntry(entry: WorkLogEntry): boolean {
+  return isMcpToolEntry(entry, getEntryToolName(entry));
+}
+
+function humanizeMcpToolNameSegment(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function formatMcpToolDisplayName(entry: WorkLogEntry): string {
+  const rawToolName = getEntryRawToolName(entry);
+  if (rawToolName) {
+    const prefixedMatch = /^mcp__([^_]+(?:_[^_]+)*)__([\s\S]+)$/u.exec(rawToolName);
+    const toolSegment = prefixedMatch?.[2] ?? rawToolName.replace(/^mcp[_\s-]+/iu, "");
+    const humanized = humanizeMcpToolNameSegment(toolSegment);
+    if (humanized.length > 0 && humanized !== "tool call") {
+      return humanized;
+    }
+  }
+
+  const normalizedTitle = normalizeWorkEntryTitle(entry);
+  if (normalizedTitle !== "mcp tool call" && normalizedTitle.length > 0) {
+    return normalizedTitle;
+  }
+
+  return "tool";
 }
 
 function recordContainsSentinelPath(value: unknown, keys: ReadonlySet<string>, depth = 0): boolean {
@@ -384,7 +508,7 @@ function classifyToolName(toolName: string | null): WorkEntryDisplayKind | null 
 }
 
 function isTodoWriteToolName(toolName: string | null): boolean {
-  return toolName === "todo write" || toolName === "todowrite";
+  return isTodoListToolName(toolName);
 }
 
 function isEmptyStructuredToolDetail(detail: string | null | undefined): boolean {
@@ -670,7 +794,8 @@ function formatTodoWriteSummary(input: Record<string, unknown> | null): string |
       return (
         asTrimmedString(record?.content) ??
         asTrimmedString(record?.activeForm) ??
-        asTrimmedString(record?.text)
+        asTrimmedString(record?.text) ??
+        asTrimmedString(record?.title)
       );
     }).length ?? 0;
 
@@ -959,6 +1084,16 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     };
   }
 
+  if (isMcpToolEntry(entry, providerToolName)) {
+    return {
+      kind: "other",
+      action: running ? "Using MCP" : "Used MCP",
+      detail: formatMcpToolDisplayName(entry),
+      monospace: false,
+      dedupeKey: null,
+    };
+  }
+
   if (providerToolName === "wait agent" || providerToolName === "wait") {
     return {
       kind: "other",
@@ -1029,7 +1164,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     };
   }
 
-  if (providerToolName === "todo write" || providerToolName === "todowrite") {
+  if (isTodoWriteToolName(providerToolName)) {
     return {
       kind: "other",
       action: running ? "Updating" : "Updated",
@@ -1268,6 +1403,80 @@ export function getDisplayedWorkEntries(entries: ReadonlyArray<WorkLogEntry>): W
 
   displayedEntries.reverse();
   return displayedEntries;
+}
+
+export function deriveWorkGroupIconKind(entries: ReadonlyArray<WorkLogEntry>): WorkGroupIconKind {
+  let hasAgent = false;
+  let hasCommand = false;
+  let hasEdit = false;
+  let hasFile = false;
+  let hasList = false;
+  let hasSearch = false;
+  let hasSkill = false;
+  let hasTodo = false;
+  let hasTool = false;
+  let hasWebSearch = false;
+
+  for (const entry of getDisplayedWorkEntries(entries)) {
+    const toolName = getEntryToolName(entry);
+    const formattedEntry = formatWorkEntry(entry);
+
+    if (isMcpToolEntry(entry, toolName)) {
+      hasTool = true;
+      continue;
+    }
+    if (entry.itemType === "web_search") {
+      hasWebSearch = true;
+      continue;
+    }
+    if (entry.itemType === "collab_agent_tool_call" || (toolName && isSubagentToolName(toolName))) {
+      hasAgent = true;
+      continue;
+    }
+    if (toolName === "skill") {
+      hasSkill = true;
+      continue;
+    }
+    if (isTodoWriteToolName(toolName)) {
+      hasTodo = true;
+      continue;
+    }
+    if (classifyFileChangeOperation(entry)) {
+      hasEdit = true;
+      continue;
+    }
+    if (formattedEntry.kind === "search") {
+      hasSearch = true;
+      continue;
+    }
+    if (formattedEntry.kind === "read") {
+      hasFile = true;
+      continue;
+    }
+    if (formattedEntry.kind === "list") {
+      hasList = true;
+      continue;
+    }
+    if (entry.requestKind === "command" || entry.itemType === "command_execution") {
+      hasCommand = true;
+      continue;
+    }
+    if (entry.tone === "tool" && deriveWorkEntryGroupKey(entry) !== null) {
+      hasTool = true;
+    }
+  }
+
+  if (hasAgent) return "agent";
+  if (hasSkill) return "skill";
+  if (hasTodo) return "todo";
+  if (hasWebSearch) return "web-search";
+  if (hasEdit) return "edit";
+  if (hasSearch) return "search";
+  if (hasFile) return "file";
+  if (hasList) return "list";
+  if (hasCommand) return "command";
+  if (hasTool) return "tool";
+  return "work";
 }
 
 export function buildWorkGroupSummary(
@@ -1834,16 +2043,6 @@ function estimateWorkRowHeight(
   const nestedRowsHeight = (childRows: ReadonlyArray<WorkTimelineRow>): number =>
     childRows.reduce((total, childRow) => total + estimateWorkRowHeight(childRow, input) + 6, 0);
 
-  const inlineReasoningHeight = (
-    inlineEntries: NonNullable<WorkTimelineRow["inlineEntries"]>,
-  ): number =>
-    inlineEntries.reduce((total, item) => {
-      if (item.kind !== "reasoning") {
-        return total;
-      }
-      return total + estimateReasoningRowHeight(item.reasoning.text) + 6;
-    }, 0);
-
   const estimateGroupedWorkListEntryHeight = (entry: WorkLogEntry): number => {
     if (entry.running) {
       return 22;
@@ -1874,19 +2073,8 @@ function estimateWorkRowHeight(
   const displayedEntries = getDisplayedWorkEntries(row.groupedEntries);
   const entryCount = displayedEntries.length;
 
-  if (entryCount === 1) {
+  if (!shouldRenderFlatWorkRowAsGroup(row) && entryCount === 1) {
     const entry = displayedEntries[0]!;
-    const usesGroupedPanel = (row.inlineEntries?.length ?? 0) > 0 || isWorkRowInProgress(row);
-
-    if (usesGroupedPanel) {
-      const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
-      if (!isExpanded) {
-        return 16 + 26;
-      }
-      const visibleItems = row.inlineEntries ?? [{ kind: "work" as const, id: entry.id, entry }];
-      return 16 + 26 + Math.min(estimateGroupedInlineItemsHeight(visibleItems), 192) + 8;
-    }
-
     if (!entry.running) {
       const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
       if (isExpanded) {
@@ -1898,13 +2086,18 @@ function estimateWorkRowHeight(
   }
 
   const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
-  const visibleEntries = isExpanded ? displayedEntries : [];
-  const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
+  if (!isExpanded) {
+    return 16 + 26;
+  }
+
+  if (row.inlineEntries) {
+    return 16 + 26 + Math.min(estimateGroupedInlineItemsHeight(row.inlineEntries), 192) + 8;
+  }
+
+  const visibleEntriesHeight = displayedEntries.reduce((total, entry) => {
     return total + estimateGroupedWorkListEntryHeight(entry);
   }, 0);
-  const reasoningHeight =
-    isExpanded && row.inlineEntries ? inlineReasoningHeight(row.inlineEntries) : 0;
-  return 16 + 26 + Math.min(visibleEntriesHeight + reasoningHeight, 192) + 8;
+  return 16 + 26 + Math.min(visibleEntriesHeight, 192) + 8;
 }
 
 function estimateOutputLineCount(output: unknown): number {
@@ -1916,7 +2109,16 @@ function estimateTimelineProposedPlanHeight(proposedPlan: ProposedPlan): number 
   return 120 + Math.min(estimatedLines * 22, 880);
 }
 
+const CHANGED_FILES_COLLAPSED_LIMIT = 5;
+
 function estimateChangedFilesCardHeight(turnDiffSummary: TurnDiffSummary): number {
-  // Card chrome (header + borders + padding) plus a flat row per file.
-  return 68 + turnDiffSummary.files.length * 24;
+  // Card chrome (header + borders + padding) plus a flat row per visible file.
+  // When the file list exceeds the pagination limit, default to the collapsed
+  // height (limit rows + a "Show all Files" toggle row); the virtualizer
+  // re-measures after expansion.
+  const totalFiles = turnDiffSummary.files.length;
+  if (totalFiles > CHANGED_FILES_COLLAPSED_LIMIT) {
+    return 68 + CHANGED_FILES_COLLAPSED_LIMIT * 24 + 24;
+  }
+  return 68 + totalFiles * 24;
 }

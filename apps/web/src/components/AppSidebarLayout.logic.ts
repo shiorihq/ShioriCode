@@ -5,6 +5,7 @@ const APP_SIDEBAR_SHORTCUT_COMMANDS = new Set<KeybindingCommand>([
   "sidebar.toggle",
   "project.add",
   "pullRequests.open",
+  "kanban.open",
 ]);
 
 export function resolveAppSidebarShortcutCommand(
@@ -29,4 +30,17 @@ export function resolveAppSidebarShortcutCommand(
   }
 
   return command;
+}
+
+export function resolveAppTitlebarWindowControlsLeftInset(options: {
+  isElectron: boolean;
+  isMac: boolean;
+  sidebarOpen: boolean;
+  windowControlsInset: number;
+}): number {
+  if (!options.isElectron || !options.isMac || options.sidebarOpen) {
+    return 0;
+  }
+
+  return Math.max(0, options.windowControlsInset);
 }

@@ -57,7 +57,7 @@ function SettingsContentLayout() {
         )}
 
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div className="app-titlebar-window-controls-inset drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5 [--app-titlebar-base-left-padding:1.25rem]">
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>

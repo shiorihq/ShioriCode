@@ -28,6 +28,7 @@ export interface ShioriCodeBootstrapConfig {
   readonly browserUse: ShioriCodeBootstrapFeatureGate;
   readonly computerUse: ShioriCodeBootstrapFeatureGate;
   readonly mobileApp: ShioriCodeBootstrapFeatureGate;
+  readonly kanban: ShioriCodeBootstrapFeatureGate;
   readonly subagents: {
     readonly enabled: boolean;
     readonly profiles: {
@@ -103,6 +104,7 @@ function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeB
     browserUse: normalizeFeatureGate(payload.browserUse),
     computerUse: normalizeFeatureGate(payload.computerUse),
     mobileApp: normalizeFeatureGate(payload.mobileApp),
+    kanban: normalizeFeatureGate(payload.kanban),
     subagents: rawSubagents
       ? {
           enabled: rawSubagents.enabled === true,

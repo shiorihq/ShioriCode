@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
-import type { OnboardingStepId } from "contracts";
+import type { OnboardingStepId, ServerProvider } from "contracts";
 
 import { Button } from "../ui/button";
 import { LoadingText } from "../ui/loading-text";
@@ -26,11 +26,11 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
   const { viewer } = useHostedShioriState();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const hasReadyProvider = useMemo(
-    () => mergedProviders.some((p) => p.status === "ready"),
+  const readyCount = useMemo(
+    () => mergedProviders.filter((p) => p.status === "ready").length,
     [mergedProviders],
   );
-
+  const hasReadyProvider = readyCount > 0;
   const isContinuing = pendingStepId === "connect-provider";
 
   const handleRefresh = useCallback(async () => {
@@ -58,7 +58,7 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: EASE }}
         >
-          <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight">
+          <h1 className="text-[1.75rem] font-bold leading-tight tracking-[-0.02em]">
             Connect a provider
           </h1>
           <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">
@@ -68,7 +68,7 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
           </p>
         </m.div>
 
-        {/* Provider cards */}
+        {/* Provider list */}
         <div className="space-y-3">
           {mergedProviders.length === 0 ? (
             <m.div
@@ -81,7 +81,7 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
               </p>
             </m.div>
           ) : (
-            mergedProviders.map((provider, index) => (
+            sortProviders(mergedProviders).map((provider, index) => (
               <ProviderCard
                 key={provider.provider}
                 provider={provider}
@@ -94,7 +94,7 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
           )}
         </div>
 
-        {/* Continue button */}
+        {/* Continue */}
         <m.div
           initial={skip ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -108,8 +108,12 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
           >
             {isContinuing ? "Continuing..." : "Continue"}
           </Button>
-          {!hasReadyProvider && mergedProviders.length > 0 ? (
-            <p className="mt-2 text-center text-xs text-muted-foreground/50">
+          {hasReadyProvider ? (
+            <p className="mt-2 text-center text-[11px] tracking-wide text-muted-foreground/55">
+              {readyCount} of {mergedProviders.length} connected
+            </p>
+          ) : mergedProviders.length > 0 ? (
+            <p className="mt-2 text-center text-[11px] tracking-wide text-muted-foreground/55">
               Connect at least one provider to continue
             </p>
           ) : null}
@@ -117,4 +121,16 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
       </div>
     </LazyMotion>
   );
+}
+
+/** Float ready providers to the top — connected ones become a calm header,
+ *  not-ready ones cluster below where the install instructions need attention. */
+function sortProviders(providers: readonly ServerProvider[]): ServerProvider[] {
+  const order: Record<ServerProvider["status"], number> = {
+    ready: 0,
+    warning: 1,
+    error: 2,
+    disabled: 3,
+  };
+  return providers.toSorted((a, b) => order[a.status] - order[b.status]);
 }

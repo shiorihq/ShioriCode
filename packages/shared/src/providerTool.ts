@@ -61,6 +61,13 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "wait agent",
 ]);
 const USER_INPUT_TOOL_NAMES = new Set(["ask user", "request user input"]);
+const TODO_LIST_TOOL_NAMES = new Set([
+  "set todo list",
+  "todo write",
+  "todowrite",
+  "update todo list",
+  "update todos",
+]);
 const MAX_SNAPSHOT_STRING_LENGTH = 20_000;
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -247,6 +254,11 @@ export function isUserInputToolName(toolName: string | null | undefined): boolea
   return normalized ? USER_INPUT_TOOL_NAMES.has(normalized) : false;
 }
 
+export function isTodoListToolName(toolName: string | null | undefined): boolean {
+  const normalized = normalizeProviderToolName(toolName);
+  return normalized ? TODO_LIST_TOOL_NAMES.has(normalized) : false;
+}
+
 export function getProviderToolInputPath(input: Record<string, unknown> | null): string | null {
   return (
     asTrimmedString(input?.file_path) ??
@@ -388,11 +400,11 @@ export function providerToolTitle(toolName: string | null | undefined): string {
   }
 
   switch (normalized) {
-    case "agent":
     case "close agent":
       return "Close subagent";
     case "resume agent":
       return "Resume subagent";
+    case "agent":
     case "spawn agent":
     case "subagent":
     case "task":
@@ -419,6 +431,12 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Send input";
     case "update plan":
       return "Update plan";
+    case "set todo list":
+    case "todo write":
+    case "todowrite":
+    case "update todo list":
+    case "update todos":
+      return "Update todo list";
     case "wait":
     case "wait agent":
       return "Wait for subagent";
@@ -466,6 +484,23 @@ export function summarizeProviderToolInvocation(
     if (actionValue) {
       return `${providerToolTitle(normalized)}: ${truncate(actionValue)}`;
     }
+  }
+
+  if (isTodoListToolName(normalized)) {
+    const todos = Array.isArray(input?.todos) ? input.todos : null;
+    const todoCount =
+      todos?.filter((entry) => {
+        const record = asObject(entry);
+        return (
+          asTrimmedString(record?.content) ??
+          asTrimmedString(record?.activeForm) ??
+          asTrimmedString(record?.text) ??
+          asTrimmedString(record?.title)
+        );
+      }).length ?? 0;
+    return todoCount > 0
+      ? `${providerToolTitle(normalized)}: ${todoCount} ${todoCount === 1 ? "task" : "tasks"}`
+      : providerToolTitle(normalized);
   }
 
   if (isSubagentToolName(normalized)) {
