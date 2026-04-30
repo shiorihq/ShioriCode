@@ -39,11 +39,11 @@ function renderSettingsSidebar(pathname = "/settings/general") {
 }
 
 describe("SettingsSidebarNav", () => {
-  it("inherits the shared sidebar text color for back and section items", () => {
+  it("inherits the shared sidebar hover color for back and section items", () => {
     const html = renderSettingsSidebar("/settings/appearance");
 
     expect(html).toContain('data-slot="sidebar-menu-button"');
-    expect(html).toContain("text-sidebar-accent-foreground");
+    expect(html).toContain("hover:text-sidebar-hover-foreground");
     expect(html).not.toContain("text-muted-foreground");
   });
 });
