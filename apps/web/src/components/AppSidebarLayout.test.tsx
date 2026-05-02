@@ -7,6 +7,7 @@ vi.mock("@tanstack/react-router", () => ({
   useLocation: <T,>(options: { select: (location: { pathname: string }) => T }) =>
     options.select({ pathname: "/" }),
   useNavigate: () => vi.fn(),
+  useParams: <T,>(options: { select: (params: { threadId?: string }) => T }) => options.select({}),
 }));
 
 vi.mock("~/rpc/serverState", () => ({
@@ -24,8 +25,9 @@ vi.mock("~/terminalStateStore", () => ({
 }));
 
 vi.mock("~/uiStateStore", () => ({
-  useUiStateStore: (selector: (state: { requestProjectAdd: () => void }) => unknown) =>
-    selector({ requestProjectAdd: () => undefined }),
+  useUiStateStore: (
+    selector: (state: { projectOrder: string[]; requestProjectAdd: () => void }) => unknown,
+  ) => selector({ projectOrder: [], requestProjectAdd: () => undefined }),
 }));
 
 vi.mock("~/hooks/useSettings", () => ({

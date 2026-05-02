@@ -155,13 +155,14 @@ describe("EffortPicker", () => {
 
     await page.getByRole("button").click();
 
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Effort");
-      expect(text).toContain("Extra High");
-      expect(text).toContain("High");
-      expect(text).not.toContain("Fast Mode");
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
+      provider: "codex",
+      options: {
+        fastMode: true,
+        reasoningEffort: "xhigh",
+      },
     });
+    expect(document.body.textContent ?? "").not.toContain("Fast Mode");
   });
 
   it("shows prompt-controlled ultrathink in the standalone picker", async () => {
@@ -176,13 +177,12 @@ describe("EffortPicker", () => {
       expect(document.body.textContent ?? "").toContain("Ultrathink");
     });
 
-    await page.getByRole("button").click();
-
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Effort");
-      expect(text).not.toContain("Fast Mode");
+    const button = page.getByRole("button", {
+      name: "Intelligence: Ultrathink. Click to cycle.",
     });
+    await expect.element(button).toBeDisabled();
+    await expect.element(button).toHaveAttribute("title", "Ultrathink (controlled by prompt)");
+    expect(document.body.textContent ?? "").not.toContain("Fast Mode");
   });
 
   it("persists sticky model options when the effort changes", async () => {
@@ -193,14 +193,13 @@ describe("EffortPicker", () => {
     });
 
     await page.getByRole("button").click();
-    await page.getByRole("menuitemradio", { name: "Max" }).click();
 
     expect(
       useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
     ).toMatchObject({
       provider: "claudeAgent",
       options: {
-        effort: "max",
+        effort: "high",
       },
     });
   });
@@ -213,17 +212,16 @@ describe("EffortPicker", () => {
     });
 
     await page.getByRole("button").click();
-    await page.getByRole("menuitemradio", { name: "Low" }).click();
 
     expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.shiori).toMatchObject({
       provider: "shiori",
       options: {
-        reasoningEffort: "low",
+        reasoningEffort: "high",
       },
     });
   });
 
-  it("closes the selector after choosing an effort", async () => {
+  it("cycles the effort without opening a selector", async () => {
     await using _ = await mountEffortPicker({
       provider: "shiori",
       model: "openai/gpt-5.4",
@@ -232,16 +230,12 @@ describe("EffortPicker", () => {
 
     await page.getByRole("button").click();
 
-    await vi.waitFor(() => {
-      expect(document.body.textContent ?? "").toContain("Effort");
-      expect(document.body.textContent ?? "").toContain("Low");
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.shiori).toMatchObject({
+      provider: "shiori",
+      options: {
+        reasoningEffort: "high",
+      },
     });
-
-    await page.getByRole("menuitemradio", { name: "Low" }).click();
-
-    await vi.waitFor(() => {
-      expect(document.body.textContent ?? "").not.toContain("Effort");
-      expect(document.body.textContent ?? "").not.toContain("Low");
-    });
+    expect(document.body.textContent ?? "").not.toContain("Effort");
   });
 });
