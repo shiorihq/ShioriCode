@@ -21,13 +21,13 @@ function refreshIntervalForSnapshot(
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
-  Settings,
+  Settings extends { readonly enabled: boolean },
 >(input: {
   readonly getSettings: Effect.Effect<Settings>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
-  readonly buildInitialSnapshot?: (settings: Settings) => ServerProvider;
+  readonly buildInitialSnapshot: (settings: Settings) => ServerProvider;
   readonly refreshInterval?: Duration.Input;
   readonly unhealthyRefreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
@@ -37,11 +37,22 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     PubSub.shutdown,
   );
   const initialSettings = yield* input.getSettings;
-  const initialSnapshot = input.buildInitialSnapshot
-    ? input.buildInitialSnapshot(initialSettings)
-    : yield* input.checkProvider;
+  const initialSnapshot = input.buildInitialSnapshot(initialSettings);
   const snapshotRef = yield* Ref.make(initialSnapshot);
   const settingsRef = yield* Ref.make(initialSettings);
+  const publishSnapshot = Effect.fn("publishSnapshot")(function* (nextSnapshot: ServerProvider) {
+    yield* Ref.set(snapshotRef, nextSnapshot);
+    yield* PubSub.publish(changesPubSub, nextSnapshot);
+    return nextSnapshot;
+  });
+
+  const applyDisabledSnapshot = Effect.fn("applyDisabledSnapshot")(function* (
+    nextSettings: Settings,
+  ) {
+    const nextSnapshot = input.buildInitialSnapshot(nextSettings);
+    yield* Ref.set(settingsRef, nextSettings);
+    return yield* publishSnapshot(nextSnapshot);
+  });
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
@@ -49,20 +60,35 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
+    if (!nextSettings.enabled) {
+      if (!input.haveSettingsChanged(previousSettings, nextSettings)) {
+        yield* Ref.set(settingsRef, nextSettings);
+        return yield* Ref.get(snapshotRef);
+      }
+      return yield* applyDisabledSnapshot(nextSettings);
+    }
+
     if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotRef);
     }
 
-    const nextSnapshot = yield* input.checkProvider;
     yield* Ref.set(settingsRef, nextSettings);
-    yield* Ref.set(snapshotRef, nextSnapshot);
-    yield* PubSub.publish(changesPubSub, nextSnapshot);
-    return nextSnapshot;
+    const nextSnapshot = yield* input.checkProvider;
+    const currentSettings = yield* Ref.get(settingsRef);
+    if (input.haveSettingsChanged(currentSettings, nextSettings)) {
+      return yield* Ref.get(snapshotRef);
+    }
+
+    return yield* publishSnapshot(nextSnapshot);
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     Effect.gen(function* () {
       const forceRefresh = options?.forceRefresh === true;
+      if (!nextSettings.enabled) {
+        return yield* applySnapshotBase(nextSettings, options);
+      }
+
       if (!forceRefresh) {
         const previousSettings = yield* Ref.get(settingsRef);
         if (!input.haveSettingsChanged(previousSettings, nextSettings)) {
@@ -95,7 +121,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ),
   ).pipe(Effect.forkScoped);
 
-  if (input.buildInitialSnapshot) {
+  if (initialSettings.enabled) {
     yield* refreshSnapshot().pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
   }
 

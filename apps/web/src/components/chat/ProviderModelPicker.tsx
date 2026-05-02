@@ -26,6 +26,7 @@ import {
   getProviderModelCapabilities,
   getProviderModels,
   getProviderSnapshot,
+  isProviderDisabledSnapshot,
 } from "../../providerModels";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
@@ -302,6 +303,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               const liveProvider = props.providers
                 ? getProviderSnapshot(props.providers, option.value)
                 : undefined;
+              if (isProviderDisabledSnapshot(liveProvider)) {
+                return null;
+              }
               const providerMenuState = getProviderPickerState(liveProvider);
               if (!providerMenuState.selectable) {
                 return (

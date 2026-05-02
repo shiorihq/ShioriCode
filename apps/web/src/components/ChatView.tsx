@@ -118,6 +118,8 @@ import {
   getProviderUnavailableReason,
   getProviderModelCapabilities,
   getProviderModels,
+  getProviderSnapshot,
+  isProviderDisabledSnapshot,
   providerModelSupportsImageAttachments,
   resolveSelectableProvider,
 } from "../providerModels";
@@ -322,6 +324,18 @@ function formatOutgoingPrompt(params: {
     return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
   }
   return params.text;
+}
+
+function modelOptionsFromModelSelection(
+  modelSelection: ModelSelection | null | undefined,
+): ProviderModelOptions | null {
+  if (!modelSelection?.options) {
+    return null;
+  }
+
+  return {
+    [modelSelection.provider]: modelSelection.options,
+  } as ProviderModelOptions;
 }
 
 function buildUnsupportedImageAttachmentMessage(modelName: string): string {
@@ -1195,6 +1209,18 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     : null;
   const serverConfig = useServerConfig();
   const providerStatuses = useMergedServerProviders(serverConfig?.providers ?? EMPTY_PROVIDERS);
+  const modelOptionsByProvider = useMemo(
+    () => ({
+      shiori: providerStatuses.find((provider) => provider.provider === "shiori")?.models ?? [],
+      kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
+      gemini: providerStatuses.find((provider) => provider.provider === "gemini")?.models ?? [],
+      cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
+      codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
+      claudeAgent:
+        providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+    }),
+    [providerStatuses],
+  );
   const hasRequestedBackgroundProviderRefreshRef = useRef(false);
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
@@ -1240,6 +1266,26 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     () =>
       buildProviderModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
+  );
+  const formatOutgoingPromptForModelSelection = useCallback(
+    (modelSelection: ModelSelection, text: string, promptText: string) => {
+      const models = getProviderModels(providerStatuses, modelSelection.provider);
+      const providerState = getComposerProviderState({
+        provider: modelSelection.provider,
+        model: modelSelection.model,
+        models,
+        prompt: promptText,
+        modelOptions: modelOptionsFromModelSelection(modelSelection),
+      });
+      return formatOutgoingPrompt({
+        provider: modelSelection.provider,
+        model: modelSelection.model,
+        models,
+        effort: providerState.promptEffort,
+        text,
+      });
+    },
+    [providerStatuses],
   );
   useEffect(() => {
     if (hasRequestedBackgroundProviderRefreshRef.current) {
@@ -1450,6 +1496,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const activePendingIsResponding = activePendingUserInput
     ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
+  const [implementationModelSelectionByPlanId, setImplementationModelSelectionByPlanId] = useState<
+    Record<string, ModelSelection>
+  >({});
   const activeProposedPlan = useMemo(() => {
     if (!latestTurnSettled) {
       return null;
@@ -1482,6 +1531,69 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
+  const implementationPickerActive =
+    showPlanFollowUpPrompt && prompt.trim().length === 0 && activeProposedPlan !== null;
+  const storedImplementationModelSelection = activeProposedPlan
+    ? (implementationModelSelectionByPlanId[activeProposedPlan.id] ?? null)
+    : null;
+  const implementationModelSelectionSeed =
+    storedImplementationModelSelection ?? selectedModelSelection;
+  const implementationProvider = resolveSelectableProvider(
+    providerStatuses,
+    implementationModelSelectionSeed.provider,
+  );
+  const implementationProviderModels = getProviderModels(providerStatuses, implementationProvider);
+  const implementationModel = resolveAppModelSelection(
+    implementationProvider,
+    settings,
+    providerStatuses,
+    implementationModelSelectionSeed.provider === implementationProvider
+      ? implementationModelSelectionSeed.model
+      : undefined,
+  );
+  const implementationSeedOptions =
+    implementationModelSelectionSeed.provider === implementationProvider
+      ? implementationModelSelectionSeed.options
+      : undefined;
+  const implementationProviderState = useMemo(
+    () =>
+      getComposerProviderState({
+        provider: implementationProvider,
+        model: implementationModel,
+        models: implementationProviderModels,
+        prompt: "",
+        modelOptions: implementationSeedOptions
+          ? ({
+              [implementationProvider]: implementationSeedOptions,
+            } as ProviderModelOptions)
+          : null,
+      }),
+    [
+      implementationModel,
+      implementationProvider,
+      implementationProviderModels,
+      implementationSeedOptions,
+    ],
+  );
+  const implementationModelSelection = useMemo<ModelSelection>(
+    () =>
+      buildProviderModelSelection(
+        implementationProvider,
+        implementationModel,
+        implementationProviderState.modelOptionsForDispatch,
+      ),
+    [
+      implementationModel,
+      implementationProvider,
+      implementationProviderState.modelOptionsForDispatch,
+    ],
+  );
+  const implementationSelectedModelForPickerWithCustomFallback = useMemo(() => {
+    const currentOptions = modelOptionsByProvider[implementationProvider];
+    return currentOptions.some((option) => option.slug === implementationModel)
+      ? implementationModel
+      : (normalizeModelSlug(implementationModel, implementationProvider) ?? implementationModel);
+  }, [implementationModel, implementationProvider, modelOptionsByProvider]);
 
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
@@ -1898,18 +2010,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
-  const modelOptionsByProvider = useMemo(
-    () => ({
-      shiori: providerStatuses.find((provider) => provider.provider === "shiori")?.models ?? [],
-      kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
-      gemini: providerStatuses.find((provider) => provider.provider === "gemini")?.models ?? [],
-      cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
-      codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
-      claudeAgent:
-        providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
-    }),
-    [providerStatuses],
-  );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -1919,7 +2019,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const searchableModelOptions = useMemo(
     () =>
       AVAILABLE_PROVIDER_OPTIONS.filter(
-        (option) => lockedProvider === null || option.value === lockedProvider,
+        (option) =>
+          (lockedProvider === null || option.value === lockedProvider) &&
+          !isProviderDisabledSnapshot(getProviderSnapshot(providerStatuses, option.value)),
       ).flatMap((option) =>
         modelOptionsByProvider[option.value].map(({ slug, name }) => ({
           provider: option.value,
@@ -1931,7 +2033,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           searchProvider: option.label.toLowerCase(),
         })),
       ),
-    [lockedProvider, modelOptionsByProvider],
+    [lockedProvider, modelOptionsByProvider, providerStatuses],
   );
   const selectedModelCapabilities = useMemo(
     () => getProviderModelCapabilities(selectedProviderModels, selectedModel, selectedProvider),
@@ -3634,9 +3736,19 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
+      if (
+        followUp.interactionMode === "default" &&
+        implementationModelSelection.provider !== selectedProvider
+      ) {
+        await onImplementPlanInNewThread(implementationModelSelection);
+        return;
+      }
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        ...(followUp.interactionMode === "default"
+          ? { modelSelection: implementationModelSelection }
+          : {}),
       });
       return;
     }
@@ -4222,9 +4334,11 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     async ({
       text,
       interactionMode: nextInteractionMode,
+      modelSelection,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      modelSelection?: ModelSelection;
     }) => {
       const api = readNativeApi();
       if (
@@ -4246,15 +4360,19 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
       const messageCreatedAt = new Date().toISOString();
-      const outgoingMessageText = formatOutgoingPrompt({
-        provider: selectedProvider,
-        model: selectedModel,
-        models: selectedProviderModels,
-        effort: selectedPromptEffort,
-        text: trimmed,
-      });
+      const turnModelSelection = modelSelection ?? selectedModelSelection;
+      const outgoingMessageText =
+        modelSelection !== undefined
+          ? formatOutgoingPromptForModelSelection(modelSelection, trimmed, "")
+          : formatOutgoingPrompt({
+              provider: selectedProvider,
+              model: selectedModel,
+              models: selectedProviderModels,
+              effort: selectedPromptEffort,
+              text: trimmed,
+            });
       try {
-        await ensureProviderCanStartTurn(selectedModelSelection.provider);
+        await ensureProviderCanStartTurn(turnModelSelection.provider);
       } catch (error) {
         setThreadError(
           threadIdForSend,
@@ -4284,7 +4402,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForSend,
           createdAt: messageCreatedAt,
-          modelSelection: selectedModelSelection,
+          modelSelection: turnModelSelection,
           runtimeMode,
           interactionMode: nextInteractionMode,
         });
@@ -4293,7 +4411,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         // while the same-thread implementation turn is starting.
         setComposerDraftInteractionMode(threadIdForSend, nextInteractionMode);
 
-        await ensureProviderCanStartTurn(selectedModelSelection.provider);
+        await ensureProviderCanStartTurn(turnModelSelection.provider);
         await api.orchestration.dispatchCommand({
           type: "thread.turn.start",
           commandId: newCommandId(),
@@ -4304,7 +4422,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
             text: outgoingMessageText,
             attachments: [],
           },
-          modelSelection: selectedModelSelection,
+          modelSelection: turnModelSelection,
           titleSeed: activeThread.title,
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -4344,6 +4462,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       autoScrollOnSend,
       beginLocalDispatch,
       ensureProviderCanStartTurn,
+      formatOutgoingPromptForModelSelection,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -4360,140 +4479,149 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     ],
   );
 
-  const onImplementPlanInNewThread = useCallback(async () => {
-    const api = readNativeApi();
-    if (
-      !api ||
-      !activeThread ||
-      !activeProject ||
-      !activeProposedPlan ||
-      !isServerThread ||
-      isSendBusy ||
-      isConnecting ||
-      sendInFlightRef.current
-    ) {
-      return;
-    }
+  const onImplementPlanInNewThread = useCallback(
+    async (modelSelection?: ModelSelection) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeProposedPlan ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
 
-    const createdAt = new Date().toISOString();
-    const nextThreadId = newThreadId();
-    const planMarkdown = activeProposedPlan.planMarkdown;
-    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const outgoingImplementationPrompt = formatOutgoingPrompt({
-      provider: selectedProvider,
-      model: selectedModel,
-      models: selectedProviderModels,
-      effort: selectedPromptEffort,
-      text: implementationPrompt,
-    });
-    const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = selectedModelSelection;
-    try {
-      await ensureProviderCanStartTurn(nextThreadModelSelection.provider);
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not start implementation thread",
-        description: error instanceof Error ? error.message : "Selected provider is unavailable.",
-      });
-      return;
-    }
-
-    sendInFlightRef.current = true;
-    flushSync(() => {
-      beginLocalDispatch({ preparingWorktree: false });
-    });
-    const finish = () => {
-      sendInFlightRef.current = false;
-      resetLocalDispatch();
-    };
-
-    await api.orchestration
-      .dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode,
-        interactionMode: "default",
-        parentThreadId: null,
-        branchSourceTurnId: null,
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      })
-      .then(() => {
-        return ensureProviderCanStartTurn(nextThreadModelSelection.provider);
-      })
-      .then(() => {
-        return api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: selectedModelSelection,
-          titleSeed: nextThreadTitle,
-          runtimeMode,
-          interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
-          createdAt,
-        });
-      })
-      .then(() => {
-        return waitForStartedServerThread(nextThreadId);
-      })
-      .then(() => {
-        // Signal that the plan sidebar should open on the new thread.
-        planSidebarOpenOnNextThreadRef.current = true;
-        return navigate({
-          to: "/$threadId",
-          params: { threadId: nextThreadId },
-        });
-      })
-      .catch(async (err) => {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-          })
-          .catch(() => undefined);
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const planMarkdown = activeProposedPlan.planMarkdown;
+      const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
+      const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
+      const nextThreadModelSelection: ModelSelection = modelSelection ?? selectedModelSelection;
+      const outgoingImplementationPrompt =
+        modelSelection !== undefined
+          ? formatOutgoingPromptForModelSelection(modelSelection, implementationPrompt, "")
+          : formatOutgoingPrompt({
+              provider: selectedProvider,
+              model: selectedModel,
+              models: selectedProviderModels,
+              effort: selectedPromptEffort,
+              text: implementationPrompt,
+            });
+      try {
+        await ensureProviderCanStartTurn(nextThreadModelSelection.provider);
+      } catch (error) {
         toastManager.add({
           type: "error",
           title: "Could not start implementation thread",
-          description:
-            err instanceof Error ? err.message : "An error occurred while creating the new thread.",
+          description: error instanceof Error ? error.message : "Selected provider is unavailable.",
         });
-      })
-      .then(finish, finish);
-  }, [
-    activeProject,
-    activeProposedPlan,
-    activeThread,
-    beginLocalDispatch,
-    ensureProviderCanStartTurn,
-    isConnecting,
-    isSendBusy,
-    isServerThread,
-    navigate,
-    resetLocalDispatch,
-    runtimeMode,
-    selectedPromptEffort,
-    selectedModelSelection,
-    selectedProvider,
-    selectedProviderModels,
-    selectedModel,
-  ]);
+        return;
+      }
+
+      sendInFlightRef.current = true;
+      flushSync(() => {
+        beginLocalDispatch({ preparingWorktree: false });
+      });
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      };
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          projectId: activeThread.projectId,
+          projectlessCwd:
+            activeThread.projectId === null ? (activeThread.projectlessCwd ?? null) : null,
+          title: nextThreadTitle,
+          modelSelection: nextThreadModelSelection,
+          runtimeMode,
+          interactionMode: "default",
+          parentThreadId: null,
+          branchSourceTurnId: null,
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          createdAt,
+        })
+        .then(() => {
+          return ensureProviderCanStartTurn(nextThreadModelSelection.provider);
+        })
+        .then(() => {
+          return api.orchestration.dispatchCommand({
+            type: "thread.turn.start",
+            commandId: newCommandId(),
+            threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: outgoingImplementationPrompt,
+              attachments: [],
+            },
+            modelSelection: nextThreadModelSelection,
+            titleSeed: nextThreadTitle,
+            runtimeMode,
+            interactionMode: "default",
+            sourceProposedPlan: {
+              threadId: activeThread.id,
+              planId: activeProposedPlan.id,
+            },
+            createdAt,
+          });
+        })
+        .then(() => {
+          return waitForStartedServerThread(nextThreadId);
+        })
+        .then(() => {
+          // Signal that the plan sidebar should open on the new thread.
+          planSidebarOpenOnNextThreadRef.current = true;
+          return navigate({
+            to: "/$threadId",
+            params: { threadId: nextThreadId },
+          });
+        })
+        .catch(async (err) => {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: nextThreadId,
+            })
+            .catch(() => undefined);
+          toastManager.add({
+            type: "error",
+            title: "Could not start implementation thread",
+            description:
+              err instanceof Error
+                ? err.message
+                : "An error occurred while creating the new thread.",
+          });
+        })
+        .then(finish, finish);
+    },
+    [
+      activeProposedPlan,
+      activeThread,
+      beginLocalDispatch,
+      ensureProviderCanStartTurn,
+      formatOutgoingPromptForModelSelection,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      resetLocalDispatch,
+      runtimeMode,
+      selectedPromptEffort,
+      selectedModelSelection,
+      selectedProvider,
+      selectedProviderModels,
+      selectedModel,
+    ],
+  );
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: string) => {
@@ -4542,6 +4670,44 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
+      settings,
+    ],
+  );
+  const onImplementationProviderModelSelect = useCallback(
+    (provider: ProviderKind, model: string) => {
+      if (!activeProposedPlan) return;
+      const resolvedProvider = resolveSelectableProvider(providerStatuses, provider);
+      const resolvedModel = resolveAppModelSelection(
+        resolvedProvider,
+        settings,
+        providerStatuses,
+        model,
+      );
+      const existingSelection = implementationModelSelectionByPlanId[activeProposedPlan.id];
+      const options =
+        existingSelection?.provider === resolvedProvider
+          ? existingSelection.options
+          : selectedModelSelection.provider === resolvedProvider
+            ? selectedModelSelection.options
+            : undefined;
+      const nextModelSelection = buildProviderModelSelection(
+        resolvedProvider,
+        resolvedModel,
+        options,
+      );
+
+      setImplementationModelSelectionByPlanId((existing) => ({
+        ...existing,
+        [activeProposedPlan.id]: nextModelSelection,
+      }));
+      scheduleComposerFocus();
+    },
+    [
+      activeProposedPlan,
+      implementationModelSelectionByPlanId,
+      providerStatuses,
+      scheduleComposerFocus,
+      selectedModelSelection,
       settings,
     ],
   );
@@ -5526,25 +5692,46 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                           className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                         >
                           {/* Provider/model picker */}
-                          <ProviderModelPicker
-                            compact={isComposerFooterCompact}
-                            provider={selectedProvider}
-                            model={selectedModelForPickerWithCustomFallback}
-                            lockedProvider={lockedProvider}
-                            providers={providerStatuses}
-                            modelOptionsByProvider={modelOptionsByProvider}
-                            modelOptions={composerModelOptions?.[selectedProvider]}
-                            effort={composerEffortPickerProps}
-                            {...(composerProviderState.modelPickerIconClassName
-                              ? {
-                                  activeProviderIconClassName:
-                                    composerProviderState.modelPickerIconClassName,
-                                }
-                              : {})}
-                            onProviderModelChange={onProviderModelSelect}
-                          />
+                          {implementationPickerActive ? (
+                            <ProviderModelPicker
+                              compact={isComposerFooterCompact}
+                              provider={implementationProvider}
+                              model={implementationSelectedModelForPickerWithCustomFallback}
+                              lockedProvider={null}
+                              providers={providerStatuses}
+                              modelOptionsByProvider={modelOptionsByProvider}
+                              modelOptions={implementationModelSelection.options}
+                              {...(implementationProviderState.modelPickerIconClassName
+                                ? {
+                                    activeProviderIconClassName:
+                                      implementationProviderState.modelPickerIconClassName,
+                                  }
+                                : {})}
+                              onProviderModelChange={onImplementationProviderModelSelect}
+                            />
+                          ) : (
+                            <ProviderModelPicker
+                              compact={isComposerFooterCompact}
+                              provider={selectedProvider}
+                              model={selectedModelForPickerWithCustomFallback}
+                              lockedProvider={lockedProvider}
+                              providers={providerStatuses}
+                              modelOptionsByProvider={modelOptionsByProvider}
+                              modelOptions={composerModelOptions?.[selectedProvider]}
+                              effort={composerEffortPickerProps}
+                              {...(composerProviderState.modelPickerIconClassName
+                                ? {
+                                    activeProviderIconClassName:
+                                      composerProviderState.modelPickerIconClassName,
+                                  }
+                                : {})}
+                              onProviderModelChange={onProviderModelSelect}
+                            />
+                          )}
 
-                          {!isComposerFooterCompact && providerTraitsPicker
+                          {!implementationPickerActive &&
+                          !isComposerFooterCompact &&
+                          providerTraitsPicker
                             ? providerTraitsPicker
                             : null}
 
@@ -5576,34 +5763,38 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               Preparing worktree...
                             </span>
                           ) : null}
-                          <ComposerPrimaryActions
-                            compact={isComposerPrimaryActionsCompact}
-                            pendingAction={
-                              activePendingProgress
-                                ? {
-                                    questionIndex: activePendingProgress.questionIndex,
-                                    isLastQuestion: activePendingProgress.isLastQuestion,
-                                    canAdvance: activePendingProgress.canAdvance,
-                                    isResponding: activePendingIsResponding,
-                                    isComplete: Boolean(activePendingResolvedAnswers),
-                                  }
-                                : null
-                            }
-                            isRunning={isTurnRunning}
-                            awaitingSendAck={isAwaitingSendAck}
-                            queuedTurnCount={queuedTurns.length}
-                            showPlanFollowUpPrompt={
-                              pendingUserInputs.length === 0 && showPlanFollowUpPrompt
-                            }
-                            promptHasText={prompt.trim().length > 0}
-                            isSendBusy={isSendBusy}
-                            isConnecting={isConnecting}
-                            isPreparingWorktree={isPreparingWorktree}
-                            hasSendableContent={composerSendState.hasSendableContent}
-                            onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                            onInterrupt={() => void onInterrupt()}
-                            onImplementPlanInNewThread={() => void onImplementPlanInNewThread()}
-                          />
+                          <div className={activeContextWindow ? "ml-1" : undefined}>
+                            <ComposerPrimaryActions
+                              compact={isComposerPrimaryActionsCompact}
+                              pendingAction={
+                                activePendingProgress
+                                  ? {
+                                      questionIndex: activePendingProgress.questionIndex,
+                                      isLastQuestion: activePendingProgress.isLastQuestion,
+                                      canAdvance: activePendingProgress.canAdvance,
+                                      isResponding: activePendingIsResponding,
+                                      isComplete: Boolean(activePendingResolvedAnswers),
+                                    }
+                                  : null
+                              }
+                              isRunning={isTurnRunning}
+                              awaitingSendAck={isAwaitingSendAck}
+                              queuedTurnCount={queuedTurns.length}
+                              showPlanFollowUpPrompt={
+                                pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                              }
+                              promptHasText={prompt.trim().length > 0}
+                              isSendBusy={isSendBusy}
+                              isConnecting={isConnecting}
+                              isPreparingWorktree={isPreparingWorktree}
+                              hasSendableContent={composerSendState.hasSendableContent}
+                              onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                              onInterrupt={() => void onInterrupt()}
+                              onImplementPlanInNewThread={() =>
+                                void onImplementPlanInNewThread(implementationModelSelection)
+                              }
+                            />
+                          </div>
                         </div>
                       </div>
                     )}

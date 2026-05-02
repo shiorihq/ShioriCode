@@ -170,6 +170,82 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
+function effort(value: string, isDefault = false) {
+  return {
+    value,
+    label: value,
+    ...(isDefault ? { isDefault: true } : {}),
+  };
+}
+
+function createMultiProviderConfig(): ServerConfig["providers"] {
+  return [
+    {
+      provider: "codex",
+      enabled: true,
+      installed: true,
+      version: "0.116.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: NOW_ISO,
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "gpt-5.3-codex",
+          name: "GPT-5.3 Codex",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    },
+    {
+      provider: "claudeAgent",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: NOW_ISO,
+      models: [
+        {
+          slug: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [
+              effort("low"),
+              effort("medium", true),
+              effort("high"),
+              effort("max"),
+            ],
+            supportsFastMode: false,
+            supportsThinkingToggle: true,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    },
+  ];
+}
+
 function createUserMessage(options: {
   id: MessageId;
   text: string;
@@ -851,6 +927,25 @@ function findButtonByText(text: string): HTMLButtonElement | null {
 
 async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
   return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
+}
+
+async function selectModelFromUnlockedProviderPicker(
+  providerLabel: string,
+  modelLabel: string,
+): Promise<void> {
+  const picker = await waitForElement(
+    findComposerProviderModelPicker,
+    "Unable to find provider model picker.",
+  );
+  picker.click();
+  await page.getByRole("menuitem", { name: providerLabel }).hover();
+  await vi.waitFor(
+    () => {
+      expect(document.body.textContent ?? "").toContain(modelLabel);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  await page.getByRole("menuitemradio", { name: modelLabel }).click();
 }
 
 async function expectComposerActionsContained(): Promise<void> {
@@ -3278,6 +3373,250 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
           expect(Math.abs(implementRect.right - implementActionsRect.left)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.top - implementActionsRect.top)).toBeLessThanOrEqual(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("unlocks provider selection for empty post-plan implementation", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: createMultiProviderConfig(),
+        };
+      },
+    });
+
+    try {
+      const picker = await waitForElement(
+        findComposerProviderModelPicker,
+        "Unable to find provider model picker.",
+      );
+      picker.click();
+
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("Codex");
+          expect(text).toContain("Claude");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("implements a plan in the current thread when the selected implementation model uses the same provider", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: createMultiProviderConfig(),
+        };
+      },
+    });
+
+    try {
+      await selectModelFromUnlockedProviderPicker("Codex", "GPT-5.3 Codex");
+
+      const implementButton = await waitForButtonByText("Implement");
+      implementButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          );
+          expect(turnStartRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.turn.start",
+            threadId: THREAD_ID,
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+          });
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.create",
+            ),
+          ).toBe(false);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("starts a linked implementation thread when the selected implementation model uses another provider", async () => {
+    let createdThreadId: ThreadId | null = null;
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: createMultiProviderConfig(),
+        };
+      },
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.create"
+        ) {
+          const threadId = body.threadId as ThreadId;
+          createdThreadId = threadId;
+          window.setTimeout(() => {
+            fixture.snapshot = addThreadToSnapshot(fixture.snapshot, threadId);
+            sendOrchestrationDomainEvent(
+              createThreadCreatedEvent(threadId, fixture.snapshot.snapshotSequence),
+            );
+          }, 0);
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await selectModelFromUnlockedProviderPicker("Claude", "Claude Sonnet 4.6");
+
+      const implementButton = await waitForButtonByText("Implement");
+      implementButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.create",
+          );
+          expect(createRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.create",
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-sonnet-4-6",
+            },
+          });
+          expect(createdThreadId).toBeTruthy();
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start" &&
+              request.threadId === createdThreadId,
+          );
+          expect(turnStartRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.turn.start",
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-sonnet-4-6",
+            },
+            sourceProposedPlan: {
+              threadId: THREAD_ID,
+              planId: "plan-follow-up-browser-test",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the selected implementation model for the explicit new-thread action", async () => {
+    let createdThreadId: ThreadId | null = null;
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotWithPlanFollowUpPrompt(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: createMultiProviderConfig(),
+        };
+      },
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.create"
+        ) {
+          const threadId = body.threadId as ThreadId;
+          createdThreadId = threadId;
+          window.setTimeout(() => {
+            fixture.snapshot = addThreadToSnapshot(fixture.snapshot, threadId);
+            sendOrchestrationDomainEvent(
+              createThreadCreatedEvent(threadId, fixture.snapshot.snapshotSequence),
+            );
+          }, 0);
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await selectModelFromUnlockedProviderPicker("Codex", "GPT-5.3 Codex");
+
+      const implementationActionsButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Implementation actions"]'),
+        "Unable to find implementation actions trigger.",
+      );
+      implementationActionsButton.click();
+      await page.getByRole("menuitem", { name: "Implement in a new thread" }).click();
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.create",
+          );
+          expect(createRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.create",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+          });
+          expect(createdThreadId).toBeTruthy();
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start" &&
+              request.threadId === createdThreadId,
+          );
+          expect(turnStartRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.turn.start",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+            sourceProposedPlan: {
+              threadId: THREAD_ID,
+              planId: "plan-follow-up-browser-test",
+            },
+          });
         },
         { timeout: 8_000, interval: 16 },
       );

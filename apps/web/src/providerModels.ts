@@ -57,6 +57,10 @@ export function isProviderEnabled(
   return getProviderSnapshot(providers, provider)?.enabled ?? true;
 }
 
+export function isProviderDisabledSnapshot(snapshot: ServerProvider | null | undefined): boolean {
+  return snapshot?.enabled === false || snapshot?.status === "disabled";
+}
+
 export function resolveSelectableProvider(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind | null | undefined,
@@ -87,7 +91,7 @@ export function getProviderPickerState(snapshot: ServerProvider | null | undefin
     };
   }
 
-  if (!snapshot.enabled || snapshot.status === "disabled") {
+  if (isProviderDisabledSnapshot(snapshot)) {
     return {
       selectable: false,
       badgeLabel: "Disabled",
@@ -136,7 +140,7 @@ export function getProviderUnavailableReason(
   }
 
   const providerLabel = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
-  if (!snapshot.enabled || snapshot.status === "disabled") {
+  if (isProviderDisabledSnapshot(snapshot)) {
     return `${providerLabel} is disabled in settings.`;
   }
   if (snapshot.message && snapshot.message.trim().length > 0) {

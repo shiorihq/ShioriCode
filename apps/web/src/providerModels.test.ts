@@ -6,6 +6,7 @@ import {
   getProviderPickerState,
   getProviderUnavailableReason,
   getProviderModelDisplayName,
+  isProviderDisabledSnapshot,
   isPendingProviderCheckStatus,
   providerModelSupportsImageAttachments,
 } from "./providerModels";
@@ -102,6 +103,18 @@ describe("isPendingProviderCheckStatus", () => {
 });
 
 describe("getProviderPickerState", () => {
+  it("identifies disabled provider snapshots", () => {
+    expect(isProviderDisabledSnapshot(buildProvider("codex"))).toBe(false);
+    expect(
+      isProviderDisabledSnapshot(
+        buildProvider("codex", {
+          enabled: false,
+          status: "disabled",
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps pending background checks selectable", () => {
     expect(
       getProviderPickerState(

@@ -25,6 +25,7 @@ import {
   DEFAULT_CODE_FONT_FAMILY,
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
 } from "contracts/settings";
 import { resolveOnboardingState } from "shared/onboarding";
 import { Equal } from "effect";
@@ -140,37 +141,136 @@ export function filterFontOptions(options: readonly FontOption[], query: string)
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  primaryFieldLabel?: string;
-  primaryFieldPlaceholder?: string;
-  primaryFieldDescription?: ReactNode;
+  textFields?: readonly ProviderSettingsTextField[];
   homePathKey?: "codexHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
 
-const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
-  {
+type ProviderSettingsTextFieldKey =
+  | "apiBaseUrl"
+  | "apiEndpoint"
+  | "acpFlag"
+  | "binaryPath"
+  | "googleCloudProject"
+  | "shareDir";
+
+type ProviderSettingsTextField = {
+  key: ProviderSettingsTextFieldKey;
+  label: string;
+  placeholder: string;
+  description?: ReactNode;
+};
+
+type ResolvedProviderSettingsTextField = ProviderSettingsTextField & {
+  value: string;
+};
+
+const PROVIDER_SETTINGS_BY_PROVIDER = {
+  shiori: {
     provider: "shiori",
     title: "Shiori",
+    textFields: [
+      {
+        key: "apiBaseUrl",
+        label: "Shiori API base URL",
+        placeholder: "https://shiori.ai",
+        description: "Hosted Shiori API endpoint.",
+      },
+    ],
   },
-  {
+  kimiCode: {
+    provider: "kimiCode",
+    title: "Kimi Code",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Kimi binary path",
+        placeholder: "kimi",
+        description: "Path to the Kimi Code binary.",
+      },
+      {
+        key: "shareDir",
+        label: "Kimi share directory",
+        placeholder: "Kimi share directory",
+        description: "Optional directory for Kimi Code shared runtime files.",
+      },
+    ],
+  },
+  gemini: {
+    provider: "gemini",
+    title: "Gemini",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Gemini binary path",
+        placeholder: "gemini",
+        description: "Path to the Gemini CLI binary.",
+      },
+      {
+        key: "googleCloudProject",
+        label: "Google Cloud project",
+        placeholder: "GOOGLE_CLOUD_PROJECT",
+        description: "Optional project ID passed to the Gemini ACP runtime.",
+      },
+      {
+        key: "acpFlag",
+        label: "ACP flag",
+        placeholder: "--acp",
+        description: "Optional Gemini ACP flag override.",
+      },
+    ],
+  },
+  cursor: {
+    provider: "cursor",
+    title: "Cursor",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Cursor agent binary path",
+        placeholder: "agent",
+        description: "Path to the Cursor agent binary.",
+      },
+      {
+        key: "apiEndpoint",
+        label: "API endpoint",
+        placeholder: "Cursor API endpoint",
+        description: "Optional endpoint passed to `agent -e`.",
+      },
+    ],
+  },
+  codex: {
     provider: "codex",
     title: "Codex",
-    primaryFieldLabel: "Codex binary path",
-    primaryFieldPlaceholder: "Codex binary path",
-    primaryFieldDescription: "Path to the Codex binary",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Codex binary path",
+        placeholder: "codex",
+        description: "Path to the Codex binary.",
+      },
+    ],
     homePathKey: "codexHomePath",
     homePlaceholder: "CODEX_HOME",
     homeDescription: "Optional custom Codex home and config directory.",
   },
-  {
+  claudeAgent: {
     provider: "claudeAgent",
     title: "Claude",
-    primaryFieldLabel: "Claude binary path",
-    primaryFieldPlaceholder: "Claude binary path",
-    primaryFieldDescription: "Path to the Claude binary",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Claude binary path",
+        placeholder: "claude",
+        description: "Path to the Claude binary.",
+      },
+    ],
   },
-] as const;
+} as const satisfies Record<ProviderKind, InstallProviderSettings>;
+
+const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = Object.values(
+  PROVIDER_SETTINGS_BY_PROVIDER,
+);
 
 const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -187,7 +287,13 @@ const PROVIDER_STATUS_STYLES = {
   },
 } as const;
 
-function getProviderSummary(provider: ServerProvider | undefined) {
+function getProviderSummary(provider: ServerProvider | undefined, enabled: boolean) {
+  if (!provider && !enabled) {
+    return {
+      headline: "Disabled",
+      detail: "This provider is disabled in ShioriCode settings.",
+    };
+  }
   if (!provider) {
     return {
       headline: "Checking provider status",
@@ -243,6 +349,101 @@ function getProviderSummary(provider: ServerProvider | undefined) {
 function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
   return version.startsWith("v") ? version : `v${version}`;
+}
+
+function readProviderTextField(
+  providers: UnifiedSettings["providers"],
+  provider: ProviderKind,
+  key: ProviderSettingsTextFieldKey,
+): string | null {
+  switch (provider) {
+    case "shiori":
+      return key === "apiBaseUrl" ? providers.shiori.apiBaseUrl : null;
+    case "kimiCode":
+      if (key === "binaryPath") return providers.kimiCode.binaryPath;
+      return key === "shareDir" ? providers.kimiCode.shareDir : null;
+    case "gemini":
+      if (key === "binaryPath") return providers.gemini.binaryPath;
+      if (key === "googleCloudProject") return providers.gemini.googleCloudProject;
+      return key === "acpFlag" ? providers.gemini.acpFlag : null;
+    case "cursor":
+      if (key === "binaryPath") return providers.cursor.binaryPath;
+      return key === "apiEndpoint" ? providers.cursor.apiEndpoint : null;
+    case "codex":
+      return key === "binaryPath" ? providers.codex.binaryPath : null;
+    case "claudeAgent":
+      return key === "binaryPath" ? providers.claudeAgent.binaryPath : null;
+  }
+}
+
+function updateProviderTextField(
+  providers: UnifiedSettings["providers"],
+  provider: ProviderKind,
+  key: ProviderSettingsTextFieldKey,
+  value: string,
+): UnifiedSettings["providers"] {
+  switch (provider) {
+    case "shiori":
+      return key === "apiBaseUrl"
+        ? { ...providers, shiori: { ...providers.shiori, apiBaseUrl: value } }
+        : providers;
+    case "kimiCode":
+      if (key === "binaryPath") {
+        return { ...providers, kimiCode: { ...providers.kimiCode, binaryPath: value } };
+      }
+      return key === "shareDir"
+        ? { ...providers, kimiCode: { ...providers.kimiCode, shareDir: value } }
+        : providers;
+    case "gemini":
+      if (key === "binaryPath") {
+        return { ...providers, gemini: { ...providers.gemini, binaryPath: value } };
+      }
+      if (key === "googleCloudProject") {
+        return { ...providers, gemini: { ...providers.gemini, googleCloudProject: value } };
+      }
+      return key === "acpFlag"
+        ? { ...providers, gemini: { ...providers.gemini, acpFlag: value } }
+        : providers;
+    case "cursor":
+      if (key === "binaryPath") {
+        return { ...providers, cursor: { ...providers.cursor, binaryPath: value } };
+      }
+      return key === "apiEndpoint"
+        ? { ...providers, cursor: { ...providers.cursor, apiEndpoint: value } }
+        : providers;
+    case "codex":
+      return key === "binaryPath"
+        ? { ...providers, codex: { ...providers.codex, binaryPath: value } }
+        : providers;
+    case "claudeAgent":
+      return key === "binaryPath"
+        ? { ...providers, claudeAgent: { ...providers.claudeAgent, binaryPath: value } }
+        : providers;
+  }
+}
+
+function resolveProviderTextFields(
+  providers: UnifiedSettings["providers"],
+  provider: ProviderKind,
+  fields: readonly ProviderSettingsTextField[] | undefined,
+): ResolvedProviderSettingsTextField[] {
+  const resolvedFields: ResolvedProviderSettingsTextField[] = [];
+
+  for (const field of fields ?? []) {
+    const value = readProviderTextField(providers, provider, field.key);
+    if (value === null) {
+      continue;
+    }
+    resolvedFields.push({
+      key: field.key,
+      label: field.label,
+      placeholder: field.placeholder,
+      description: field.description,
+      value,
+    });
+  }
+
+  return resolvedFields;
 }
 
 function useRelativeTimeTick(intervalMs = 1_000) {
@@ -943,7 +1144,7 @@ export function GeneralSettingsPanel() {
     const providerConfig = settings.providers[providerSettings.provider];
     const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
-    const summary = getProviderSummary(liveProvider);
+    const summary = getProviderSummary(liveProvider, providerConfig.enabled);
     const fallbackModels = providerConfig.customModels.map((slug) => ({
       slug,
       name: slug,
@@ -958,13 +1159,14 @@ export function GeneralSettingsPanel() {
     return {
       provider: providerSettings.provider,
       title: providerSettings.title,
-      primaryFieldLabel: providerSettings.primaryFieldLabel,
-      primaryFieldPlaceholder: providerSettings.primaryFieldPlaceholder,
-      primaryFieldDescription: providerSettings.primaryFieldDescription,
+      textFields: resolveProviderTextFields(
+        settings.providers,
+        providerSettings.provider,
+        providerSettings.textFields,
+      ),
       homePathKey: providerSettings.homePathKey,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
-      primaryFieldValue: "binaryPath" in providerConfig ? providerConfig.binaryPath : null,
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -1575,41 +1777,41 @@ export function GeneralSettingsPanel() {
                       </div>
                     ) : null}
 
-                    {providerCard.primaryFieldLabel && providerCard.primaryFieldValue !== null ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                    {providerCard.textFields.map((field) => (
+                      <div
+                        key={`${providerCard.provider}:${field.key}`}
+                        className="border-t border-border/60 px-4 py-3 sm:px-5"
+                      >
                         <label
-                          htmlFor={`provider-install-${providerCard.provider}-primary`}
+                          htmlFor={`provider-install-${providerCard.provider}-${field.key}`}
                           className="block"
                         >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerCard.primaryFieldLabel}
-                          </span>
+                          <span className="text-xs font-medium text-foreground">{field.label}</span>
                           <Input
-                            id={`provider-install-${providerCard.provider}-primary`}
+                            id={`provider-install-${providerCard.provider}-${field.key}`}
                             className="mt-1.5"
-                            value={providerCard.primaryFieldValue}
+                            value={field.value}
                             onChange={(event) =>
                               updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    binaryPath: event.target.value,
-                                  },
-                                },
+                                providers: updateProviderTextField(
+                                  settings.providers,
+                                  providerCard.provider,
+                                  field.key,
+                                  event.target.value,
+                                ),
                               })
                             }
-                            placeholder={providerCard.primaryFieldPlaceholder}
+                            placeholder={field.placeholder}
                             spellCheck={false}
                           />
-                          {providerCard.primaryFieldDescription ? (
+                          {field.description ? (
                             <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.primaryFieldDescription}
+                              {field.description}
                             </span>
                           ) : null}
                         </label>
                       </div>
-                    ) : null}
+                    ))}
 
                     {providerCard.homePathKey ? (
                       <div className="border-t border-border/60 px-4 py-3 sm:px-5">

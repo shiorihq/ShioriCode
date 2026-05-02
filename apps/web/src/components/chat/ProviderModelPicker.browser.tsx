@@ -559,7 +559,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows disabled providers as non-selectable entries", async () => {
+  it("hides disabled providers from provider switching", async () => {
     const disabledProviders = TEST_PROVIDERS.slice();
     const claudeIndex = disabledProviders.findIndex(
       (provider) => provider.provider === "claudeAgent",
@@ -584,8 +584,8 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
-        expect(text).toContain("Claude");
-        expect(text).toContain("Disabled");
+        expect(text).not.toContain("Claude");
+        expect(text).not.toContain("Disabled");
         expect(text).not.toContain("Claude Sonnet 4.6");
       });
     } finally {
