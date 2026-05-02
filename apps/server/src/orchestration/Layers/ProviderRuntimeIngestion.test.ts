@@ -3007,6 +3007,78 @@ describe("ProviderRuntimeIngestion", () => {
     expect(payload?.parentItemId).toBe("agent-tool-codex-1");
   });
 
+  it("projects Kimi subagent child parent ids from raw payloads onto tool activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-kimi-subagent"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "kimiCode",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+    harness.setProviderSession({
+      provider: "kimiCode",
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-kimi-subagent-child-tool-started"),
+      provider: "kimiCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-kimi-subagent-1"),
+      itemId: asItemId("kimi-child-tool-1"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "inProgress",
+        title: "Read file",
+        detail: "Read file: src/index.ts",
+      },
+      raw: {
+        source: "kimi.agent.sdk",
+        messageType: "SubagentEvent",
+        payload: {
+          parent_tool_call_id: "kimi-task-tool-1",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-kimi-subagent-child-tool-started",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) =>
+        candidate.id === "evt-kimi-subagent-child-tool-started",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(payload?.parentItemId).toBe("kimi-task-tool-1");
+  });
+
   it("projects reasoning lifecycle and deltas into thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

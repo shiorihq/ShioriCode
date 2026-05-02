@@ -481,7 +481,7 @@ export function Timeline({
   }
 
   return (
-    <Box flexDirection="column" height={height} paddingX={1} overflow="hidden">
+    <Box flexDirection="column" paddingX={1}>
       {entries.map((entry) => (
         <TimelineEntryView
           key={entry.id}

@@ -392,4 +392,67 @@ describe("subagentDetail", () => {
       },
     ]);
   });
+
+  it("derives Kimi background subagent rows from running Task tool calls", () => {
+    const rows = deriveBackgroundSubagentRows({
+      provider: "kimiCode",
+      workEntries: [
+        {
+          id: "kimi-root",
+          createdAt: "2026-05-02T10:00:00.000Z",
+          label: "Subagent task",
+          tone: "tool",
+          itemId: "kimi-task-tool-1",
+          itemType: "collab_agent_tool_call",
+          running: true,
+          output: {
+            toolName: "Task",
+            input: {
+              description: "Inspect sidebar drag/drop styling",
+              prompt: "Find the sidebar component and patch the hover/drop state.",
+              subagent_type: "explorer",
+            },
+          },
+        },
+        {
+          id: "kimi-child",
+          createdAt: "2026-05-02T10:00:01.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemId: "kimi-read-1",
+          parentItemId: "kimi-task-tool-1",
+          itemType: "dynamic_tool_call",
+          running: true,
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      {
+        id: "kimi-root",
+        rootItemId: "kimi-task-tool-1",
+        provider: "kimiCode",
+        displayName: expect.stringMatching(/^[A-Z][a-z]+(?: [0-9]+)?$/),
+        mentionName: expect.stringMatching(/^[A-Za-z0-9._-]+$/),
+        hasContents: true,
+        agentRole: "explorer",
+        instruction: "Inspect sidebar drag/drop styling",
+        providerThreadIds: [],
+        taskIds: [],
+        status: "active",
+        childEntries: [
+          {
+            id: "kimi-child",
+            createdAt: "2026-05-02T10:00:01.000Z",
+            label: "Read file",
+            tone: "tool",
+            itemId: "kimi-read-1",
+            parentItemId: "kimi-task-tool-1",
+            itemType: "dynamic_tool_call",
+            running: true,
+          },
+        ],
+      },
+    ]);
+  });
 });

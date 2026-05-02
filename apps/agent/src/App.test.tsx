@@ -248,6 +248,25 @@ describe("App", () => {
     expect(app.lastFrame()).toContain("Hello from Shiori Agent");
   });
 
+  it("renders the full timeline instead of hiding earlier entries behind a counter", () => {
+    const messages: Thread["messages"] = Array.from({ length: 18 }, (_, index) => ({
+      id: MessageId.makeUnsafe(`message-${index + 1}`),
+      role: index % 2 === 0 ? "user" : "assistant",
+      text: `Timeline item ${index + 1}`,
+      createdAt: `2026-04-17T10:${String(index).padStart(2, "0")}:00.000Z`,
+      completedAt: `2026-04-17T10:${String(index).padStart(2, "0")}:01.000Z`,
+      streaming: false,
+    }));
+    const controller = new MockController(makeState(makeThread({ messages })));
+    const app = render(<App controller={controller} dimensions={{ columns: 100, rows: 14 }} />);
+    const frame = app.lastFrame();
+
+    expect(frame).toContain("Timeline item 1");
+    expect(frame).toContain("Timeline item 18");
+    expect(frame).toContain("│");
+    expect(frame).not.toContain("earlier");
+  });
+
   it("opens the thread switcher on ctrl+p", async () => {
     const controller = new MockController(makeState(makeThread()));
     const app = render(<App controller={controller} dimensions={{ columns: 80, rows: 30 }} />);
@@ -282,6 +301,50 @@ describe("App", () => {
 
     expect(controller.createThread).toHaveBeenCalled();
     expect(controller.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps slash menu navigation out of composer history", async () => {
+    const controller = new MockController(makeState(makeThread()));
+    const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
+
+    app.stdin.write("previous message");
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
+    app.stdin.write("/");
+    await flushUi();
+    app.stdin.write("\u001b[A");
+    await flushUi();
+
+    expect(app.lastFrame()).toContain("commands");
+    expect(app.lastFrame()).not.toContain("previous message");
+  });
+
+  it("closes the slash menu with escape", async () => {
+    const controller = new MockController(makeState(makeThread()));
+    const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
+
+    app.stdin.write("/");
+    await flushUi();
+
+    expect(app.lastFrame()).toContain("commands");
+
+    app.stdin.write("\u001b");
+    await flushUi();
+
+    expect(app.lastFrame()).not.toContain("enter run");
+  });
+
+  it("opens help with the advertised question mark shortcut", async () => {
+    const controller = new MockController(makeState(makeThread()));
+    const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
+
+    app.stdin.write("?");
+    await flushUi();
+
+    expect(app.lastFrame()).toContain("help");
+    expect(app.lastFrame()).toContain("ctrl+s settings");
+    expect(app.lastFrame()).not.toContain("› ?");
   });
 
   it("supports vim mode editing via /vim", async () => {
@@ -414,7 +477,7 @@ describe("App", () => {
     expect(app.lastFrame()).not.toContain("Second line of reasoning");
   });
 
-  it("submits approval responses", () => {
+  it("submits approval responses without leaking the answer into the composer", async () => {
     const controller = new MockController(
       makeState(
         makeThread({
@@ -446,11 +509,28 @@ describe("App", () => {
     const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
 
     app.stdin.write("1");
+    await flushUi();
+
+    controller.setState({
+      projection: {
+        ...controller.state.projection,
+        threads: [makeThread()],
+        threadIndexById: { [ThreadId.makeUnsafe("thread-1")]: 0 },
+        sidebarThreadsById: buildSidebarThreadsById([makeThread()]),
+        threadIdsByProjectId: {
+          [ProjectId.makeUnsafe("project-1")]: [ThreadId.makeUnsafe("thread-1")],
+        },
+      },
+    });
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
 
     expect(controller.respondToApproval).toHaveBeenCalledWith("request-1", "accept");
+    expect(controller.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("submits structured user input responses", () => {
+  it("submits structured user input responses without leaking the answer into the composer", async () => {
     const controller = new MockController(
       makeState(
         makeThread({
@@ -491,10 +571,27 @@ describe("App", () => {
     const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
 
     app.stdin.write("2");
+    await flushUi();
+
+    controller.setState({
+      projection: {
+        ...controller.state.projection,
+        threads: [makeThread()],
+        threadIndexById: { [ThreadId.makeUnsafe("thread-1")]: 0 },
+        sidebarThreadsById: buildSidebarThreadsById([makeThread()]),
+        threadIdsByProjectId: {
+          [ProjectId.makeUnsafe("project-1")]: [ThreadId.makeUnsafe("thread-1")],
+        },
+      },
+    });
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
 
     expect(controller.respondToUserInput).toHaveBeenCalledWith("user-input-1", {
       "question-1": "Large",
     });
+    expect(controller.sendMessage).not.toHaveBeenCalled();
   });
 
   it("edits Shiori provider settings via the /model overlay", async () => {
@@ -525,7 +622,7 @@ describe("App", () => {
     expect(controller.updateServerSettings).toHaveBeenCalledWith({
       providers: {
         shiori: {
-          apiBaseUrl: "https://shiori.aihttps://shiori.example",
+          apiBaseUrl: "https://shiori.example",
         },
       },
     });

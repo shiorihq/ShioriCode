@@ -397,6 +397,7 @@ export function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary 
     projectId: thread.projectId,
     projectlessCwd: thread.projectlessCwd ?? null,
     title: thread.title,
+    modelProvider: thread.modelSelection.provider,
     interactionMode: thread.interactionMode,
     session: thread.session,
     resumeState: thread.resumeState ?? "resumed",

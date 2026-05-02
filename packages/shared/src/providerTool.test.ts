@@ -38,6 +38,7 @@ describe("providerTool", () => {
       "close_agent",
       "resumeAgent",
       "wait",
+      "Task",
     ]) {
       expect(classifyProviderToolLifecycleItemType(toolName)).toBe("collab_agent_tool_call");
     }

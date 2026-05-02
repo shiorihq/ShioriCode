@@ -5,6 +5,21 @@ import * as Semaphore from "effect/Semaphore";
 import type { ServerProviderShape } from "./Services/ServerProvider";
 import { ServerSettingsError } from "contracts";
 
+const DEFAULT_REFRESH_INTERVAL = "60 seconds";
+const DEFAULT_UNHEALTHY_REFRESH_INTERVAL = "5 minutes";
+
+function refreshIntervalForSnapshot(
+  snapshot: ServerProvider,
+  input: {
+    readonly refreshInterval?: Duration.Input;
+    readonly unhealthyRefreshInterval?: Duration.Input;
+  },
+): Duration.Input {
+  return snapshot.status === "ready"
+    ? (input.refreshInterval ?? DEFAULT_REFRESH_INTERVAL)
+    : (input.unhealthyRefreshInterval ?? DEFAULT_UNHEALTHY_REFRESH_INTERVAL);
+}
+
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
@@ -14,6 +29,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly buildInitialSnapshot?: (settings: Settings) => ServerProvider;
   readonly refreshInterval?: Duration.Input;
+  readonly unhealthyRefreshInterval?: Duration.Input;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
@@ -67,8 +83,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     Effect.asVoid(applySnapshot(nextSettings)),
   ).pipe(Effect.forkScoped);
 
+  const backgroundRefreshDelay = Ref.get(snapshotRef).pipe(
+    Effect.map((snapshot) => refreshIntervalForSnapshot(snapshot, input)),
+  );
+
   yield* Effect.forever(
-    Effect.sleep(input.refreshInterval ?? "60 seconds").pipe(
+    backgroundRefreshDelay.pipe(
+      Effect.flatMap((delay) => Effect.sleep(delay)),
       Effect.flatMap(() => refreshSnapshot()),
       Effect.ignoreCause({ log: true }),
     ),

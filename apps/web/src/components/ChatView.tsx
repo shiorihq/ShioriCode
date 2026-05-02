@@ -154,7 +154,6 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import BrowserPanel from "./browser/BrowserPanel";
-import { BackgroundSubagentsPanel } from "./chat/BackgroundSubagentsPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { deriveBackgroundSubagentRows } from "./chat/subagentDetail";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -173,7 +172,6 @@ import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPane
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ComposerContextPanel } from "./chat/ComposerContextPanel";
-import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -372,13 +370,12 @@ interface ChatViewProps {
 function ProjectlessChatComposerNotice(props: { emptyThread: boolean }) {
   return (
     <div
+      aria-hidden="true"
       className={cn(
-        "relative z-10 mx-auto flex w-full min-w-0 items-center justify-center px-5 text-center text-muted-foreground/55 text-xs",
+        "relative z-10 mx-auto flex min-h-4 w-full min-w-0 items-center justify-center px-5 text-center text-muted-foreground/55 text-xs",
         props.emptyThread ? "mt-2 max-w-[50rem]" : "max-w-3xl pb-3 pt-1",
       )}
-    >
-      <p>ShioriCode uses AI, so double-check important information.</p>
-    </div>
+    />
   );
 }
 
@@ -862,6 +859,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerTaskListOpen, setIsComposerTaskListOpen] = useState(true);
   const [isBackgroundSubagentsPanelOpen, setIsBackgroundSubagentsPanelOpen] = useState(true);
+  const [isComposerQueueOpen, setIsComposerQueueOpen] = useState(true);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -5266,24 +5264,18 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   onDismiss={() => setPlanSuggestionDismissed(true)}
                 />
               )}
-              <BackgroundSubagentsPanel
-                provider={activeThread.session?.provider ?? activeThread.modelSelection.provider}
-                activities={activeThread.activities}
-                open={isBackgroundSubagentsPanelOpen}
-                onOpenChange={setIsBackgroundSubagentsPanelOpen}
-              />
               <ComposerContextPanel
                 taskList={activeTaskList}
                 taskListOpen={isComposerTaskListOpen}
-                backgroundSubagents={[]}
-                backgroundSubagentsOpen={false}
-                queuedTurns={[]}
-                queuedOpen={false}
+                backgroundSubagents={backgroundSubagentRows}
+                backgroundSubagentsOpen={isBackgroundSubagentsPanelOpen}
+                queuedTurns={queuedTurns}
+                queuedOpen={isComposerQueueOpen}
                 onTaskListOpenChange={setIsComposerTaskListOpen}
-                onBackgroundSubagentsOpenChange={() => undefined}
-                onQueuedOpenChange={() => undefined}
-                onDeleteQueuedTurn={() => undefined}
-                onEditQueuedTurn={() => undefined}
+                onBackgroundSubagentsOpenChange={setIsBackgroundSubagentsPanelOpen}
+                onQueuedOpenChange={setIsComposerQueueOpen}
+                onDeleteQueuedTurn={onDeleteQueuedTurn}
+                onEditQueuedTurn={(queuedTurnId) => void onEditQueuedTurn(queuedTurnId)}
               />
               <div className="relative">
                 {composerMenuOpen && !isComposerApprovalState && (
@@ -5303,14 +5295,11 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   data-chat-composer-frame="true"
                   className={cn(
                     "group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-                    backgroundSubagentRows.length > 0 &&
-                      isBackgroundSubagentsPanelOpen &&
-                      "-mt-6 sm:-mt-8",
                     hasDecoratedComposerFrame
                       ? ["rounded-[22px] p-px", composerProviderState.composerFrameClassName]
                       : [
-                          "glass-composer rounded-[20px] has-focus-visible:border-ring/45",
-                          isDragOverComposer && "border-primary/70 bg-accent/30",
+                          "rounded-[20px] border border-border bg-card has-focus-visible:border-ring/45",
+                          isDragOverComposer && "border-primary/70",
                         ],
                   )}
                   onDragEnter={onComposerDragEnter}
@@ -5322,6 +5311,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                     data-chat-composer-surface="true"
                     className={cn(
                       "min-w-0",
+                      !hasDecoratedComposerFrame && "rounded-[19px] bg-card",
                       hasDecoratedComposerFrame && [
                         "rounded-[20px] border bg-card shadow-sm transition-colors duration-200 has-focus-visible:border-ring/45",
                         isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
@@ -5354,13 +5344,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                           planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
                         />
                       </div>
-                    ) : null}
-                    {!isComposerApprovalState && pendingUserInputs.length === 0 ? (
-                      <QueuedMessagesPanel
-                        queuedTurns={queuedTurns}
-                        onDeleteQueuedTurn={onDeleteQueuedTurn}
-                        onEditQueuedTurn={(queuedTurnId) => void onEditQueuedTurn(queuedTurnId)}
-                      />
                     ) : null}
                     <div
                       className={cn(
@@ -5636,7 +5619,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               <ProjectlessChatComposerNotice emptyThread />
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
-              <div className="relative z-0 mx-auto -mt-3 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-card px-3 pt-4 pb-1.5">
+              <div className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5">
                 <BranchToolbar
                   threadId={activeThread.id}
                   onEnvModeChange={onEnvModeChange}

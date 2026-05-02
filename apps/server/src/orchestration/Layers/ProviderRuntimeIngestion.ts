@@ -136,7 +136,8 @@ function parentItemIdFromRuntimeEvent(event: ProviderRuntimeEvent): string | und
     return parentItemId;
   }
 
-  const parentToolUseId = asString(rawPayload?.parent_tool_use_id);
+  const parentToolUseId =
+    asString(rawPayload?.parent_tool_use_id) ?? asString(rawPayload?.parent_tool_call_id);
   if (parentToolUseId) {
     return parentToolUseId;
   }

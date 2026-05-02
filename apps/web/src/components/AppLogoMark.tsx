@@ -1,3 +1,5 @@
+import { OpenAI } from "./Icons";
+
 export function AppLogoMark(_props?: { className?: string }) {
-  return null;
+  return <OpenAI aria-hidden="true" className={_props?.className} />;
 }

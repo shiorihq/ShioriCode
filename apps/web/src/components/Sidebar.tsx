@@ -150,7 +150,6 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClickAction,
   resolveThreadRowClassName,
-  resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -166,6 +165,7 @@ import { useSidebarThreadSummaryById } from "../storeSelectors";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project } from "../types";
 import { normalizeProjectTitle } from "shared/String";
 import { ShioriWordmark } from "./ShioriWordmark";
+import { PROVIDER_BRAND_ICON_BY_PROVIDER } from "./chat/providerBrandIcons";
 
 const THREAD_PREVIEW_LIMIT = 10;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -497,7 +497,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const pendingThreadDispatch = useStore(
     (store) => store.pendingThreadDispatchById[props.threadId],
   );
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[props.threadId]);
   const runningTerminalIds = useTerminalStateStore(
     (state) =>
       selectThreadTerminalState(state.terminalStateByThreadId, props.threadId).runningTerminalIds,
@@ -533,13 +532,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isPinned = props.isPinned;
   const prStatus = prStatusIndicator(props.pr);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
-  const threadStatusPill = resolveThreadStatusPill({
-    thread: {
-      ...thread,
-      hasPendingDispatch,
-      lastVisitedAt,
-    },
-  });
   const threadMetaClassName = !isThreadBusy
     ? "pointer-events-none group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
     : "pointer-events-none";
@@ -551,6 +543,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         : "min-w-16"
     : "min-w-12";
   const threadWorkspacePath = props.threadWorkspacePath;
+  const ProviderIcon = PROVIDER_BRAND_ICON_BY_PROVIDER[thread.modelProvider];
   const actionMenuAnchor = useMemo(
     () =>
       actionMenuPosition
@@ -607,14 +600,45 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           }}
         >
           <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-            <span className="mr-2 inline-flex w-3 shrink-0 items-center justify-center pl-1">
-              <SidebarThreadStatusGlyph
-                mode={isThreadBusy ? "loader" : "dot"}
-                neutralDotClassName="bg-current opacity-50"
-                {...(!isThreadBusy && threadStatusPill?.dotClass
-                  ? { dotClassName: threadStatusPill.dotClass }
-                  : {})}
-              />
+            <span className="mr-1.5 inline-flex w-4 shrink-0 items-center justify-center">
+              {isThreadBusy ? (
+                <SidebarThreadStatusGlyph mode="loader" />
+              ) : (
+                <span className="relative inline-flex size-4 items-center justify-center">
+                  <ProviderIcon
+                    aria-hidden="true"
+                    className="pointer-events-none inline-flex size-3 shrink-0 text-muted-foreground/70 opacity-55 grayscale group-hover/menu-sub-item:hidden group-focus-within/menu-sub-item:hidden"
+                  />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          data-thread-selection-safe
+                          data-testid={`thread-pin-${thread.id}`}
+                          aria-label={`${isPinned ? "Unpin" : "Pin"} ${thread.title}`}
+                          className="absolute inset-0 hidden cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring group-hover/menu-sub-item:inline-flex group-focus-within/menu-sub-item:inline-flex"
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void props.onSetPinned(thread.id, !isPinned);
+                          }}
+                        >
+                          {isPinned ? (
+                            <PinOffIcon className="size-3.5" />
+                          ) : (
+                            <PinIcon className="size-3.5" />
+                          )}
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">{isPinned ? "Unpin" : "Pin"}</TooltipPopup>
+                  </Tooltip>
+                </span>
+              )}
             </span>
             {thread.parentThreadId !== null && (
               <Tooltip>
@@ -853,34 +877,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       </MenuGroup>
                     </MenuPopup>
                   </Menu>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          data-thread-selection-safe
-                          data-testid={`thread-pin-${thread.id}`}
-                          aria-label={`${isPinned ? "Unpin" : "Pin"} ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                          onPointerDown={(event) => {
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            void props.onSetPinned(thread.id, !isPinned);
-                          }}
-                        >
-                          {isPinned ? (
-                            <PinOffIcon className="size-3.5" />
-                          ) : (
-                            <PinIcon className="size-3.5" />
-                          )}
-                        </button>
-                      }
-                    />
-                    <TooltipPopup side="top">{isPinned ? "Unpin" : "Pin"}</TooltipPopup>
-                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger
                       render={

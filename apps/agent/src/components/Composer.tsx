@@ -13,6 +13,8 @@ export interface ComposerProps {
   readonly placeholder?: string;
   readonly disabled?: boolean;
   readonly focused: boolean;
+  readonly navigationDisabled?: boolean;
+  readonly reserveEmptyQuestionMark?: boolean;
   readonly editorMode: EditorMode;
   readonly vimMode: VimMode;
   readonly onVimModeChange: (mode: VimMode) => void;
@@ -142,6 +144,8 @@ export function Composer({
   placeholder,
   disabled,
   focused,
+  navigationDisabled = false,
+  reserveEmptyQuestionMark = false,
   editorMode,
   vimMode,
   onVimModeChange,
@@ -216,7 +220,7 @@ export function Composer({
             setCursor((current) => clampNormalCursor(value, current + 1));
             return;
           }
-          if (key.upArrow || input === "k") {
+          if (!navigationDisabled && (key.upArrow || input === "k")) {
             const { row } = cursorToRowCol(value, Math.min(cursor, value.length));
             if (row > 0) {
               setCursor(moveVerticalNormal(value, cursor, -1));
@@ -225,7 +229,7 @@ export function Composer({
             onHistoryPrev?.();
             return;
           }
-          if (key.downArrow || input === "j") {
+          if (!navigationDisabled && (key.downArrow || input === "j")) {
             const { row } = cursorToRowCol(value, Math.min(cursor, value.length));
             const rowCount = splitLines(value).length;
             if (row < rowCount - 1) {
@@ -317,7 +321,7 @@ export function Composer({
         setCursor((current) => Math.min(value.length, current + 1));
         return;
       }
-      if (key.upArrow) {
+      if (!navigationDisabled && key.upArrow) {
         const { row, col } = cursorToRowCol(value, cursor);
         if (row > 0) {
           setCursor(rowColToCursor(value, row - 1, col));
@@ -326,7 +330,7 @@ export function Composer({
         onHistoryPrev?.();
         return;
       }
-      if (key.downArrow) {
+      if (!navigationDisabled && key.downArrow) {
         const { row, col } = cursorToRowCol(value, cursor);
         const rowCount = splitLines(value).length;
         if (row < rowCount - 1) {
@@ -378,6 +382,10 @@ export function Composer({
       }
 
       if (key.ctrl || key.meta) {
+        return;
+      }
+
+      if (reserveEmptyQuestionMark && value.length === 0 && input === "?") {
         return;
       }
 

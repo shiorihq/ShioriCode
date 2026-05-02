@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type TransitionEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type TransitionEvent } from "react";
 import { useReducedMotion } from "framer-motion";
 
 import { cn } from "~/lib/utils";
@@ -19,6 +19,13 @@ export function AnimatedExpandPanel({
 }) {
   const shouldReduceMotion = useReducedMotion();
   const [isPresent, setIsPresent] = useState(open);
+  const lastOpenChildrenRef = useRef(children);
+
+  useEffect(() => {
+    if (open) {
+      lastOpenChildrenRef.current = children;
+    }
+  }, [children, open]);
 
   useEffect(() => {
     if (open) {
@@ -56,7 +63,9 @@ export function AnimatedExpandPanel({
         inert={!open ? true : undefined}
         className={cn("min-h-0 overflow-hidden", contentClassName)}
       >
-        <div className={cn(fade && "shiori-expand-panel-fade")}>{children}</div>
+        <div className={cn(fade && "shiori-expand-panel-fade")}>
+          {open ? children : lastOpenChildrenRef.current}
+        </div>
       </div>
     </div>
   );

@@ -27,7 +27,7 @@ import {
 } from "./components/Overlays";
 import { matchCommands, SLASH_COMMANDS, SlashMenu } from "./components/SlashMenu";
 import { StatusLine } from "./components/StatusLine";
-import { estimateEntryRows, isExpandableEntry, Timeline } from "./components/Timeline";
+import { isExpandableEntry, Timeline } from "./components/Timeline";
 import { Welcome } from "./components/Welcome";
 import { useTerminalDimensions } from "./hooks/useTerminalDimensions";
 import { palette } from "./theme";
@@ -67,7 +67,6 @@ function useControllerState(controller: AgentController) {
 const WELCOME_ROWS = 4;
 const STATUS_ROWS = 2;
 const COMPOSER_ROWS = 4;
-const TIMELINE_STATUS_ROWS = 1;
 const TRANSCRIPT_FOOTER_ROWS = 1;
 
 export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
@@ -191,7 +190,12 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
     });
   }, [slashMatches.length]);
 
-  const composerDisabled = transcriptMode || prompt !== null || overlay !== "none";
+  const composerDisabled =
+    transcriptMode ||
+    prompt !== null ||
+    overlay !== "none" ||
+    Boolean(currentPendingQuestion) ||
+    pendingApprovals.length > 0;
   const footerRows = transcriptMode ? TRANSCRIPT_FOOTER_ROWS : COMPOSER_ROWS;
   const errorMessage = state.error ?? null;
 
@@ -214,72 +218,9 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
 
   const timelineHeight = Math.max(
     4,
-    dimensions.rows - WELCOME_ROWS - TIMELINE_STATUS_ROWS - STATUS_ROWS - footerRows - overlayRows,
+    dimensions.rows - WELCOME_ROWS - STATUS_ROWS - footerRows - overlayRows,
   );
-
-  const measuredTimelineEntries = useMemo(
-    () =>
-      timelineEntries.map((entry) => ({
-        entry,
-        rows: estimateEntryRows(
-          entry,
-          transcriptMode || expandedIds.has(entry.id),
-          dimensions.columns,
-          transcriptMode,
-        ),
-      })),
-    [timelineEntries, transcriptMode, expandedIds, dimensions.columns],
-  );
-
-  const totalTimelineRows = useMemo(
-    () => measuredTimelineEntries.reduce((total, entry) => total + entry.rows, 0),
-    [measuredTimelineEntries],
-  );
-
-  const maxScrollOffset = Math.max(0, totalTimelineRows - timelineHeight);
-
-  // Slice entries to fit viewport, honoring scrollOffset. scrollOffset counts from
-  // the newest entry backwards: 0 = show latest, higher = show older.
-  const visibleTimelineEntries = useMemo(() => {
-    if (measuredTimelineEntries.length === 0) return [];
-    // Working from the bottom. scrollOffset = how many rows we've scrolled past the bottom.
-    let bottomIndex = measuredTimelineEntries.length - 1;
-    let skippedRows = 0;
-    while (bottomIndex >= 0 && skippedRows < scrollOffset) {
-      const row = measuredTimelineEntries[bottomIndex];
-      if (!row) break;
-      skippedRows += row.rows;
-      bottomIndex -= 1;
-    }
-    if (bottomIndex < 0) bottomIndex = 0;
-    // Now take entries upward from bottomIndex until we fill timelineHeight.
-    let used = 0;
-    let topIndex = bottomIndex;
-    while (topIndex >= 0) {
-      const row = measuredTimelineEntries[topIndex];
-      if (!row) break;
-      if (used + row.rows > timelineHeight && topIndex !== bottomIndex) break;
-      used += row.rows;
-      topIndex -= 1;
-    }
-    return measuredTimelineEntries
-      .slice(Math.max(0, topIndex + 1), bottomIndex + 1)
-      .map((item) => item.entry);
-  }, [measuredTimelineEntries, scrollOffset, timelineHeight]);
-
-  const hiddenBelow = useMemo(() => {
-    if (visibleTimelineEntries.length === 0) return 0;
-    const lastVisible = visibleTimelineEntries[visibleTimelineEntries.length - 1];
-    const lastIndex = timelineEntries.findIndex((entry) => entry.id === lastVisible?.id);
-    return Math.max(0, timelineEntries.length - 1 - lastIndex);
-  }, [timelineEntries, visibleTimelineEntries]);
-
-  const hiddenAbove = useMemo(() => {
-    if (visibleTimelineEntries.length === 0) return 0;
-    const firstVisible = visibleTimelineEntries[0];
-    const firstIndex = timelineEntries.findIndex((entry) => entry.id === firstVisible?.id);
-    return Math.max(0, firstIndex);
-  }, [timelineEntries, visibleTimelineEntries]);
+  const maxScrollOffset = 0;
 
   useEffect(() => {
     if (scrollOffset > maxScrollOffset) {
@@ -430,6 +371,10 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         exitTranscriptMode();
         return;
       }
+      if (showingSlashMenu) {
+        setComposerValue("");
+        return;
+      }
       if (editorMode === "vim" && !composerDisabled) {
         return;
       }
@@ -519,6 +464,16 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
     }
     if (key.ctrl && input === "a") {
       void runAction(() => controller.archiveSelectedThread());
+      return;
+    }
+    if (
+      !key.ctrl &&
+      !key.meta &&
+      input === "?" &&
+      overlay === "none" &&
+      composerValue.length === 0
+    ) {
+      setOverlay("help");
       return;
     }
 
@@ -638,9 +593,10 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         return;
       }
       if (providerSelection.provider === "shiori" && input === "e") {
+        const currentApiBaseUrl = state.serverConfig?.settings.providers.shiori.apiBaseUrl;
         openPrompt({
           title: "Edit Shiori API Base URL",
-          initialValue: state.serverConfig?.settings.providers.shiori.apiBaseUrl ?? "",
+          ...(currentApiBaseUrl ? { placeholder: currentApiBaseUrl } : {}),
           onSubmit: async (value) => {
             await controller.updateServerSettings({
               providers: {
@@ -760,8 +716,7 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
   if (state.phase === "loading") {
     statusHint = "connecting to backend…";
   } else if (transcriptMode) {
-    statusHint =
-      "detailed transcript · ctrl+o or q return · ↑↓ scroll · pgup/pgdn page · home/end jump";
+    statusHint = "detailed transcript · ctrl+o or q return · all entries shown";
   } else if (overlay === "switcher") {
     statusHint = "↑↓ navigate · enter switch · esc close";
   } else if (overlay === "settings") {
@@ -771,12 +726,11 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
   } else if (vimEnabled) {
     statusHint = "vim insert · esc normal · enter send · /vim disable · ctrl+o transcript";
   } else if (focusedId) {
-    statusHint =
-      "ctrl+↑↓ select · ctrl+space expand · ctrl+o transcript · pgup/pgdn scroll · esc follow";
+    statusHint = "ctrl+↑↓ select · ctrl+space expand · ctrl+o transcript · esc follow";
   }
 
   return (
-    <Box flexDirection="column" width={dimensions.columns} height={dimensions.rows}>
+    <Box flexDirection="column" width={dimensions.columns}>
       <Welcome cwd={state.cwd} />
 
       {transcriptMode ? (
@@ -790,13 +744,8 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         </Box>
       ) : null}
 
-      <Box paddingX={1} justifyContent="space-between">
-        <Text dimColor>{hiddenAbove > 0 ? `↑ ${hiddenAbove} earlier` : " "}</Text>
-        <Text dimColor>{hiddenBelow > 0 ? `${hiddenBelow} newer ↓` : " "}</Text>
-      </Box>
-
       <Timeline
-        entries={visibleTimelineEntries}
+        entries={timelineEntries}
         height={timelineHeight}
         columns={dimensions.columns}
         expandedIds={expandedIds}
@@ -893,6 +842,8 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
           {...(composerPlaceholder ? { placeholder: composerPlaceholder } : {})}
           disabled={composerDisabled}
           focused={!composerDisabled}
+          navigationDisabled={showingSlashMenu}
+          reserveEmptyQuestionMark
           editorMode={editorMode}
           vimMode={vimMode}
           onVimModeChange={setVimMode}
@@ -1003,10 +954,7 @@ function TranscriptFooter() {
       paddingLeft={2}
       width="100%"
     >
-      <Text dimColor>
-        Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll · pgup/pgdn page · home/end jump
-        · q return
-      </Text>
+      <Text dimColor>Showing detailed transcript · all entries shown · ctrl+o or q return</Text>
     </Box>
   );
 }
@@ -1018,9 +966,7 @@ function HelpPanel() {
         Shortcuts
       </Text>
       <Text dimColor>ctrl+p threads · ctrl+n new · ctrl+s settings · ctrl+r interrupt</Text>
-      <Text dimColor>
-        ctrl+o transcript · ctrl+↑↓ select entry · ctrl+space expand · pgup/pgdn scroll
-      </Text>
+      <Text dimColor>ctrl+o transcript · ctrl+↑↓ select entry · ctrl+space expand</Text>
       <Text dimColor>
         /vim toggle · esc normal · i/a/o insert · h/j/k/l move · w/b/e words · 0/$ line
       </Text>

@@ -194,6 +194,7 @@ function sidebarThreadSummariesEqual(
     left.projectId === right.projectId &&
     left.projectlessCwd === right.projectlessCwd &&
     left.title === right.title &&
+    left.modelProvider === right.modelProvider &&
     left.interactionMode === right.interactionMode &&
     left.session === right.session &&
     left.resumeState === right.resumeState &&

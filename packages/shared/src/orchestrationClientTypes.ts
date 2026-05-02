@@ -127,6 +127,7 @@ export interface SidebarThreadSummary {
   projectId: ProjectId | null;
   projectlessCwd?: string | null;
   title: string;
+  modelProvider: ProviderKind;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   resumeState: OrchestrationThreadResumeState;

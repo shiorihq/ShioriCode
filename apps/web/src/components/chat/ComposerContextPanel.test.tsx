@@ -1,10 +1,32 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { ThreadId } from "contracts";
 import { describe, expect, it, vi } from "vitest";
 
+import { type QueuedTurnDraft } from "../../queuedTurnsStore";
 import { ComposerContextPanel } from "./ComposerContextPanel";
 
 describe("ComposerContextPanel", () => {
-  it("renders the shared task and agent sections", () => {
+  it("renders the shared queue, task, and agent sections", () => {
+    const queuedTurn = {
+      id: "queued-1",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      messageId: "message-1",
+      text: "Follow up on the queue rendering",
+      attachments: [],
+      modelSelection: { provider: "codex", model: "gpt-5.1" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      titleSeed: "Follow up on the queue rendering",
+      createdAt: "2026-04-23T12:01:00.000Z",
+      composerSnapshot: {
+        prompt: "Follow up on the queue rendering",
+        persistedAttachments: [],
+        terminalContexts: [],
+      },
+      status: "queued",
+      errorMessage: null,
+    } as QueuedTurnDraft;
+
     const markup = renderToStaticMarkup(
       <ComposerContextPanel
         taskList={{
@@ -28,7 +50,7 @@ describe("ComposerContextPanel", () => {
           ],
         }}
         taskListOpen
-        queuedTurns={[]}
+        queuedTurns={[queuedTurn]}
         queuedOpen
         backgroundSubagents={[
           {
@@ -57,6 +79,8 @@ describe("ComposerContextPanel", () => {
 
     expect(markup).toContain("Tasks");
     expect(markup).toContain("1/2");
+    expect(markup).toContain("Queued");
+    expect(markup).toContain("Follow up on the queue rendering");
     expect(markup).toContain("Background agents");
     expect(markup).toContain("Harvey");
     expect(markup).toContain("Inspect the composer stack");

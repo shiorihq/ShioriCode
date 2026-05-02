@@ -168,6 +168,12 @@ interface ToolInFlight {
   readonly lastEmittedInputFingerprint?: string;
 }
 
+interface SubagentToolCandidate {
+  readonly itemId: string;
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -187,6 +193,8 @@ interface ClaudeSessionContext {
     checkpointUuid?: string;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
+  readonly subagentToolCandidates: Map<string, SubagentToolCandidate>;
+  readonly subagentTaskParentToolIds: Map<string, string>;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
@@ -561,6 +569,138 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
 
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
   return summarizeProviderToolInvocation(toolName, input) ?? providerToolTitle(toolName);
+}
+
+function asTrimmedUnknownString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isSubagentToolCandidate(tool: ToolInFlight): boolean {
+  return tool.itemType === "collab_agent_tool_call";
+}
+
+function subagentToolTaskType(input: Record<string, unknown>): string | undefined {
+  return (
+    asTrimmedUnknownString(input.subagent_type) ??
+    asTrimmedUnknownString(input.subagentType) ??
+    asTrimmedUnknownString(input.agent_type) ??
+    asTrimmedUnknownString(input.agentType)
+  );
+}
+
+function subagentToolDescription(input: Record<string, unknown>): string | undefined {
+  return (
+    asTrimmedUnknownString(input.description) ??
+    asTrimmedUnknownString(input.task) ??
+    asTrimmedUnknownString(input.title) ??
+    asTrimmedUnknownString(input.prompt) ??
+    asTrimmedUnknownString(input.message)
+  );
+}
+
+function normalizeMatchString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().toLowerCase();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function scoreSubagentToolCandidate(candidate: SubagentToolCandidate, message: SDKMessage): number {
+  if (message.type !== "system") {
+    return 0;
+  }
+
+  const record = message as unknown as Record<string, unknown>;
+  const messageTaskType = normalizeMatchString(asTrimmedUnknownString(record.task_type));
+  const messageDescription = normalizeMatchString(asTrimmedUnknownString(record.description));
+  const candidateTaskType = normalizeMatchString(subagentToolTaskType(candidate.input));
+  const candidateDescription = normalizeMatchString(subagentToolDescription(candidate.input));
+  let score = 0;
+
+  if (messageTaskType && candidateTaskType && messageTaskType === candidateTaskType) {
+    score += 4;
+  }
+  if (messageDescription && candidateDescription && messageDescription === candidateDescription) {
+    score += 6;
+  }
+
+  return score;
+}
+
+function inferClaudeTaskParentToolUseId(
+  context: ClaudeSessionContext,
+  message: SDKMessage,
+): string | undefined {
+  if (message.type !== "system") {
+    return undefined;
+  }
+
+  const record = message as unknown as Record<string, unknown>;
+  const explicitToolUseId =
+    asTrimmedUnknownString(record.tool_use_id) ?? asTrimmedUnknownString(record.parent_tool_use_id);
+  const taskId = asTrimmedUnknownString(record.task_id);
+  if (explicitToolUseId) {
+    if (taskId) {
+      context.subagentTaskParentToolIds.set(taskId, explicitToolUseId);
+    }
+    return explicitToolUseId;
+  }
+
+  if (taskId) {
+    const cached = context.subagentTaskParentToolIds.get(taskId);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  let bestCandidate: SubagentToolCandidate | undefined;
+  let bestScore = 0;
+  for (const candidate of context.subagentToolCandidates.values()) {
+    const score = scoreSubagentToolCandidate(candidate, message);
+    if (score > bestScore) {
+      bestCandidate = candidate;
+      bestScore = score;
+    }
+  }
+
+  const inferred =
+    bestCandidate && bestScore > 0
+      ? bestCandidate.itemId
+      : context.subagentToolCandidates.size === 1
+        ? Array.from(context.subagentToolCandidates.values())[0]?.itemId
+        : undefined;
+  if (taskId && inferred) {
+    context.subagentTaskParentToolIds.set(taskId, inferred);
+  }
+  return inferred;
+}
+
+function withClaudeTaskParentToolUseId(
+  message: SDKMessage,
+  parentToolUseId: string | undefined,
+): SDKMessage | Record<string, unknown> {
+  if (!parentToolUseId || typeof message !== "object" || message === null) {
+    return message;
+  }
+  return {
+    ...(message as unknown as Record<string, unknown>),
+    tool_use_id: parentToolUseId,
+  };
+}
+
+function inferClaudeTaskType(
+  context: ClaudeSessionContext,
+  message: SDKMessage,
+  parentToolUseId: string | undefined,
+): string | undefined {
+  if (message.type !== "system") {
+    return undefined;
+  }
+  const record = message as unknown as Record<string, unknown>;
+  return (
+    asTrimmedUnknownString(record.task_type) ??
+    (parentToolUseId
+      ? subagentToolTaskType(context.subagentToolCandidates.get(parentToolUseId)?.input ?? {})
+      : undefined)
+  );
 }
 
 function titleForTool(itemType: CanonicalItemType, toolName?: string): string {
@@ -1722,6 +1862,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ? toolInputFingerprint(parsedInput)
             : undefined;
         context.inFlightTools.set(event.index, nextTool);
+        if (isSubagentToolCandidate(nextTool)) {
+          context.subagentToolCandidates.set(nextTool.itemId, {
+            itemId: nextTool.itemId,
+            toolName: nextTool.toolName,
+            input: nextTool.input,
+          });
+        }
 
         if (
           !parsedInput ||
@@ -1817,6 +1964,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(inputFingerprint ? { lastEmittedInputFingerprint: inputFingerprint } : {}),
       };
       context.inFlightTools.set(index, tool);
+      if (isSubagentToolCandidate(tool)) {
+        context.subagentToolCandidates.set(tool.itemId, {
+          itemId: tool.itemId,
+          toolName: tool.toolName,
+          input: tool.input,
+        });
+      }
 
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -2194,18 +2348,26 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "task_started":
+      case "task_started": {
+        const parentToolUseId = inferClaudeTaskParentToolUseId(context, message);
+        const taskType = inferClaudeTaskType(context, message, parentToolUseId);
         yield* offerRuntimeEvent({
           ...base,
+          raw: {
+            ...base.raw,
+            payload: withClaudeTaskParentToolUseId(message, parentToolUseId),
+          },
           type: "task.started",
           payload: {
             taskId: RuntimeTaskId.makeUnsafe(message.task_id),
             description: message.description,
-            ...(message.task_type ? { taskType: message.task_type } : {}),
+            ...(taskType ? { taskType } : {}),
           },
         });
         return;
-      case "task_progress":
+      }
+      case "task_progress": {
+        const parentToolUseId = inferClaudeTaskParentToolUseId(context, message);
         if (message.usage) {
           const normalizedUsage = normalizeClaudeTokenUsage(
             message.usage,
@@ -2218,6 +2380,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               ...base,
               eventId: usageStamp.eventId,
               createdAt: usageStamp.createdAt,
+              raw: {
+                ...base.raw,
+                payload: withClaudeTaskParentToolUseId(message, parentToolUseId),
+              },
               type: "thread.token-usage.updated",
               payload: {
                 usage: normalizedUsage,
@@ -2227,6 +2393,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
         yield* offerRuntimeEvent({
           ...base,
+          raw: {
+            ...base.raw,
+            payload: withClaudeTaskParentToolUseId(message, parentToolUseId),
+          },
           type: "task.progress",
           payload: {
             taskId: RuntimeTaskId.makeUnsafe(message.task_id),
@@ -2237,7 +2407,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "task_notification":
+      }
+      case "task_notification": {
+        const parentToolUseId = inferClaudeTaskParentToolUseId(context, message);
         if (message.usage) {
           const normalizedUsage = normalizeClaudeTokenUsage(
             message.usage,
@@ -2250,6 +2422,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               ...base,
               eventId: usageStamp.eventId,
               createdAt: usageStamp.createdAt,
+              raw: {
+                ...base.raw,
+                payload: withClaudeTaskParentToolUseId(message, parentToolUseId),
+              },
               type: "thread.token-usage.updated",
               payload: {
                 usage: normalizedUsage,
@@ -2259,6 +2435,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
         yield* offerRuntimeEvent({
           ...base,
+          raw: {
+            ...base.raw,
+            payload: withClaudeTaskParentToolUseId(message, parentToolUseId),
+          },
           type: "task.completed",
           payload: {
             taskId: RuntimeTaskId.makeUnsafe(message.task_id),
@@ -2269,6 +2449,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      }
       case "files_persisted":
         yield* offerRuntimeEvent({
           ...base,
@@ -3127,6 +3308,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pendingUserInputs,
         turns: [],
         inFlightTools,
+        subagentToolCandidates: new Map(),
+        subagentTaskParentToolIds: new Map(),
         turnState: undefined,
         lastKnownContextWindow: undefined,
         lastKnownTokenUsage: undefined,

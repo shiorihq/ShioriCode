@@ -1216,7 +1216,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1257,6 +1257,25 @@ describe("ClaudeAdapterLive", () => {
       } as unknown as SDKMessage);
 
       harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-review-1",
+        description: "Review the database layer",
+        session_id: "sdk-session-task",
+        uuid: "task-started-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-review-1",
+        description: "Review the database layer",
+        summary: "Reading migration files.",
+        session_id: "sdk-session-task",
+        uuid: "task-progress-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
         type: "assistant",
         session_id: "sdk-session-task",
         uuid: "assistant-task-1",
@@ -1282,6 +1301,23 @@ describe("ClaudeAdapterLive", () => {
       if (toolStarted?.type === "item.started") {
         assert.equal(toolStarted.payload.itemType, "collab_agent_tool_call");
         assert.equal(toolStarted.payload.title, "Subagent task");
+      }
+      const taskStarted = runtimeEvents.find((event) => event.type === "task.started");
+      assert.equal(taskStarted?.type, "task.started");
+      if (taskStarted?.type === "task.started") {
+        assert.equal(taskStarted.payload.taskType, "code-reviewer");
+        assert.equal(
+          (taskStarted.raw?.payload as { tool_use_id?: unknown } | undefined)?.tool_use_id,
+          "tool-task-1",
+        );
+      }
+      const taskProgress = runtimeEvents.find((event) => event.type === "task.progress");
+      assert.equal(taskProgress?.type, "task.progress");
+      if (taskProgress?.type === "task.progress") {
+        assert.equal(
+          (taskProgress.raw?.payload as { tool_use_id?: unknown } | undefined)?.tool_use_id,
+          "tool-task-1",
+        );
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

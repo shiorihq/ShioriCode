@@ -286,9 +286,14 @@ function normalizeIdentifier(value: string | null | undefined): string | null {
 }
 
 function deriveSubagentStatus(input: {
+  rootEntry: WorkLogEntry;
   childEntries: ReadonlyArray<WorkLogEntry>;
   taskActivities: ReadonlyArray<OrchestrationThreadActivity>;
 }): CodexBackgroundSubagentStatus {
+  if (input.rootEntry.running === true) {
+    return "active";
+  }
+
   if (input.childEntries.some((entry) => entry.running)) {
     return "active";
   }
@@ -332,6 +337,7 @@ function isBackgroundSubagentRootEntry(input: {
   entry: WorkLogEntry;
   taskActivities: ReadonlyArray<OrchestrationThreadActivity>;
   providerThreadIds: ReadonlyArray<string>;
+  childEntries: ReadonlyArray<WorkLogEntry>;
 }): boolean {
   if (!isSubagentWorkEntry(input.entry)) {
     return false;
@@ -357,6 +363,8 @@ function isBackgroundSubagentRootEntry(input: {
     structuredResult?.run_in_background === true ||
     input.providerThreadIds.length > 0 ||
     input.taskActivities.length > 0 ||
+    (input.provider === "kimiCode" &&
+      (input.entry.running === true || input.childEntries.length > 0)) ||
     input.provider === "codex"
   );
 }
@@ -410,12 +418,14 @@ export function deriveBackgroundSubagentRows(input: {
       : [];
     const taskIds = collectDistinctTaskIds(taskActivities);
     const providerThreadIds = extractCodexProviderThreadIdsFromWorkEntry(entry);
+    const childEntries = collectSubagentDescendantEntries(input.workEntries, entry.itemId);
     if (
       !isBackgroundSubagentRootEntry({
         provider: input.provider,
         entry,
         taskActivities,
         providerThreadIds,
+        childEntries,
       })
     ) {
       return [];
@@ -450,7 +460,6 @@ export function deriveBackgroundSubagentRows(input: {
       return [];
     }
 
-    const childEntries = collectSubagentDescendantEntries(input.workEntries, entry.itemId);
     const agentRole =
       asTrimmedString(toolInput?.agent_type) ??
       asTrimmedString(toolInput?.subagent_type) ??
@@ -465,6 +474,7 @@ export function deriveBackgroundSubagentRows(input: {
       asTrimmedString(toolResult?.summary) ??
       null;
     const status = deriveSubagentStatus({
+      rootEntry: entry,
       childEntries,
       taskActivities,
     });

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import type { ServerProvider } from "contracts";
 import { Deferred, Effect, Option, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider";
 
@@ -69,4 +70,36 @@ it.effect("returns the cached initial snapshot while the first refresh is still 
       assert.strictEqual(snapshot.message, "Codex is ready.");
     }),
   ),
+);
+
+it.effect("backs off background refreshes while a provider is unhealthy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let checkCount = 0;
+
+      yield* makeManagedServerProvider({
+        getSettings: Effect.succeed({ enabled: true }),
+        streamSettings: Stream.empty,
+        haveSettingsChanged: () => false,
+        buildInitialSnapshot: () => pendingSnapshot,
+        refreshInterval: "1 second",
+        unhealthyRefreshInterval: "5 seconds",
+        checkProvider: Effect.sync(() => {
+          checkCount += 1;
+          return pendingSnapshot;
+        }),
+      });
+
+      yield* Effect.yieldNow;
+      assert.strictEqual(checkCount, 1);
+
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      assert.strictEqual(checkCount, 1);
+
+      yield* TestClock.adjust("4 seconds");
+      yield* Effect.yieldNow;
+      assert.strictEqual(checkCount, 2);
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
 );
