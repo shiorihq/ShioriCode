@@ -5,20 +5,24 @@ import { cn } from "~/lib/utils";
 
 /** Animates a panel open/close via grid-template-rows transition. */
 export function AnimatedExpandPanel({
+  animateOnMount = true,
   open,
   children,
   className,
   contentClassName,
   fade = false,
+  unmountOnExit = true,
 }: {
+  animateOnMount?: boolean;
   open: boolean;
   children: ReactNode;
   className?: string;
   contentClassName?: string;
   fade?: boolean;
+  unmountOnExit?: boolean;
 }) {
   const shouldReduceMotion = useReducedMotion();
-  const [isPresent, setIsPresent] = useState(open);
+  const [isPresent, setIsPresent] = useState(() => open || !unmountOnExit);
   const lastOpenChildrenRef = useRef(children);
 
   useEffect(() => {
@@ -28,6 +32,11 @@ export function AnimatedExpandPanel({
   }, [children, open]);
 
   useEffect(() => {
+    if (!unmountOnExit) {
+      setIsPresent(true);
+      return;
+    }
+
     if (open) {
       setIsPresent(true);
       return;
@@ -36,13 +45,13 @@ export function AnimatedExpandPanel({
     if (shouldReduceMotion) {
       setIsPresent(false);
     }
-  }, [open, shouldReduceMotion]);
+  }, [open, shouldReduceMotion, unmountOnExit]);
 
   const handleTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {
       return;
     }
-    if (event.propertyName !== "grid-template-rows" || open) {
+    if (!unmountOnExit || event.propertyName !== "grid-template-rows" || open) {
       return;
     }
     setIsPresent(false);
@@ -55,6 +64,7 @@ export function AnimatedExpandPanel({
   return (
     <div
       data-state={open ? "open" : "closed"}
+      data-animate-on-mount={animateOnMount ? undefined : "false"}
       onTransitionEnd={handleTransitionEnd}
       className={cn("shiori-expand-panel grid", className)}
     >

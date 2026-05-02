@@ -19,7 +19,6 @@ import {
 import {
   useCallback,
   useEffect,
-  Fragment,
   memo,
   useMemo,
   useRef,
@@ -1906,7 +1905,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
         const animatedThreadIds = pinnedCollapsedThread
           ? visibleProjectThreads.map((thread) => thread.id)
           : renderedThreadIds;
-        const showEmptyThreadState = project.expanded && projectThreads.length === 0;
+        const showEmptyThreadState = projectThreads.length === 0;
         const emptyThreadStateLabel =
           archivedThreadCount > 0
             ? getArchivedOnlyProjectEmptyStateLabel(archivedThreadCount)
@@ -2343,21 +2342,23 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                 </div>
               </SidebarMenuSubItem>
             ) : null}
-            {animatedThreadIds.map((threadId) =>
-              pinnedCollapsedThreadId === null ? (
-                <Fragment key={threadId}>{renderProjectThreadRow(threadId)}</Fragment>
-              ) : (
-                <AnimatedExpandPanel
-                  key={threadId}
-                  open={project.expanded || pinnedCollapsedThreadId === threadId}
-                  fade
-                  className="w-full"
-                  contentClassName="min-h-0"
-                >
-                  {renderProjectThreadRow(threadId)}
-                </AnimatedExpandPanel>
-              ),
-            )}
+            {animatedThreadIds.map((threadId) => (
+              <AnimatedExpandPanel
+                key={threadId}
+                open={
+                  project.expanded ||
+                  pinnedCollapsedThreadId === null ||
+                  pinnedCollapsedThreadId === threadId
+                }
+                fade
+                animateOnMount={false}
+                unmountOnExit={false}
+                className="w-full"
+                contentClassName="min-h-0"
+              >
+                {renderProjectThreadRow(threadId)}
+              </AnimatedExpandPanel>
+            ))}
 
             {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">

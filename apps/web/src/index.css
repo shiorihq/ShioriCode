@@ -191,11 +191,12 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
 }
 
 @starting-style {
-  .shiori-expand-panel[data-state="open"] {
+  .shiori-expand-panel[data-state="open"]:not([data-animate-on-mount="false"]) {
     grid-template-rows: 0fr;
   }
 
-  .shiori-expand-panel[data-state="open"] .shiori-expand-panel-fade {
+  .shiori-expand-panel[data-state="open"]:not([data-animate-on-mount="false"])
+    .shiori-expand-panel-fade {
     opacity: 0;
     transform: translateY(-0.25rem);
   }
