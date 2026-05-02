@@ -3229,8 +3229,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(firstOption).toBeInTheDocument();
       await firstOption.click();
 
-      await expect.element(page.getByText("Previous")).toBeInTheDocument();
-      await expect.element(page.getByText("Submit answers")).toBeInTheDocument();
+      await expect.element(page.getByLabelText("Previous question")).toBeInTheDocument();
+      await expect.element(page.getByText("Submit")).toBeInTheDocument();
 
       await mounted.setContainerSize(COMPACT_FOOTER_VIEWPORT);
       await expectComposerActionsContained();

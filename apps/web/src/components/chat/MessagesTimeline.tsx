@@ -2655,7 +2655,6 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
                     <li key={`work-row:${workEntry.id}`} className={groupedEntryClassName}>
                       <MinimalWorkEntry
                         workEntry={workEntry}
-                        asListItem
                         indented={false}
                         cwd={markdownCwd}
                         showMcpToolboxIcon={false}
@@ -2669,7 +2668,6 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
                     <li key={`work-row:${workEntry.id}`} className={groupedEntryClassName}>
                       <MinimalWorkEntry
                         workEntry={workEntry}
-                        asListItem
                         indented={false}
                         cwd={markdownCwd}
                         showMcpToolboxIcon={false}

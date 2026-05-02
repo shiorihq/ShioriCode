@@ -267,60 +267,68 @@ const BackgroundSubagentRow = memo(function BackgroundSubagentRow(props: {
   const [expanded, setExpanded] = useState(false);
   const hasChildren = row.childEntries.length > 0;
   const statusText = row.status === "active" ? "working" : "waiting";
+  const headingContent = (
+    <>
+      <div className="min-w-0 flex-1 leading-snug">
+        <div className="truncate text-[12.5px] font-medium text-foreground">
+          <span className={backgroundSubagentNameClass(index)}>{row.displayName}</span>
+          {row.agentRole ? (
+            <span className="font-normal text-muted-foreground/70"> ({row.agentRole})</span>
+          ) : null}
+          <span
+            className={cn(
+              "font-normal text-muted-foreground/80",
+              row.status === "active" && "shimmer shimmer-spread-200",
+            )}
+          >
+            {" "}
+            {statusText}
+          </span>
+        </div>
+        {row.instruction ? (
+          <p className="mt-px truncate text-[11.5px] text-muted-foreground/65">{row.instruction}</p>
+        ) : null}
+        {!row.hasContents ? (
+          <p className="mt-px truncate text-[11.5px] text-muted-foreground/50">No contents</p>
+        ) : null}
+      </div>
+      {hasChildren ? (
+        <span
+          data-testid={`background-subagent-row-chevron-${row.id}`}
+          className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/55"
+          aria-hidden
+        >
+          {expanded ? <ChevronUpIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
+        </span>
+      ) : null}
+    </>
+  );
 
   return (
-    <div className="border-t border-border/35 px-4 py-2 first:border-t-0">
-      <button
-        type={hasChildren ? "button" : undefined}
-        className={cn(
-          "flex w-full min-w-0 items-start gap-2.5 text-left",
-          hasChildren && "cursor-pointer focus-visible:outline-none",
-        )}
-        onClick={hasChildren ? () => setExpanded((current) => !current) : undefined}
-        aria-expanded={hasChildren ? expanded : undefined}
-      >
-        <div className="min-w-0 flex-1 leading-snug">
-          <div className="truncate text-[12.5px] font-medium text-foreground">
-            <span className={backgroundSubagentNameClass(index)}>{row.displayName}</span>
-            {row.agentRole ? (
-              <span className="font-normal text-muted-foreground/70"> ({row.agentRole})</span>
-            ) : null}
-            <span
-              className={cn(
-                "font-normal text-muted-foreground/80",
-                row.status === "active" && "shimmer shimmer-spread-200",
-              )}
-            >
-              {" "}
-              {statusText}
-            </span>
-          </div>
-          {row.instruction ? (
-            <p className="mt-px truncate text-[11.5px] text-muted-foreground/65">
-              {row.instruction}
-            </p>
-          ) : null}
-          {!row.hasContents ? (
-            <p className="mt-px truncate text-[11.5px] text-muted-foreground/50">No contents</p>
-          ) : null}
-        </div>
-        {hasChildren ? (
-          <span
-            className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground/55"
-            aria-hidden
-          >
-            {expanded ? (
-              <ChevronUpIcon className="size-4" />
-            ) : (
-              <ChevronDownIcon className="size-4" />
-            )}
-          </span>
-        ) : null}
-      </button>
+    <div
+      className="border-t border-border/35 px-4 py-2 first:border-t-0"
+      data-background-subagent-row="true"
+      data-testid={`background-subagent-row-${row.id}`}
+    >
+      {hasChildren ? (
+        <button
+          type="button"
+          className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left focus-visible:outline-none"
+          onClick={() => setExpanded((current) => !current)}
+          aria-expanded={expanded}
+          data-background-subagent-row-toggle="true"
+          data-testid={`background-subagent-row-toggle-${row.id}`}
+        >
+          {headingContent}
+        </button>
+      ) : (
+        <div className="flex w-full min-w-0 items-start gap-2.5 text-left">{headingContent}</div>
+      )}
       {hasChildren ? (
         <AnimatedExpandPanel open={expanded}>
           <MaskedScrollViewport
             dependencyKey={row.childEntries.length}
+            data-background-subagent-activity-list="true"
             className="max-h-40 overflow-y-auto overscroll-contain pt-2"
           >
             {row.childEntries.map((entry) => (
@@ -446,22 +454,24 @@ export const ComposerContextPanel = memo(function ComposerContextPanel(
           </ComposerContextSection>
         ) : null}
         {backgroundSubagents ? (
-          <ComposerContextSection
-            title="Background agents"
-            icon={BotIcon}
-            count={String(backgroundSubagents.length)}
-            open={props.backgroundSubagentsOpen}
-            onOpenChange={props.onBackgroundSubagentsOpenChange}
-          >
-            <FadedListViewport
-              scrollable={backgroundSubagents.length > MAX_VISIBLE_BACKGROUND_SUBAGENTS}
-              ariaLabel="Background agents list"
+          <div data-chat-background-subagents-panel="true">
+            <ComposerContextSection
+              title="Background agents"
+              icon={BotIcon}
+              count={String(backgroundSubagents.length)}
+              open={props.backgroundSubagentsOpen}
+              onOpenChange={props.onBackgroundSubagentsOpenChange}
             >
-              {backgroundSubagents.map((row, index) => (
-                <BackgroundSubagentRow key={row.id} row={row} index={index} />
-              ))}
-            </FadedListViewport>
-          </ComposerContextSection>
+              <FadedListViewport
+                scrollable={backgroundSubagents.length > MAX_VISIBLE_BACKGROUND_SUBAGENTS}
+                ariaLabel="Background agents list"
+              >
+                {backgroundSubagents.map((row, index) => (
+                  <BackgroundSubagentRow key={row.id} row={row} index={index} />
+                ))}
+              </FadedListViewport>
+            </ComposerContextSection>
+          </div>
         ) : null}
       </div>
     </div>
