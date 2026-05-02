@@ -74,7 +74,6 @@ import {
   formatWorkEntry,
   getGroupedWorkEntryExpansionKey,
   getDisplayedWorkEntries,
-  isFileChangeWorkEntry,
   isMcpToolWorkEntry,
   isRuntimeDiagnosticWorkEntry,
   isSkillWorkEntry,
@@ -536,7 +535,6 @@ function MessagesTimelineView({
       if (shouldRenderFlatWorkRowAsGroup(row)) {
         const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
         const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
-        const isEditGroup = entries.every(isFileChangeWorkEntry);
         return (
           <div className={wrapperClassName}>
             <GroupedWorkEntries
@@ -551,7 +549,6 @@ function MessagesTimelineView({
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onHeightChange={scheduleTimelineMeasure}
-              isEditGroup={isEditGroup}
               onToggleGroup={() => {
                 onToggleWorkGroup(groupId, isExpanded);
                 scheduleTimelineMeasure();
@@ -592,7 +589,6 @@ function MessagesTimelineView({
     const isExpanded = depth > 0 || isWorkRowExpanded(row, expandedWorkGroups);
     const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
     const groupItemsId = `work-group-items-${groupId}`;
-    const isEditGroup = entries.every(isFileChangeWorkEntry);
 
     return (
       <div className={wrapperClassName}>
@@ -608,7 +604,6 @@ function MessagesTimelineView({
           expandedWorkGroups={expandedWorkGroups}
           onToggleWorkGroup={onToggleWorkGroup}
           onHeightChange={scheduleTimelineMeasure}
-          isEditGroup={isEditGroup}
           onToggleGroup={() => {
             onToggleWorkGroup(groupId, isExpanded);
             scheduleTimelineMeasure();
@@ -2368,7 +2363,6 @@ type GroupedWorkEntriesProps = {
   onToggleWorkGroup: (groupId: string, currentlyExpanded: boolean) => void;
   onToggleGroup: () => void;
   onHeightChange?: (() => void) | undefined;
-  isEditGroup?: boolean;
 };
 
 const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEntriesProps) {
@@ -2377,7 +2371,6 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
     entries,
     groupItemsId,
     inlineEntries,
-    isEditGroup = false,
     isExpanded,
     isInProgress,
     markdownCwd,
@@ -2394,7 +2387,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
   const iconKind = useMemo(() => deriveWorkGroupIconKind(entries), [entries]);
   const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
   const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
-  const shouldUseScrollViewport = isExpanded && !isEditGroup;
+  const shouldUseScrollViewport = isExpanded;
   const shouldAutoStickScrollViewport = shouldUseScrollViewport && (isInProgress || nested);
   const {
     bottomFadeStrength: entriesBottomFadeStrength,
@@ -2708,7 +2701,6 @@ function areGroupedWorkEntriesPropsEqual(
     previous.entries !== next.entries ||
     previous.groupItemsId !== next.groupItemsId ||
     previous.inlineEntries !== next.inlineEntries ||
-    previous.isEditGroup !== next.isEditGroup ||
     previous.isExpanded !== next.isExpanded ||
     previous.isInProgress !== next.isInProgress ||
     previous.markdownCwd !== next.markdownCwd ||

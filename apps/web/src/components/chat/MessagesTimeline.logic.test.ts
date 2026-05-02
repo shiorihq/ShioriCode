@@ -479,7 +479,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
   });
 
-  it("groups contiguous create, write, and delete tool calls into a single edit work row", () => {
+  it("groups contiguous create, write, and delete tool calls into a single work row", () => {
     const timelineEntries: TimelineEntry[] = [
       {
         id: "entry-create-1",
@@ -1021,7 +1021,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("keeps distinct workgroup kinds in separate rows", () => {
+  it("groups edits with adjacent normal tool work", () => {
     const timelineEntries: TimelineEntry[] = [
       {
         id: "work-edit",
@@ -1088,16 +1088,15 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     const workRows = rows.filter((row) => row.kind === "work");
-    expect(workRows).toHaveLength(2);
-    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-edit"]);
-    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual([
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "work-edit",
       "work-read",
       "work-command",
       "work-web-search",
     ]);
-    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe("Edited 1 file");
-    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe(
-      "Explored 1 file, ran 1 command, searched web 1 time",
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Edited 1 file, explored 1 file, ran 1 command, searched web 1 time",
     );
   });
 
@@ -1296,7 +1295,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
   });
 
-  it("distributes reasoning entries into adjacent extreme workgroups instead of separate top-level rows", () => {
+  it("distributes reasoning entries into the adjacent normal workgroup", () => {
     const timelineEntries: TimelineEntry[] = [
       {
         id: "reasoning-before-edit",
@@ -1360,14 +1359,21 @@ describe("deriveMessagesTimelineRows", () => {
 
     const workRows = rows.filter((row) => row.kind === "work");
     const reasoningRows = rows.filter((row) => row.kind === "reasoning");
-    expect(workRows).toHaveLength(2);
+    expect(workRows).toHaveLength(1);
     expect(reasoningRows).toHaveLength(0);
-    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-edit"]);
-    expect(workRows[1]?.groupedEntries.map((entry) => entry.id)).toEqual(["work-command"]);
-    expect(workRows[0]?.inlineEntries?.map((entry) => entry.kind)).toEqual(["reasoning", "work"]);
-    expect(workRows[1]?.inlineEntries?.map((entry) => entry.kind)).toEqual(["reasoning", "work"]);
-    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe("Edited 1 file");
-    expect(buildWorkGroupSummary(workRows[1]!.groupedEntries, false)).toBe("Ran 1 command");
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "work-edit",
+      "work-command",
+    ]);
+    expect(workRows[0]?.inlineEntries?.map((entry) => entry.kind)).toEqual([
+      "reasoning",
+      "work",
+      "reasoning",
+      "work",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Edited 1 file, ran 1 command",
+    );
   });
 
   it("does not group consecutive status updates into one work disclosure", () => {

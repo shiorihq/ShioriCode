@@ -2729,8 +2729,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Edited 1 file");
-    expect(markup).toContain("Ran 1 command");
+    expect(markup).toContain("Edited 1 file, ran 1 command");
     expect(markup).toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="reasoning"');
   });

@@ -3,7 +3,9 @@ import {
   ArrowUpDownIcon,
   ChevronDownIcon,
   Columns2Icon,
+  FolderClosedIcon,
   FolderIcon,
+  FolderOpenIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   CopyIcon,
@@ -2240,7 +2242,15 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
               });
             }}
           >
-            <span className="min-w-0 shrink truncate text-[13px] text-muted-foreground/72">
+            {project.expanded ? (
+              <FolderOpenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground/60" />
+            ) : (
+              <FolderClosedIcon
+                aria-hidden
+                className="size-3.5 shrink-0 text-muted-foreground/60"
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground/72">
               {project.name}
             </span>
             <ChevronDownIcon

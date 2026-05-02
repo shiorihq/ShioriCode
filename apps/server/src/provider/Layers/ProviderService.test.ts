@@ -7,10 +7,13 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ServerSettings,
+  ServerSettingsPatch,
   ProviderTurnStartResult,
 } from "contracts";
 import {
   ApprovalRequestId,
+  DEFAULT_SERVER_SETTINGS,
   EventId,
   type ProviderKind,
   ProviderSessionStartInput,
@@ -44,6 +47,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { deepMerge, type DeepPartial } from "shared/Struct";
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
@@ -390,6 +394,177 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     assert.include(failure.issue, "Provider 'claudeAgent' is disabled in ShioriCode settings.");
     assert.equal(claude.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive rejects routed operations for disabled providers before adapter access",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const claude = makeFakeCodexAdapter("claudeAgent");
+      const registry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "codex"
+            ? Effect.succeed(codex.adapter)
+            : provider === "claudeAgent"
+              ? Effect.succeed(claude.adapter)
+              : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
+      };
+      const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+      const serverSettingsLayer = ServerSettingsService.layerTest({
+        providers: {
+          claudeAgent: {
+            enabled: false,
+          },
+        },
+      });
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(serverSettingsLayer),
+        Layer.provideMerge(AnalyticsService.layerTest),
+      );
+      const testLayer = Layer.mergeAll(
+        providerLayer,
+        directoryLayer,
+        runtimeRepositoryLayer,
+        NodeServices.layer,
+      );
+      const threadId = asThreadId("thread-disabled-bound");
+
+      const failure = yield* Effect.flip(
+        Effect.gen(function* () {
+          const directory = yield* ProviderSessionDirectory;
+          yield* directory.upsert({
+            provider: "claudeAgent",
+            threadId,
+            status: "running",
+            runtimeMode: "full-access",
+          });
+
+          const provider = yield* ProviderService;
+          return yield* provider.sendTurn({
+            threadId,
+            input: "hello",
+          });
+        }).pipe(Effect.provide(testLayer)),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "Provider 'claudeAgent' is disabled in ShioriCode settings.");
+      assert.equal(claude.hasSession.mock.calls.length, 0);
+      assert.equal(claude.sendTurn.mock.calls.length, 0);
+
+      const usageFailure = yield* Effect.flip(
+        Effect.gen(function* () {
+          const provider = yield* ProviderService;
+          return yield* provider.readUsage("claudeAgent");
+        }).pipe(Effect.provide(testLayer)),
+      );
+      assert.instanceOf(usageFailure, ProviderValidationError);
+      assert.include(
+        usageFailure.issue,
+        "Provider 'claudeAgent' is disabled in ShioriCode settings.",
+      );
+    }),
+);
+
+it.effect("ProviderServiceLive stops active sessions when a provider is disabled", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const claude = makeFakeCodexAdapter("claudeAgent");
+    const registry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === "codex"
+          ? Effect.succeed(codex.adapter)
+          : provider === "claudeAgent"
+            ? Effect.succeed(claude.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
+    };
+    const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+    const settingsRef = yield* Ref.make<ServerSettings>(
+      deepMerge(DEFAULT_SERVER_SETTINGS, {
+        providers: {
+          claudeAgent: {
+            enabled: true,
+          },
+        },
+      } satisfies DeepPartial<ServerSettings>),
+    );
+    const settingsPubSub = yield* PubSub.unbounded<ServerSettings>();
+    const serverSettings: typeof ServerSettingsService.Service = {
+      start: Effect.void,
+      ready: Effect.void,
+      getSettings: Ref.get(settingsRef),
+      updateSettings: (patch: ServerSettingsPatch) =>
+        Ref.get(settingsRef).pipe(
+          Effect.map((currentSettings) => deepMerge(currentSettings, patch)),
+          Effect.tap((nextSettings) => Ref.set(settingsRef, nextSettings)),
+          Effect.tap((nextSettings) => PubSub.publish(settingsPubSub, nextSettings)),
+        ),
+      streamChanges: Stream.fromPubSub(settingsPubSub),
+    };
+    const serverSettingsLayer = Layer.succeed(ServerSettingsService, serverSettings);
+    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(providerAdapterLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(serverSettingsLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
+    );
+    const testLayer = Layer.mergeAll(
+      providerLayer,
+      directoryLayer,
+      runtimeRepositoryLayer,
+      serverSettingsLayer,
+      NodeServices.layer,
+    );
+    const threadId = asThreadId("thread-disable-active");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* sleep(10);
+
+      yield* serverSettings.updateSettings({
+        providers: {
+          claudeAgent: {
+            enabled: false,
+          },
+        },
+      });
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (claude.stopAll.mock.calls.length > 0) {
+          const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+          const sessions = yield* claude.listSessions();
+          assert.equal(binding?.status, "stopped");
+          assert.equal(sessions.length, 0);
+          return;
+        }
+        yield* Effect.yieldNow;
+      }
+
+      assert.equal(claude.stopAll.mock.calls.length, 1);
+    }).pipe(Effect.provide(testLayer));
+  }),
 );
 
 const routing = makeProviderServiceLayer();

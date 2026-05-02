@@ -1934,7 +1934,7 @@ function deriveNestedWorkRows(
   const hasNestedChildren = (entry: WorkLogEntry): boolean =>
     typeof entry.itemId === "string" && (childrenByParentItemId.get(entry.itemId)?.length ?? 0) > 0;
 
-  const contiguousTopLevelToolGroupKey = (entry: WorkLogEntry): "edit" | "tool" | null => {
+  const contiguousTopLevelToolGroupKey = (entry: WorkLogEntry): "tool" | null => {
     if (
       entry.tone !== "tool" ||
       entry.itemType === "collab_agent_tool_call" ||
@@ -1942,7 +1942,7 @@ function deriveNestedWorkRows(
     ) {
       return null;
     }
-    return isFileChangeWorkEntry(entry) ? "edit" : "tool";
+    return "tool";
   };
 
   for (let index = 0; index < topLevelEntries.length; index += 1) {

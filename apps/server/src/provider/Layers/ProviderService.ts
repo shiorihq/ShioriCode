@@ -23,7 +23,18 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "contracts";
-import { Effect, Equal, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
+import {
+  Effect,
+  Equal,
+  Layer,
+  Option,
+  PubSub,
+  Queue,
+  Ref,
+  Schema,
+  SchemaIssue,
+  Stream,
+} from "effect";
 
 import { ProviderValidationError, type ProviderServiceError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -249,9 +260,113 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const providers = yield* registry.listProviders();
   const adapters = yield* Effect.forEach(providers, (provider) => registry.getByProvider(provider));
+  const adapterByProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
+  const initialProviderEnabled = yield* serverSettings.getSettings.pipe(
+    Effect.map(
+      (settings) =>
+        new Map(providers.map((provider) => [provider, settings.providers[provider].enabled])),
+    ),
+    Effect.orElseSucceed(() => new Map<ProviderSession["provider"], boolean>()),
+  );
+  const providerEnabledRef = yield* Ref.make(initialProviderEnabled);
+
+  const ensureProviderEnabled = Effect.fn("ensureProviderEnabled")(function* (
+    provider: ProviderSession["provider"],
+    operation: string,
+  ) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError((error) =>
+        toValidationError(operation, `Failed to load provider settings: ${error.message}`, error),
+      ),
+    );
+    if (!settings.providers[provider].enabled) {
+      return yield* toValidationError(
+        operation,
+        `Provider '${provider}' is disabled in ShioriCode settings.`,
+      );
+    }
+  });
+
+  const isProviderEnabled = Effect.fn("isProviderEnabled")(function* (
+    provider: ProviderSession["provider"],
+    operation: string,
+  ) {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError((error) =>
+        toValidationError(operation, `Failed to load provider settings: ${error.message}`, error),
+      ),
+    );
+    return settings.providers[provider].enabled;
+  });
+
+  const stopDisabledProviderSessions = Effect.fn("stopDisabledProviderSessions")(function* (
+    provider: ProviderSession["provider"],
+  ) {
+    const adapter = adapterByProvider.get(provider);
+    if (!adapter) {
+      return;
+    }
+
+    const activeSessions = yield* adapter.listSessions();
+    if (activeSessions.length === 0) {
+      return;
+    }
+
+    const stoppedAt = new Date().toISOString();
+    yield* adapter.stopAll();
+    yield* Effect.forEach(activeSessions, (session) =>
+      directory.upsert({
+        threadId: session.threadId,
+        provider: session.provider,
+        runtimeMode: session.runtimeMode,
+        status: "stopped",
+        ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
+        runtimePayload: {
+          cwd: session.cwd ?? null,
+          model: session.model ?? null,
+          activeTurnId: null,
+          lastError: session.lastError ?? null,
+          lastRuntimeEvent: "provider.disabled.stopAll",
+          lastRuntimeEventAt: stoppedAt,
+        },
+      }),
+    ).pipe(Effect.asVoid);
+    yield* analytics.record("provider.sessions.stopped_disabled", {
+      provider,
+      sessionCount: activeSessions.length,
+    });
+  });
+
+  const reconcileDisabledProviderSettings = Effect.fn("reconcileDisabledProviderSettings")(
+    function* (settings: {
+      readonly providers: Record<ProviderSession["provider"], { enabled: boolean }>;
+    }) {
+      const previousEnabled = yield* Ref.get(providerEnabledRef);
+      const nextEnabled = new Map(
+        providers.map((provider) => [provider, settings.providers[provider].enabled]),
+      );
+
+      yield* Effect.forEach(providers, (provider) => {
+        const wasEnabled = previousEnabled.get(provider) ?? true;
+        const isEnabled = nextEnabled.get(provider) ?? true;
+        return wasEnabled && !isEnabled ? stopDisabledProviderSessions(provider) : Effect.void;
+      }).pipe(Effect.asVoid);
+      yield* Ref.set(providerEnabledRef, nextEnabled);
+    },
+  );
+
+  yield* Stream.runForEach(serverSettings.streamChanges, (settings) =>
+    reconcileDisabledProviderSettings(settings).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to stop sessions for disabled provider settings", { cause }),
+      ),
+    ),
+  ).pipe(Effect.forkScoped);
+
   const syncBindingFromActiveSession = Effect.fn("syncBindingFromActiveSession")(function* (
     event: ProviderRuntimeEvent,
   ) {
+    yield* ensureProviderEnabled(event.provider, "ProviderService.syncBindingFromActiveSession");
     const adapter = yield* registry.getByProvider(event.provider);
     const hasActiveSession = yield* adapter.hasSession(event.threadId);
     if (!hasActiveSession) {
@@ -331,6 +446,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly binding: ProviderRuntimeBinding;
     readonly operation: string;
   }) {
+    yield* ensureProviderEnabled(input.binding.provider, input.operation);
     const adapter = yield* registry.getByProvider(input.binding.provider);
     const capabilities = adapter.capabilities;
     const hasResumeCursor =
@@ -453,6 +569,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         `Cannot route thread '${input.threadId}' because no persisted provider binding exists.`,
       );
     }
+    yield* ensureProviderEnabled(binding.provider, input.operation);
     const adapter = yield* registry.getByProvider(binding.provider);
 
     const hasRequestedSession = yield* adapter.hasSession(input.threadId);
@@ -481,21 +598,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId,
         provider: parsed.provider ?? "codex",
       };
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError((error) =>
-          toValidationError(
-            "ProviderService.startSession",
-            `Failed to load provider settings: ${error.message}`,
-            error,
-          ),
-        ),
-      );
-      if (!settings.providers[input.provider].enabled) {
-        return yield* toValidationError(
-          "ProviderService.startSession",
-          `Provider '${input.provider}' is disabled in ShioriCode settings.`,
-        );
-      }
+      yield* ensureProviderEnabled(input.provider, "ProviderService.startSession");
       const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
       const effectiveResumeCursor =
         input.resumeCursor ??
@@ -756,6 +859,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         Effect.gen(function* () {
           const activeSession = activeSessionsByThreadId.get(threadId);
           if (activeSession) {
+            const providerEnabled = yield* isProviderEnabled(
+              activeSession.provider,
+              "ProviderService.reconcileSessions",
+            );
+            if (!providerEnabled) {
+              return {
+                threadId,
+                provider: activeSession.provider,
+                session: null,
+                resumeState: "needs_resume",
+                runtimeMode: activeSession.runtimeMode,
+                lastError: "Provider is disabled in ShioriCode settings.",
+              };
+            }
+
             yield* upsertSessionBinding(activeSession, threadId);
             return {
               threadId,
@@ -786,6 +904,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               resumeState: "resumed",
               runtimeMode: binding.runtimeMode ?? "full-access",
               lastError,
+            };
+          }
+
+          const providerEnabled = yield* isProviderEnabled(
+            binding.provider,
+            "ProviderService.reconcileSessions",
+          );
+          if (!providerEnabled) {
+            return {
+              threadId,
+              provider: binding.provider,
+              session: null,
+              resumeState: defaultResumeStateForBinding(binding),
+              runtimeMode: binding.runtimeMode ?? "full-access",
+              lastError: lastError ?? "Provider is disabled in ShioriCode settings.",
             };
           }
 
@@ -837,6 +970,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const readUsage: ProviderServiceShape["readUsage"] = (provider) =>
     Effect.gen(function* () {
+      yield* ensureProviderEnabled(provider, "ProviderService.readUsage");
       if (provider === "codex") {
         const adapter = (yield* registry.getByProvider(provider)) as CodexAdapterShape;
         return yield* adapter.readUsage();

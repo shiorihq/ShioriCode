@@ -266,7 +266,7 @@ export const ShioriProviderLive = Layer.effect(
       customModels: ReadonlyArray<string>;
       authToken: string | null;
     }) =>
-      settings.apiBaseUrl && hasHostedShioriAuthToken(settings.authToken)
+      settings.enabled && settings.apiBaseUrl && hasHostedShioriAuthToken(settings.authToken)
         ? fetchShioriCodeEntitlements({
             apiBaseUrl: settings.apiBaseUrl,
             authToken: settings.authToken,
