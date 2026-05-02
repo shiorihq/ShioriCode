@@ -4895,14 +4895,15 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       if (composerMenuItems.length === 0) {
         return;
       }
-      const highlightedIndex = composerMenuItems.findIndex(
-        (item) => item.id === composerHighlightedItemId,
-      );
-      const normalizedIndex =
-        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
+      // Mirror activeComposerMenuItem's fallback to the first item so that the first
+      // arrow press always advances from what the user visually sees as selected,
+      // instead of just re-selecting item 0 as a silent no-op.
+      const highlightedIndex = composerHighlightedItemId
+        ? composerMenuItems.findIndex((item) => item.id === composerHighlightedItemId)
+        : -1;
+      const startIndex = highlightedIndex >= 0 ? highlightedIndex : 0;
       const offset = key === "ArrowDown" ? 1 : -1;
-      const nextIndex =
-        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
+      const nextIndex = (startIndex + offset + composerMenuItems.length) % composerMenuItems.length;
       const nextItem = composerMenuItems[nextIndex];
       setComposerHighlightedItemId(nextItem?.id ?? null);
     },
