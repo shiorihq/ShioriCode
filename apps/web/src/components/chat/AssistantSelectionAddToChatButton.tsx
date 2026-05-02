@@ -177,7 +177,7 @@ export const AssistantSelectionAddToChatButton = memo(function AssistantSelectio
           variant="ghost"
           size="sm"
           className={cn(
-            "h-6 gap-1 rounded-full px-2 text-xs before:rounded-full",
+            "h-6 gap-1 rounded-full px-2 text-[10px]/3 before:rounded-full",
             "text-foreground hover:bg-foreground/10",
           )}
           data-assistant-selection-add-to-chat="true"
