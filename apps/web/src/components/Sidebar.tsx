@@ -1097,7 +1097,8 @@ function SortableProjectItem({
         transition,
       }}
       className={cn(
-        "group/menu-item relative rounded-md border border-transparent",
+        "group/menu-item relative border border-transparent",
+        isOver && !isDragging ? "rounded-none" : "rounded-md",
         isDragging ? "z-20 opacity-80" : "",
         isOver && !isDragging
           ? "border-t-blue-500/70 border-x-transparent border-b-transparent"
