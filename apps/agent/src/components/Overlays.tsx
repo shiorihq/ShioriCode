@@ -82,7 +82,7 @@ export function ThreadPicker({
 }) {
   const now = useNow();
   return (
-    <Panel title="threads" footer="↑↓ navigate · enter switch · esc close">
+    <Panel title="threads" footer="↑↓ or j/k navigate · enter switch · esc close">
       {threads.length === 0 ? (
         <Text dimColor>No active threads</Text>
       ) : (

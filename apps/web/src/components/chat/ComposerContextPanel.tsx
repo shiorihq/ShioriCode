@@ -400,7 +400,7 @@ export const ComposerContextPanel = memo(function ComposerContextPanel(
     <div className="relative z-0">
       <div
         className={cn(
-          "mx-auto w-[calc(100%-3rem)] max-w-[45rem] min-w-0 overflow-hidden rounded-t-[16px] rounded-b-none border border-b-0 border-border bg-card sm:w-[calc(100%-4rem)]",
+          "mx-auto w-[calc(100%-3rem)] max-w-[39rem] min-w-0 overflow-hidden rounded-t-[16px] rounded-b-none border border-b-0 border-border bg-card sm:w-[calc(100%-4rem)]",
         )}
         data-chat-composer-context-panel="true"
       >

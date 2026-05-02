@@ -401,12 +401,6 @@ export function Composer({
     [value, cursor, focused, placeholder, editorMode, vimMode],
   );
 
-  const footerHint =
-    editorMode === "vim"
-      ? vimMode === "NORMAL"
-        ? "vim normal · i/a/o insert · enter send"
-        : "vim insert · esc normal · shift+enter newline"
-      : "enter send · shift+enter newline · / commands";
   return (
     <Box
       borderStyle="round"
@@ -419,9 +413,6 @@ export function Composer({
         <Box flexDirection="column" flexGrow={1}>
           {rendered}
         </Box>
-      </Box>
-      <Box>
-        <Text dimColor>{footerHint}</Text>
       </Box>
     </Box>
   );

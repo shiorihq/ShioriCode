@@ -219,8 +219,16 @@ function makeState(
   thread: Thread,
   serverConfig = makeServerConfig(thread.modelSelection.provider),
 ): AgentControllerState {
-  const threads = [thread];
+  return makeStateWithThreads([thread], thread.id, serverConfig);
+}
+
+function makeStateWithThreads(
+  threads: ReadonlyArray<Thread>,
+  selectedThreadId: ThreadId,
+  serverConfig = makeServerConfig(threads[0]?.modelSelection.provider ?? "codex"),
+): AgentControllerState {
   const projects = [makeProject()];
+  const projectionThreads = [...threads];
   return {
     phase: "ready",
     baseDir: "/tmp/.shiori",
@@ -228,12 +236,12 @@ function makeState(
     serverConfig,
     projection: {
       projects,
-      threads,
-      threadIndexById: buildThreadIndexById(threads),
-      sidebarThreadsById: buildSidebarThreadsById(threads),
-      threadIdsByProjectId: buildThreadIdsByProjectId(threads),
+      threads: projectionThreads,
+      threadIndexById: buildThreadIndexById(projectionThreads),
+      sidebarThreadsById: buildSidebarThreadsById(projectionThreads),
+      threadIdsByProjectId: buildThreadIdsByProjectId(projectionThreads),
     },
-    selectedThreadId: thread.id,
+    selectedThreadId,
     error: null,
     notice: null,
   };
@@ -276,6 +284,32 @@ describe("App", () => {
 
     expect(app.lastFrame()).toContain("threads");
     expect(app.lastFrame()).toContain("Thread One");
+  });
+
+  it("navigates and switches threads from the thread picker", async () => {
+    const firstThread = makeThread({
+      id: ThreadId.makeUnsafe("thread-1"),
+      title: "Current Thread",
+      updatedAt: "2026-04-17T10:00:02.000Z",
+    });
+    const secondThread = makeThread({
+      id: ThreadId.makeUnsafe("thread-2"),
+      title: "Next Thread",
+      updatedAt: "2026-04-17T10:00:01.000Z",
+    });
+    const controller = new MockController(
+      makeStateWithThreads([firstThread, secondThread], firstThread.id),
+    );
+    const app = render(<App controller={controller} dimensions={{ columns: 80, rows: 30 }} />);
+
+    app.stdin.write("\u0010");
+    await flushUi();
+    app.stdin.write("j");
+    await flushUi();
+    app.stdin.write("\r");
+    await flushUi();
+
+    expect(controller.state.selectedThreadId).toBe(secondThread.id);
   });
 
   it("submits composer input", async () => {

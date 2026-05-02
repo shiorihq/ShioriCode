@@ -180,7 +180,7 @@ export function AuthGateScreenContent() {
           className={`auth-form-enter w-full ${requiresPaidPlan ? "max-w-[960px]" : "max-w-[380px]"}`}
         >
           <div className="mb-5 flex justify-start">
-            <ShioriWordmark />
+            <ShioriWordmark showLogo={false} />
           </div>
           <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight sm:text-[2rem]">
             {heading}

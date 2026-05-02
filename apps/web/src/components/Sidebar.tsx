@@ -201,7 +201,7 @@ function SidebarBrandHeader() {
               className="flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md outline-hidden ring-ring hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <ShioriWordmark />
+              <ShioriWordmark showLogo={false} />
             </Link>
           }
         />
@@ -1099,7 +1099,9 @@ function SortableProjectItem({
       className={cn(
         "group/menu-item relative rounded-md border border-transparent",
         isDragging ? "z-20 opacity-80" : "",
-        isOver && !isDragging ? "border-blue-500/70 bg-blue-500/5" : "",
+        isOver && !isDragging
+          ? "border-t-blue-500/70 border-x-transparent border-b-transparent"
+          : "",
       )}
       data-sidebar="menu-item"
       data-slot="sidebar-menu-item"

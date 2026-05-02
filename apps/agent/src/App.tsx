@@ -121,6 +121,10 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
     if (currentIndex >= 0) setSwitcherIndex(currentIndex);
   }, [recentThreads, selectedThread]);
 
+  useEffect(() => {
+    setSwitcherIndex((current) => Math.max(0, Math.min(recentThreads.length - 1, current)));
+  }, [recentThreads.length]);
+
   const providerSelection = getThreadProviderSelection(state);
   const pendingApprovals = selectedThread ? derivePendingApprovals(selectedThread.activities) : [];
   const pendingUserInputs = selectedThread
@@ -477,6 +481,33 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
       return;
     }
 
+    if (overlay === "switcher") {
+      if (key.upArrow || input === "k") {
+        setSwitcherIndex((current) => Math.max(0, current - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSwitcherIndex((current) => Math.min(recentThreads.length - 1, current + 1));
+        return;
+      }
+      if (key.home) {
+        setSwitcherIndex(0);
+        return;
+      }
+      if (key.end) {
+        setSwitcherIndex(Math.max(0, recentThreads.length - 1));
+        return;
+      }
+      if (key.return) {
+        const nextThread = recentThreads[switcherIndex];
+        if (nextThread) {
+          controller.selectThread(nextThread.id);
+          setOverlay("none");
+        }
+      }
+      return;
+    }
+
     // Timeline scrolling & entry navigation.
     if (key.pageUp) {
       setScrollOffset((current) =>
@@ -500,25 +531,6 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
     }
     if (key.ctrl && input === " ") {
       if (focusedId) toggleExpanded(focusedId);
-      return;
-    }
-
-    if (overlay === "switcher") {
-      if (key.upArrow) {
-        setSwitcherIndex((current) => Math.max(0, current - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setSwitcherIndex((current) => Math.min(recentThreads.length - 1, current + 1));
-        return;
-      }
-      if (key.return) {
-        const nextThread = recentThreads[switcherIndex];
-        if (nextThread) {
-          controller.selectThread(nextThread.id);
-          setOverlay("none");
-        }
-      }
       return;
     }
 
@@ -718,7 +730,7 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
   } else if (transcriptMode) {
     statusHint = "detailed transcript · ctrl+o or q return · all entries shown";
   } else if (overlay === "switcher") {
-    statusHint = "↑↓ navigate · enter switch · esc close";
+    statusHint = "↑↓ or j/k navigate · enter switch · esc close";
   } else if (overlay === "settings") {
     statusHint = "esc close · [ ] provider · ← → model · r runtime · i interaction";
   } else if (vimEnabled && vimMode === "NORMAL") {
@@ -731,7 +743,7 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
 
   return (
     <Box flexDirection="column" width={dimensions.columns}>
-      <Welcome cwd={state.cwd} />
+      <Welcome columns={dimensions.columns} cwd={state.cwd} />
 
       {transcriptMode ? (
         <Box paddingX={1} justifyContent="space-between">

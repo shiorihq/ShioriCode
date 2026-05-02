@@ -109,14 +109,14 @@ export function getProviderPickerState(snapshot: ServerProvider | null | undefin
         }
       : {
           selectable: false,
-          badgeLabel: "Unavailable",
+          badgeLabel: null,
         };
   }
 
   if (snapshot.status === "error") {
     return {
       selectable: false,
-      badgeLabel: "Unavailable",
+      badgeLabel: null,
     };
   }
 

@@ -1,6 +1,7 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "contracts";
 import type { OrchestrationThreadResumeState } from "contracts";
 import {
+  AlertTriangleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   Loader2Icon,
@@ -15,16 +16,16 @@ import { cn } from "~/lib/utils";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
 import { Button } from "../ui/button";
 
-/* ── Status dot (colored, no background tint) ── */
+/* ── Alert icon (colored, no background tint) ── */
 
-function StatusDot({ variant }: { variant: "error" | "warning" | "info" }) {
+function AlertIcon({ variant }: { variant: "error" | "warning" | "info" }) {
   return (
-    <span
+    <AlertTriangleIcon
       className={cn(
-        "mt-[5px] inline-block size-[7px] shrink-0 rounded-full",
-        variant === "error" && "bg-destructive",
-        variant === "warning" && "bg-warning",
-        variant === "info" && "bg-info",
+        "size-3 shrink-0",
+        variant === "error" && "text-destructive",
+        variant === "warning" && "text-warning",
+        variant === "info" && "text-info",
       )}
     />
   );
@@ -54,7 +55,7 @@ const ComposerAlertRow = memo(function ComposerAlertRow({
   return (
     <div className="border-t border-border/30 first:border-t-0">
       <div className="flex items-start gap-2.5 px-4 py-2.5">
-        <span className="mt-[3px] shrink-0">{icon}</span>
+        <span className="flex h-[18px] shrink-0 items-center">{icon}</span>
         <div className="min-w-0 flex-1">
           <button
             type="button"
@@ -62,7 +63,14 @@ const ComposerAlertRow = memo(function ComposerAlertRow({
             className="flex w-full cursor-pointer items-center gap-2 text-left focus-visible:outline-none"
             aria-expanded={expanded}
           >
-            <span className="text-[12.5px] font-medium text-foreground/85">{title}</span>
+            <span
+              className={cn(
+                "text-[12.5px] font-medium",
+                _variant === "error" ? "text-destructive" : "text-foreground/85",
+              )}
+            >
+              {title}
+            </span>
             <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/50">
               {expanded ? (
                 <ChevronUpIcon className="size-3" />
@@ -116,7 +124,7 @@ const ComposerProviderStatusAlert = memo(function ComposerProviderStatusAlert({
 
   return (
     <ComposerAlertRow
-      icon={<StatusDot variant={variant} />}
+      icon={<AlertIcon variant={variant} />}
       title={title}
       variant={variant}
       action={
@@ -139,12 +147,12 @@ const ComposerThreadErrorAlert = memo(function ComposerThreadErrorAlert({
   onDismiss,
 }: {
   error: string | null;
-  onDismiss?: () => void;
+  onDismiss?: (() => void) | undefined;
 }) {
   if (!error) return null;
   return (
     <ComposerAlertRow
-      icon={<StatusDot variant="error" />}
+      icon={<AlertIcon variant="error" />}
       title="Something went wrong"
       variant="error"
       onDismiss={onDismiss}
@@ -208,7 +216,7 @@ const ComposerThreadResumeAlert = memo(function ComposerThreadResumeAlert({
         isResuming ? (
           <Loader2Icon className="mt-[3px] size-3.5 animate-spin text-warning" />
         ) : (
-          <StatusDot variant={copy.variant} />
+          <AlertIcon variant={copy.variant} />
         )
       }
       title={copy.title}

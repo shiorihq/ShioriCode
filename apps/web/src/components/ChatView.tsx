@@ -179,11 +179,10 @@ import {
 } from "./chat/composerProviderRegistry";
 import { useResolvedTraits, useUpdateModelOptions } from "./chat/TraitsPicker";
 import { playFastModeBlitz } from "./chat/fastModeBlitzFx";
-import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
+import { ComposerAlertsPanel } from "./chat/ComposerAlertsPanel";
 import { EmptyThreadAmbient } from "./chat/EmptyThreadAmbient";
 import { EmptyThreadHeading } from "./chat/EmptyThreadHero";
-import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
-import { ThreadResumeBanner } from "./chat/ThreadResumeBanner";
+
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -373,7 +372,7 @@ function ProjectlessChatComposerNotice(props: { emptyThread: boolean }) {
       aria-hidden="true"
       className={cn(
         "relative z-10 mx-auto flex min-h-4 w-full min-w-0 items-center justify-center px-5 text-center text-muted-foreground/55 text-xs",
-        props.emptyThread ? "mt-2 max-w-[50rem]" : "max-w-3xl pb-3 pt-1",
+        props.emptyThread ? "mt-2 max-w-[44rem]" : "max-w-3xl pb-3 pt-1",
       )}
     />
   );
@@ -5155,16 +5154,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         />
       </header>
 
-      {/* Error banner */}
-      <ProviderStatusBanner status={activeProviderStatus} />
-      <ThreadResumeBanner
-        resumeState={activeThread.resumeState}
-        onResumeAction={() => focusComposer()}
-      />
-      <ThreadErrorBanner
-        error={activeThread.error}
-        onDismiss={() => setThreadError(activeThread.id, null)}
-      />
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -5243,19 +5232,19 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               "relative w-full min-w-0",
               isEmptyThread
                 ? "flex flex-1 flex-col items-center justify-center px-3 sm:px-5"
-                : "shrink-0 px-3 pb-3 sm:px-5 sm:pb-4",
+                : "shrink-0 px-3 pb-5 sm:px-5 sm:pb-6",
             )}
           >
             {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
             {isEmptyThread && (
-              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[50rem]">
+              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[44rem]">
                 <EmptyThreadHeading projectName={activeProject?.name} />
               </div>
             )}
             <form
               ref={composerFormRef}
               onSubmit={onSend}
-              className="relative z-10 mx-auto w-full min-w-0 max-w-[50rem]"
+              className="relative z-10 mx-auto w-full min-w-0 max-w-[44rem]"
               data-chat-composer-form="true"
             >
               {showPlanSuggestion && (
@@ -5276,6 +5265,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                 onQueuedOpenChange={setIsComposerQueueOpen}
                 onDeleteQueuedTurn={onDeleteQueuedTurn}
                 onEditQueuedTurn={(queuedTurnId) => void onEditQueuedTurn(queuedTurnId)}
+              />
+              <ComposerAlertsPanel
+                providerStatus={activeProviderStatus}
+                resumeState={activeThread.resumeState}
+                threadError={activeThread.error}
+                onDismissError={() => setThreadError(activeThread.id, null)}
+                onResumeAction={() => focusComposer()}
               />
               <div className="relative">
                 {composerMenuOpen && !isComposerApprovalState && (
@@ -5619,7 +5615,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               <ProjectlessChatComposerNotice emptyThread />
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
-              <div className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5">
+              <div className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[44rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5">
                 <BranchToolbar
                   threadId={activeThread.id}
                   onEnvModeChange={onEnvModeChange}

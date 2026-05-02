@@ -473,9 +473,27 @@ export function Timeline({
 }) {
   const now = useNowTicker();
   if (entries.length === 0) {
+    const emptyTitle =
+      placeholder === "No thread selected."
+        ? "No thread selected"
+        : (placeholder ?? "Ready when you are");
+    const emptyHint =
+      placeholder === "No thread selected."
+        ? "ctrl+p opens threads · ctrl+n starts a new one"
+        : "Type a message below to begin";
+
     return (
-      <Box flexDirection="column" height={height} paddingX={1}>
-        <Text dimColor>{placeholder ?? "Send a message to start."}</Text>
+      <Box flexDirection="column" height={height} paddingX={1} paddingTop={1}>
+        <Box>
+          <Text color={palette.accentDim}>┌─ </Text>
+          <Text color={palette.accentBright} bold>
+            {emptyTitle}
+          </Text>
+        </Box>
+        <Box>
+          <Text color={palette.accentDim}>└─ </Text>
+          <Text dimColor>{emptyHint}</Text>
+        </Box>
       </Box>
     );
   }

@@ -126,7 +126,7 @@ describe("getProviderPickerState", () => {
       ),
     ).toEqual({
       selectable: false,
-      badgeLabel: "Unavailable",
+      badgeLabel: null,
     });
   });
 });

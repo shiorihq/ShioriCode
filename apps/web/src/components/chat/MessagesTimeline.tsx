@@ -830,7 +830,7 @@ function MessagesTimelineView({
       <div
         ref={timelineRootRef}
         data-timeline-root="true"
-        className="mx-auto w-full min-w-0 max-w-[50rem]"
+        className="mx-auto w-full min-w-0 max-w-[44rem]"
       >
         {onAddAssistantSelectionToChat ? (
           <AssistantSelectionAddToChatButton
