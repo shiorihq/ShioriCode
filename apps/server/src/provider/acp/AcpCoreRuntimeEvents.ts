@@ -7,6 +7,7 @@ import {
   type ProviderKind,
   type ProviderRuntimeEvent,
   type RuntimeRequestId,
+  type ThreadTokenUsageSnapshot,
   type ThreadId,
   type ToolLifecycleItemType,
   type TurnId,
@@ -291,6 +292,33 @@ export function makeAcpContentDeltaEvent(input: {
     raw: {
       source: "acp.jsonrpc",
       method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makeAcpUsageUpdatedEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderKind;
+  readonly threadId: ThreadId;
+  readonly turnId?: TurnId | undefined;
+  readonly usage: ThreadTokenUsageSnapshot;
+  readonly source: AcpAdapterRawSource;
+  readonly method: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    payload: {
+      usage: input.usage,
+    },
+    raw: {
+      source: input.source,
+      method: input.method,
       payload: input.rawPayload,
     },
   };

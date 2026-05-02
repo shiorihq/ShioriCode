@@ -141,6 +141,27 @@ function asStringArray(value: unknown): string[] | undefined {
   return strings.length > 0 ? strings : undefined;
 }
 
+function asStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const strings = value.flatMap((entry) => {
+      if (typeof entry !== "string") {
+        return [];
+      }
+      const trimmed = entry.trim();
+      return trimmed.length > 0 ? [trimmed] : [];
+    });
+    return strings.length > 0 ? strings : undefined;
+  }
+  if (typeof value === "string") {
+    const strings = value
+      .split(/[,\s]+/g)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return strings.length > 0 ? strings : undefined;
+  }
+  return undefined;
+}
+
 function asStringRecord(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -180,12 +201,27 @@ function mcpServerEntryFromRaw(input: {
     return null;
   }
 
-  const url = asString(input.raw.url);
-  const command = asString(input.raw.command);
-  const transport = normalizeTransport(input.raw.transport ?? input.raw.type, url !== undefined);
-  const headers = asStringRecord(input.raw.http_headers ?? input.raw.headers);
-  const args = asStringArray(input.raw.args);
-  const env = asStringRecord(input.raw.env);
+  const transportConfig = isRecord(input.raw.transport) ? input.raw.transport : undefined;
+  const url = asString(input.raw.url) ?? asString(transportConfig?.url);
+  const command = asString(input.raw.command) ?? asString(transportConfig?.command);
+  const transport = normalizeTransport(
+    transportConfig?.type ?? input.raw.transport ?? input.raw.type,
+    url !== undefined,
+  );
+  const headers = asStringRecord(
+    input.raw.http_headers ??
+      input.raw.headers ??
+      transportConfig?.http_headers ??
+      transportConfig?.headers,
+  );
+  const envHttpHeaders = asStringRecord(
+    input.raw.env_http_headers ?? input.raw.envHttpHeaders ?? transportConfig?.env_http_headers,
+  );
+  const bearerTokenEnvVar = asString(input.raw.bearer_token_env_var ?? input.raw.bearerTokenEnvVar);
+  const oauthScopes = asStringList(input.raw.scopes ?? input.raw.oauthScopes);
+  const oauthResource = asString(input.raw.oauth_resource ?? input.raw.oauthResource);
+  const args = asStringArray(input.raw.args) ?? asStringArray(transportConfig?.args);
+  const env = asStringRecord(input.raw.env) ?? asStringRecord(transportConfig?.env);
   const enabled = asBoolean(input.raw.enabled, true);
 
   if (transport === "stdio" && !command) {
@@ -205,6 +241,10 @@ function mcpServerEntryFromRaw(input: {
     providers: ["shiori"],
     ...(url ? { url } : {}),
     ...(headers ? { headers } : {}),
+    ...(envHttpHeaders ? { envHttpHeaders } : {}),
+    ...(bearerTokenEnvVar ? { bearerTokenEnvVar } : {}),
+    ...(oauthScopes ? { oauthScopes } : {}),
+    ...(oauthResource ? { oauthResource } : {}),
     ...(command ? { command } : {}),
     ...(args ? { args } : {}),
     ...(env ? { env } : {}),
@@ -378,6 +418,41 @@ function sortStringRecord(
   );
 }
 
+function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === "authorization");
+}
+
+function mcpServerHasStaticAuthorization(server: McpServerEntry): boolean {
+  return (
+    hasAuthorizationHeader(server.headers) ||
+    hasAuthorizationHeader(server.envHttpHeaders) ||
+    Boolean(server.bearerTokenEnvVar?.trim())
+  );
+}
+
+function resolveMcpServerHttpHeaders(server: McpServerEntry): Record<string, string> | undefined {
+  const headers: Record<string, string> = { ...server.headers };
+  for (const [name, envName] of Object.entries(server.envHttpHeaders ?? {})) {
+    const value = process.env[envName];
+    if (value !== undefined) {
+      headers[name] = value;
+    }
+  }
+  const bearerEnvName = server.bearerTokenEnvVar?.trim();
+  if (bearerEnvName) {
+    const value = process.env[bearerEnvName];
+    if (value !== undefined) {
+      headers.Authorization = `Bearer ${value}`;
+    }
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function mcpServerOAuthScope(server: McpServerEntry): string | undefined {
+  const scopes = server.oauthScopes?.map((scope) => scope.trim()).filter(Boolean) ?? [];
+  return scopes.length > 0 ? scopes.join(" ") : undefined;
+}
+
 function equivalentMcpServerSignature(server: McpServerEntry): string {
   return JSON.stringify({
     transport: server.transport,
@@ -386,6 +461,10 @@ function equivalentMcpServerSignature(server: McpServerEntry): string {
     ...(server.args ? { args: [...server.args] } : {}),
     ...(server.env ? { env: sortStringRecord(server.env) } : {}),
     ...(server.headers ? { headers: sortStringRecord(server.headers) } : {}),
+    ...(server.envHttpHeaders ? { envHttpHeaders: sortStringRecord(server.envHttpHeaders) } : {}),
+    ...(server.bearerTokenEnvVar ? { bearerTokenEnvVar: server.bearerTokenEnvVar } : {}),
+    ...(server.oauthScopes ? { oauthScopes: [...server.oauthScopes] } : {}),
+    ...(server.oauthResource ? { oauthResource: server.oauthResource } : {}),
   });
 }
 
@@ -517,13 +596,10 @@ async function resolveEffectiveMcpServerAuth(input: {
   readonly source: EffectiveMcpServerEntry["source"];
   readonly oauthStorageDir?: string;
 }): Promise<EffectiveMcpServerAuth> {
-  if (input.source !== "shiori") {
-    return { status: "unknown" };
-  }
   if (input.server.transport === "stdio") {
     return { status: "unknown" };
   }
-  if ((input.server.headers ? Object.keys(input.server.headers).length : 0) > 0) {
+  if (mcpServerHasStaticAuthorization(input.server)) {
     return { status: "unknown" };
   }
   const serverUrl = input.server.url?.trim();
@@ -619,14 +695,13 @@ export async function authenticateEffectiveMcpServer(input: {
   if (!server) {
     throw new Error(`MCP server '${input.target.name}' is no longer configured.`);
   }
-  if (server.source !== "shiori") {
-    throw new Error("Only Shiori-managed MCP servers can be authenticated from this screen.");
-  }
   if (server.transport === "stdio") {
     throw new Error("Only remote MCP servers support browser authentication.");
   }
-  if ((server.headers ? Object.keys(server.headers).length : 0) > 0) {
-    throw new Error("This MCP server uses static headers and cannot be authenticated here.");
+  if (mcpServerHasStaticAuthorization(server)) {
+    throw new Error(
+      "This MCP server already uses a static Authorization header and cannot be authenticated here.",
+    );
   }
   const serverUrl = server.url?.trim();
   if (!serverUrl) {
@@ -645,6 +720,8 @@ export async function authenticateEffectiveMcpServer(input: {
       serverName: server.name,
       serverUrl,
       storageDir: input.oauthStorageDir,
+      scope: mcpServerOAuthScope(server),
+      oauthResource: server.oauthResource,
       callbackTimeoutMs: input.oauthCallbackTimeoutMs ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS,
       openAuthorizationUrl:
         input.openAuthorizationUrl ??
@@ -654,8 +731,12 @@ export async function authenticateEffectiveMcpServer(input: {
       allowInteractiveAuthorization: true,
     });
 
+    const scope = mcpServerOAuthScope(server);
     try {
-      await auth(oauthProvider, { serverUrl });
+      await auth(oauthProvider, {
+        serverUrl,
+        ...(scope ? { scope } : {}),
+      });
     } finally {
       await oauthProvider.close();
     }
@@ -808,11 +889,12 @@ export function toAcpMcpServers(
       case "http": {
         const url = server.url?.trim();
         if (!url) break;
+        const headers = resolveMcpServerHttpHeaders(server);
         acpServers.push({
           type: "http",
           name: server.name,
           url,
-          headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({
+          headers: Object.entries(headers ?? {}).map(([name, value]) => ({
             name,
             value,
           })),
@@ -822,11 +904,12 @@ export function toAcpMcpServers(
       case "sse": {
         const url = server.url?.trim();
         if (!url) break;
+        const headers = resolveMcpServerHttpHeaders(server);
         acpServers.push({
           type: "sse",
           name: server.name,
           url,
-          headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({
+          headers: Object.entries(headers ?? {}).map(([name, value]) => ({
             name,
             value,
           })),
@@ -1040,6 +1123,8 @@ class FileBackedMcpOAuthProvider implements OAuthClientProvider {
       readonly serverUrl: string;
       readonly callbackServer: LocalCallbackServer;
       readonly storageFile: string;
+      readonly scope?: string | undefined;
+      readonly oauthResource?: string | undefined;
       readonly callbackTimeoutMs: number;
       readonly openAuthorizationUrl: (url: URL) => Promise<void>;
       readonly allowInteractiveAuthorization: boolean;
@@ -1069,7 +1154,16 @@ class FileBackedMcpOAuthProvider implements OAuthClientProvider {
       response_types: ["code"],
       client_name: "ShioriCode",
       client_uri: "https://shiori.ai",
+      ...(this.input.scope ? { scope: this.input.scope } : {}),
     };
+  }
+
+  async validateResourceURL(_serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+    const oauthResource = this.input.oauthResource?.trim();
+    if (oauthResource) {
+      return new URL(oauthResource);
+    }
+    return resource ? new URL(resource) : undefined;
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
@@ -1199,6 +1293,8 @@ async function createMcpOAuthProvider(input: {
   readonly serverName: string;
   readonly serverUrl: string;
   readonly storageDir: string;
+  readonly scope?: string | undefined;
+  readonly oauthResource?: string | undefined;
   readonly callbackTimeoutMs: number;
   readonly openAuthorizationUrl: (url: URL) => Promise<void>;
   readonly allowInteractiveAuthorization: boolean;
@@ -1219,11 +1315,101 @@ async function createMcpOAuthProvider(input: {
       serverUrl: input.serverUrl,
       callbackServer,
       storageFile,
+      scope: input.scope,
+      oauthResource: input.oauthResource,
       callbackTimeoutMs: input.callbackTimeoutMs,
       openAuthorizationUrl: input.openAuthorizationUrl,
       allowInteractiveAuthorization: input.allowInteractiveAuthorization,
     },
     storage,
+  );
+}
+
+async function storedMcpOAuthAuthorizationHeader(input: {
+  readonly server: McpServerEntry;
+  readonly storageDir: string;
+  readonly callbackTimeoutMs?: number;
+  readonly openAuthorizationUrl?: (url: URL) => Promise<void>;
+}): Promise<string | undefined> {
+  if (input.server.transport === "stdio" || mcpServerHasStaticAuthorization(input.server)) {
+    return undefined;
+  }
+  const serverUrl = input.server.url?.trim();
+  if (!serverUrl) {
+    return undefined;
+  }
+
+  const storageFile = mcpOAuthStorageFile({
+    storageDir: input.storageDir,
+    serverName: input.server.name,
+    serverUrl,
+  });
+  const storage = await readOAuthStorage(storageFile);
+  if (!storage.tokens?.access_token && !storage.tokens?.refresh_token) {
+    return undefined;
+  }
+  if (!storage.tokens.refresh_token) {
+    return storage.tokens.access_token ? `Bearer ${storage.tokens.access_token}` : undefined;
+  }
+
+  const oauthProvider = await createMcpOAuthProvider({
+    serverName: input.server.name,
+    serverUrl,
+    storageDir: input.storageDir,
+    scope: mcpServerOAuthScope(input.server),
+    oauthResource: input.server.oauthResource,
+    callbackTimeoutMs: input.callbackTimeoutMs ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS,
+    openAuthorizationUrl:
+      input.openAuthorizationUrl ??
+      (async (authorizationUrl) => {
+        await open(authorizationUrl.href);
+      }),
+    allowInteractiveAuthorization: false,
+  });
+  const scope = mcpServerOAuthScope(input.server);
+  try {
+    await auth(oauthProvider, {
+      serverUrl,
+      ...(scope ? { scope } : {}),
+    }).catch(() => undefined);
+    const refreshed = await oauthProvider.tokens();
+    return refreshed?.access_token ? `Bearer ${refreshed.access_token}` : undefined;
+  } finally {
+    await oauthProvider.close();
+  }
+}
+
+export async function materializeMcpServersForRuntime(input: {
+  readonly servers: ReadonlyArray<McpServerEntry>;
+  readonly oauthStorageDir?: string;
+  readonly oauthCallbackTimeoutMs?: number;
+  readonly openAuthorizationUrl?: (url: URL) => Promise<void>;
+  readonly resolveEnvironmentHeaders?: boolean;
+}): Promise<McpServerEntry[]> {
+  return await Promise.all(
+    input.servers.map(async (server) => {
+      if (server.transport === "stdio") {
+        return server;
+      }
+      const headers =
+        input.resolveEnvironmentHeaders === false
+          ? server.headers
+          : resolveMcpServerHttpHeaders(server);
+      const authorization = input.oauthStorageDir
+        ? await storedMcpOAuthAuthorizationHeader({
+            server,
+            storageDir: input.oauthStorageDir,
+            ...(input.oauthCallbackTimeoutMs
+              ? { callbackTimeoutMs: input.oauthCallbackTimeoutMs }
+              : {}),
+            ...(input.openAuthorizationUrl
+              ? { openAuthorizationUrl: input.openAuthorizationUrl }
+              : {}),
+          }).catch(() => undefined)
+        : undefined;
+      const runtimeHeaders = authorization ? { ...headers, Authorization: authorization } : headers;
+      return runtimeHeaders ? { ...server, headers: runtimeHeaders } : server;
+    }),
   );
 }
 
@@ -1264,27 +1450,31 @@ async function createMcpClientForEntry(input: {
       if (!url) {
         throw new Error(`MCP server '${input.entry.name}' is missing a URL.`);
       }
-      const oauthProvider = input.oauthStorageDir
-        ? await createMcpOAuthProvider({
-            serverName: input.entry.name,
-            serverUrl: url,
-            storageDir: input.oauthStorageDir,
-            callbackTimeoutMs:
-              input.oauthCallbackTimeoutMs ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS,
-            openAuthorizationUrl:
-              input.openAuthorizationUrl ??
-              (async (authorizationUrl) => {
-                await open(authorizationUrl.href);
-              }),
-            allowInteractiveAuthorization: input.allowInteractiveAuthorization ?? false,
-          })
-        : undefined;
+      const oauthProvider =
+        input.oauthStorageDir && !mcpServerHasStaticAuthorization(input.entry)
+          ? await createMcpOAuthProvider({
+              serverName: input.entry.name,
+              serverUrl: url,
+              storageDir: input.oauthStorageDir,
+              scope: mcpServerOAuthScope(input.entry),
+              oauthResource: input.entry.oauthResource,
+              callbackTimeoutMs:
+                input.oauthCallbackTimeoutMs ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS,
+              openAuthorizationUrl:
+                input.openAuthorizationUrl ??
+                (async (authorizationUrl) => {
+                  await open(authorizationUrl.href);
+                }),
+              allowInteractiveAuthorization: input.allowInteractiveAuthorization ?? false,
+            })
+          : undefined;
+      const headers = resolveMcpServerHttpHeaders(input.entry);
       try {
         const client = await createMCPClient({
           transport: {
             type: input.entry.transport,
             url,
-            ...(input.entry.headers ? { headers: { ...input.entry.headers } } : {}),
+            ...(headers ? { headers } : {}),
             ...(oauthProvider ? { authProvider: oauthProvider } : {}),
             redirect: "error",
           },
@@ -1296,7 +1486,7 @@ async function createMcpClientForEntry(input: {
             transport: {
               type: input.entry.transport,
               url,
-              ...(input.entry.headers ? { headers: { ...input.entry.headers } } : {}),
+              ...(headers ? { headers } : {}),
               authProvider: oauthProvider,
               redirect: "error",
             },
@@ -1521,6 +1711,14 @@ function escapeTomlKey(value: string): string {
   return /^[A-Za-z0-9_-]+$/.test(value) ? value : escapeTomlString(value);
 }
 
+function codexManagedMcpServerTableName(server: McpServerEntry): string {
+  const discovered = server as Partial<DiscoveredMcpServerEntry>;
+  if (discovered.source === "codex" && discovered.sourceName) {
+    return sanitizeIdentifier(discovered.sourceName, "server");
+  }
+  return `shioricode_${sanitizeIdentifier(server.name, "server")}`;
+}
+
 export function buildCodexManagedMcpConfigFragment(
   servers: ReadonlyArray<McpServerEntry>,
 ): string | null {
@@ -1531,7 +1729,7 @@ export function buildCodexManagedMcpConfigFragment(
 
   const lines: string[] = ["# ShioriCode managed MCP servers"];
   for (const server of managedServers) {
-    const tableName = `shioricode_${sanitizeIdentifier(server.name, "server")}`;
+    const tableName = codexManagedMcpServerTableName(server);
     const tablePath = `mcp_servers.${escapeTomlKey(tableName)}`;
 
     if (server.transport === "stdio") {
@@ -1562,9 +1760,24 @@ export function buildCodexManagedMcpConfigFragment(
     if (server.transport === "sse") {
       lines.push(`transport = "sse"`);
     }
+    if (server.bearerTokenEnvVar?.trim()) {
+      lines.push(`bearer_token_env_var = ${escapeTomlString(server.bearerTokenEnvVar.trim())}`);
+    }
+    if (server.oauthScopes && server.oauthScopes.length > 0) {
+      lines.push(`scopes = [${server.oauthScopes.map(escapeTomlString).join(", ")}]`);
+    }
+    if (server.oauthResource?.trim()) {
+      lines.push(`oauth_resource = ${escapeTomlString(server.oauthResource.trim())}`);
+    }
     if (server.headers && Object.keys(server.headers).length > 0) {
       lines.push(`[${tablePath}.http_headers]`);
       for (const [key, value] of Object.entries(server.headers)) {
+        lines.push(`${escapeTomlKey(key)} = ${escapeTomlString(value)}`);
+      }
+    }
+    if (server.envHttpHeaders && Object.keys(server.envHttpHeaders).length > 0) {
+      lines.push(`[${tablePath}.env_http_headers]`);
+      for (const [key, value] of Object.entries(server.envHttpHeaders)) {
         lines.push(`${escapeTomlKey(key)} = ${escapeTomlString(value)}`);
       }
     }
@@ -1704,6 +1917,7 @@ export async function prepareCodexHomeWithManagedMcpServers(input: {
   readonly runtimeRootDir: string;
   readonly homePath?: string;
   readonly servers: ReadonlyArray<McpServerEntry>;
+  readonly oauthStorageDir?: string;
 }): Promise<{ homePath: string; cleanup: () => Promise<void> } | null> {
   if (input.servers.length === 0) {
     return null;
@@ -1719,12 +1933,21 @@ export async function prepareCodexHomeWithManagedMcpServers(input: {
 
   await mkdir(targetHome, { recursive: true });
   await maybeCopyFile(path.join(sourceHome, "auth.json"), path.join(targetHome, "auth.json"));
+  await maybeCopyFile(
+    path.join(sourceHome, ".credentials.json"),
+    path.join(targetHome, ".credentials.json"),
+  );
   await maybeMirrorDirectory(path.join(sourceHome, "skills"), path.join(targetHome, "skills"));
 
   const baseConfig = await readFile(path.join(sourceHome, "config.toml"), "utf8").catch(() => "");
+  const runtimeServers = await materializeMcpServersForRuntime({
+    servers: input.servers,
+    ...(input.oauthStorageDir ? { oauthStorageDir: input.oauthStorageDir } : {}),
+    resolveEnvironmentHeaders: false,
+  });
   const mergedConfig = buildCodexLeanAppServerConfig({
     baseConfig,
-    servers: input.servers,
+    servers: runtimeServers,
   });
   await writeFile(path.join(targetHome, "config.toml"), mergedConfig, "utf8");
 

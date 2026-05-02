@@ -6,7 +6,9 @@ import { useMemo } from "react";
 
 import { hostedUsageStatsQuery } from "../../convex/api";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { deriveLocalProviderUsageSummaries } from "../../lib/usageMetrics";
 import { ensureNativeApi } from "../../nativeApi";
+import { useStore } from "../../store";
 
 type UsageMetric = {
   label: string;
@@ -35,6 +37,26 @@ function clampPercentage(value: number | null | undefined): number | null {
 function toRemainingPercentage(usedPercent: number | null | undefined): number | null {
   const normalized = clampPercentage(usedPercent);
   return normalized === null ? null : Math.max(0, 100 - normalized);
+}
+
+function formatApproxTokens(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 tokens";
+  }
+  if (value < 1_000) {
+    return `${Math.round(value)} tokens`;
+  }
+  if (value < 10_000) {
+    return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k tokens`;
+  }
+  if (value < 1_000_000) {
+    return `${Math.round(value / 1_000)}k tokens`;
+  }
+  return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m tokens`;
+}
+
+function formatTurnCount(value: number): string {
+  return `${value} ${value === 1 ? "turn" : "turns"}`;
 }
 
 function UsageBar({ percent, danger = false }: { percent: number; danger?: boolean }) {
@@ -195,10 +217,46 @@ function buildRemoteProviderUsage(input: {
   };
 }
 
+function buildLocalProviderUsage(input: {
+  provider: Extract<ProviderKind, "kimiCode" | "gemini" | "cursor">;
+  last5Hours: { turns: number; approxTokens: number };
+  last7Days: { turns: number; approxTokens: number };
+}): ProviderUsage {
+  const hasRecordedUsage = input.last5Hours.turns > 0 || input.last7Days.turns > 0;
+
+  return {
+    provider: input.provider,
+    source: "Local token usage",
+    metrics: [
+      {
+        label: "Last 5 hours",
+        value: `${formatApproxTokens(input.last5Hours.approxTokens)} · ${formatTurnCount(
+          input.last5Hours.turns,
+        )}`,
+        percent: null,
+      },
+      {
+        label: "Last 7 days",
+        value: `${formatApproxTokens(input.last7Days.approxTokens)} · ${formatTurnCount(
+          input.last7Days.turns,
+        )}`,
+        percent: null,
+      },
+    ],
+    ...(hasRecordedUsage ? {} : { message: "No local usage recorded yet." }),
+  };
+}
+
 export function UsagePanel() {
   const { isAuthenticated, isAuthLoading } = useHostedShioriState();
+  const threads = useStore((store) => store.threads);
 
   const hostedUsageStats = useConvexQuery(hostedUsageStatsQuery, isAuthenticated ? {} : "skip");
+  const localUsageByProvider = useMemo(
+    () =>
+      new Map(deriveLocalProviderUsageSummaries(threads).map((usage) => [usage.provider, usage])),
+    [threads],
+  );
 
   const codexUsage = useServerQuery({
     queryKey: ["server", "providerUsage", "codex"],
@@ -217,6 +275,9 @@ export function UsagePanel() {
   const providerUsage = useMemo(() => {
     const codexSnapshot = codexUsage.data?.provider === "codex" ? codexUsage.data : null;
     const claudeSnapshot = claudeUsage.data?.provider === "claudeAgent" ? claudeUsage.data : null;
+    const kimiCodeUsage = localUsageByProvider.get("kimiCode");
+    const geminiUsage = localUsageByProvider.get("gemini");
+    const cursorUsage = localUsageByProvider.get("cursor");
 
     return [
       buildShioriAccountUsage({
@@ -249,6 +310,21 @@ export function UsagePanel() {
         secondaryLabel: "Weekly",
         unavailableReason: claudeSnapshot?.unavailableReason ?? null,
       }),
+      buildLocalProviderUsage({
+        provider: "kimiCode",
+        last5Hours: kimiCodeUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+        last7Days: kimiCodeUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+      }),
+      buildLocalProviderUsage({
+        provider: "gemini",
+        last5Hours: geminiUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+        last7Days: geminiUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+      }),
+      buildLocalProviderUsage({
+        provider: "cursor",
+        last5Hours: cursorUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+        last7Days: cursorUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+      }),
     ] satisfies readonly ProviderUsage[];
   }, [
     claudeUsage.data,
@@ -261,6 +337,7 @@ export function UsagePanel() {
     hostedUsageStats?.percentUsed,
     isAuthenticated,
     isAuthLoading,
+    localUsageByProvider,
   ]);
 
   return (
@@ -270,7 +347,7 @@ export function UsagePanel() {
           <div className="space-y-1">
             <h2 className="text-[11px] font-medium text-muted-foreground">Usage</h2>
             <p className="text-sm text-muted-foreground">
-              Only percentage-based progress is shown here.
+              Account quota where available, plus local token usage from recorded turns.
             </p>
           </div>
           <div className={cardClasses}>

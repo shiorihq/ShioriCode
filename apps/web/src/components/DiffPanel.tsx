@@ -452,7 +452,7 @@ export default function DiffPanel({ mode = "inline", onClose }: DiffPanelProps) 
 
   const headerRow = (
     <>
-      <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
+      <div className="relative min-w-0 flex-1 overflow-hidden [-webkit-app-region:no-drag]">
         {canScrollTurnStripLeft && (
           <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-linear-to-r from-card to-transparent" />
         )}
@@ -489,7 +489,7 @@ export default function DiffPanel({ mode = "inline", onClose }: DiffPanelProps) 
         </button>
         <div
           ref={turnStripRef}
-          className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
+          className="turn-chip-strip flex min-w-0 gap-1 overflow-x-auto px-8 py-0.5"
           onWheel={onTurnStripWheel}
         >
           <button
@@ -542,7 +542,7 @@ export default function DiffPanel({ mode = "inline", onClose }: DiffPanelProps) 
           ))}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <div className="flex min-w-fit shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
         <ToggleGroup
           className="shrink-0"
           variant="outline"

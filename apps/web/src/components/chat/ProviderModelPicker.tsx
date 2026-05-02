@@ -12,6 +12,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuSeparator,
   MenuSub,
   MenuSubPopup,
   MenuSubTrigger,
@@ -133,6 +134,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   disabled?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  effort?: {
+    value: string;
+    label: string;
+    levels: ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>;
+    onChange: (value: string) => void;
+    locked?: boolean;
+  } | null;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -189,30 +197,27 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             style={props.compact ? { paddingInlineEnd: "12px" } : undefined}
             className={cn(
-              "group/provider-model-picker justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
-              props.compact ? "max-w-42 min-w-0 shrink" : "sm:px-3",
+              "group/provider-model-picker shrink-0 justify-start whitespace-nowrap px-2 font-normal data-pressed:bg-accent/60 sm:px-2.5 [&_svg]:mx-0",
               props.triggerClassName,
             )}
             disabled={props.disabled}
           />
         }
       >
-        <span
-          className={cn("flex items-center gap-2", props.compact ? "max-w-36 sm:pl-1" : undefined)}
-        >
-          <span className="relative flex size-4 shrink-0 items-center justify-center">
+        <span className="flex items-center gap-1.5">
+          <span className="relative flex size-3.5 shrink-0 items-center justify-center">
             {fastModeActive ? (
               <>
                 <FastModeBoltIcon
                   aria-hidden="true"
                   data-chat-provider-model-picker-fast-icon="true"
-                  className="size-4 shrink-0 text-muted-foreground/70 group-hover/provider-model-picker:opacity-0 group-focus-visible/provider-model-picker:opacity-0"
+                  className="size-3.5 shrink-0 text-muted-foreground/70 group-hover/provider-model-picker:opacity-0 group-focus-visible/provider-model-picker:opacity-0"
                 />
                 <ProviderIcon
                   aria-hidden="true"
                   data-chat-provider-model-picker-provider-icon="true"
                   className={cn(
-                    "absolute inset-0 size-4 shrink-0 opacity-0 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
+                    "absolute inset-0 size-3.5 shrink-0 opacity-0 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
                     providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
                     props.activeProviderIconClassName,
                   )}
@@ -223,18 +228,23 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 aria-hidden="true"
                 data-chat-provider-model-picker-provider-icon="true"
                 className={cn(
-                  "size-4 shrink-0",
+                  "size-3.5 shrink-0",
                   providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
                   props.activeProviderIconClassName,
                 )}
               />
             )}
           </span>
-          <span className="min-w-0 flex-1 truncate whitespace-nowrap">{selectedModelLabel}</span>
+          <span className="shrink-0 whitespace-nowrap">{selectedModelLabel}</span>
+          {props.effort ? (
+            <span className="shrink-0 whitespace-nowrap text-muted-foreground/70">
+              {props.effort.label}
+            </span>
+          ) : null}
           <ChevronDownIcon
             aria-hidden="true"
             data-chat-provider-model-picker-chevron="true"
-            className="size-3 shrink-0 opacity-60"
+            className="size-2.5 shrink-0 opacity-70"
           />
         </span>
       </MenuTrigger>
@@ -242,9 +252,37 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         align="start"
         scrollFade={props.lockedProvider !== null}
         className={
-          props.lockedProvider !== null ? "[--available-height:min(24rem,70vh)]" : undefined
+          props.lockedProvider !== null ? "[--available-height:min(11rem,45vh)]" : undefined
         }
       >
+        {props.effort && props.effort.levels.length > 0 && !props.effort.locked ? (
+          <>
+            <MenuSub>
+              <MenuSubTrigger>
+                <span className="flex-1">Intelligence</span>
+                <span className="ms-auto text-muted-foreground/80 text-xs">
+                  {props.effort.label}
+                </span>
+              </MenuSubTrigger>
+              <MenuSubPopup className="[--available-height:min(11rem,45vh)]" sideOffset={4}>
+                <MenuRadioGroup
+                  value={props.effort.value}
+                  onValueChange={(value) => {
+                    props.effort?.onChange(value);
+                  }}
+                >
+                  {props.effort.levels.map((option) => (
+                    <MenuRadioItem key={option.value} value={option.value}>
+                      {option.label}
+                      {option.isDefault ? " (default)" : ""}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuSubPopup>
+            </MenuSub>
+            <MenuSeparator />
+          </>
+        ) : null}
         {props.lockedProvider !== null ? (
           <LockedProviderModelList
             model={props.model}
@@ -299,7 +337,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       </span>
                     ) : null}
                   </MenuSubTrigger>
-                  <MenuSubPopup className="[--available-height:min(24rem,70vh)]" sideOffset={4}>
+                  <MenuSubPopup className="[--available-height:min(11rem,45vh)]" sideOffset={4}>
                     <MenuGroup>
                       <MenuRadioGroup
                         value={props.provider === option.value ? props.model : ""}

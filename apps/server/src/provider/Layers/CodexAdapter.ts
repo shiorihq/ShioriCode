@@ -6,6 +6,8 @@
  *
  * @module CodexAdapterLive
  */
+import path from "node:path";
+
 import {
   type CanonicalItemType,
   type CanonicalRequestType,
@@ -1644,6 +1646,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             runtimeRootDir: serverConfig.stateDir,
             homePath: codexSettings.homePath,
             servers: effectiveServers.servers,
+            oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
           });
           return {
             prepared,

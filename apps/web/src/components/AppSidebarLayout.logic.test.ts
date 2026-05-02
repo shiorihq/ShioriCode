@@ -23,6 +23,21 @@ const APP_SIDEBAR_BINDINGS = [
     },
   },
   {
+    command: "search.open",
+    shortcut: {
+      key: "g",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    },
+    whenAst: {
+      type: "not",
+      node: { type: "identifier", name: "kanbanView" },
+    },
+  },
+  {
     command: "project.add",
     shortcut: {
       key: "o",
@@ -46,6 +61,36 @@ const APP_SIDEBAR_BINDINGS = [
       shiftKey: false,
       altKey: false,
       modKey: false,
+    },
+  },
+  {
+    command: "chat.new",
+    shortcut: {
+      key: "n",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    },
+    whenAst: {
+      type: "not",
+      node: { type: "identifier", name: "terminalFocus" },
+    },
+  },
+  {
+    command: "chat.newLocal",
+    shortcut: {
+      key: "n",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: true,
+      altKey: false,
+      modKey: true,
+    },
+    whenAst: {
+      type: "not",
+      node: { type: "identifier", name: "terminalFocus" },
     },
   },
 ] satisfies ResolvedKeybindingsConfig;
@@ -106,6 +151,60 @@ describe("resolveAppSidebarShortcutCommand", () => {
         },
       ),
     ).toBe("pullRequests.open");
+  });
+
+  it("resolves new chat shortcuts as app-level shortcuts", () => {
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ key: "n", metaKey: true }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBe("chat.new");
+
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ key: "n", metaKey: true, shiftKey: true }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBe("chat.newLocal");
+  });
+
+  it("resolves global search outside Kanban and leaves Command-G to Kanban inside Kanban", () => {
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ metaKey: true, key: "g" }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          kanbanView: false,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBe("search.open");
+
+    expect(
+      resolveAppSidebarShortcutCommand(
+        createEvent({ metaKey: true, key: "g" }),
+        APP_SIDEBAR_BINDINGS,
+        {
+          terminalFocus: false,
+          terminalOpen: false,
+          kanbanView: true,
+          platform: "MacIntel",
+        },
+      ),
+    ).toBeNull();
   });
 
   it("does not override unrelated prevented shortcuts", () => {

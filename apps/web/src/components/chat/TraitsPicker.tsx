@@ -174,7 +174,7 @@ export interface TraitsMenuContentProps {
   triggerClassName?: string;
 }
 
-function useUpdateModelOptions(
+export function useUpdateModelOptions(
   provider: ProviderKind,
   persistence: TraitsPersistence,
 ): (nextOptions: ProviderOptions | undefined) => void {
@@ -192,7 +192,7 @@ function useUpdateModelOptions(
   );
 }
 
-function useResolvedTraits(input: {
+export function useResolvedTraits(input: {
   provider: ProviderKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
@@ -463,6 +463,35 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   );
 });
 
+function EffortBars(props: {
+  levels: ReadonlyArray<{ value: string; label: string }>;
+  currentIndex: number;
+  className?: string;
+}) {
+  const total = props.levels.length;
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("inline-flex h-3.5 items-end gap-[2px]", props.className)}
+    >
+      {props.levels.map((level, i) => {
+        const isActive = i <= props.currentIndex;
+        const heightPercent = 35 + (i / Math.max(total - 1, 1)) * 65;
+        return (
+          <span
+            key={level.value}
+            className={cn(
+              "w-[3px] rounded-[1.5px] transition-opacity duration-150 ease-out",
+              isActive ? "bg-foreground" : "bg-foreground/25",
+            )}
+            style={{ height: `${heightPercent}%` }}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
 export const EffortPicker = memo(function EffortPicker({
   provider,
   models,
@@ -471,18 +500,15 @@ export const EffortPicker = memo(function EffortPicker({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
-  triggerVariant,
   triggerClassName,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const updateModelOptions = useUpdateModelOptions(provider, persistence);
   const {
     effort,
     effortLevels,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
-    defaultEffort,
     handleEffortChange,
   } = useResolvedTraits({
     provider,
@@ -499,56 +525,46 @@ export const EffortPicker = memo(function EffortPicker({
     return null;
   }
 
+  const currentIndex = effortLevels.findIndex((option) => option.value === effort);
   const triggerLabel = ultrathinkPromptControlled
     ? "Ultrathink"
     : (effortLevels.find((option) => option.value === effort)?.label ?? effort);
-  const isCodexStyle = provider === "codex";
-  const handleEffortSelection = useCallback(
-    (value: string) => {
-      handleEffortChange(value);
-      setIsMenuOpen(false);
-    },
-    [handleEffortChange],
-  );
+  const isLocked = ultrathinkInBodyText || ultrathinkPromptControlled;
+  const nextLabel = !isLocked
+    ? (effortLevels[(currentIndex + 1) % effortLevels.length]?.label ?? null)
+    : null;
+  const title = ultrathinkInBodyText
+    ? 'Your prompt contains "ultrathink" — remove it to change effort.'
+    : ultrathinkPromptControlled
+      ? "Ultrathink (controlled by prompt)"
+      : nextLabel
+        ? `Intelligence: ${triggerLabel} — click for ${nextLabel}`
+        : `Intelligence: ${triggerLabel}`;
+
+  const handleClick = () => {
+    if (isLocked || effortLevels.length === 0) return;
+    const nextIndex = (currentIndex + 1) % effortLevels.length;
+    const next = effortLevels[nextIndex];
+    if (next) handleEffortChange(next.value);
+  };
 
   return (
-    <Menu
-      open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open);
-      }}
+    <button
+      type="button"
+      data-chat-effort-picker="true"
+      title={title}
+      aria-label={`Intelligence: ${triggerLabel}. Click to cycle.`}
+      disabled={isLocked}
+      onClick={handleClick}
+      className={cn(
+        "group/effort-picker inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-sm font-normal text-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-2.5 sm:text-xs",
+        isLocked && "pointer-events-none opacity-60",
+        triggerClassName,
+      )}
     >
-      <MenuTrigger
-        render={
-          <Button
-            size="sm"
-            variant={triggerVariant ?? "ghost"}
-            data-chat-effort-picker="true"
-            className={cn(
-              isCodexStyle
-                ? "min-w-0 max-w-32 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0 sm:max-w-36 sm:px-3"
-                : "min-w-0 max-w-36 shrink-0 justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3",
-              triggerClassName,
-            )}
-          />
-        }
-      >
-        <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
-          <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
-          <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
-        </span>
-      </MenuTrigger>
-      <MenuPopup align="start">
-        <EffortMenuGroup
-          effort={effort}
-          effortLevels={effortLevels}
-          ultrathinkPromptControlled={ultrathinkPromptControlled}
-          ultrathinkInBodyText={ultrathinkInBodyText}
-          defaultEffort={defaultEffort}
-          onValueChange={handleEffortSelection}
-        />
-      </MenuPopup>
-    </Menu>
+      <EffortBars levels={effortLevels} currentIndex={currentIndex} />
+      <span className="min-w-0 truncate">{triggerLabel}</span>
+    </button>
   );
 });
 
@@ -623,8 +639,8 @@ export const TraitsPicker = memo(function TraitsPicker({
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
-                : "shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3",
+                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 font-normal sm:max-w-48 sm:px-2.5 [&_svg]:mx-0"
+                : "shrink-0 whitespace-nowrap px-2 font-normal sm:px-2.5",
               triggerClassName,
             )}
           />
@@ -633,12 +649,12 @@ export const TraitsPicker = memo(function TraitsPicker({
         {isCodexStyle ? (
           <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
             {triggerLabel}
-            <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+            <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
           </span>
         ) : (
           <>
             <span>{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-70" />
           </>
         )}
       </MenuTrigger>

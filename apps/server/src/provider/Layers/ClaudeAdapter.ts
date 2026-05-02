@@ -6,6 +6,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import path from "node:path";
+
 import {
   AbortError,
   type CanUseTool,
@@ -82,7 +84,7 @@ import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
-import { filterMcpServersForProvider } from "../mcpServers.ts";
+import { filterMcpServersForProvider, materializeMcpServersForRuntime } from "../mcpServers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -2997,7 +2999,23 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       );
       const claudeSettings = serverSettings.providers.claudeAgent;
       const claudeBinaryPath = claudeSettings.binaryPath;
-      const claudeMcpServers = buildClaudeMcpServers(serverSettings.mcpServers.servers);
+      const runtimeMcpServers = yield* Effect.tryPromise(() =>
+        materializeMcpServersForRuntime({
+          servers: serverSettings.mcpServers.servers,
+          oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
+        }),
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(
+              "claude mcp OAuth materialization failed; continuing with static MCP config",
+            );
+            yield* Effect.logWarning(toMessage(cause, "Failed to materialize Claude MCP auth."));
+            return serverSettings.mcpServers.servers;
+          }),
+        ),
+      );
+      const claudeMcpServers = buildClaudeMcpServers(runtimeMcpServers);
       const assistantSettingsAppendix = buildAssistantSettingsAppendix({
         personality: serverSettings.assistantPersonality,
         generateMemories: serverSettings.generateMemories,

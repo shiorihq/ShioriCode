@@ -1,5 +1,5 @@
-import { useEffect, type CSSProperties, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, type CSSProperties, type ReactNode } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useServerKeybindings } from "~/rpc/serverState";
 import { useDesktopWindowControlsInset } from "~/hooks/useDesktopWindowControlsInset";
 import { isTerminalFocused } from "~/lib/terminalFocus";
@@ -8,12 +8,14 @@ import { useUiStateStore } from "~/uiStateStore";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
+import { useHandleNewThread } from "~/hooks/useHandleNewThread";
 
 import ThreadSidebar from "./Sidebar";
 import {
   resolveAppSidebarShortcutCommand,
   resolveAppTitlebarWindowControlsLeftInset,
 } from "./AppSidebarLayout.logic";
+import { resolveSidebarNewThreadEnvMode } from "./Sidebar.logic";
 import { CommandKModal, useCommandK } from "./CommandKModal";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 
@@ -21,12 +23,15 @@ const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
-function AppSidebarKeyboardShortcuts() {
+function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => void }) {
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
   const navigate = useNavigate();
-  const kanbanEnabled = useSettings().kanban.enabled;
+  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const appSettings = useSettings();
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
+  const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
+    useHandleNewThread();
   const terminalOpen = useTerminalStateStore((state) =>
     Object.values(state.terminalStateByThreadId).some(
       (terminalState) => terminalState.terminalOpen,
@@ -39,8 +44,16 @@ function AppSidebarKeyboardShortcuts() {
       const command = resolveAppSidebarShortcutCommand(event, keybindings, {
         terminalFocus,
         terminalOpen,
+        kanbanView: pathname === "/kanban",
       });
       if (!command) return;
+
+      if (command === "search.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSearchOpen();
+        return;
+      }
 
       if (command === "project.add") {
         event.preventDefault();
@@ -57,12 +70,43 @@ function AppSidebarKeyboardShortcuts() {
       }
 
       if (command === "kanban.open") {
-        if (!kanbanEnabled) {
+        if (!appSettings.kanban.enabled) {
           return;
         }
         event.preventDefault();
         event.stopPropagation();
         void navigate({ to: "/kanban", search: {} });
+        return;
+      }
+
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? defaultProjectId;
+
+      if (command === "chat.newLocal") {
+        if (!projectId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewThread(projectId, {
+          envMode: resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+        });
+        return;
+      }
+
+      if (command === "chat.new") {
+        if (!projectId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewThread(projectId, {
+          branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+          worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+          envMode:
+            activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+        });
         return;
       }
 
@@ -77,7 +121,21 @@ function AppSidebarKeyboardShortcuts() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown, { capture: true });
     };
-  }, [kanbanEnabled, keybindings, navigate, requestProjectAdd, terminalOpen, toggleSidebar]);
+  }, [
+    activeDraftThread,
+    activeThread,
+    appSettings.defaultThreadEnvMode,
+    appSettings.kanban.enabled,
+    defaultProjectId,
+    handleNewThread,
+    keybindings,
+    navigate,
+    onSearchOpen,
+    pathname,
+    requestProjectAdd,
+    terminalOpen,
+    toggleSidebar,
+  ]);
 
   return null;
 }
@@ -114,6 +172,7 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
             "-ml-px overflow-hidden rounded-l-[var(--app-sidebar-shell-radius)]",
         )}
         data-app-chat-shell-with-sidebar={showCurvedSidebarEdge || undefined}
+        data-app-modal-blur-surface
       >
         {children}
       </div>
@@ -140,6 +199,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { sidebarTranslucent } = useSettings();
   const { open: commandKOpen, setOpen: setCommandKOpen } = useCommandK();
+  const openCommandK = useCallback(() => {
+    setCommandKOpen(true);
+  }, [setCommandKOpen]);
   const translucent = isElectron && sidebarTranslucent;
   useSidebarTranslucency(translucent);
 
@@ -157,11 +219,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     return () => {
       unsubscribe?.();
     };
-  }, [navigate]);
+  }, [navigate, openCommandK]);
 
   return (
     <SidebarProvider defaultOpen className="h-dvh">
-      <AppSidebarKeyboardShortcuts />
+      <AppSidebarKeyboardShortcuts onSearchOpen={openCommandK} />
       <CommandKModal open={commandKOpen} onOpenChange={setCommandKOpen} />
       <Sidebar
         side="left"
@@ -176,7 +238,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        <ThreadSidebar onSearchClick={() => setCommandKOpen(true)} />
+        <ThreadSidebar onSearchClick={openCommandK} />
         <SidebarRail />
       </Sidebar>
       <AppSidebarContent>{children}</AppSidebarContent>

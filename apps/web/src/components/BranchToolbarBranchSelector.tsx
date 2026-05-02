@@ -29,7 +29,6 @@ import {
   resolveBranchToolbarValue,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
-import { Button } from "./ui/button";
 import {
   Combobox,
   ComboboxEmpty,
@@ -40,6 +39,8 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
+import { selectTriggerVariants } from "./ui/select";
+import { cn } from "~/lib/utils";
 import { toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
@@ -498,13 +499,15 @@ export function BranchToolbarBranchSelector({
       value={resolvedActiveBranch}
     >
       <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
+        className={cn(
+          selectTriggerVariants({ size: "xs", variant: "ghost" }),
+          "h-auto gap-1.5 rounded-full py-1.5 font-medium transition-none hover:text-foreground/80 sm:h-auto sm:py-1.5",
+        )}
         disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
       >
-        <GitBranchIcon className="size-3" />
+        <GitBranchIcon className="size-3.5" />
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon />
+        <ChevronDownIcon className="size-3 opacity-50" />
       </ComboboxTrigger>
       <ComboboxPopup align="end" side="top" className="w-80">
         <div className="border-b p-1">

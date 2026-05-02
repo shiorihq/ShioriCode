@@ -906,9 +906,9 @@ async function waitForServerConfigToApply(): Promise<void> {
   await waitForLayout();
 }
 
-function dispatchChatNewShortcut(): void {
+function dispatchChatNewShortcut(target: EventTarget = window): void {
   const useMetaForMod = isMacPlatform(navigator.platform);
-  window.dispatchEvent(
+  target.dispatchEvent(
     new KeyboardEvent("keydown", {
       key: "o",
       shiftKey: true,
@@ -940,11 +940,12 @@ async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
   errorMessage: string,
+  target: EventTarget = window,
 ): Promise<string> {
   let pathname = router.state.location.pathname;
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
-    dispatchChatNewShortcut();
+    dispatchChatNewShortcut(target);
     await waitForLayout();
     pathname = router.state.location.pathname;
     if (predicate(pathname)) {
@@ -1677,6 +1678,46 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 200));
       await waitForLayout();
 
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.create",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a projectless draft when the new chat icon is clicked", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await waitForWsClient();
+      wsRequests.length = 0;
+
+      await page.getByTestId("new-chat-button").click();
+
+      await vi.waitFor(
+        () => {
+          expect(UUID_ROUTE_RE.test(mounted.router.state.location.pathname)).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const threadId = mounted.router.state.location.pathname.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[threadId]).toMatchObject({
+        projectId: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+      });
       expect(
         wsRequests.some(
           (request) =>
@@ -3017,11 +3058,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
       await waitForLayout();
-      await triggerChatNewShortcutUntilPath(
-        mounted.router,
-        (path) => UUID_ROUTE_RE.test(path),
-        "Route should have changed to a new draft thread UUID from the shortcut.",
-      );
+      composerEditor.addEventListener("keydown", stopAtEditor);
+      try {
+        await triggerChatNewShortcutUntilPath(
+          mounted.router,
+          (path) => UUID_ROUTE_RE.test(path),
+          "Route should have changed to a new draft thread UUID from the shortcut.",
+          composerEditor,
+        );
+      } finally {
+        composerEditor.removeEventListener("keydown", stopAtEditor);
+      }
     } finally {
       await mounted.cleanup();
     }

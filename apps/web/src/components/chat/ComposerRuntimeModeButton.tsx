@@ -2,6 +2,7 @@ import { RuntimeMode } from "contracts";
 import { memo } from "react";
 import { LockIcon, LockOpenIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import { cn } from "~/lib/utils";
 import { getRuntimeModeLabel, getRuntimeModeTitle } from "./runtimeModeLabels";
 
 export const ComposerRuntimeModeButton = memo(function ComposerRuntimeModeButton(props: {
@@ -16,7 +17,11 @@ export const ComposerRuntimeModeButton = memo(function ComposerRuntimeModeButton
   return (
     <Button
       variant="ghost"
-      className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+      className={cn(
+        "shrink-0 gap-1.5 whitespace-nowrap px-2 font-normal data-pressed:bg-accent/60 sm:px-2.5 [&_svg:not([class*='size-'])]:size-3.5",
+        isFullAccess &&
+          "text-orange-600 dark:text-orange-400 [&_svg:not([class*='opacity-'])]:opacity-100",
+      )}
       size="sm"
       type="button"
       onClick={props.onToggle}

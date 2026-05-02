@@ -108,7 +108,6 @@ import {
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
@@ -177,10 +176,10 @@ import { ComposerContextPanel } from "./chat/ComposerContextPanel";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
 import {
   getComposerProviderState,
-  renderProviderEffortPicker,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./chat/composerProviderRegistry";
+import { useResolvedTraits, useUpdateModelOptions } from "./chat/TraitsPicker";
 import { playFastModeBlitz } from "./chat/fastModeBlitzFx";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { EmptyThreadAmbient } from "./chat/EmptyThreadAmbient";
@@ -1319,7 +1318,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       branch: string | null;
       worktreePath: string | null;
     }): Promise<boolean> => {
-      if (!isLocalDraftThread || !activeProject || !activeThread) {
+      if (!isLocalDraftThread || !activeThread) {
         return false;
       }
 
@@ -1345,7 +1344,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           type: "thread.create",
           commandId: newCommandId(),
           threadId,
-          projectId: activeProject.id,
+          projectId: activeThread.projectId,
+          projectlessCwd:
+            activeThread.projectId === null ? (activeThread.projectlessCwd ?? null) : null,
           title: input.title,
           modelSelection: input.modelSelection,
           runtimeMode,
@@ -1376,7 +1377,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       draftThreadMaterializationPromisesRef.current.set(threadId, promise);
       return promise;
     },
-    [activeProject, activeThread, interactionMode, isLocalDraftThread, runtimeMode, threadId],
+    [activeThread, interactionMode, isLocalDraftThread, runtimeMode, threadId],
   );
   const selectedModelForPicker = selectedModel;
   const draftThreadCreateModelSelection = useMemo<ModelSelection>(
@@ -2941,7 +2942,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       pendingUserScrollUpIntentRef.current = true;
     }
   }, []);
-  const onMessagesPointerDown = useCallback((_event: React.PointerEvent<HTMLDivElement>) => {
+  const onMessagesPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("button, summary, [role='button'], [data-scroll-anchor-target]")
+    ) {
+      return;
+    }
     isPointerScrollActiveRef.current = true;
   }, []);
   const onMessagesPointerUp = useCallback((_event: React.PointerEvent<HTMLDivElement>) => {
@@ -3737,7 +3744,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       );
       return;
     }
-    if (!isServerThread && !activeProject) return;
+    if (!activeThread) return;
     const activeProjectForSend = activeProject;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -3948,14 +3955,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       }
 
       if (isLocalDraftThread && !hasMaterializedServerThread) {
-        if (!activeProjectForSend) {
-          return;
-        }
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: threadIdForSend,
-          projectId: activeProjectForSend.id,
+          projectId: activeThread.projectId,
+          projectlessCwd:
+            activeThread.projectId === null ? (activeThread.projectlessCwd ?? null) : null,
           title,
           modelSelection: draftThreadCreateModelSelection,
           runtimeMode,
@@ -4567,15 +4573,35 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     prompt,
     onPromptChange: setPromptFromTraits,
   });
-  const providerEffortPicker = renderProviderEffortPicker({
+  const composerEffortUpdateModelOptions = useUpdateModelOptions(selectedProvider, { threadId });
+  const composerEffortTraits = useResolvedTraits({
     provider: selectedProvider,
-    threadId,
-    model: selectedModel,
     models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedProvider],
+    model: selectedModel,
     prompt,
     onPromptChange: setPromptFromTraits,
+    modelOptions: composerModelOptions?.[selectedProvider],
+    allowPromptInjectedEffort: true,
+    updateModelOptions: composerEffortUpdateModelOptions,
   });
+  const composerEffortPickerProps =
+    composerEffortTraits.effort && composerEffortTraits.effortLevels.length > 0
+      ? {
+          value: composerEffortTraits.ultrathinkPromptControlled
+            ? "ultrathink"
+            : composerEffortTraits.effort,
+          label: composerEffortTraits.ultrathinkPromptControlled
+            ? "Ultrathink"
+            : (composerEffortTraits.effortLevels.find(
+                (level) => level.value === composerEffortTraits.effort,
+              )?.label ?? composerEffortTraits.effort),
+          levels: composerEffortTraits.effortLevels,
+          onChange: composerEffortTraits.handleEffortChange,
+          locked:
+            composerEffortTraits.ultrathinkInBodyText ||
+            composerEffortTraits.ultrathinkPromptControlled,
+        }
+      : null;
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
     threadId,
@@ -4972,7 +4998,20 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   };
   const onToggleWorkGroup = useCallback(
     (groupId: string, currentlyExpanded: boolean) => {
-      if (currentlyExpanded) {
+      const scrollContainer = messagesScrollRef.current;
+      const wasNearBottom = scrollContainer
+        ? isScrollContainerNearBottom(scrollContainer)
+        : shouldAutoScrollRef.current;
+
+      if (wasNearBottom) {
+        shouldAutoScrollRef.current = true;
+        pendingUserScrollUpIntentRef.current = false;
+        setScrollChromeState({
+          showScrollToBottom: false,
+          isScrolledFromTop: scrollContainer ? scrollContainer.scrollTop > 8 : false,
+        });
+        scheduleStickToBottomSettlement(18);
+      } else if (currentlyExpanded) {
         pauseTimelineAutoScroll();
       }
       setExpandedWorkGroups((existing) => ({
@@ -4980,7 +5019,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         [groupId]: !currentlyExpanded,
       }));
     },
-    [pauseTimelineAutoScroll],
+    [pauseTimelineAutoScroll, scheduleStickToBottomSettlement, setScrollChromeState],
   );
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
@@ -5205,7 +5244,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               "relative w-full min-w-0",
               isEmptyThread
                 ? "flex flex-1 flex-col items-center justify-center px-3 sm:px-5"
-                : cn("shrink-0 px-3 sm:px-5", isGitRepo ? "pb-1" : "pb-3 sm:pb-4"),
+                : "shrink-0 px-3 pb-3 sm:px-5 sm:pb-4",
             )}
           >
             {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
@@ -5269,8 +5308,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                     hasDecoratedComposerFrame
                       ? ["rounded-[22px] p-px", composerProviderState.composerFrameClassName]
                       : [
-                          "rounded-[20px] border bg-card shadow-sm has-focus-visible:border-ring/45",
-                          isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+                          "glass-composer rounded-[20px] has-focus-visible:border-ring/45",
+                          isDragOverComposer && "border-primary/70 bg-accent/30",
                         ],
                   )}
                   onDragEnter={onComposerDragEnter}
@@ -5424,7 +5463,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               ? "Type your own answer, or leave this blank to use the selected option"
                               : showPlanFollowUpPrompt && activeProposedPlan
                                 ? "Add feedback to refine the plan, or leave this blank to implement it"
-                                : phase === "disconnected"
+                                : hasThreadStarted && phase === "disconnected"
                                   ? "Ask for follow-up changes or attach images"
                                   : "Ask anything, @tag files/folders, or use / to show available commands"
                         }
@@ -5459,12 +5498,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                       >
                         <div
                           ref={composerFooterLeadingRef}
-                          className={cn(
-                            "flex min-w-0 flex-1 items-center",
-                            isComposerFooterCompact
-                              ? "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                              : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-                          )}
+                          className="flex min-w-0 shrink-0 items-center gap-1"
                         >
                           {/* Plus menu */}
                           <ComposerPlusMenu
@@ -5478,6 +5512,39 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             onAddFiles={addComposerImages}
                           />
 
+                          {isComposerFooterCompact && compactControlsMenuNeeded ? (
+                            <CompactComposerControlsMenu
+                              activePlan={Boolean(
+                                activePlan || sidebarProposedPlan || planSidebarOpen,
+                              )}
+                              planSidebarOpen={planSidebarOpen}
+                              runtimeMode={runtimeMode}
+                              traitsMenuContent={providerTraitsMenuContent}
+                              onTogglePlanSidebar={togglePlanSidebar}
+                              onRuntimeModeChange={handleRuntimeModeChange}
+                            />
+                          ) : (
+                            <ComposerRuntimeModeButton
+                              compact={isComposerFooterCompact}
+                              runtimeMode={runtimeMode}
+                              onToggle={toggleRuntimeMode}
+                            />
+                          )}
+
+                          {interactionMode === "plan" ? (
+                            <PlanModeIndicator onDisable={toggleInteractionMode} />
+                          ) : null}
+                        </div>
+
+                        {/* Right side: model + effort + send */}
+                        <div
+                          ref={composerFooterActionsRef}
+                          data-chat-composer-actions="right"
+                          data-chat-composer-primary-actions-compact={
+                            isComposerPrimaryActionsCompact ? "true" : "false"
+                          }
+                          className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                        >
                           {/* Provider/model picker */}
                           <ProviderModelPicker
                             compact={isComposerFooterCompact}
@@ -5487,6 +5554,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             providers={providerStatuses}
                             modelOptionsByProvider={modelOptionsByProvider}
                             modelOptions={composerModelOptions?.[selectedProvider]}
+                            effort={composerEffortPickerProps}
                             {...(composerProviderState.modelPickerIconClassName
                               ? {
                                   activeProviderIconClassName:
@@ -5496,112 +5564,35 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             onProviderModelChange={onProviderModelSelect}
                           />
 
-                          {providerEffortPicker}
+                          {!isComposerFooterCompact && providerTraitsPicker
+                            ? providerTraitsPicker
+                            : null}
 
-                          {isComposerFooterCompact ? (
-                            <>
-                              {compactControlsMenuNeeded ? (
-                                <CompactComposerControlsMenu
-                                  activePlan={Boolean(
-                                    activePlan || sidebarProposedPlan || planSidebarOpen,
-                                  )}
-                                  planSidebarOpen={planSidebarOpen}
-                                  runtimeMode={runtimeMode}
-                                  traitsMenuContent={providerTraitsMenuContent}
-                                  onTogglePlanSidebar={togglePlanSidebar}
-                                  onRuntimeModeChange={handleRuntimeModeChange}
-                                />
-                              ) : (
-                                <ComposerRuntimeModeButton
-                                  compact
-                                  runtimeMode={runtimeMode}
-                                  onToggle={toggleRuntimeMode}
-                                />
+                          {!isComposerFooterCompact &&
+                          (activePlan || sidebarProposedPlan || planSidebarOpen) ? (
+                            <Button
+                              variant="ghost"
+                              className={cn(
+                                "shrink-0 whitespace-nowrap px-2 sm:px-2.5",
+                                planSidebarOpen
+                                  ? "text-blue-400 hover:text-blue-300"
+                                  : "text-muted-foreground/70 hover:text-foreground/80",
                               )}
-                              {interactionMode === "plan" && (
-                                <>
-                                  <Separator orientation="vertical" className="mx-0.5 h-4" />
-                                  <PlanModeIndicator onDisable={toggleInteractionMode} />
-                                </>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              {providerTraitsPicker ? (
-                                <>
-                                  <Separator
-                                    orientation="vertical"
-                                    className="mx-0.5 hidden h-4 sm:block"
-                                  />
-                                  {providerTraitsPicker}
-                                </>
-                              ) : null}
+                              size="sm"
+                              type="button"
+                              onClick={togglePlanSidebar}
+                              title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+                            >
+                              <ListTodoIcon />
+                              <span className="sr-only sm:not-sr-only">Plan</span>
+                            </Button>
+                          ) : null}
 
-                              {interactionMode === "plan" ? (
-                                <>
-                                  <Separator
-                                    orientation="vertical"
-                                    className="mx-0.5 hidden h-4 sm:block"
-                                  />
-                                  <PlanModeIndicator onDisable={toggleInteractionMode} />
-                                </>
-                              ) : null}
-
-                              <Separator
-                                orientation="vertical"
-                                className="mx-0.5 hidden h-4 sm:block"
-                              />
-
-                              <ComposerRuntimeModeButton
-                                compact={false}
-                                runtimeMode={runtimeMode}
-                                onToggle={toggleRuntimeMode}
-                              />
-
-                              {activePlan || sidebarProposedPlan || planSidebarOpen ? (
-                                <>
-                                  <Separator
-                                    orientation="vertical"
-                                    className="mx-0.5 hidden h-4 sm:block"
-                                  />
-                                  <Button
-                                    variant="ghost"
-                                    className={cn(
-                                      "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                                      planSidebarOpen
-                                        ? "text-blue-400 hover:text-blue-300"
-                                        : "text-muted-foreground/70 hover:text-foreground/80",
-                                    )}
-                                    size="sm"
-                                    type="button"
-                                    onClick={togglePlanSidebar}
-                                    title={
-                                      planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"
-                                    }
-                                  >
-                                    <ListTodoIcon />
-                                    <span className="sr-only sm:not-sr-only">Plan</span>
-                                  </Button>
-                                </>
-                              ) : null}
-                            </>
-                          )}
-                        </div>
-
-                        {/* Right side: send / stop button */}
-                        <div
-                          ref={composerFooterActionsRef}
-                          data-chat-composer-actions="right"
-                          data-chat-composer-primary-actions-compact={
-                            isComposerPrimaryActionsCompact ? "true" : "false"
-                          }
-                          className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
-                        >
                           {activeContextWindow ? (
                             <ContextWindowMeter usage={activeContextWindow} />
                           ) : null}
                           {isPreparingWorktree ? (
-                            <span className="text-muted-foreground/70 text-xs">
+                            <span className="ms-1 text-muted-foreground/70 text-xs">
                               Preparing worktree...
                             </span>
                           ) : null}
@@ -5644,9 +5635,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               <ProjectlessChatComposerNotice emptyThread />
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
-              <div className="relative z-10 mx-auto mt-2 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center justify-start gap-x-0.5 gap-y-1">
+              <div className="relative z-0 mx-auto -mt-3 flex w-full min-w-0 max-w-[50rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-card px-3 pt-4 pb-1.5">
                 <BranchToolbar
-                  inline
                   threadId={activeThread.id}
                   onEnvModeChange={onEnvModeChange}
                   envLocked={envLocked}
@@ -5663,18 +5653,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           {!isEmptyThread && isProjectlessChat ? (
             <ProjectlessChatComposerNotice emptyThread={false} />
           ) : null}
-          {!isEmptyThread && !isProjectlessChat && (
-            <BranchToolbar
-              threadId={activeThread.id}
-              onEnvModeChange={onEnvModeChange}
-              envLocked={envLocked}
-              isGitRepo={isGitRepo}
-              onComposerFocusRequest={scheduleComposerFocus}
-              {...(canCheckoutPullRequestIntoThread
-                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                : {})}
-            />
-          )}
 
           {pullRequestDialogState ? (
             <PullRequestThreadDialog

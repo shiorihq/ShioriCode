@@ -172,6 +172,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
 
       assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
+      assert.equal(defaultsByCommand.get("search.open"), "meta+g");
       assert.equal(defaultsByCommand.get("project.add"), "mod+o");
       assert.equal(defaultsByCommand.get("pullRequests.open"), "meta+p");
       assert.equal(defaultsByCommand.get("kanban.open"), "meta+k");

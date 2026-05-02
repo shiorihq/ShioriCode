@@ -306,6 +306,10 @@ export const McpServerEntry = Schema.Struct({
   // sse/http transport fields
   url: Schema.optionalKey(TrimmedString),
   headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  envHttpHeaders: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  bearerTokenEnvVar: Schema.optionalKey(TrimmedString),
+  oauthScopes: Schema.optionalKey(Schema.Array(Schema.String)),
+  oauthResource: Schema.optionalKey(TrimmedString),
   // stdio transport fields
   command: Schema.optionalKey(TrimmedString),
   args: Schema.optionalKey(Schema.Array(Schema.String)),

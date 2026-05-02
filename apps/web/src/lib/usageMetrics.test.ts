@@ -119,6 +119,20 @@ describe("deriveLocalProviderUsageSummaries", () => {
           }),
         ],
       }),
+      makeThread({
+        id: "thread-kimi",
+        provider: "kimiCode",
+        activities: [
+          makeActivity({
+            id: "kimi-turn-1",
+            createdAt: "2026-04-04T11:30:00.000Z",
+            turnId: "turn-kimi-1",
+            payload: {
+              lastUsedTokens: 75,
+            },
+          }),
+        ],
+      }),
     ];
 
     const summaries = deriveLocalProviderUsageSummaries(threads, now);
@@ -135,6 +149,21 @@ describe("deriveLocalProviderUsageSummaries", () => {
       },
       {
         provider: "shiori",
+        last5Hours: { turns: 0, approxTokens: 0 },
+        last7Days: { turns: 0, approxTokens: 0 },
+      },
+      {
+        provider: "kimiCode",
+        last5Hours: { turns: 1, approxTokens: 75 },
+        last7Days: { turns: 1, approxTokens: 75 },
+      },
+      {
+        provider: "gemini",
+        last5Hours: { turns: 0, approxTokens: 0 },
+        last7Days: { turns: 0, approxTokens: 0 },
+      },
+      {
+        provider: "cursor",
         last5Hours: { turns: 0, approxTokens: 0 },
         last7Days: { turns: 0, approxTokens: 0 },
       },

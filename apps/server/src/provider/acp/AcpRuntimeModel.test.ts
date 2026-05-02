@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { parseSessionUpdateEvent } from "./AcpRuntimeModel.ts";
+import { normalizeAcpPromptUsage, parseSessionUpdateEvent } from "./AcpRuntimeModel.ts";
 
 describe("parseSessionUpdateEvent", () => {
   it("preserves Gemini ACP tool state that only includes kind/title/locations/content", () => {
@@ -63,5 +63,61 @@ describe("parseSessionUpdateEvent", () => {
         result: { stdout: "ok" },
       });
     }
+  });
+
+  it("normalizes ACP context usage updates", () => {
+    const parsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1234,
+        size: 200000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(parsed.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        usage: {
+          usedTokens: 1234,
+          maxTokens: 200000,
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1234,
+            size: 200000,
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe("normalizeAcpPromptUsage", () => {
+  it("maps ACP prompt usage to token usage snapshots", () => {
+    expect(
+      normalizeAcpPromptUsage({
+        inputTokens: 100,
+        cachedReadTokens: 20,
+        cachedWriteTokens: 5,
+        outputTokens: 30,
+        thoughtTokens: 7,
+        totalTokens: 162,
+      }),
+    ).toEqual({
+      usedTokens: 162,
+      totalProcessedTokens: 162,
+      inputTokens: 100,
+      cachedInputTokens: 25,
+      outputTokens: 30,
+      reasoningOutputTokens: 7,
+      lastUsedTokens: 162,
+      lastInputTokens: 100,
+      lastCachedInputTokens: 25,
+      lastOutputTokens: 30,
+      lastReasoningOutputTokens: 7,
+    });
   });
 });

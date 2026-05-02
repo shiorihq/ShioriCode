@@ -190,7 +190,10 @@ describe("buildCodexManagedMcpConfigFragment", () => {
         name: "Remote",
         transport: "http",
         url: "https://example.com/mcp",
-        headers: { Authorization: "Bearer token" },
+        headers: { "X-Static": "static" },
+        envHttpHeaders: { "X-Team": "MCP_TEAM" },
+        oauthScopes: ["read", "write"],
+        oauthResource: "https://example.com/mcp",
         enabled: true,
         providers: ["codex"],
       },
@@ -211,8 +214,12 @@ describe("buildCodexManagedMcpConfigFragment", () => {
     assert.match(fragment, /GITHUB_TOKEN = "secret"/);
     assert.match(fragment, /\[mcp_servers\.shioricode_remote\]/);
     assert.match(fragment, /url = "https:\/\/example\.com\/mcp"/);
+    assert.match(fragment, /scopes = \["read", "write"\]/);
+    assert.match(fragment, /oauth_resource = "https:\/\/example\.com\/mcp"/);
     assert.match(fragment, /\[mcp_servers\.shioricode_remote\.http_headers\]/);
-    assert.match(fragment, /Authorization = "Bearer token"/);
+    assert.match(fragment, /X-Static = "static"/);
+    assert.match(fragment, /\[mcp_servers\.shioricode_remote\.env_http_headers\]/);
+    assert.match(fragment, /X-Team = "MCP_TEAM"/);
     assert.match(fragment, /\[mcp_servers\.shioricode_events\]/);
     assert.match(fragment, /transport = "sse"/);
   });
@@ -355,6 +362,37 @@ describe("listEffectiveMcpServerRows", () => {
 
     expect(result.servers[0]?.auth).toEqual({ status: "unknown" });
   });
+
+  it("marks discovered remote servers unauthenticated until OAuth tokens exist", async () => {
+    const codexHome = await createTempDir("mcp-oauth-codex-home-");
+    const oauthStorageDir = await createTempDir("mcp-oauth-storage-");
+    await writeFile(
+      path.join(codexHome, "config.toml"),
+      ["[mcp_servers.remote]", 'url = "https://codex.example/mcp"'].join("\n"),
+      "utf8",
+    );
+
+    const result = await listEffectiveMcpServerRows({
+      oauthStorageDir,
+      settings: {
+        providers: {
+          codex: { homePath: codexHome },
+        },
+        mcpServers: {
+          servers: [],
+        },
+      } as never,
+    });
+
+    expect(result.servers[0]).toMatchObject({
+      name: "codex:remote",
+      source: "codex",
+      auth: {
+        status: "unauthenticated",
+        message: "Authentication required",
+      },
+    });
+  });
 });
 
 describe("external MCP discovery", () => {
@@ -378,7 +416,12 @@ describe("external MCP discovery", () => {
       path.join(workspaceRoot, ".codex", "config.toml"),
       [
         "[mcp_servers.remote]",
-        'url = "https://project.example/mcp"',
+        'transport = { type = "streamable_http", url = "https://project.example/mcp" }',
+        'scopes = ["read", "write"]',
+        'oauth_resource = "https://project.example/mcp"',
+        "",
+        "[mcp_servers.remote.env_http_headers]",
+        'X-Team = "MCP_TEAM"',
         "",
         "[mcp_servers.events]",
         'transport = "sse"',
@@ -401,6 +444,9 @@ describe("external MCP discovery", () => {
     ]);
     const merged = Object.fromEntries(result.servers.map((server) => [server.name, server]));
     expect(merged["codex:remote"]?.url).toEqual("https://project.example/mcp");
+    expect(merged["codex:remote"]?.oauthScopes).toEqual(["read", "write"]);
+    expect(merged["codex:remote"]?.oauthResource).toEqual("https://project.example/mcp");
+    expect(merged["codex:remote"]?.envHttpHeaders).toEqual({ "X-Team": "MCP_TEAM" });
     expect(merged["codex:events"]?.transport).toEqual("sse");
   });
 
@@ -805,19 +851,35 @@ describe("prepareCodexHomeWithManagedMcpServers", () => {
   it("creates an isolated lean CODEX_HOME with managed MCP config", async () => {
     const sourceHome = await createTempDir("codex-home-source-");
     const runtimeRoot = await createTempDir("codex-home-runtime-");
+    const oauthStorageDir = await createTempDir("codex-home-oauth-");
     await mkdir(path.join(sourceHome, "skills", "demo"), { recursive: true });
     await writeFile(path.join(sourceHome, "auth.json"), '{"access_token":"token"}', "utf8");
+    await writeFile(
+      path.join(sourceHome, ".credentials.json"),
+      '{"mcp":"codex-oauth-token"}',
+      "utf8",
+    );
     await writeFile(
       path.join(sourceHome, "config.toml"),
       ['model = "gpt-5"', "", "[features]", "plugins = true"].join("\n"),
       "utf8",
     );
     await writeFile(path.join(sourceHome, "skills", "demo", "SKILL.md"), "# Demo\n", "utf8");
+    const digest = createHash("sha256")
+      .update("remote\nhttps://remote.example/mcp")
+      .digest("hex")
+      .slice(0, 16);
+    await writeFile(
+      path.join(oauthStorageDir, `remote-${digest}.json`),
+      `${JSON.stringify({ tokens: { access_token: "mcp-access-token" } }, null, 2)}\n`,
+      "utf8",
+    );
 
     const prepared = await prepareCodexHomeWithManagedMcpServers({
       threadId: "thread-1",
       runtimeRootDir: runtimeRoot,
       homePath: sourceHome,
+      oauthStorageDir,
       servers: [
         {
           name: "filesystem",
@@ -827,11 +889,22 @@ describe("prepareCodexHomeWithManagedMcpServers", () => {
           enabled: true,
           providers: ["codex"],
         },
+        {
+          name: "remote",
+          transport: "http",
+          url: "https://remote.example/mcp",
+          enabled: true,
+          providers: ["codex"],
+        },
       ],
     });
 
     assert.ok(prepared);
     const auth = await readFile(path.join(prepared.homePath, "auth.json"), "utf8");
+    const mcpCredentials = await readFile(
+      path.join(prepared.homePath, ".credentials.json"),
+      "utf8",
+    );
     const config = await readFile(path.join(prepared.homePath, "config.toml"), "utf8");
     const skill = await readFile(
       path.join(prepared.homePath, "skills", "demo", "SKILL.md"),
@@ -839,11 +912,15 @@ describe("prepareCodexHomeWithManagedMcpServers", () => {
     );
 
     assert.equal(auth, '{"access_token":"token"}');
+    assert.equal(mcpCredentials, '{"mcp":"codex-oauth-token"}');
     assert.equal(skill, "# Demo\n");
     assert.match(config, /model = "gpt-5"/);
     assert.match(config, /plugins = false/);
     assert.match(config, /\[mcp_servers\.shioricode_filesystem\]/);
     assert.match(config, /args = \[\s*"server\.js"\s*\]/);
+    assert.match(config, /\[mcp_servers\.shioricode_remote\]/);
+    assert.match(config, /\[mcp_servers\.shioricode_remote\.http_headers\]/);
+    assert.match(config, /Authorization = "Bearer mcp-access-token"/);
 
     await prepared.cleanup();
   });

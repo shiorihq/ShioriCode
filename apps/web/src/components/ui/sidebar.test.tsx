@@ -2,6 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuSubButton,
@@ -18,6 +22,25 @@ function renderSidebarButton(className?: string) {
 }
 
 describe("sidebar interactive cursors", () => {
+  it("fades desktop offcanvas contents as the sidebar opens and closes", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider open={false}>
+        <Sidebar collapsible="offcanvas">
+          <SidebarHeader>Header</SidebarHeader>
+          <SidebarContent>Content</SidebarContent>
+          <SidebarFooter>Footer</SidebarFooter>
+          <SidebarRail />
+        </Sidebar>
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-collapsible="offcanvas"');
+    expect(html).toContain("group-data-[collapsible=offcanvas]:opacity-0");
+    expect(html).toContain("opacity-100");
+    expect(html).toContain("transition-opacity");
+    expect(html).toContain("duration-150");
+  });
+
   it("uses a pointer cursor for menu buttons by default", () => {
     const html = renderSidebarButton();
 

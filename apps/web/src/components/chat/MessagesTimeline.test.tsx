@@ -308,6 +308,56 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("tool output line 16");
   });
 
+  it("renders non-command tool output without an extra leading indent", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-tool-output",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-tool-output",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Tool call completed",
+              detail: "read_file",
+              tone: "tool",
+              toolTitle: "read_file",
+              itemType: "dynamic_tool_call",
+              output: "first line\nsecond line",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{ "work-tool-output": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onRetryAssistantMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('<div class="mt-0.5"><div class="relative"><pre');
+    expect(markup).not.toContain('<div class="mt-0.5 pl-4">');
+    expect(markup).toContain("first line");
+    expect(markup).toContain("second line");
+  });
+
   it("renders command details in monospace within work log rows", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

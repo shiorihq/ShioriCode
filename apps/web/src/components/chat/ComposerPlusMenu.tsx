@@ -111,7 +111,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
             <Button
               size="sm"
               variant="ghost"
-              className="shrink-0 px-1.5 text-muted-foreground/70 hover:text-foreground/80"
+              className="shrink-0 px-1.5"
               aria-label="More options"
               type="button"
             />

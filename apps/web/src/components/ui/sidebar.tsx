@@ -633,7 +633,10 @@ function SidebarInput({ className, ...props }: React.ComponentProps<typeof Input
 function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn(
+        "flex flex-col gap-2 p-2 opacity-100 transition-opacity duration-150 ease-basic group-data-[collapsible=offcanvas]:opacity-0 motion-reduce:transition-none",
+        className,
+      )}
       data-sidebar="header"
       data-slot="sidebar-header"
       {...props}
@@ -645,7 +648,7 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative z-20 isolate flex flex-col gap-2 bg-sidebar text-sidebar-foreground",
+        "relative z-20 isolate flex flex-col gap-2 bg-sidebar text-sidebar-foreground opacity-100 transition-opacity duration-150 ease-basic group-data-[collapsible=offcanvas]:opacity-0 motion-reduce:transition-none",
         className,
       )}
       data-sidebar="footer"
@@ -671,7 +674,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
     <ScrollArea hideScrollbars className="sidebar-scroll-fade h-auto min-h-0 flex-1">
       <div
         className={cn(
-          "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
+          "flex w-full min-w-0 flex-col gap-2 opacity-100 transition-opacity duration-150 ease-basic group-data-[collapsible=offcanvas]:opacity-0 group-data-[collapsible=icon]:overflow-hidden motion-reduce:transition-none",
           className,
         )}
         data-sidebar="content"

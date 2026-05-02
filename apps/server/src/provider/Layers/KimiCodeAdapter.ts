@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -64,6 +65,8 @@ const PROVIDER = "kimiCode" as const;
 const DEFAULT_MODEL = "kimi-code/kimi-for-coding";
 const KIMI_REASONING_ITEM_TITLE = "Reasoning";
 const KIMI_ASSISTANT_ITEM_TITLE = "Assistant response";
+const DEFAULT_KIMI_MAX_STEPS_PER_TURN = 64;
+const DEFAULT_KIMI_MAX_RETRIES_PER_STEP = 2;
 
 type KimiResumeCursor = {
   readonly sessionId: string;
@@ -180,6 +183,50 @@ function trimOrUndefined(value: string | null | undefined): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parsePositiveIntegerEnv(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
+}
+
+export function resolveKimiLoopControlFromEnv(env: NodeJS.ProcessEnv = process.env): {
+  readonly maxStepsPerTurn: number;
+  readonly maxRetriesPerStep: number;
+} {
+  return {
+    maxStepsPerTurn: parsePositiveIntegerEnv(
+      env.SHIORICODE_KIMI_MAX_STEPS_PER_TURN,
+      DEFAULT_KIMI_MAX_STEPS_PER_TURN,
+    ),
+    maxRetriesPerStep: parsePositiveIntegerEnv(
+      env.SHIORICODE_KIMI_MAX_RETRIES_PER_STEP,
+      DEFAULT_KIMI_MAX_RETRIES_PER_STEP,
+    ),
+  };
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function buildKimiExecutableWrapperScript(executablePath: string): string {
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    `max_steps="\${SHIORICODE_KIMI_MAX_STEPS_PER_TURN:-${DEFAULT_KIMI_MAX_STEPS_PER_TURN}}"`,
+    `max_retries="\${SHIORICODE_KIMI_MAX_RETRIES_PER_STEP:-${DEFAULT_KIMI_MAX_RETRIES_PER_STEP}}"`,
+    `case "$max_steps" in ""|*[!0-9]*|0) max_steps="${DEFAULT_KIMI_MAX_STEPS_PER_TURN}" ;; esac`,
+    `case "$max_retries" in ""|*[!0-9]*|0) max_retries="${DEFAULT_KIMI_MAX_RETRIES_PER_STEP}" ;; esac`,
+    `exec ${shellSingleQuote(executablePath)} \\`,
+    '  --max-steps-per-turn "$max_steps" \\',
+    '  --max-retries-per-step "$max_retries" \\',
+    '  "$@"',
+    "",
+  ].join("\n");
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -313,6 +360,10 @@ async function buildKimiAgentFileContents(input: {
       "Help the user complete real coding tasks accurately and efficiently.",
       "Prefer direct action over explanation when local tooling can safely do the work.",
       "Inspect the repository and local environment before making claims.",
+      "",
+      "## Loop Avoidance",
+      "Avoid repetitive reasoning or repeated tool calls. If you notice you are revisiting the same step, summarize what is known, choose the next concrete action, and move forward.",
+      "If you are blocked, state the blocker once with the relevant evidence instead of retrying the same failed approach indefinitely.",
       "",
       "## Tooling Expectations",
       "You have Kimi Code's native local tools available for code, files, and shell work in this workspace.",
@@ -616,6 +667,56 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     }
   });
 
+  const prepareKimiExecutable = Effect.fn("prepareKimiExecutable")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly executablePath: string;
+  }) {
+    const wrapperHash = createHash("sha256")
+      .update(input.executablePath)
+      .digest("hex")
+      .slice(0, 16);
+    const wrapperPath = path.join(
+      serverConfig.providerLogsDir,
+      `kimi-loop-guard-${wrapperHash}.sh`,
+    );
+    const script = buildKimiExecutableWrapperScript(input.executablePath);
+
+    yield* fileSystem.makeDirectory(serverConfig.providerLogsDir, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Failed to prepare Kimi Code loop guard directory."),
+            cause,
+          }),
+      ),
+    );
+    yield* fileSystem.writeFileString(wrapperPath, script).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Failed to write Kimi Code loop guard executable."),
+            cause,
+          }),
+      ),
+    );
+    yield* Effect.tryPromise({
+      try: () => chmod(wrapperPath, 0o755),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail: toMessage(cause, "Failed to mark Kimi Code loop guard executable."),
+          cause,
+        }),
+    });
+
+    return wrapperPath;
+  });
+
   const buildSessionResources = Effect.fn("buildSessionResources")(function* (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
@@ -650,11 +751,16 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
 
     const mcpRuntime = yield* Effect.tryPromise({
       try: () =>
-        buildProviderMcpToolRuntime({
-          provider: PROVIDER,
-          servers: effectiveMcpServers.servers,
-          cwd: input.cwd,
-        }),
+        buildProviderMcpToolRuntime(
+          {
+            provider: PROVIDER,
+            servers: effectiveMcpServers.servers,
+            cwd: input.cwd,
+          },
+          {
+            oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
+          },
+        ),
       catch: (cause) =>
         new ProviderAdapterProcessError({
           provider: PROVIDER,
@@ -1716,6 +1822,31 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     yield* persistSession(input.context);
     input.context.interrupting = false;
 
+    if (input.result.status === "max_steps_reached") {
+      const loopControl = resolveKimiLoopControlFromEnv();
+      const steps = input.result.steps ?? loopControl.maxStepsPerTurn;
+      yield* publish({
+        type: "runtime.warning",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: input.context.session.threadId,
+        createdAt: nowIso(),
+        turnId: input.turn.turnId,
+        payload: {
+          message: `Kimi Code stopped after reaching the ShioriCode turn step limit (${steps}/${loopControl.maxStepsPerTurn}).`,
+          detail: {
+            maxStepsPerTurn: loopControl.maxStepsPerTurn,
+            maxRetriesPerStep: loopControl.maxRetriesPerStep,
+            status: input.result.status,
+          },
+        },
+        providerRefs: {
+          providerTurnId: input.context.sessionId,
+        },
+        raw: rawEvent("TurnEnd", input.result),
+      });
+    }
+
     yield* publish({
       type: "turn.completed",
       eventId: nextEventId(),
@@ -1894,6 +2025,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           : false;
       const yoloMode = input.runtimeMode === "full-access";
       const timestamp = nowIso();
+      const executablePath = yield* prepareKimiExecutable({
+        threadId: input.threadId,
+        executablePath: trimOrUndefined(kimiSettings.binaryPath) ?? "kimi",
+      });
       const resources = yield* buildSessionResources({
         threadId: input.threadId,
         cwd: workDir,
@@ -1912,7 +2047,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         sessionId,
         client: new ProtocolClient(),
         workDir,
-        executablePath: trimOrUndefined(kimiSettings.binaryPath) ?? "kimi",
+        executablePath,
         shareDir: trimOrUndefined(kimiSettings.shareDir),
         model,
         thinking,
@@ -1967,7 +2102,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         ? input.modelSelection.options?.thinking === true
         : context.thinking;
     const yoloMode = context.session.runtimeMode === "full-access";
-    const executablePath = trimOrUndefined(kimiSettings.binaryPath) ?? "kimi";
+    const executablePath = yield* prepareKimiExecutable({
+      threadId: input.threadId,
+      executablePath: trimOrUndefined(kimiSettings.binaryPath) ?? "kimi",
+    });
     const shareDir = trimOrUndefined(kimiSettings.shareDir);
     const resources = yield* buildSessionResources({
       threadId: input.threadId,

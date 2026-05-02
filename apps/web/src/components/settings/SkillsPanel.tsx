@@ -150,6 +150,11 @@ function serverIdentity(server: McpServerEntry): string {
     server.transport === "stdio"
       ? [server.command ?? "", ...(server.args ?? [])].join(" ")
       : (server.url ?? ""),
+    JSON.stringify(server.headers ?? {}),
+    JSON.stringify(server.envHttpHeaders ?? {}),
+    server.bearerTokenEnvVar ?? "",
+    (server.oauthScopes ?? []).join(","),
+    server.oauthResource ?? "",
     server.providers.join(","),
   ].join("|");
 }
@@ -167,11 +172,16 @@ function effectiveServerIdentity(server: EffectiveMcpServerEntry): string {
   ].join("|");
 }
 
+function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === "authorization");
+}
+
 function canAuthenticateServer(server: EffectiveMcpServerEntry): boolean {
   return (
-    server.source === "shiori" &&
     server.transport !== "stdio" &&
-    (server.headers ? Object.keys(server.headers).length : 0) === 0
+    !hasAuthorizationHeader(server.headers) &&
+    !hasAuthorizationHeader(server.envHttpHeaders) &&
+    !server.bearerTokenEnvVar?.trim()
   );
 }
 
@@ -345,7 +355,7 @@ function AddMcpServerDialog({ onAdd }: { onAdd: (entry: McpServerEntry) => void 
             handleSubmit();
           }}
         >
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 px-6 py-4">
             {/* Name */}
             <div className="space-y-1.5">
               <label htmlFor="mcp-server-name" className="text-sm font-medium">

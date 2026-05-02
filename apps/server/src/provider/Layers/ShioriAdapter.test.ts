@@ -1,6 +1,6 @@
 // @ts-nocheck
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -26,6 +26,7 @@ import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.t
 import { ShioriAdapter } from "../Services/ShioriAdapter.ts";
 import {
   SHIORI_WORKSPACE_RULES,
+  CONSERVATIVE_SHIORI_BOOTSTRAP,
   buildShioriWorkspaceRules,
   buildHostedToolDescriptors,
   buildInterruptedTurnEvents,
@@ -442,6 +443,84 @@ describe("ShioriAdapterLive interruptTurn", () => {
           const completed = yield* Fiber.join(completedFiber);
           assert.equal(completed._tag, "Some");
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
+  it("starts the hosted request without waiting for a cold bootstrap probe", async () => {
+    const resolveBootstraps: Array<() => void> = [];
+    const fetchBootstrapProbe = vi.fn(() =>
+      Effect.promise(
+        () =>
+          new Promise((resolve) => {
+            resolveBootstraps.push(() =>
+              resolve({
+                bootstrap: CONSERVATIVE_SHIORI_BOOTSTRAP,
+                message: null,
+              }),
+            );
+          }),
+      ),
+    );
+    let resolveResponse: ((response: Response) => void) | null = null;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-cold-bootstrap");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+
+          const completedFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Please do not wait on bootstrap.",
+          });
+          yield* Effect.sleep("20 millis");
+
+          expect(fetchBootstrapProbe).toHaveBeenCalled();
+          expect(fetchMock).toHaveBeenCalledTimes(1);
+
+          assert.ok(resolveBootstraps.length > 0);
+          for (const resolveBootstrap of resolveBootstraps) {
+            resolveBootstrap();
+          }
+          assert.ok(resolveResponse);
+          resolveResponse(
+            responseFromChunks([
+              {
+                type: "finish",
+                finishReason: "stop",
+              },
+            ]),
+          );
+
+          const completed = yield* Fiber.join(completedFiber);
+          assert.equal(completed._tag, "Some");
+        }).pipe(Effect.provide(makeShioriAdapterTestLayer({ fetchBootstrapProbe }))),
       ),
     );
   });
@@ -914,7 +993,11 @@ describe("ShioriAdapterLive session state", () => {
           });
 
           const eventsFiber = yield* Effect.forkScoped(
-            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(10))),
+            Stream.runCollect(
+              adapter.streamEvents.pipe(
+                Stream.takeUntil((event) => event.type === "turn.completed"),
+              ),
+            ),
           );
           yield* Effect.sleep("10 millis");
 
@@ -1003,7 +1086,11 @@ describe("ShioriAdapterLive session state", () => {
           });
 
           const eventsFiber = yield* Effect.forkScoped(
-            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(8))),
+            Stream.runCollect(
+              adapter.streamEvents.pipe(
+                Stream.takeUntil((event) => event.type === "turn.completed"),
+              ),
+            ),
           );
           yield* Effect.sleep("10 millis");
 
@@ -1112,7 +1199,11 @@ describe("ShioriAdapterLive session state", () => {
           });
 
           const eventsFiber = yield* Effect.forkScoped(
-            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(8))),
+            Stream.runCollect(
+              adapter.streamEvents.pipe(
+                Stream.takeUntil((event) => event.type === "turn.completed"),
+              ),
+            ),
           );
           yield* Effect.sleep("10 millis");
 
@@ -1532,6 +1623,120 @@ describe("ShioriAdapterLive session state", () => {
           const completed = yield* Fiber.join(completionFiber);
           assert.equal(completed._tag, "Some");
           assert.equal(requestBodies.length, 2);
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
+  it("preserves hidden OpenAI reasoning references without emitting empty reasoning items", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const hiddenReasoningMetadata = {
+      openai: {
+        itemId: "rs_hidden_reasoning_1",
+        reasoningEncryptedContent: "encrypted-hidden-reasoning",
+      },
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "reasoning-start",
+            id: "rs_hidden_reasoning_1:0",
+            providerMetadata: hiddenReasoningMetadata,
+          },
+          {
+            type: "reasoning-end",
+            id: "rs_hidden_reasoning_1:0",
+            providerMetadata: hiddenReasoningMetadata,
+          },
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", delta: "Before hidden tool. " },
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-hidden-1",
+            toolName: "read_file",
+            input: { path: "missing-hidden.txt" },
+            providerMetadata: {
+              openai: {
+                itemId: "fc_hidden_tool_1",
+              },
+            },
+          },
+        ]);
+      }
+
+      const secondBody = requestBodies[1];
+      const secondMessages = Array.isArray(secondBody?.messages)
+        ? (secondBody.messages as Array<Record<string, unknown>>)
+        : [];
+      const lastAssistantMessage = secondMessages.at(-1);
+      const lastParts = Array.isArray(lastAssistantMessage?.parts)
+        ? (lastAssistantMessage.parts as Array<Record<string, unknown>>)
+        : [];
+
+      assert.equal(lastAssistantMessage?.role, "assistant");
+      assert.equal(lastParts[0]?.type, "reasoning");
+      assert.equal(lastParts[0]?.text, "");
+      assert.deepStrictEqual(lastParts[0]?.providerMetadata, hiddenReasoningMetadata);
+      assert.equal(lastParts[1]?.type, "text");
+      assert.equal(lastParts[1]?.text, "Before hidden tool. ");
+      assert.equal(lastParts[2]?.type, "dynamic-tool");
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-2" },
+        { type: "text-delta", id: "text-2", delta: "Recovered with hidden reasoning." },
+        { type: "text-end", id: "text-2" },
+        {
+          type: "finish",
+          finishReason: "stop",
+        },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-hidden-reasoning-replay");
+
+          const eventsFiber = yield* Effect.forkScoped(
+            Stream.runCollect(
+              adapter.streamEvents.pipe(
+                Stream.takeUntil((event) => event.type === "turn.completed"),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Inspect before using the hidden-reasoning tool.",
+          });
+
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+          assert.equal(requestBodies.length, 2);
+          assert.equal(events.at(-1)?.type, "turn.completed");
+          assert.equal(
+            events.some(
+              (event) =>
+                (event.type === "item.started" || event.type === "item.completed") &&
+                event.payload.itemType === "reasoning",
+            ),
+            false,
+          );
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
       ),
     );
@@ -2376,6 +2581,97 @@ describe("ShioriAdapterLive session state", () => {
     );
   });
 
+  it("applies Codex-style edit patches from hosted Shiori tool calls", async () => {
+    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "shiori-adapter-codex-patch-"));
+    writeFileSync(path.join(workspaceRoot, "notes.txt"), "old\n", "utf8");
+    let callCount = 0;
+    const fetchMock = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-codex-patch-1",
+            toolName: "edit",
+            input: {
+              patch: "*** Begin Patch\n*** Update File: notes.txt\n@@\n-old\n+new\n*** End Patch\n",
+            },
+          },
+        ]);
+      }
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-codex-patch" },
+        { type: "text-delta", id: "text-codex-patch", delta: "Applied the patch." },
+        { type: "text-end", id: "text-codex-patch" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const adapter = yield* ShioriAdapter;
+            const threadId = asThreadId("thread-shiori-codex-patch");
+
+            const completionFiber = yield* Effect.forkScoped(
+              Stream.runHead(
+                adapter.streamEvents.pipe(
+                  Stream.filter(
+                    (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                      event.type === "turn.completed",
+                  ),
+                ),
+              ),
+            );
+            yield* Effect.sleep("10 millis");
+
+            yield* adapter.startSession({
+              provider: "shiori",
+              threadId,
+              cwd: workspaceRoot,
+              runtimeMode: "full-access",
+            });
+
+            yield* adapter.sendTurn({
+              threadId,
+              input: "Edit the file.",
+            });
+
+            const completed = yield* Fiber.join(completionFiber);
+            assert.equal(completed._tag, "Some");
+            assert.equal(callCount, 2);
+          }).pipe(
+            Effect.provide(
+              makeShioriAdapterTestLayer({
+                fetchBootstrapProbe: () =>
+                  Effect.succeed({
+                    bootstrap: {
+                      approvalPolicies: {},
+                      protectedPaths: [],
+                      browserUse: { enabled: false },
+                      computerUse: { enabled: false },
+                      mobileApp: { enabled: false },
+                      kanban: { enabled: false },
+                      subagents: null,
+                    },
+                    message: null,
+                  }),
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.equal(readFileSync(path.join(workspaceRoot, "notes.txt"), "utf8"), "new\n");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("interrupts running turns before clearing sessions in stopAll", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const signal = init?.signal as AbortSignal | undefined;
@@ -2481,7 +2777,11 @@ describe("ShioriAdapterLive session state", () => {
           });
 
           const eventsFiber = yield* Effect.forkScoped(
-            Stream.runCollect(adapter.streamEvents.pipe(Stream.take(8))),
+            Stream.runCollect(
+              adapter.streamEvents.pipe(
+                Stream.takeUntil((event) => event.type === "turn.completed"),
+              ),
+            ),
           );
           yield* Effect.sleep("10 millis");
 

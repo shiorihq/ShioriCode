@@ -142,6 +142,76 @@
   animation-duration: 0s !important;
 }
 
+.dialog-backdrop-gaussian-blur {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transform: translateZ(0);
+  will-change: backdrop-filter;
+}
+
+[data-app-sidebar-shell],
+[data-app-modal-blur-surface] {
+  transition: filter 180ms ease;
+}
+
+html:has([data-slot="dialog-backdrop"]:not([data-ending-style])) [data-app-sidebar-shell],
+html:has([data-slot="dialog-backdrop"]:not([data-ending-style])) [data-app-modal-blur-surface],
+html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style])) [data-app-sidebar-shell],
+html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
+  [data-app-modal-blur-surface] {
+  filter: blur(20px);
+}
+
+.shiori-expand-panel {
+  grid-template-rows: 0fr;
+  transition-property: grid-template-rows;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shiori-expand-panel[data-state="open"] {
+  grid-template-rows: 1fr;
+}
+
+.shiori-expand-panel[data-state="closed"] {
+  grid-template-rows: 0fr;
+}
+
+.shiori-expand-panel-fade {
+  opacity: 0;
+  transform: translateY(-0.25rem);
+  transition-property: opacity, transform;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shiori-expand-panel[data-state="open"] .shiori-expand-panel-fade {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@starting-style {
+  .shiori-expand-panel[data-state="open"] {
+    grid-template-rows: 0fr;
+  }
+
+  .shiori-expand-panel[data-state="open"] .shiori-expand-panel-fade {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shiori-expand-panel,
+  .shiori-expand-panel-fade {
+    transition-duration: 0s;
+  }
+
+  .shiori-expand-panel-fade {
+    transform: none;
+  }
+}
+
 @keyframes fast-mode-blitz-fall {
   0% {
     top: -14%;
@@ -205,8 +275,8 @@
     inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 75%, transparent),
     inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 4%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-black) 2%, transparent),
-    0 0 10px 0 color-mix(in srgb, var(--color-black) 4%, transparent),
-    0 0 24px 0 color-mix(in srgb, var(--color-black) 6%, transparent);
+    0 0 6px 0 color-mix(in srgb, var(--color-black) 3%, transparent),
+    0 0 14px 0 color-mix(in srgb, var(--color-black) 4%, transparent);
 }
 
 .glass-user-message::before {
@@ -237,8 +307,8 @@
     inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 14%, transparent),
     inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 30%, transparent),
     0 0 0 1px color-mix(in srgb, var(--color-black) 12%, transparent),
-    0 0 12px 0 color-mix(in srgb, var(--color-black) 18%, transparent),
-    0 0 28px 0 color-mix(in srgb, var(--color-black) 24%, transparent);
+    0 0 8px 0 color-mix(in srgb, var(--color-black) 12%, transparent),
+    0 0 18px 0 color-mix(in srgb, var(--color-black) 16%, transparent);
 }
 
 .dark .glass-user-message::before {
@@ -253,6 +323,80 @@
 @supports not (backdrop-filter: blur(1px)) {
   .glass-user-message {
     background: var(--secondary);
+  }
+}
+
+/* Frosted-glass surface for the chat composer.
+ * Same family as .glass-user-message but tuned for a larger floating
+ * panel: stronger blur, slightly more atmospheric shadow halo, and
+ * uses background-image (not the shorthand) so Tailwind bg-* utilities
+ * for drag/focus states can still layer on top. */
+.glass-composer {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid color-mix(in srgb, var(--color-black) 10%, transparent);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-white) 70%, transparent) 0%,
+    color-mix(in srgb, var(--color-white) 48%, transparent) 60%,
+    color-mix(in srgb, var(--color-white) 30%, transparent) 100%
+  );
+  backdrop-filter: blur(22px) saturate(1.7);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 80%, transparent),
+    inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 5%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-black) 2%, transparent),
+    0 0 8px 0 color-mix(in srgb, var(--color-black) 3%, transparent),
+    0 0 22px 0 color-mix(in srgb, var(--color-black) 5%, transparent);
+}
+
+.glass-composer::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-white) 95%, transparent) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  z-index: 1;
+}
+
+.dark .glass-composer {
+  border-color: color-mix(in srgb, var(--color-white) 16%, transparent);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-white) 9%, transparent) 0%,
+    color-mix(in srgb, var(--color-white) 5%, transparent) 60%,
+    color-mix(in srgb, var(--color-white) 2.5%, transparent) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in srgb, var(--color-white) 12%, transparent),
+    inset 0 -1px 0 0 color-mix(in srgb, var(--color-black) 35%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-black) 14%, transparent),
+    0 0 10px 0 color-mix(in srgb, var(--color-black) 14%, transparent),
+    0 0 24px 0 color-mix(in srgb, var(--color-black) 20%, transparent);
+}
+
+.dark .glass-composer::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-white) 16%, transparent) 50%,
+    transparent 100%
+  );
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-composer {
+    background-image: none;
+    background-color: var(--card);
   }
 }
 
@@ -729,6 +873,15 @@ samp {
 }
 
 .turn-chip-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-prompt-editor {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.composer-prompt-editor::-webkit-scrollbar {
   display: none;
 }
 

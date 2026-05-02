@@ -260,7 +260,7 @@ const DiffPanelDockedSidebar = (props: {
     <div
       ref={panelRef}
       className={cn(
-        "relative hidden min-h-0 shrink-0 border-l border-border bg-card text-foreground md:flex",
+        "relative hidden min-h-0 shrink-0 overflow-hidden border-l border-border bg-card text-foreground md:flex",
         "shadow-[-20px_0_40px_-36px_rgba(15,23,42,0.55)]",
       )}
       style={{ width: sidebarWidth }}
@@ -272,7 +272,7 @@ const DiffPanelDockedSidebar = (props: {
         onPointerMove={handleResizeMove}
         onPointerUp={handleResizeEnd}
       />
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {renderDiffContent ? <LazyDiffPanel mode="sidebar" onClose={onCloseDiff} /> : null}
       </div>
     </div>
@@ -421,7 +421,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$threadId",
       params: { threadId },
-      search: (previous) => stripDiffSearchParams(previous),
+      search: (previous) => ({ ...stripDiffSearchParams(previous), diff: undefined }),
     });
   }, [navigate, threadId]);
   useEffect(() => {

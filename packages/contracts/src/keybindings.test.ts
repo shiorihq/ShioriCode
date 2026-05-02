@@ -35,6 +35,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedProjectAdd.command, "project.add");
 
+    const parsedSearchOpen = yield* decode(KeybindingRule, {
+      key: "meta+g",
+      command: "search.open",
+    });
+    assert.strictEqual(parsedSearchOpen.command, "search.open");
+
     const parsedPullRequestsOpen = yield* decode(KeybindingRule, {
       key: "meta+p",
       command: "pullRequests.open",

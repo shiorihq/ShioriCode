@@ -58,11 +58,12 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
+  makeAcpUsageUpdatedEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
-import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import { normalizeAcpPromptUsage, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeGeminiAcpRuntime } from "../acp/GeminiAcpSupport.ts";
-import { toAcpMcpServers } from "../mcpServers.ts";
+import { materializeMcpServersForRuntime, toAcpMcpServers } from "../mcpServers.ts";
 import { GeminiAdapter, type GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -328,12 +329,34 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         provider: PROVIDER,
         threadId: input.threadId,
       });
+      const runtimeMcpServers = yield* Effect.tryPromise(() =>
+        materializeMcpServersForRuntime({
+          servers: serverSettings.mcpServers.servers,
+          oauthStorageDir: nodePath.join(serverConfig.stateDir, "mcp-oauth"),
+        }),
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(
+              "gemini mcp OAuth materialization failed; continuing with static MCP config",
+            );
+            yield* Effect.logWarning(
+              cause instanceof Error ? cause.message : "Failed to materialize Gemini MCP auth.",
+            );
+            return serverSettings.mcpServers.servers;
+          }),
+        ),
+      );
+      const runtimeServerSettings = {
+        ...serverSettings,
+        mcpServers: { servers: runtimeMcpServers },
+      };
 
       const acp = yield* makeGeminiAcpRuntime({
         geminiSettings,
         childProcessSpawner,
         cwd: input.cwd,
-        mcpServers: toAcpMcpServers(PROVIDER, serverSettings, undefined, {
+        mcpServers: toAcpMcpServers(PROVIDER, runtimeServerSettings, undefined, {
           browserPanel: {
             config: serverConfig,
             threadId: input.threadId,
@@ -516,6 +539,21 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
                     turnId: ctx.activeTurnId,
                     ...(event.itemId ? { itemId: event.itemId } : {}),
                     text: event.text,
+                    rawPayload: event.rawPayload,
+                  }),
+                );
+                return;
+              case "UsageUpdated":
+                yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                yield* offerRuntimeEvent(
+                  makeAcpUsageUpdatedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    turnId: ctx.activeTurnId,
+                    usage: event.usage,
+                    source: "acp.jsonrpc",
+                    method: "session/update",
                     rawPayload: event.rawPayload,
                   }),
                 );
@@ -750,6 +788,21 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
               Effect.flatMap((result) =>
                 Effect.gen(function* () {
                   ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+                  const usage = normalizeAcpPromptUsage(result.usage);
+                  if (usage) {
+                    yield* offerRuntimeEvent(
+                      makeAcpUsageUpdatedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId,
+                        usage,
+                        source: "acp.jsonrpc",
+                        method: "session/prompt",
+                        rawPayload: result,
+                      }),
+                    );
+                  }
                   yield* completeTurn(
                     ctx,
                     turnId,

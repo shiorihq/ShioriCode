@@ -57,10 +57,12 @@ import {
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
+  makeAcpUsageUpdatedEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
   type AcpSessionMode,
   type AcpSessionModeState,
+  normalizeAcpPromptUsage,
   parsePermissionRequest,
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
@@ -75,7 +77,7 @@ import {
   extractPlanMarkdown,
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
-import { toAcpMcpServers } from "../mcpServers.ts";
+import { materializeMcpServersForRuntime, toAcpMcpServers } from "../mcpServers.ts";
 import { CursorAdapter, type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -489,12 +491,34 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             provider: PROVIDER,
             threadId: input.threadId,
           });
+          const runtimeMcpServers = yield* Effect.tryPromise(() =>
+            materializeMcpServersForRuntime({
+              servers: serverSettings.mcpServers.servers,
+              oauthStorageDir: nodePath.join(serverConfig.stateDir, "mcp-oauth"),
+            }),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.gen(function* () {
+                yield* Effect.logWarning(
+                  "cursor mcp OAuth materialization failed; continuing with static MCP config",
+                );
+                yield* Effect.logWarning(
+                  cause instanceof Error ? cause.message : "Failed to materialize Cursor MCP auth.",
+                );
+                return serverSettings.mcpServers.servers;
+              }),
+            ),
+          );
+          const runtimeServerSettings = {
+            ...serverSettings,
+            mcpServers: { servers: runtimeMcpServers },
+          };
 
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings,
             childProcessSpawner,
             cwd,
-            mcpServers: toAcpMcpServers(PROVIDER, serverSettings, undefined, {
+            mcpServers: toAcpMcpServers(PROVIDER, runtimeServerSettings, undefined, {
               browserPanel: {
                 config: serverConfig,
                 threadId: input.threadId,
@@ -798,6 +822,26 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                       }),
                     );
                     return;
+                  case "UsageUpdated":
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpUsageUpdatedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        usage: event.usage,
+                        source: "acp.jsonrpc",
+                        method: "session/update",
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
                 }
               }),
             ),
@@ -991,6 +1035,21 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 Effect.flatMap((result) =>
                   Effect.gen(function* () {
                     ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+                    const usage = normalizeAcpPromptUsage(result.usage);
+                    if (usage) {
+                      yield* offerRuntimeEvent(
+                        makeAcpUsageUpdatedEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId,
+                          usage,
+                          source: "acp.jsonrpc",
+                          method: "session/prompt",
+                          rawPayload: result,
+                        }),
+                      );
+                    }
                     yield* completeTurn(ctx, turnId, {
                       state: result.stopReason === "cancelled" ? "cancelled" : "completed",
                       stopReason: result.stopReason ?? null,

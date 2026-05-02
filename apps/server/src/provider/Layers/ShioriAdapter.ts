@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { spawn, spawnSync, type ChildProcess as ChildProcessHandle } from "node:child_process";
 import path from "node:path";
@@ -272,7 +271,7 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "send_message",
 ]);
 const KANBAN_TOOL_PREFIX = "kanban_";
-const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
+export const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   approvalPolicies: {
     fileWrite: "ask",
     shellCommand: "ask",
@@ -393,6 +392,7 @@ interface ActiveTurnState {
       providerMetadata: ProviderMetadata | undefined;
       completed: boolean;
       includedInHistory: boolean;
+      visibleStarted: boolean;
     }
   >;
   reasoningBlockOrder: string[];
@@ -2244,6 +2244,14 @@ function assertWorkspacePathAllowed(input: {
 
 function extractPatchTargetPaths(patch: string): string[] {
   return patch.split(/\r?\n/u).flatMap((line) => {
+    const codexMatch = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/u.exec(line);
+    if (codexMatch?.[1]) {
+      return [codexMatch[1].trim()];
+    }
+    const codexMoveMatch = /^\*\*\* Move to: (.+)$/u.exec(line);
+    if (codexMoveMatch?.[1]) {
+      return [codexMoveMatch[1].trim()];
+    }
     if (line.startsWith("+++ b/") || line.startsWith("--- a/")) {
       const candidate = line.slice(6).trim();
       return candidate === "/dev/null" ? [] : [candidate];
@@ -2254,6 +2262,249 @@ function extractPatchTargetPaths(patch: string): string[] {
     }
     return [];
   });
+}
+
+type CodexPatchHunk = {
+  oldLines: string[];
+  newLines: string[];
+};
+
+type CodexPatchOperation =
+  | {
+      kind: "add";
+      path: string;
+      lines: string[];
+    }
+  | {
+      kind: "delete";
+      path: string;
+    }
+  | {
+      kind: "update";
+      path: string;
+      moveTo?: string | undefined;
+      hunks: CodexPatchHunk[];
+    };
+
+function isCodexApplyPatch(patch: string): boolean {
+  return /^\s*\*\*\* Begin Patch\b/u.test(patch);
+}
+
+function parseCodexApplyPatch(patch: string): CodexPatchOperation[] {
+  const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+
+  while (index < lines.length && lines[index]?.trim() === "") {
+    index += 1;
+  }
+  if (lines[index] !== "*** Begin Patch") {
+    throw new Error("Codex patch must start with '*** Begin Patch'.");
+  }
+  index += 1;
+
+  const operations: CodexPatchOperation[] = [];
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (line === "*** End Patch") {
+      return operations;
+    }
+    if (line.trim() === "") {
+      index += 1;
+      continue;
+    }
+
+    const addMatch = /^\*\*\* Add File: (.+)$/u.exec(line);
+    if (addMatch?.[1]) {
+      const filePath = addMatch[1].trim();
+      index += 1;
+      const addedLines: string[] = [];
+      while (index < lines.length && !lines[index]!.startsWith("*** ")) {
+        const addLine = lines[index] ?? "";
+        if (!addLine.startsWith("+")) {
+          throw new Error(`Invalid add-file patch line for '${filePath}'.`);
+        }
+        addedLines.push(addLine.slice(1));
+        index += 1;
+      }
+      operations.push({ kind: "add", path: filePath, lines: addedLines });
+      continue;
+    }
+
+    const deleteMatch = /^\*\*\* Delete File: (.+)$/u.exec(line);
+    if (deleteMatch?.[1]) {
+      operations.push({ kind: "delete", path: deleteMatch[1].trim() });
+      index += 1;
+      continue;
+    }
+
+    const updateMatch = /^\*\*\* Update File: (.+)$/u.exec(line);
+    if (updateMatch?.[1]) {
+      const filePath = updateMatch[1].trim();
+      index += 1;
+      let moveTo: string | undefined;
+      const hunks: CodexPatchHunk[] = [];
+      let currentHunk: CodexPatchHunk | null = null;
+
+      while (
+        index < lines.length &&
+        !/^\*\*\* (?:Add|Update|Delete|End Patch)\b/u.test(lines[index] ?? "")
+      ) {
+        const patchLine = lines[index] ?? "";
+        const moveMatch = /^\*\*\* Move to: (.+)$/u.exec(patchLine);
+        if (moveMatch?.[1]) {
+          moveTo = moveMatch[1].trim();
+          index += 1;
+          continue;
+        }
+        if (patchLine.startsWith("@@")) {
+          currentHunk = { oldLines: [], newLines: [] };
+          hunks.push(currentHunk);
+          index += 1;
+          continue;
+        }
+        if (patchLine === "*** End of File") {
+          index += 1;
+          continue;
+        }
+        if (!currentHunk) {
+          currentHunk = { oldLines: [], newLines: [] };
+          hunks.push(currentHunk);
+        }
+        if (patchLine.startsWith(" ")) {
+          const content = patchLine.slice(1);
+          currentHunk.oldLines.push(content);
+          currentHunk.newLines.push(content);
+        } else if (patchLine.startsWith("-")) {
+          currentHunk.oldLines.push(patchLine.slice(1));
+        } else if (patchLine.startsWith("+")) {
+          currentHunk.newLines.push(patchLine.slice(1));
+        } else if (patchLine.trim() === "") {
+          currentHunk.oldLines.push("");
+          currentHunk.newLines.push("");
+        } else {
+          throw new Error(`Invalid update patch line for '${filePath}'.`);
+        }
+        index += 1;
+      }
+
+      operations.push({ kind: "update", path: filePath, ...(moveTo ? { moveTo } : {}), hunks });
+      continue;
+    }
+
+    throw new Error(`Unsupported Codex patch directive: ${line}`);
+  }
+
+  throw new Error("Codex patch is missing '*** End Patch'.");
+}
+
+function splitPatchContent(content: string): {
+  lines: string[];
+  newline: string;
+  hasTrailingNewline: boolean;
+} {
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const normalized = content.replace(/\r\n/g, "\n");
+  const hasTrailingNewline = normalized.endsWith("\n");
+  const lines = normalized.split("\n");
+  if (hasTrailingNewline) {
+    lines.pop();
+  }
+  return { lines, newline, hasTrailingNewline };
+}
+
+function joinPatchContent(input: {
+  lines: string[];
+  newline: string;
+  hasTrailingNewline: boolean;
+}): string {
+  const joined = input.lines.join(input.newline);
+  return input.hasTrailingNewline ? `${joined}${input.newline}` : joined;
+}
+
+function findPatchHunkIndex(
+  lines: ReadonlyArray<string>,
+  oldLines: ReadonlyArray<string>,
+  startIndex: number,
+): number {
+  if (oldLines.length === 0) {
+    return startIndex;
+  }
+
+  for (let index = startIndex; index <= lines.length - oldLines.length; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < oldLines.length; offset += 1) {
+      if (lines[index + offset] !== oldLines[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function applyCodexHunks(
+  content: string,
+  hunks: ReadonlyArray<CodexPatchHunk>,
+  filePath: string,
+): string {
+  const split = splitPatchContent(content);
+  const nextLines = [...split.lines];
+  let cursor = 0;
+
+  for (const hunk of hunks) {
+    const hunkIndex = findPatchHunkIndex(nextLines, hunk.oldLines, cursor);
+    if (hunkIndex < 0) {
+      throw new Error(`Patch hunk did not match '${filePath}'.`);
+    }
+    nextLines.splice(hunkIndex, hunk.oldLines.length, ...hunk.newLines);
+    cursor = hunkIndex + hunk.newLines.length;
+  }
+
+  return joinPatchContent({
+    lines: nextLines,
+    newline: split.newline,
+    hasTrailingNewline: split.hasTrailingNewline,
+  });
+}
+
+async function applyCodexApplyPatch(
+  patch: string,
+  cwd: string,
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}> {
+  const operations = parseCodexApplyPatch(patch);
+  for (const operation of operations) {
+    if (operation.kind === "add") {
+      const filePath = path.resolve(cwd, operation.path);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, `${operation.lines.join("\n")}\n`, "utf8");
+      continue;
+    }
+
+    if (operation.kind === "delete") {
+      await unlink(path.resolve(cwd, operation.path));
+      continue;
+    }
+
+    const filePath = path.resolve(cwd, operation.path);
+    const current = await readFile(filePath, "utf8");
+    const next = applyCodexHunks(current, operation.hunks, operation.path);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, next, "utf8");
+    if (operation.moveTo) {
+      const movedPath = path.resolve(cwd, operation.moveTo);
+      await mkdir(path.dirname(movedPath), { recursive: true });
+      await rename(filePath, movedPath);
+    }
+  }
+
+  return { stdout: "", stderr: "", exitCode: 0 };
 }
 
 function killChildProcessTree(
@@ -2664,6 +2915,7 @@ function ensureReasoningBlock(
   providerMetadata: ProviderMetadata | undefined;
   completed: boolean;
   includedInHistory: boolean;
+  visibleStarted: boolean;
 } {
   const existing = activeTurn.reasoningBlocks.get(chunkId);
   if (existing) {
@@ -2677,6 +2929,7 @@ function ensureReasoningBlock(
     providerMetadata: undefined,
     completed: false,
     includedInHistory: false,
+    visibleStarted: false,
   };
   activeTurn.reasoningBlocks.set(chunkId, created);
   activeTurn.reasoningBlockOrder.push(chunkId);
@@ -2689,7 +2942,7 @@ function buildReasoningPartsForBlockIds(
 ): HostedShioriMessage["parts"] {
   return blockIds.flatMap((blockId) => {
     const block = activeTurn.reasoningBlocks.get(blockId);
-    if (!block || block.text.trim().length === 0) {
+    if (!block || !hasReplayableReasoningBlock(block)) {
       return [];
     }
     return [
@@ -2702,11 +2955,22 @@ function buildReasoningPartsForBlockIds(
   });
 }
 
+function hasReasoningProviderMetadata(providerMetadata: ProviderMetadata | undefined): boolean {
+  return providerMetadata != null && Object.keys(providerMetadata).length > 0;
+}
+
+function hasReplayableReasoningBlock(block: {
+  text: string;
+  providerMetadata: ProviderMetadata | undefined;
+}): boolean {
+  return block.text.trim().length > 0 || hasReasoningProviderMetadata(block.providerMetadata);
+}
+
 function takeUnconsumedReasoningBlockIds(activeTurn: ActiveTurnState): string[] {
   const selected: string[] = [];
   for (const blockId of activeTurn.reasoningBlockOrder) {
     const block = activeTurn.reasoningBlocks.get(blockId);
-    if (!block || block.includedInHistory || block.text.trim().length === 0) {
+    if (!block || block.includedInHistory || !hasReplayableReasoningBlock(block)) {
       continue;
     }
     block.includedInHistory = true;
@@ -3234,6 +3498,16 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         },
       );
 
+      const getFreshHostedBootstrapForContext = (
+        context: ShioriSessionContext,
+      ): ShioriCodeBootstrapConfig | null | undefined => {
+        const existing = context.hostedBootstrap ?? context.activeTurn?.hostedBootstrap;
+        const fetchedAt = context.hostedBootstrapFetchedAt ?? 0;
+        return existing !== undefined && Date.now() - fetchedAt < HOSTED_BOOTSTRAP_CACHE_TTL_MS
+          ? existing
+          : undefined;
+      };
+
       const getOrCreateSessionToolRuntime = Effect.fn("getOrCreateSessionToolRuntime")(function* (
         context: ShioriSessionContext,
       ) {
@@ -3475,7 +3749,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             assistantStarted: activeTurn.assistantStarted,
             openReasoningItemIds: activeTurn.reasoningBlockOrder.flatMap((blockId) => {
               const block = activeTurn.reasoningBlocks.get(blockId);
-              return block && !block.completed ? [block.itemId] : [];
+              return block && block.visibleStarted && !block.completed ? [block.itemId] : [];
             }),
           }),
           emit,
@@ -4864,7 +5138,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 requestError(`shiori.tool.${input.toolName}`, toMessage(error), error),
             });
             const result = yield* Effect.tryPromise({
-              try: () => applyUnifiedPatch(patchText, input.cwd ?? process.cwd(), input.signal),
+              try: () =>
+                isCodexApplyPatch(patchText)
+                  ? applyCodexApplyPatch(patchText, input.cwd ?? process.cwd())
+                  : applyUnifiedPatch(patchText, input.cwd ?? process.cwd(), input.signal),
               catch: (error) =>
                 requestError(`shiori.tool.${input.toolName}`, "Failed to apply patch.", error),
             });
@@ -4978,10 +5255,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         const settings = yield* serverSettings.getSettings;
         const apiBaseUrl = resolveApiBaseUrl(settings.providers.shiori.apiBaseUrl);
         const interactionMode = input.context.activeTurn?.interactionMode ?? "default";
-        const hostedBootstrap = yield* resolveHostedBootstrapForContext({
-          threadId: input.context.session.threadId,
-          authToken: input.authToken,
-        });
+        const hostedBootstrap =
+          input.context.activeTurn?.hostedBootstrap ??
+          (yield* resolveHostedBootstrapForContext({
+            threadId: input.context.session.threadId,
+            authToken: input.authToken,
+          }));
         const tools = buildHostedToolDescriptors({
           ...input.context,
           interactionMode,
@@ -5731,19 +6010,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               case "reasoning-start": {
                 if (input.context.activeTurn) {
                   const block = ensureReasoningBlock(input.context.activeTurn, chunk.id);
-                  yield* emit({
-                    ...runtimeEventBase({
-                      threadId: input.context.session.threadId,
-                      turnId: input.turnId,
-                      itemId: block.itemId,
-                    }),
-                    type: "item.started",
-                    payload: {
-                      itemType: "reasoning",
-                      status: "inProgress",
-                      title: "Reasoning",
-                    },
-                  } satisfies ProviderRuntimeEvent);
+                  if (chunk.providerMetadata !== undefined) {
+                    block.providerMetadata = chunk.providerMetadata;
+                  }
                 }
                 break;
               }
@@ -5753,6 +6022,25 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   block.text += chunk.delta;
                   if (chunk.providerMetadata !== undefined) {
                     block.providerMetadata = chunk.providerMetadata;
+                  }
+                  if (chunk.delta.length === 0) {
+                    break;
+                  }
+                  if (!block.visibleStarted) {
+                    block.visibleStarted = true;
+                    yield* emit({
+                      ...runtimeEventBase({
+                        threadId: input.context.session.threadId,
+                        turnId: input.turnId,
+                        itemId: block.itemId,
+                      }),
+                      type: "item.started",
+                      payload: {
+                        itemType: "reasoning",
+                        status: "inProgress",
+                        title: "Reasoning",
+                      },
+                    } satisfies ProviderRuntimeEvent);
                   }
                   yield* emit({
                     ...runtimeEventBase({
@@ -5772,10 +6060,16 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               case "reasoning-end": {
                 if (input.context.activeTurn) {
                   const block = ensureReasoningBlock(input.context.activeTurn, chunk.id);
+                  if (chunk.providerMetadata !== undefined) {
+                    block.providerMetadata = chunk.providerMetadata;
+                  }
                   if (block.completed) {
                     break;
                   }
                   block.completed = true;
+                  if (!block.visibleStarted) {
+                    break;
+                  }
                   yield* emit({
                     ...runtimeEventBase({
                       threadId: input.context.session.threadId,
@@ -6072,7 +6366,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                   input.context.activeTurn !== null
                     ? input.context.activeTurn.reasoningBlockOrder.flatMap((blockId) => {
                         const block = input.context.activeTurn?.reasoningBlocks.get(blockId);
-                        return block && !block.completed ? [block.itemId] : [];
+                        return block && block.visibleStarted && !block.completed
+                          ? [block.itemId]
+                          : [];
                       })
                     : [],
               }),
@@ -6329,10 +6625,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const controller = new AbortController();
             const toolRuntime = yield* getOrCreateSessionToolRuntime(context);
             const hostedBootstrap =
-              context.hostedBootstrap !== undefined &&
-              Date.now() - (context.hostedBootstrapFetchedAt ?? 0) < HOSTED_BOOTSTRAP_CACHE_TTL_MS
-                ? context.hostedBootstrap
-                : yield* fetchHostedBootstrapForToken(authToken);
+              getFreshHostedBootstrapForContext(context) ?? CONSERVATIVE_SHIORI_BOOTSTRAP;
 
             const runningContext = withResumeCursor({
               ...context,

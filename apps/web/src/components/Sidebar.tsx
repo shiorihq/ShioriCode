@@ -1147,6 +1147,8 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const setDraftThread = useComposerDraftStore((store) => store.setDraftThread);
+  const applyStickyDraftState = useComposerDraftStore((store) => store.applyStickyState);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const appSettings = useSettings();
@@ -1241,13 +1243,14 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
       context: {
         terminalFocus: false,
         terminalOpen: routeTerminalOpen,
+        kanbanView: pathname === "/kanban",
       },
     }),
-    [platform, routeTerminalOpen],
+    [pathname, platform, routeTerminalOpen],
   );
   const searchShortcutLabel = useMemo(
-    () => (isMacPlatform(platform) ? "⌘G" : "Ctrl G"),
-    [platform],
+    () => shortcutLabelForCommand(keybindings, "search.open", sidebarShortcutLabelOptions),
+    [keybindings, sidebarShortcutLabelOptions],
   );
   const toggleSidebarSection = useCallback((section: SidebarSectionKey) => {
     setCollapsedSidebarSections((current) => {
@@ -1261,34 +1264,19 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
     });
   }, []);
   const createProjectlessChat = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Unable to create chat",
-      });
-      return;
-    }
-
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     try {
-      await api.orchestration.dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId,
+      setDraftThread(threadId, {
         projectId: null,
-        projectlessCwd: null,
-        title: "New Chat",
-        modelSelection: appSettings.defaultModelSelection,
+        createdAt,
         runtimeMode: DEFAULT_RUNTIME_MODE,
         interactionMode: DEFAULT_INTERACTION_MODE,
-        parentThreadId: null,
-        branchSourceTurnId: null,
         branch: null,
         worktreePath: null,
-        createdAt,
+        envMode: "local",
       });
+      applyStickyDraftState(threadId);
       setCollapsedSidebarSections((current) => {
         if (!current.has("chats")) {
           return current;
@@ -1304,11 +1292,11 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Failed to create chat",
+        title: "Failed to create draft chat",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     }
-  }, [appSettings.defaultModelSelection, navigate]);
+  }, [applyStickyDraftState, navigate, setDraftThread]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -2784,7 +2772,9 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
               >
                 <SearchIcon className="size-4 shrink-0" aria-hidden />
                 <span className={SIDEBAR_ROW_LABEL_CLASS}>Search</span>
-                <span className={SIDEBAR_ROW_META_CLASS}>{searchShortcutLabel}</span>
+                {searchShortcutLabel ? (
+                  <span className={SIDEBAR_ROW_META_CLASS}>{searchShortcutLabel}</span>
+                ) : null}
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>

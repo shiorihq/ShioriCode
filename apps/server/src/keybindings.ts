@@ -57,6 +57,7 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
+  { key: "meta+g", command: "search.open", when: "!kanbanView" },
   { key: "mod+o", command: "project.add", when: "!terminalFocus" },
   { key: "meta+p", command: "pullRequests.open" },
   { key: "meta+k", command: "kanban.open" },

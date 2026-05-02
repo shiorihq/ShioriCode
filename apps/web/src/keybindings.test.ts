@@ -82,6 +82,11 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
+  {
+    shortcut: { ...modShortcut("g"), modKey: false, metaKey: true },
+    command: "search.open",
+    whenAst: whenNot(whenIdentifier("kanbanView")),
+  },
   { shortcut: modShortcut("o"), command: "project.add" },
   { shortcut: { ...modShortcut("p"), modKey: false, metaKey: true }, command: "pullRequests.open" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
@@ -272,6 +277,19 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.toggle", "MacIntel"),
       "⌘B",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "search.open", {
+        platform: "MacIntel",
+        context: { kanbanView: false },
+      }),
+      "⌘G",
+    );
+    assert.isNull(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "search.open", {
+        platform: "MacIntel",
+        context: { kanbanView: true },
+      }),
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌘O");
     assert.strictEqual(

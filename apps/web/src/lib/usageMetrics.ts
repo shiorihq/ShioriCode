@@ -16,6 +16,15 @@ export interface LocalProviderUsageSummary {
   readonly last7Days: LocalUsageWindowSummary;
 }
 
+const LOCAL_USAGE_PROVIDERS = [
+  "codex",
+  "claudeAgent",
+  "shiori",
+  "kimiCode",
+  "gemini",
+  "cursor",
+] as const satisfies readonly ProviderKind[];
+
 interface ProviderTurnUsageSample {
   readonly provider: ProviderKind;
   readonly timestampMs: number;
@@ -48,6 +57,11 @@ function deriveApproxTokensFromPayload(payload: unknown): number {
   ]);
   if (incrementalTokens > 0) {
     return incrementalTokens;
+  }
+
+  const lastUsedTokens = asFiniteNonNegativeNumber(record.lastUsedTokens);
+  if (lastUsedTokens !== null && lastUsedTokens > 0) {
+    return lastUsedTokens;
   }
 
   const snapshotTokens = sumValues([
@@ -127,7 +141,7 @@ export function deriveLocalProviderUsageSummaries(
   const last5HoursCutoffMs = now - FIVE_HOURS_MS;
   const last7DaysCutoffMs = now - SEVEN_DAYS_MS;
 
-  return (["codex", "claudeAgent", "shiori"] as const).map((provider) => ({
+  return LOCAL_USAGE_PROVIDERS.map((provider) => ({
     provider,
     last5Hours: summarizeWindow(samples, provider, last5HoursCutoffMs),
     last7Days: summarizeWindow(samples, provider, last7DaysCutoffMs),

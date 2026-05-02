@@ -3,9 +3,12 @@ import { resolveShortcutCommand, type ShortcutEventLike } from "~/keybindings";
 
 const APP_SIDEBAR_SHORTCUT_COMMANDS = new Set<KeybindingCommand>([
   "sidebar.toggle",
+  "search.open",
   "project.add",
   "pullRequests.open",
   "kanban.open",
+  "chat.new",
+  "chat.newLocal",
 ]);
 
 export function resolveAppSidebarShortcutCommand(
@@ -14,6 +17,7 @@ export function resolveAppSidebarShortcutCommand(
   options: {
     terminalFocus: boolean;
     terminalOpen: boolean;
+    kanbanView?: boolean;
     platform?: string;
   },
 ): KeybindingCommand | null {
@@ -22,6 +26,7 @@ export function resolveAppSidebarShortcutCommand(
     context: {
       terminalFocus: options.terminalFocus,
       terminalOpen: options.terminalOpen,
+      kanbanView: options.kanbanView ?? false,
     },
   });
 

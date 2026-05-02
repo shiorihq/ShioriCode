@@ -1,4 +1,5 @@
 import type * as EffectAcpSchema from "effect-acp/schema";
+import type { ThreadTokenUsageSnapshot } from "contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -66,6 +67,11 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usage: ThreadTokenUsageSnapshot;
       readonly rawPayload: unknown;
     };
 
@@ -384,6 +390,64 @@ export function parsePermissionRequest(
   };
 }
 
+function asNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function asPositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+export function normalizeAcpPromptUsage(
+  usage: EffectAcpSchema.Usage | null | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!usage) {
+    return undefined;
+  }
+
+  const inputTokens = asNonNegativeInteger(usage.inputTokens) ?? 0;
+  const outputTokens = asNonNegativeInteger(usage.outputTokens) ?? 0;
+  const cachedReadTokens = asNonNegativeInteger(usage.cachedReadTokens) ?? 0;
+  const cachedWriteTokens = asNonNegativeInteger(usage.cachedWriteTokens) ?? 0;
+  const cachedInputTokens = cachedReadTokens + cachedWriteTokens;
+  const reasoningOutputTokens = asNonNegativeInteger(usage.thoughtTokens) ?? 0;
+  const computedTotal = inputTokens + outputTokens + cachedInputTokens + reasoningOutputTokens;
+  const usedTokens = asNonNegativeInteger(usage.totalTokens) ?? computedTotal;
+
+  if (usedTokens <= 0) {
+    return undefined;
+  }
+
+  return {
+    usedTokens,
+    totalProcessedTokens: usedTokens,
+    ...(inputTokens > 0 ? { inputTokens, lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens > 0
+      ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+      : {}),
+    ...(outputTokens > 0 ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens > 0
+      ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+      : {}),
+    lastUsedTokens: usedTokens,
+  };
+}
+
+function normalizeAcpUsageUpdate(
+  usage: EffectAcpSchema.UsageUpdate,
+): ThreadTokenUsageSnapshot | undefined {
+  const usedTokens = asNonNegativeInteger(usage.used);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+
+  const maxTokens = asPositiveInteger(usage.size);
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+}
+
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
@@ -448,6 +512,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         events.push({
           _tag: "ContentDelta",
           text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "usage_update": {
+      const usage = normalizeAcpUsageUpdate(upd);
+      if (usage) {
+        events.push({
+          _tag: "UsageUpdated",
+          usage,
           rawPayload: params,
         });
       }

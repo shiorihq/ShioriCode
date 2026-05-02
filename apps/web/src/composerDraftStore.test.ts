@@ -481,6 +481,32 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("stores projectless draft chats without a project mapping", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setDraftThread(threadId, {
+      projectId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
+      projectId: null,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().projectDraftThreadIdByProjectId).toEqual({});
+  });
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId);

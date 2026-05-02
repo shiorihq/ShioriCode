@@ -1365,7 +1365,7 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
         type="button"
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "group flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-sm py-0.5 text-left text-foreground/55 transition-colors duration-150 hover:text-foreground/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+          "group flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-sm py-0.5 text-left text-foreground/55 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
         )}
         onClick={() => {
           setIsExpanded((current) => !current);
@@ -1878,7 +1878,7 @@ const SkillWorkflowCardView = memo(function SkillWorkflowCardView(props: {
   const { card, cwd } = props;
   const markdownCwd = getPathDirectory(card.skillPath) ?? cwd;
   return (
-    <div className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 pl-4 text-foreground/80")}>
+    <div className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 text-foreground/80")}>
       {card.toolUseId && (
         <div className="mb-1 font-mono text-xs text-foreground/50">Tool call {card.toolUseId}</div>
       )}
@@ -1910,7 +1910,7 @@ const DelegatedAgentCardView = memo(function DelegatedAgentCardView(props: {
     <div
       className={cn(
         CHAT_THREAD_BODY_CLASS,
-        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 pl-4 text-foreground/80",
+        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 text-foreground/80",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -2014,8 +2014,6 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
   const isFileChange = formattedEntry.kind === "edit";
   const isReadEntry = formattedEntry.kind === "read";
   const isSearchEntry = formattedEntry.kind === "search";
-  const isCommandEntry =
-    formattedEntry.kind === "command" || workEntry.itemType === "command_execution";
   const shouldShowMcpToolboxIcon = showMcpToolboxIcon && isMcpToolWorkEntry(workEntry);
   const isFilePathEntry = isFileChange || isReadEntry;
   const parsedDiff = useMemo(
@@ -2123,7 +2121,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           {skillWorkflowCard && <SkillWorkflowCardView card={skillWorkflowCard} cwd={cwd} />}
           {delegatedAgentCard && <DelegatedAgentCardView card={delegatedAgentCard} />}
           {runtimeDiagnosticDetail && (
-            <div className="mt-0.5 pl-4">
+            <div className="mt-0.5">
               <div className="mb-1 flex justify-end">
                 <MessageCopyButton
                   text={runtimeDiagnosticDetail}
@@ -2148,7 +2146,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           )}
 
           {commandExecutionSummary && (
-            <div className="mt-1 space-y-2 pl-4">
+            <div className="mt-1 space-y-2">
               {(commandExecutionSummary.cwd ||
                 commandExecutionSummary.status ||
                 commandExecutionSummary.processId ||
@@ -2209,7 +2207,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           )}
 
           {todoList && (
-            <ul className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 space-y-1 pl-4 text-foreground/75")}>
+            <ul className={cn(CHAT_THREAD_BODY_CLASS, "mt-1 space-y-1 text-foreground/75")}>
               {todoList.map((todo) => (
                 <li
                   key={`${todo.status}:${todo.text}`}
@@ -2258,7 +2256,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           )}
 
           {planProposalMarkdown && (
-            <div className="mt-1 pl-4">
+            <div className="mt-1">
               <div className="rounded-lg border border-border/55 bg-muted/25 px-3 py-2 text-foreground/80">
                 <ChatMarkdown text={planProposalMarkdown} cwd={cwd} />
               </div>
@@ -2273,7 +2271,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
           )}
 
           {toolErrorText && (
-            <div className="mt-1 pl-4">
+            <div className="mt-1">
               <p
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
@@ -2300,7 +2298,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
 
           {/* Fallback: raw text output */}
           {!parsedDiff && !toolErrorText && outputText && (
-            <div className={cn("mt-0.5", !isCommandEntry && !isSearchEntry && "pl-4")}>
+            <div className="mt-0.5">
               {showsRawJsonOutput && (
                 <div className="mb-1 flex justify-end">
                   <MessageCopyButton text={outputText} title="Copy JSON output" />
@@ -2357,7 +2355,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
   );
 });
 
-const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
+type GroupedWorkEntriesProps = {
   entries: ReadonlyArray<TimelineWorkEntry>;
   groupItemsId: string;
   isExpanded: boolean;
@@ -2371,7 +2369,9 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
   onToggleGroup: () => void;
   onHeightChange?: (() => void) | undefined;
   isEditGroup?: boolean;
-}) {
+};
+
+const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEntriesProps) {
   const {
     expandedWorkGroups,
     entries,
@@ -2700,4 +2700,56 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: {
       </AnimatedExpandPanel>
     </div>
   );
-});
+}, areGroupedWorkEntriesPropsEqual);
+
+function areGroupedWorkEntriesPropsEqual(
+  previous: GroupedWorkEntriesProps,
+  next: GroupedWorkEntriesProps,
+): boolean {
+  if (
+    previous.entries !== next.entries ||
+    previous.groupItemsId !== next.groupItemsId ||
+    previous.inlineEntries !== next.inlineEntries ||
+    previous.isEditGroup !== next.isEditGroup ||
+    previous.isExpanded !== next.isExpanded ||
+    previous.isInProgress !== next.isInProgress ||
+    previous.markdownCwd !== next.markdownCwd ||
+    previous.nested !== next.nested ||
+    previous.onHeightChange !== next.onHeightChange ||
+    previous.onToggleWorkGroup !== next.onToggleWorkGroup ||
+    previous.summary.leadingVerb !== next.summary.leadingVerb ||
+    previous.summary.rest !== next.summary.rest
+  ) {
+    return false;
+  }
+
+  for (const expansionKey of getVisibleGroupedWorkEntryExpansionKeys(next)) {
+    if (previous.expandedWorkGroups[expansionKey] !== next.expandedWorkGroups[expansionKey]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getVisibleGroupedWorkEntryExpansionKeys(
+  props: Pick<GroupedWorkEntriesProps, "entries" | "inlineEntries">,
+): string[] {
+  const renderedItems =
+    props.inlineEntries ??
+    getDisplayedWorkEntries(props.entries).map((entry) => ({
+      kind: "work" as const,
+      id: entry.id,
+      entry,
+    }));
+  const visibleRenderedItems =
+    renderedItems.length > MAX_RENDERED_WORK_GROUP_ITEMS
+      ? renderedItems.slice(-MAX_RENDERED_WORK_GROUP_ITEMS)
+      : renderedItems;
+
+  return visibleRenderedItems.flatMap((item) =>
+    item.kind === "work" && !item.entry.running && item.entry.itemType !== "web_search"
+      ? [getGroupedWorkEntryExpansionKey(item.entry.id)]
+      : [],
+  );
+}

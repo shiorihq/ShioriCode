@@ -1,6 +1,6 @@
 import type { ProjectId, ThreadId } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BoxIcon, FolderIcon, GitForkIcon } from "lucide-react";
+import { FolderGit2, GitForkIcon, Laptop } from "lucide-react";
 import { useCallback } from "react";
 
 import { openProjectDraftThread } from "../hooks/useHandleNewThread";
@@ -8,7 +8,6 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
-import { cn } from "~/lib/utils";
 import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
@@ -18,7 +17,7 @@ import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 const envModeItems = [
-  { value: "local", label: "Local" },
+  { value: "local", label: "Work locally" },
   { value: "worktree", label: "New worktree" },
 ] as const;
 
@@ -27,8 +26,6 @@ interface BranchToolbarProps {
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
   isGitRepo?: boolean;
-  /** When true, renders controls inline without the wrapper div. */
-  inline?: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -38,7 +35,6 @@ export default function BranchToolbar({
   onEnvModeChange,
   envLocked,
   isGitRepo = true,
-  inline,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
@@ -132,8 +128,8 @@ export default function BranchToolbar({
   if (!activeThreadId || !activeProject) return null;
 
   const projectSelector = hasServerThread ? (
-    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-      <BoxIcon className="size-3" />
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-transparent px-[calc(--spacing(3)-1px)] py-1.5 text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <FolderGit2 className="size-3.5" />
       <span className="max-w-[10rem] truncate">{activeProject.name}</span>
     </span>
   ) : (
@@ -142,15 +138,19 @@ export default function BranchToolbar({
       onValueChange={(value) => handleProjectChange(value as ProjectId)}
       items={projects.map((project) => ({ value: project.id, label: project.name }))}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium">
-        <BoxIcon className="size-3" />
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="h-auto gap-1.5 rounded-full py-1.5 font-medium transition-none sm:h-auto sm:py-1.5"
+      >
+        <FolderGit2 className="size-3.5" />
         <SelectValue className="max-w-[10rem] truncate" />
       </SelectTrigger>
       <SelectPopup>
         {projects.map((project) => (
           <SelectItem key={project.id} value={project.id}>
             <span className="inline-flex items-center gap-1.5">
-              <BoxIcon className="size-3" />
+              <FolderGit2 className="size-3.5" />
               <span className="truncate">{project.name}</span>
             </span>
           </SelectItem>
@@ -160,12 +160,12 @@ export default function BranchToolbar({
   );
 
   const envModeSelector = !isGitRepo ? (
-    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-      <FolderIcon className="size-3" />
-      Local
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-transparent px-[calc(--spacing(3)-1px)] py-1.5 text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <Laptop className="size-3.5" />
+      Work locally
     </span>
   ) : envLocked || activeWorktreePath ? (
-    <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-transparent px-[calc(--spacing(3)-1px)] py-1.5 text-sm font-medium text-muted-foreground/70 sm:text-xs">
       {activeWorktreePath ? (
         <>
           <GitForkIcon className="size-3" />
@@ -173,8 +173,8 @@ export default function BranchToolbar({
         </>
       ) : (
         <>
-          <FolderIcon className="size-3" />
-          Local
+          <Laptop className="size-3.5" />
+          Work locally
         </>
       )}
     </span>
@@ -184,19 +184,23 @@ export default function BranchToolbar({
       onValueChange={(value) => onEnvModeChange(value as EnvMode)}
       items={envModeItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium">
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="h-auto gap-1.5 rounded-full py-1.5 font-medium transition-none sm:h-auto sm:py-1.5"
+      >
         {effectiveEnvMode === "worktree" ? (
           <GitForkIcon className="size-3" />
         ) : (
-          <FolderIcon className="size-3" />
+          <Laptop className="size-3.5" />
         )}
         <SelectValue />
       </SelectTrigger>
       <SelectPopup>
         <SelectItem value="local">
           <span className="inline-flex items-center gap-1.5">
-            <FolderIcon className="size-3" />
-            Local
+            <Laptop className="size-3.5" />
+            Work locally
           </span>
         </SelectItem>
         <SelectItem value="worktree">
@@ -223,28 +227,11 @@ export default function BranchToolbar({
     />
   ) : null;
 
-  if (inline) {
-    return (
-      <>
-        {projectSelector}
-        {envModeSelector}
-        {branchSelector}
-      </>
-    );
-  }
-
   return (
-    <div
-      className={cn(
-        "mx-auto flex w-full min-w-0 max-w-3xl items-center px-5 pb-3 pt-1",
-        branchSelector ? "justify-between" : "justify-start",
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-1">
-        {projectSelector}
-        {envModeSelector}
-      </div>
+    <>
+      {projectSelector}
+      {envModeSelector}
       {branchSelector}
-    </div>
+    </>
   );
 }

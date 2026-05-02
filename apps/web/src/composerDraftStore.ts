@@ -133,7 +133,7 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
   LegacyV2StoreFields;
 
 const PersistedDraftThreadState = Schema.Struct({
-  projectId: ProjectId,
+  projectId: Schema.NullOr(ProjectId),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -172,7 +172,7 @@ export interface ComposerThreadDraftState {
 }
 
 export interface DraftThreadState {
-  projectId: ProjectId;
+  projectId: ProjectId | null;
   createdAt: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -205,12 +205,24 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  setDraftThread: (
+    threadId: ThreadId,
+    options: {
+      projectId: ProjectId | null;
+      branch?: string | null;
+      worktreePath?: string | null;
+      createdAt?: string;
+      envMode?: DraftThreadEnvMode;
+      runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
+    },
+  ) => void;
   setDraftThreadContext: (
     threadId: ThreadId,
     options: {
       branch?: string | null;
       worktreePath?: string | null;
-      projectId?: ProjectId;
+      projectId?: ProjectId | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
@@ -871,11 +883,11 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
-      if (typeof projectId !== "string" || projectId.length === 0) {
+      if (projectId !== null && (typeof projectId !== "string" || projectId.length === 0)) {
         continue;
       }
       draftThreadsByThreadId[threadId as ThreadId] = {
-        projectId: projectId as ProjectId,
+        projectId: projectId === null ? null : (projectId as ProjectId),
         createdAt:
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
@@ -1457,6 +1469,62 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           };
         });
       },
+      setDraftThread: (threadId, options) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => {
+          const existingThread = state.draftThreadsByThreadId[threadId];
+          const nextWorktreePath =
+            options.worktreePath === undefined
+              ? (existingThread?.worktreePath ?? null)
+              : (options.worktreePath ?? null);
+          const nextDraftThread: DraftThreadState = {
+            projectId: options.projectId,
+            createdAt: options.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
+            runtimeMode: options.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            interactionMode:
+              options.interactionMode ??
+              existingThread?.interactionMode ??
+              DEFAULT_INTERACTION_MODE,
+            branch:
+              options.branch === undefined
+                ? (existingThread?.branch ?? null)
+                : (options.branch ?? null),
+            worktreePath: nextWorktreePath,
+            envMode:
+              options.envMode ??
+              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+          };
+          const hasSameDraftThread =
+            existingThread &&
+            existingThread.projectId === nextDraftThread.projectId &&
+            existingThread.createdAt === nextDraftThread.createdAt &&
+            existingThread.runtimeMode === nextDraftThread.runtimeMode &&
+            existingThread.interactionMode === nextDraftThread.interactionMode &&
+            existingThread.branch === nextDraftThread.branch &&
+            existingThread.worktreePath === nextDraftThread.worktreePath &&
+            existingThread.envMode === nextDraftThread.envMode;
+          if (hasSameDraftThread) {
+            return state;
+          }
+          const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
+            Object.entries(state.projectDraftThreadIdByProjectId).filter(
+              ([, draftThreadId]) => draftThreadId !== threadId,
+            ),
+          ) as Record<ProjectId, ThreadId>;
+          if (nextDraftThread.projectId !== null) {
+            nextProjectDraftThreadIdByProjectId[nextDraftThread.projectId] = threadId;
+          }
+          return {
+            draftThreadsByThreadId: {
+              ...state.draftThreadsByThreadId,
+              [threadId]: nextDraftThread,
+            },
+            projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+          };
+        });
+      },
       setDraftThreadContext: (threadId, options) => {
         if (threadId.length === 0) {
           return;
@@ -1466,8 +1534,11 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (!existing) {
             return state;
           }
-          const nextProjectId = options.projectId ?? existing.projectId;
-          if (nextProjectId.length === 0) {
+          const hasProjectIdOption = Object.hasOwn(options, "projectId");
+          const nextProjectId = hasProjectIdOption
+            ? (options.projectId ?? null)
+            : existing.projectId;
+          if (nextProjectId !== null && nextProjectId.length === 0) {
             return state;
           }
           const nextWorktreePath =
@@ -1500,10 +1571,15 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const nextProjectDraftThreadIdByProjectId: Record<ProjectId, ThreadId> = {
             ...state.projectDraftThreadIdByProjectId,
-            [nextProjectId]: threadId,
           };
+          if (nextProjectId !== null) {
+            nextProjectDraftThreadIdByProjectId[nextProjectId] = threadId;
+          }
           if (existing.projectId !== nextProjectId) {
-            if (nextProjectDraftThreadIdByProjectId[existing.projectId] === threadId) {
+            if (
+              existing.projectId !== null &&
+              nextProjectDraftThreadIdByProjectId[existing.projectId] === threadId
+            ) {
               delete nextProjectDraftThreadIdByProjectId[existing.projectId];
             }
           }
