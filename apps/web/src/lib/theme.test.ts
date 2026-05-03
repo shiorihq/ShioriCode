@@ -20,6 +20,7 @@ function makeSettings(overrides: Partial<ClientSettings> = {}): ClientSettings {
     confirmThreadDelete: true,
     diffWordWrap: false,
     blurPersonalData: false,
+    composerVimMode: false,
     sidebarProjectSortOrder: "updated_at",
     sidebarThreadSortOrder: "updated_at",
     sidebarTranslucent: true,

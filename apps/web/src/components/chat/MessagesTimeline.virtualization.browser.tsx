@@ -1007,6 +1007,44 @@ describe("MessagesTimeline virtualization harness", () => {
     }
   });
 
+  it("does not force expanded top-level streaming workgroups to the bottom", async () => {
+    const workEntries = Array.from({ length: 24 }, (_, index) => {
+      const commandNumber = index + 1;
+      return createToolWorkEntry({
+        id: `running-scroll-work-${commandNumber}`,
+        offsetSeconds: commandNumber,
+        label: "exec_command started",
+        command: `printf ${commandNumber}`,
+        itemType: "command_execution",
+        running: true,
+      });
+    });
+    const props = createBaseTimelineProps({
+      workEntries,
+    });
+    const mounted = await mountMessagesTimeline({ props });
+
+    try {
+      const groupItems = await waitForElement(
+        () => document.getElementById("work-group-items-running-scroll-work-1"),
+        "Unable to find streaming workgroup items.",
+      );
+      const entriesViewport = await waitForElement(
+        () => groupItems.querySelector<HTMLDivElement>("div.max-h-48"),
+        "Unable to find streaming workgroup scroll viewport.",
+      );
+
+      await vi.waitFor(() => {
+        expect(entriesViewport.scrollHeight).toBeGreaterThan(entriesViewport.clientHeight);
+      });
+      await waitForLayout();
+
+      expect(entriesViewport.scrollTop).toBe(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("lets an expanded streaming subagent group collapse from the summary header", async () => {
     const toggles: Array<{ groupId: string; currentlyExpanded: boolean }> = [];
     const props = createBaseTimelineProps({

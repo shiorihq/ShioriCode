@@ -863,6 +863,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.blurPersonalData !== DEFAULT_UNIFIED_SETTINGS.blurPersonalData
         ? ["Hide personal details"]
         : []),
+      ...(settings.composerVimMode !== DEFAULT_UNIFIED_SETTINGS.composerVimMode
+        ? ["Composer Vim mode"]
+        : []),
       ...(settings.uiFontFamily !== DEFAULT_UNIFIED_SETTINGS.uiFontFamily ? ["UI font"] : []),
       ...(settings.codeFontFamily !== DEFAULT_UNIFIED_SETTINGS.codeFontFamily ? ["Code font"] : []),
       ...(settings.importedThemes.length > 0 ? ["Imported themes"] : []),
@@ -906,6 +909,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       areProviderSettingsDirty,
       settings.blurPersonalData,
       settings.codeFontFamily,
+      settings.composerVimMode,
       isDefaultModelDirty,
       isGitWritingModelDirty,
       settings.confirmThreadDelete,
@@ -1255,6 +1259,30 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="General">
+        <SettingsRow
+          title="Composer Vim mode"
+          description="Use a lightweight Vim editing mode in the message composer."
+          resetAction={
+            settings.composerVimMode !== DEFAULT_UNIFIED_SETTINGS.composerVimMode ? (
+              <SettingResetButton
+                label="Composer Vim mode"
+                onClick={() =>
+                  updateSettings({
+                    composerVimMode: DEFAULT_UNIFIED_SETTINGS.composerVimMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerVimMode}
+              onCheckedChange={(checked) => updateSettings({ composerVimMode: Boolean(checked) })}
+              aria-label="Enable composer Vim mode"
+            />
+          }
+        />
+
         <SettingsRow
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."

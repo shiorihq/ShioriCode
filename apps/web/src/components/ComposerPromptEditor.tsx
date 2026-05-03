@@ -22,9 +22,12 @@ import {
   KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
   KEY_ENTER_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
   KEY_BACKSPACE_COMMAND,
+  REDO_COMMAND,
+  UNDO_COMMAND,
   $getRoot,
   DecoratorNode,
   type ElementNode,
@@ -47,6 +50,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ClipboardEventHandler,
   type ReactElement,
   type Ref,
@@ -58,6 +62,12 @@ import {
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
+import {
+  applyComposerVimKey,
+  createComposerVimState,
+  type ComposerVimMode,
+  type ComposerVimState,
+} from "~/composer-vim-logic";
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
@@ -553,6 +563,29 @@ function $setSelectionAtComposerOffset(nextOffset: number): void {
   $setSelection(selection);
 }
 
+function $setSelectionAtComposerRange(anchorOffset: number, focusOffset: number): void {
+  const root = $getRoot();
+  const composerLength = $getComposerRootLength();
+  const boundedAnchor = Math.max(0, Math.min(anchorOffset, composerLength));
+  const boundedFocus = Math.max(0, Math.min(focusOffset, composerLength));
+  const anchorRemainingRef = { value: boundedAnchor };
+  const focusRemainingRef = { value: boundedFocus };
+  const anchorPoint = findSelectionPointAtOffset(root, anchorRemainingRef) ?? {
+    key: root.getKey(),
+    offset: root.getChildren().length,
+    type: "element" as const,
+  };
+  const focusPoint = findSelectionPointAtOffset(root, focusRemainingRef) ?? {
+    key: root.getKey(),
+    offset: root.getChildren().length,
+    type: "element" as const,
+  };
+  const selection = $createRangeSelection();
+  selection.anchor.set(anchorPoint.key, anchorPoint.offset, anchorPoint.type);
+  selection.focus.set(focusPoint.key, focusPoint.offset, focusPoint.type);
+  $setSelection(selection);
+}
+
 function $readSelectionOffsetFromEditorState(fallback: number): number {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
@@ -642,6 +675,9 @@ interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   className?: string;
+  vimModeEnabled: boolean;
+  vimCommandMenuActive: boolean;
+  onVimModeChange?: (mode: ComposerVimMode | null) => void;
   onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
     nextValue: string,
@@ -713,6 +749,118 @@ function ComposerCommandKeyPlugin(props: {
       unregisterTab();
     };
   }, [editor, props]);
+
+  return null;
+}
+
+function ComposerVimPlugin(props: {
+  enabled: boolean;
+  commandMenuActive: boolean;
+  value: string;
+  cursor: number;
+  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  onModeChange?: (mode: ComposerVimMode | null) => void;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const stateRef = useRef<ComposerVimState>(createComposerVimState("insert"));
+  const cursorRef = useRef(props.cursor);
+  const onModeChangeRef = useRef(props.onModeChange);
+
+  useEffect(() => {
+    onModeChangeRef.current = props.onModeChange;
+  }, [props.onModeChange]);
+
+  useEffect(() => {
+    cursorRef.current = props.cursor;
+  }, [props.cursor, props.value]);
+
+  useEffect(() => {
+    if (!props.enabled) {
+      stateRef.current = createComposerVimState("insert");
+      onModeChangeRef.current?.(null);
+      return;
+    }
+    stateRef.current = createComposerVimState("insert");
+    onModeChangeRef.current?.("insert");
+  }, [props.enabled]);
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (!props.enabled) return false;
+        if (!event || event.isComposing) return false;
+        if (event.key === "Enter") return false;
+        if (event.metaKey || event.altKey) return false;
+        const isAllowedCtrlKey =
+          event.ctrlKey && (event.key === "[" || event.key.toLowerCase() === "r");
+        if (event.ctrlKey && !isAllowedCtrlKey) return false;
+        if (props.commandMenuActive && event.key !== "Escape") return false;
+
+        let promptValue = props.value;
+        let currentCursor = cursorRef.current;
+        editor.getEditorState().read(() => {
+          promptValue = $getRoot().getTextContent();
+          currentCursor = $readSelectionOffsetFromEditorState(cursorRef.current);
+        });
+
+        const previousMode = stateRef.current.mode;
+        const commandResult = applyComposerVimKey(
+          {
+            text: promptValue,
+            cursor: currentCursor,
+            key: event.key,
+            ctrlKey: event.ctrlKey,
+          },
+          stateRef.current,
+        );
+
+        if (!commandResult.handled) return false;
+
+        stateRef.current = commandResult.state;
+        cursorRef.current = commandResult.cursor;
+        if (previousMode !== commandResult.state.mode) {
+          onModeChangeRef.current?.(commandResult.state.mode);
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (commandResult.undo) {
+          editor.dispatchCommand(UNDO_COMMAND, undefined);
+          return true;
+        }
+        if (commandResult.redo) {
+          editor.dispatchCommand(REDO_COMMAND, undefined);
+          return true;
+        }
+
+        editor.update(() => {
+          if (commandResult.text !== promptValue) {
+            $setComposerEditorPrompt(commandResult.text, props.terminalContexts);
+          }
+          if (commandResult.selection) {
+            $setSelectionAtComposerRange(
+              commandResult.selection.anchor,
+              commandResult.selection.focus,
+            );
+          } else {
+            const normalModeBlockEnd = commandResult.cursor + 1;
+            if (
+              commandResult.state.mode === "normal" &&
+              normalModeBlockEnd <= commandResult.text.length
+            ) {
+              $setSelectionAtComposerRange(commandResult.cursor, normalModeBlockEnd);
+            } else {
+              $setSelectionAtComposerOffset(commandResult.cursor);
+            }
+          }
+        });
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor, props.commandMenuActive, props.enabled, props.terminalContexts, props.value]);
 
   return null;
 }
@@ -885,6 +1033,9 @@ function ComposerPromptEditorInner({
   disabled,
   placeholder,
   className,
+  vimModeEnabled,
+  vimCommandMenuActive,
+  onVimModeChange,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
@@ -902,6 +1053,9 @@ function ComposerPromptEditorInner({
     expandedCursor: expandCollapsedComposerCursor(value, initialCursor),
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
+  const [activeVimMode, setActiveVimMode] = useState<ComposerVimMode | null>(() =>
+    vimModeEnabled ? "insert" : null,
+  );
   const isApplyingControlledUpdateRef = useRef(false);
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),
@@ -915,6 +1069,18 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     editor.setEditable(!disabled);
   }, [disabled, editor]);
+
+  useEffect(() => {
+    setActiveVimMode(vimModeEnabled ? "insert" : null);
+  }, [vimModeEnabled]);
+
+  const handleVimModeChange = useCallback(
+    (nextMode: ComposerVimMode | null) => {
+      setActiveVimMode(nextMode);
+      onVimModeChange?.(nextMode);
+    },
+    [onVimModeChange],
+  );
 
   useLayoutEffect(() => {
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
@@ -1097,6 +1263,7 @@ function ComposerPromptEditorInner({
                 className,
               )}
               data-testid="composer-editor"
+              data-vim-mode={activeVimMode ?? undefined}
               aria-placeholder={placeholder}
               placeholder={<span />}
               onPaste={onPaste}
@@ -1112,6 +1279,14 @@ function ComposerPromptEditorInner({
           ErrorBoundary={LexicalErrorBoundary}
         />
         <OnChangePlugin onChange={handleEditorChange} />
+        <ComposerVimPlugin
+          enabled={vimModeEnabled}
+          commandMenuActive={vimCommandMenuActive}
+          value={value}
+          cursor={cursor}
+          terminalContexts={terminalContexts}
+          onModeChange={handleVimModeChange}
+        />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
@@ -1133,6 +1308,9 @@ export const ComposerPromptEditor = forwardRef<
     disabled,
     placeholder,
     className,
+    vimModeEnabled,
+    vimCommandMenuActive,
+    onVimModeChange,
     onRemoveTerminalContext,
     onChange,
     onCommandKeyDown,
@@ -1165,10 +1343,13 @@ export const ComposerPromptEditor = forwardRef<
         terminalContexts={terminalContexts}
         disabled={disabled}
         placeholder={placeholder}
+        vimModeEnabled={vimModeEnabled}
+        vimCommandMenuActive={vimCommandMenuActive}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}
         onPaste={onPaste}
         editorRef={ref}
+        {...(onVimModeChange ? { onVimModeChange } : {})}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
       />

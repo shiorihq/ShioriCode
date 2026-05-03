@@ -153,6 +153,7 @@ import {
   shouldUseCompactComposerFooter,
 } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import type { ComposerVimMode } from "../composer-vim-logic";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import BrowserPanel from "./browser/BrowserPanel";
@@ -228,6 +229,12 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const BROWSER_PANEL_SHEET_MEDIA_QUERY = "(max-width: 1180px)";
+const COMPOSER_VIM_MODE_LABELS = {
+  insert: "INSERT",
+  normal: "NORMAL",
+  visual: "VISUAL",
+  "visual-line": "V-LINE",
+} as const satisfies Record<ComposerVimMode, string>;
 
 function shouldBackgroundRefreshProviderStatus(provider: ServerProvider): boolean {
   return (
@@ -870,6 +877,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [composerVimMode, setComposerVimMode] = useState<ComposerVimMode | null>(() =>
+    settings.composerVimMode ? "insert" : null,
+  );
   const [isComposerTaskListOpen, setIsComposerTaskListOpen] = useState(true);
   const [isBackgroundSubagentsPanelOpen, setIsBackgroundSubagentsPanelOpen] = useState(true);
   const [isComposerQueueOpen, setIsComposerQueueOpen] = useState(true);
@@ -2302,6 +2312,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   composerMenuOpenRef.current = composerMenuOpen;
   composerMenuItemsRef.current = composerMenuItems;
   activeComposerMenuItemRef.current = activeComposerMenuItem;
+  useEffect(() => {
+    if (!settings.composerVimMode) {
+      setComposerVimMode(null);
+      return;
+    }
+    setComposerVimMode((currentMode) => currentMode ?? "insert");
+  }, [settings.composerVimMode]);
   const nonPersistedComposerImageIdSet = useMemo(
     () => new Set(nonPersistedComposerImageIds),
     [nonPersistedComposerImageIds],
@@ -5123,6 +5140,14 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     ],
   );
 
+  const onComposerVimModeChange = useCallback((nextMode: ComposerVimMode | null) => {
+    setComposerVimMode(nextMode);
+    if (nextMode && nextMode !== "insert") {
+      setComposerTrigger(null);
+      setComposerHighlightedItemId(null);
+    }
+  }, []);
+
   const onComposerCommandKey = (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
@@ -5601,6 +5626,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                         onChange={onPromptChange}
                         onCommandKeyDown={onComposerCommandKey}
                         onPaste={onComposerPaste}
+                        vimModeEnabled={settings.composerVimMode}
+                        vimCommandMenuActive={composerMenuOpen}
+                        onVimModeChange={onComposerVimModeChange}
                         placeholder={
                           isComposerApprovalState
                             ? (activePendingApproval?.detail ??
@@ -5657,6 +5685,15 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             onTogglePlanMode={toggleInteractionMode}
                             onAddFiles={addComposerImages}
                           />
+
+                          {settings.composerVimMode && composerVimMode ? (
+                            <span
+                              className="inline-flex h-7 shrink-0 items-center rounded border border-border/70 bg-muted/40 px-2 font-medium text-[10px] text-muted-foreground"
+                              data-testid="composer-vim-mode"
+                            >
+                              {COMPOSER_VIM_MODE_LABELS[composerVimMode]}
+                            </span>
+                          ) : null}
 
                           {isComposerFooterCompact && compactControlsMenuNeeded ? (
                             <CompactComposerControlsMenu

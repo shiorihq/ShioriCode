@@ -818,6 +818,15 @@ samp {
   -ms-overflow-style: none;
 }
 
+.composer-prompt-editor[data-vim-mode="normal"] {
+  caret-color: transparent;
+}
+
+.composer-prompt-editor[data-vim-mode="normal"]::selection {
+  color: var(--background);
+  background: var(--foreground);
+}
+
 .composer-prompt-editor::-webkit-scrollbar {
   display: none;
 }

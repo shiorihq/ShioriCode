@@ -22,11 +22,12 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { CLIENT_SETTINGS_STORAGE_KEY } from "../clientSettings";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -898,6 +899,30 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+function enableComposerVimModeForTest(): void {
+  localStorage.setItem(
+    CLIENT_SETTINGS_STORAGE_KEY,
+    JSON.stringify({ ...DEFAULT_CLIENT_SETTINGS, composerVimMode: true }),
+  );
+}
+
+async function pressComposerKey(key: string): Promise<void> {
+  await userEvent.keyboard(key.length === 1 ? key : `{${key}}`);
+  await waitForLayout();
+}
+
+async function waitForComposerText(expectedText: string): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const editor = document.querySelector<HTMLElement>('[data-testid="composer-editor"]');
+      const actualText =
+        expectedText.includes("\n") && editor ? editor.innerText.trimEnd() : editor?.textContent;
+      expect(actualText).toBe(expectedText);
+    },
+    { timeout: 8_000, interval: 16 },
   );
 }
 
@@ -3714,6 +3739,174 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ).toContain("Compact this thread's context");
         },
         { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("activates composer Vim normal-mode editing from client settings", async () => {
+    enableComposerVimModeForTest();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-vim-settings" as MessageId,
+        targetText: "vim settings thread",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await userEvent.fill(composerEditor, "abc");
+      composerEditor.focus();
+
+      await pressComposerKey("Escape");
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="composer-vim-mode"]')?.textContent).toBe(
+          "NORMAL",
+        );
+        expect(window.getSelection()?.toString()).toBe("c");
+      });
+
+      await pressComposerKey("x");
+      await waitForComposerText("ab");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("moves and re-enters insert mode with Vim i/a commands", async () => {
+    enableComposerVimModeForTest();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-vim-insert" as MessageId,
+        targetText: "vim insert thread",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await userEvent.fill(composerEditor, "one two");
+      composerEditor.focus();
+
+      await pressComposerKey("Escape");
+      await pressComposerKey("b");
+      await pressComposerKey("i");
+      await userEvent.keyboard("X");
+      await waitForComposerText("one Xtwo");
+
+      await pressComposerKey("Escape");
+      await pressComposerKey("w");
+      await pressComposerKey("a");
+      await userEvent.keyboard("!");
+      await waitForComposerText("one Xtwo!");
+
+      await userEvent.fill(composerEditor, "one\ntwo");
+      composerEditor.focus();
+      await pressComposerKey("Escape");
+      await pressComposerKey("g");
+      await pressComposerKey("g");
+      await pressComposerKey("o");
+      await userEvent.keyboard("new");
+      await waitForComposerText("one\nnew\ntwo");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("supports linewise and wordwise Vim yank/paste in the composer", async () => {
+    enableComposerVimModeForTest();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-vim-yank" as MessageId,
+        targetText: "vim yank thread",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await userEvent.fill(composerEditor, "one\ntwo");
+      composerEditor.focus();
+
+      await pressComposerKey("Escape");
+      await pressComposerKey("g");
+      await pressComposerKey("g");
+      await pressComposerKey("y");
+      await pressComposerKey("y");
+      await pressComposerKey("p");
+      await waitForComposerText("one\none\ntwo");
+
+      await pressComposerKey("i");
+      await userEvent.fill(composerEditor, "one two");
+      composerEditor.focus();
+      await pressComposerKey("Escape");
+      await pressComposerKey("g");
+      await pressComposerKey("g");
+      await pressComposerKey("y");
+      await pressComposerKey("w");
+      await pressComposerKey("p");
+      await waitForComposerText("oonene two");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps slash commands, Enter send, and image paste working with Vim mode enabled", async () => {
+    enableComposerVimModeForTest();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-vim-existing-behavior" as MessageId,
+        targetText: "vim compatibility thread",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await userEvent.fill(composerEditor, "/");
+      const menuItem = await waitForComposerMenuItem("slash:compact");
+      menuItem.click();
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector<HTMLElement>('[data-testid="composer-editor"]')?.textContent,
+          ).toContain("Compact this thread's context");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await userEvent.fill(composerEditor, "send from vim");
+      composerEditor.focus();
+      await pressComposerKey("Escape");
+      await userEvent.keyboard("{Enter}");
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.turn.start",
+            ),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await userEvent.fill(composerEditor, "");
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([ATTACHMENT_SVG], "paste.png", { type: "image/png" }));
+      composerEditor.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer,
+        }),
+      );
+      await waitForElement(
+        () => document.querySelector<HTMLImageElement>('img[alt="paste.png"]'),
+        "Unable to find pasted image preview.",
       );
     } finally {
       await mounted.cleanup();

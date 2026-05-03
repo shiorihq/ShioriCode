@@ -2388,7 +2388,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
   const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
   const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
   const shouldUseScrollViewport = isExpanded;
-  const shouldAutoStickScrollViewport = shouldUseScrollViewport && (isInProgress || nested);
+  const shouldAutoStickScrollViewport = shouldUseScrollViewport && nested;
   const {
     bottomFadeStrength: entriesBottomFadeStrength,
     onScroll: onEntriesFadeScroll,

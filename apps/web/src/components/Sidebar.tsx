@@ -893,7 +893,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           className={cn(
                             "inline-flex h-5 cursor-pointer items-center justify-center focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
                             isConfirmingArchive
-                              ? "rounded-full bg-destructive/12 px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/18"
+                              ? "rounded-full bg-destructive/12 px-2 text-[11px] font-medium text-destructive transition-none hover:bg-destructive/18"
                               : "w-5 text-muted-foreground hover:text-foreground",
                           )}
                           onPointerDown={(event) => {

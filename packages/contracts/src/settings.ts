@@ -171,6 +171,7 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   blurPersonalData: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  composerVimMode: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),
