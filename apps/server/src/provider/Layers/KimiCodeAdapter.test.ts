@@ -7,6 +7,7 @@ import {
   buildKimiExecutableWrapperScript,
   resolveKimiLoopControlFromEnv,
   shouldFlushKimiPendingTextAsAssistantAnswer,
+  shouldOmitKimiCompletedToolData,
   turnSnapshotFromEvents,
 } from "./KimiCodeAdapter.ts";
 
@@ -34,13 +35,13 @@ describe("KimiCodeAdapter helpers", () => {
     );
   });
 
-  it("keeps pre-tool/interrupted Kimi text out of final answers after tools ran", () => {
+  it("keeps pending Kimi text as assistant output even around tools", () => {
     expect(
       shouldFlushKimiPendingTextAsAssistantAnswer({
         turnFinished: false,
         toolCallSeen: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldFlushKimiPendingTextAsAssistantAnswer({
         turnFinished: true,
@@ -53,6 +54,13 @@ describe("KimiCodeAdapter helpers", () => {
         toolCallSeen: false,
       }),
     ).toBe(true);
+  });
+
+  it("omits successful read tool result payloads from completed Kimi work items", () => {
+    expect(shouldOmitKimiCompletedToolData({ toolName: "ReadFile", isError: false })).toBe(true);
+    expect(shouldOmitKimiCompletedToolData({ toolName: "read", isError: false })).toBe(true);
+    expect(shouldOmitKimiCompletedToolData({ toolName: "ReadFile", isError: true })).toBe(false);
+    expect(shouldOmitKimiCompletedToolData({ toolName: "Search", isError: false })).toBe(false);
   });
 
   it("wraps the Kimi executable with ShioriCode loop-control flags", () => {

@@ -36,6 +36,7 @@ import {
   classifyProviderToolLifecycleItemType,
   classifyProviderToolRequestKind,
   isTodoListToolName,
+  normalizeProviderToolName,
   providerToolTitle,
   summarizeProviderToolInvocation,
 } from "shared/providerTool";
@@ -134,7 +135,6 @@ type ActiveTurnState = {
   readonly toolCalls: Map<string, ToolInFlight>;
   readonly lastToolCallIdByParent: Map<string, string>;
   pendingAssistantText: string;
-  commentaryItemIndex: number;
   toolCallSeen: boolean;
   assistantStarted: boolean;
   assistantCompleted: boolean;
@@ -428,7 +428,19 @@ export function shouldFlushKimiPendingTextAsAssistantAnswer(input: {
   readonly turnFinished: boolean;
   readonly toolCallSeen: boolean;
 }): boolean {
-  return input.turnFinished || !input.toolCallSeen;
+  void input;
+  return true;
+}
+
+export function shouldOmitKimiCompletedToolData(input: {
+  readonly toolName: string;
+  readonly isError: boolean;
+}): boolean {
+  if (input.isError) {
+    return false;
+  }
+  const normalized = normalizeProviderToolName(input.toolName);
+  return normalized === "read" || normalized === "read file" || normalized === "view";
 }
 
 function mapRequestKindToCanonical(
@@ -1265,52 +1277,6 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     });
   });
 
-  const flushPendingAssistantTextAsCommentary = Effect.fn("flushPendingAssistantTextAsCommentary")(
-    function* (context: KimiSessionContext, turn: ActiveTurnState) {
-      const text = trimOrUndefined(turn.pendingAssistantText);
-      turn.pendingAssistantText = "";
-      if (!text) {
-        return;
-      }
-
-      turn.commentaryItemIndex += 1;
-      const itemId = `commentary:${turn.turnId}:${turn.commentaryItemIndex}`;
-      yield* publish({
-        type: "item.completed",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId: context.session.threadId,
-        createdAt: nowIso(),
-        turnId: turn.turnId,
-        itemId: RuntimeItemId.makeUnsafe(itemId),
-        payload: {
-          itemType: "assistant_message",
-          title: "Status update",
-          detail: text,
-          data: {
-            item: {
-              id: itemId,
-              phase: "commentary",
-              text,
-            },
-          },
-        },
-        providerRefs: {
-          providerItemId: ProviderItemId.makeUnsafe(itemId),
-        },
-        raw: rawEvent("ContentPart", {
-          type: "text",
-          text,
-          item: {
-            id: itemId,
-            phase: "commentary",
-            text,
-          },
-        }),
-      });
-    },
-  );
-
   const flushPendingAssistantTextAsAnswer = Effect.fn("flushPendingAssistantTextAsAnswer")(
     function* (context: KimiSessionContext, turn: ActiveTurnState) {
       const text = turn.pendingAssistantText;
@@ -1326,7 +1292,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     readonly parentToolCallId?: string;
   }) {
     if (!input.parentToolCallId) {
-      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
+      yield* flushPendingAssistantTextAsAnswer(input.context, input.turn);
     }
     input.turn.toolCallSeen = true;
     const toolName = input.payload.function.name;
@@ -1396,10 +1362,18 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             }
           })()
         : null;
-    const detail =
-      trimOrUndefined(extractBrief(input.payload.return_value.display)) ??
-      trimOrUndefined(input.payload.return_value.message) ??
-      trimOrUndefined(summarizeProviderToolInvocation(toolName, parsedArguments) ?? undefined);
+    const omitCompletedData = shouldOmitKimiCompletedToolData({
+      toolName,
+      isError: input.payload.return_value.is_error,
+    });
+    const invocationSummary = trimOrUndefined(
+      summarizeProviderToolInvocation(toolName, parsedArguments) ?? undefined,
+    );
+    const detail = omitCompletedData
+      ? invocationSummary
+      : (trimOrUndefined(extractBrief(input.payload.return_value.display)) ??
+        trimOrUndefined(input.payload.return_value.message) ??
+        invocationSummary);
 
     const todoBlock = input.payload.return_value.display.find(isKimiTodoBlock);
     if (todoBlock) {
@@ -1443,16 +1417,20 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         ...(tool?.title ? { title: tool.title } : {}),
         ...(detail ? { detail } : {}),
         ...(input.payload.return_value.is_error ? { status: "failed" } : { status: "completed" }),
-        data: {
-          toolName,
-          ...(parsedArguments !== null ? { input: parsedArguments } : {}),
-          result: {
-            isError: input.payload.return_value.is_error,
-            output: formatContentOutput(input.payload.return_value.output),
-            message: input.payload.return_value.message,
-            display: input.payload.return_value.display,
-          },
-        },
+        ...(!omitCompletedData
+          ? {
+              data: {
+                toolName,
+                ...(parsedArguments !== null ? { input: parsedArguments } : {}),
+                result: {
+                  isError: input.payload.return_value.is_error,
+                  output: formatContentOutput(input.payload.return_value.output),
+                  message: input.payload.return_value.message,
+                  display: input.payload.return_value.display,
+                },
+              },
+            }
+          : {}),
       },
       providerRefs: {
         providerItemId: ProviderItemId.makeUnsafe(tool?.itemId ?? input.payload.tool_call_id),
@@ -1792,8 +1770,6 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       })
     ) {
       yield* flushPendingAssistantTextAsAnswer(input.context, input.turn);
-    } else {
-      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
     }
     if (input.turn.assistantTextSeen) {
       yield* emitAssistantCompleted(input.context, input.turn);
@@ -1879,8 +1855,6 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       })
     ) {
       yield* flushPendingAssistantTextAsAnswer(input.context, input.turn);
-    } else {
-      yield* flushPendingAssistantTextAsCommentary(input.context, input.turn);
     }
     if (input.turn.assistantTextSeen) {
       yield* emitAssistantCompleted(input.context, input.turn);
@@ -2173,7 +2147,6 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       toolCalls: new Map(),
       lastToolCallIdByParent: new Map(),
       pendingAssistantText: "",
-      commentaryItemIndex: 0,
       toolCallSeen: false,
       assistantStarted: false,
       assistantCompleted: false,

@@ -837,6 +837,66 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps Codex update_plan notifications to canonical task-list updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-update-plan"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "turn/plan/updated",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          explanation: "Tracking the remaining work.",
+          plan: [
+            { step: "Inspect current projection", status: "completed" },
+            { step: "Map Codex todos into tasks", status: "inProgress" },
+            { step: "Run verification", status: "pending" },
+          ],
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "turn.tasks.updated");
+      if (firstEvent.value.type !== "turn.tasks.updated") {
+        return;
+      }
+      assert.equal(firstEvent.value.turnId, "turn-1");
+      assert.equal(firstEvent.value.payload.source, "update_plan");
+      assert.deepEqual(firstEvent.value.payload.items, [
+        {
+          id: "turn-1:update-plan:0",
+          title: "Inspect current projection",
+          status: "completed",
+          source: "update_plan",
+        },
+        {
+          id: "turn-1:update-plan:1",
+          title: "Map Codex todos into tasks",
+          status: "inProgress",
+          source: "update_plan",
+        },
+        {
+          id: "turn-1:update-plan:2",
+          title: "Run verification",
+          status: "pending",
+          source: "update_plan",
+        },
+      ]);
+    }),
+  );
+
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

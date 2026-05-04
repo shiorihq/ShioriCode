@@ -633,6 +633,25 @@ function asRuntimeTaskId(taskId: string): RuntimeTaskId {
   return RuntimeTaskId.makeUnsafe(taskId);
 }
 
+function normalizeCodexPlanStepStatus(value: unknown): "pending" | "inProgress" | "completed" {
+  switch (value) {
+    case "completed":
+    case "done":
+      return "completed";
+    case "inProgress":
+    case "in_progress":
+      return "inProgress";
+    case "pending":
+    default:
+      return "pending";
+  }
+}
+
+type CodexTaskListItem = Extract<
+  ProviderRuntimeEvent,
+  { type: "turn.tasks.updated" }
+>["payload"]["items"][number];
+
 function codexEventMessage(
   payload: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
@@ -1016,24 +1035,31 @@ function mapToRuntimeEvents(
 
   if (event.method === "turn/plan/updated") {
     const steps = Array.isArray(payload?.plan) ? payload.plan : [];
+    const taskIdPrefix = event.turnId ?? event.id;
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
-        type: "turn.plan.updated",
+        type: "turn.tasks.updated",
         payload: {
-          ...(asString(payload?.explanation)
-            ? { explanation: asString(payload?.explanation) }
-            : {}),
-          plan: steps
-            .map((entry) => asObject(entry))
-            .filter((entry): entry is Record<string, unknown> => entry !== undefined)
-            .map((entry) => ({
-              step: asString(entry.step) ?? "step",
-              status:
-                entry.status === "completed" || entry.status === "inProgress"
-                  ? entry.status
-                  : "pending",
-            })),
+          source: "update_plan",
+          items: steps.flatMap((entry, index): CodexTaskListItem[] => {
+            const task = asObject(entry);
+            if (!task) {
+              return [];
+            }
+            const title = asString(task.step);
+            if (!title) {
+              return [];
+            }
+            return [
+              {
+                id: `${taskIdPrefix}:update-plan:${index}`,
+                title,
+                status: normalizeCodexPlanStepStatus(task.status),
+                source: "update_plan",
+              },
+            ];
+          }),
         },
       },
     ];

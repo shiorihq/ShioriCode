@@ -20,6 +20,7 @@ import {
   mapProposedPlanToClientProposedPlan as mapProposedPlanToClientProposedPlanShared,
   projectReadModelToClientSnapshot,
   mapSessionToThreadSession as mapSessionToThreadSessionShared,
+  visibleSessionError,
 } from "shared/orchestrationClientProjection";
 import { resolveModelSlugForProvider } from "shared/model";
 import { normalizeProjectTitle } from "shared/String";
@@ -159,7 +160,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     resumeState: thread.resumeState ?? "resumed",
     messages: thread.messages.map(mapMessage),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
-    error: thread.session?.lastError ?? null,
+    error: visibleSessionError(thread.session),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     pinnedAt: thread.pinnedAt ?? null,
@@ -1191,7 +1192,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         session: mapSession(event.payload.session),
-        error: event.payload.session.lastError ?? null,
+        error: visibleSessionError(event.payload.session),
         latestTurn:
           event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
             ? buildLatestTurn({

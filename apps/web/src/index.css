@@ -872,6 +872,51 @@ samp {
   margin-bottom: 0;
 }
 
+.chat-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.85rem 0 0.45rem;
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.chat-markdown h1 {
+  margin-top: 1rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  font-size: 1.35rem;
+}
+
+.chat-markdown h2 {
+  margin-top: 0.95rem;
+  font-size: 1.2rem;
+}
+
+.chat-markdown h3 {
+  font-size: 1.08rem;
+}
+
+.chat-markdown h4 {
+  font-size: 1rem;
+  font-weight: 550;
+}
+
+.chat-markdown h5 {
+  font-size: 0.93rem;
+  font-weight: 550;
+}
+
+.chat-markdown h6 {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 550;
+}
+
+.chat-markdown hr {
+  margin: 0.9rem 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
 .chat-markdown-reveal-blocks
   > :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6):nth-child(-n + 24) {
   animation: chat-markdown-block-ease-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;

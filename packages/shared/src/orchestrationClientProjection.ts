@@ -149,6 +149,12 @@ export function mapSessionToThreadSession(session: OrchestrationSession): Thread
   };
 }
 
+export function visibleSessionError(
+  session: OrchestrationSession | null | undefined,
+): string | null {
+  return session?.status === "error" ? (session.lastError ?? null) : null;
+}
+
 export function mapMessageToChatMessage(
   message: OrchestrationMessage,
   options: ClientProjectionOptions = {},
@@ -341,7 +347,7 @@ export function mapThreadToClientThread(
     resumeState: thread.resumeState ?? "resumed",
     messages: thread.messages.map((message) => mapMessageToChatMessage(message, options)),
     proposedPlans: thread.proposedPlans.map(mapProposedPlanToClientProposedPlan),
-    error: thread.session?.lastError ?? null,
+    error: visibleSessionError(thread.session),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
     pinnedAt: thread.pinnedAt ?? null,
