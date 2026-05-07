@@ -11,6 +11,8 @@ import type {
   ComputerUseCreateSessionInput,
   ComputerUseKeyInput,
   ComputerUseMoveInput,
+  ComputerUsePermissionActionInput,
+  ComputerUsePermissionActionResult,
   ComputerUsePermissionKind,
   ComputerUsePermissionsSnapshot,
   ComputerUseScreenshotInput,
@@ -305,6 +307,12 @@ export interface NativeApi {
   };
   computer?: {
     getPermissions: () => Promise<ComputerUsePermissionsSnapshot>;
+    requestPermission: (
+      input: typeof ComputerUsePermissionActionInput.Encoded,
+    ) => Promise<ComputerUsePermissionActionResult>;
+    showPermissionGuide: (
+      input: typeof ComputerUsePermissionActionInput.Encoded,
+    ) => Promise<ComputerUsePermissionActionResult>;
     createSession: (
       input?: typeof ComputerUseCreateSessionInput.Encoded,
     ) => Promise<ComputerUseSessionSnapshot>;

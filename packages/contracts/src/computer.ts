@@ -32,6 +32,18 @@ export const ComputerUsePermissionsSnapshot = Schema.Struct({
 });
 export type ComputerUsePermissionsSnapshot = typeof ComputerUsePermissionsSnapshot.Type;
 
+export const ComputerUsePermissionActionInput = Schema.Struct({
+  kind: ComputerUsePermissionKind,
+});
+export type ComputerUsePermissionActionInput = typeof ComputerUsePermissionActionInput.Type;
+
+export const ComputerUsePermissionActionResult = Schema.Struct({
+  ok: Schema.Boolean,
+  kind: ComputerUsePermissionKind,
+  message: Schema.NullOr(Schema.String),
+});
+export type ComputerUsePermissionActionResult = typeof ComputerUsePermissionActionResult.Type;
+
 export const ComputerUseSessionId = TrimmedNonEmptyString;
 export type ComputerUseSessionId = typeof ComputerUseSessionId.Type;
 

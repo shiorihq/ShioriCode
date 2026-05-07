@@ -174,6 +174,19 @@ export function createWsNativeApi(): NativeApi {
       completeCommand: (result) =>
         rpcClient.browserPanel.completeCommand(result).then(() => undefined),
     },
+    computer: {
+      getPermissions: () => rpcClient.computer.getPermissions(),
+      requestPermission: (input) => rpcClient.computer.requestPermission(input),
+      showPermissionGuide: (input) => rpcClient.computer.showPermissionGuide(input),
+      createSession: (input = {}) => rpcClient.computer.createSession(input),
+      closeSession: (input) => rpcClient.computer.closeSession(input),
+      screenshot: (input) => rpcClient.computer.screenshot(input),
+      click: (input) => rpcClient.computer.click(input),
+      move: (input) => rpcClient.computer.move(input),
+      type: (input) => rpcClient.computer.type(input),
+      key: (input) => rpcClient.computer.key(input),
+      scroll: (input) => rpcClient.computer.scroll(input),
+    },
   };
 
   instance = { api };

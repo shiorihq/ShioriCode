@@ -2022,6 +2022,8 @@ function estimateReasoningRowHeight(text: string): number {
   return 36 + Math.min(lineCount * 14, 140);
 }
 
+export const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
+
 function estimateWorkRowHeight(
   row: WorkTimelineRow,
   input: {
@@ -2036,7 +2038,7 @@ function estimateWorkRowHeight(
       return 16 + 26 + 28 + diff.lines.length * 20 + 8;
     }
     const outputLines = estimateOutputLineCount(entry.output);
-    // max-h-48 = 192px cap in the UI
+    // max-h-48 = 192px cap in the UI for a single entry's output
     return 16 + 26 + Math.min(Math.max(outputLines, 1) * 18, 192);
   };
 
@@ -2067,7 +2069,11 @@ function estimateWorkRowHeight(
 
   if (row.childRows.length > 0) {
     const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
-    return 16 + 26 + (isExpanded ? Math.min(nestedRowsHeight(row.childRows), 192) + 8 : 0);
+    if (!isExpanded) {
+      return 16 + 26;
+    }
+    const visibleChildRows = row.childRows.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
+    return 16 + 26 + nestedRowsHeight(visibleChildRows) + 8;
   }
 
   const displayedEntries = getDisplayedWorkEntries(row.groupedEntries);
@@ -2091,13 +2097,15 @@ function estimateWorkRowHeight(
   }
 
   if (row.inlineEntries) {
-    return 16 + 26 + Math.min(estimateGroupedInlineItemsHeight(row.inlineEntries), 192) + 8;
+    const visibleInlineEntries = row.inlineEntries.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
+    return 16 + 26 + estimateGroupedInlineItemsHeight(visibleInlineEntries) + 8;
   }
 
-  const visibleEntriesHeight = displayedEntries.reduce((total, entry) => {
+  const visibleEntries = displayedEntries.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
+  const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
     return total + estimateGroupedWorkListEntryHeight(entry);
   }, 0);
-  return 16 + 26 + Math.min(visibleEntriesHeight, 192) + 8;
+  return 16 + 26 + visibleEntriesHeight + 8;
 }
 
 function estimateOutputLineCount(output: unknown): number {

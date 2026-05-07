@@ -65,6 +65,7 @@ import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore";
 import { HostedBillingService } from "./hostedBilling";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { BrowserPanelRequests } from "./browserPanelRequests.ts";
+import { ComputerUseManager } from "./computer/Services/ComputerUseManager";
 import {
   summarizeClientCommand,
   summarizeSettingsPatch,
@@ -260,6 +261,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const analytics = yield* AnalyticsService;
     const browserPanelRequests = yield* BrowserPanelRequests;
+    const computer = yield* ComputerUseManager;
     const latestProvidersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
 
     const readProvidersForConfig = Effect.gen(function* () {
@@ -385,6 +387,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.subscribeBrowserPanelCommands]: (_input) => browserPanelRequests.stream,
       [WS_METHODS.browserPanelCompleteCommand]: (input) =>
         browserPanelRequests.completeCommand(input).pipe(Effect.as({})),
+      [WS_METHODS.computerGetPermissions]: (_input) => computer.getPermissions,
+      [WS_METHODS.computerRequestPermission]: (input) => computer.requestPermission(input),
+      [WS_METHODS.computerShowPermissionGuide]: (input) => computer.showPermissionGuide(input),
+      [WS_METHODS.computerCreateSession]: (_input) => computer.createSession,
+      [WS_METHODS.computerCloseSession]: (input) =>
+        computer.closeSession(input).pipe(Effect.as({})),
+      [WS_METHODS.computerScreenshot]: (input) => computer.screenshot(input),
+      [WS_METHODS.computerClick]: (input) => computer.click(input),
+      [WS_METHODS.computerMove]: (input) => computer.move(input),
+      [WS_METHODS.computerType]: (input) => computer.type(input),
+      [WS_METHODS.computerKey]: (input) => computer.key(input),
+      [WS_METHODS.computerScroll]: (input) => computer.scroll(input),
       [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig,
       [WS_METHODS.serverRefreshProviders]: (_input) =>
         providerRegistry.refresh().pipe(

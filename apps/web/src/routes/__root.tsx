@@ -67,7 +67,10 @@ import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { rememberSettingsReturnPath } from "../lib/settingsNavigation";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { coalesceOrchestrationUiEvents, createFrameBatcher } from "../orchestrationEventBatching";
-import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import {
+  createOrchestrationRecoveryCoordinator,
+  shouldRecoverStaleRunningOrchestration,
+} from "../orchestrationRecovery";
 import { logTelemetryErrorOnce, recordTelemetry } from "../telemetry";
 import { getWsRpcClient } from "~/wsRpcClient";
 
@@ -524,6 +527,29 @@ function errorDetails(error: unknown): string {
   }
 }
 
+const ORCHESTRATION_RECOVERY_REQUEST_TIMEOUT_MS = 8_000;
+const ORCHESTRATION_RUNNING_WATCHDOG_INTERVAL_MS = 5_000;
+const ORCHESTRATION_RUNNING_STALE_AFTER_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 function ServerStateBootstrap() {
   useEffect(() => {
     return startServerStateSync(getWsRpcClient().server);
@@ -630,6 +656,7 @@ function EventRouter() {
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
     let needsProviderInvalidation = false;
+    let lastOrchestrationActivityAt = Date.now();
 
     const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
@@ -674,53 +701,73 @@ function EventRouter() {
       },
     );
 
-    const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
-      const nextEvents = recovery.markEventBatchApplied(events);
+    const applyEventBatch = (
+      events: ReadonlyArray<OrchestrationEvent>,
+      options?: { readonly recoverOnFailure?: boolean },
+    ): boolean => {
+      const nextEvents = recovery.selectApplicableEventBatch(events);
       if (nextEvents.length === 0) {
-        return;
+        return true;
       }
 
-      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
-      const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
-      const needsProjectUiSync = nextEvents.some(
-        (event) =>
-          event.type === "project.created" ||
-          event.type === "project.meta-updated" ||
-          event.type === "project.deleted",
-      );
-
-      if (batchEffects.needsProviderInvalidation) {
-        needsProviderInvalidation = true;
-        void queryInvalidationThrottler.maybeExecute();
-      }
-
-      applyOrchestrationEvents(uiEvents);
-      if (needsProjectUiSync) {
-        const projects = useStore.getState().projects;
-        syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
-      }
-      const needsThreadUiSync = nextEvents.some(
-        (event) => event.type === "thread.created" || event.type === "thread.deleted",
-      );
-      if (needsThreadUiSync) {
-        const threads = useStore.getState().threads;
-        syncThreads(
-          threads.map((thread) => ({
-            id: thread.id,
-            seedVisitedAt: thread.updatedAt ?? thread.createdAt,
-          })),
+      try {
+        const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
+        const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
+        const needsProjectUiSync = nextEvents.some(
+          (event) =>
+            event.type === "project.created" ||
+            event.type === "project.meta-updated" ||
+            event.type === "project.deleted",
         );
-      }
-      const draftStore = useComposerDraftStore.getState();
-      for (const threadId of batchEffects.clearPromotedDraftThreadIds) {
-        clearPromotedDraftThread(threadId);
-      }
-      for (const threadId of batchEffects.clearDeletedThreadIds) {
-        draftStore.clearDraftThread(threadId);
-        clearThreadUi(threadId);
-      }
-      for (const threadId of batchEffects.removeTerminalStateThreadIds) {
-        removeTerminalState(threadId);
+
+        applyOrchestrationEvents(uiEvents);
+        recovery.markEventBatchApplied(nextEvents);
+        lastOrchestrationActivityAt = Date.now();
+
+        if (batchEffects.needsProviderInvalidation) {
+          needsProviderInvalidation = true;
+          void queryInvalidationThrottler.maybeExecute();
+        }
+
+        if (needsProjectUiSync) {
+          const projects = useStore.getState().projects;
+          syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
+        }
+        const needsThreadUiSync = nextEvents.some(
+          (event) => event.type === "thread.created" || event.type === "thread.deleted",
+        );
+        if (needsThreadUiSync) {
+          const threads = useStore.getState().threads;
+          syncThreads(
+            threads.map((thread) => ({
+              id: thread.id,
+              seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+            })),
+          );
+        }
+        const draftStore = useComposerDraftStore.getState();
+        for (const threadId of batchEffects.clearPromotedDraftThreadIds) {
+          clearPromotedDraftThread(threadId);
+        }
+        for (const threadId of batchEffects.clearDeletedThreadIds) {
+          draftStore.clearDraftThread(threadId);
+          clearThreadUi(threadId);
+        }
+        for (const threadId of batchEffects.removeTerminalStateThreadIds) {
+          removeTerminalState(threadId);
+        }
+        return true;
+      } catch (error: unknown) {
+        logTelemetryErrorOnce("web.orchestration_event_batch_failed", {
+          message: error instanceof Error ? error.message : String(error),
+          eventCount: nextEvents.length,
+          firstSequence: nextEvents[0]?.sequence ?? null,
+          lastSequence: nextEvents.at(-1)?.sequence ?? null,
+        });
+        if (options?.recoverOnFailure !== false) {
+          void fallbackToSnapshotRecovery();
+        }
+        return false;
       }
     };
     const domainEventBatcher = createFrameBatcher<OrchestrationEvent>({
@@ -740,11 +787,22 @@ function EventRouter() {
 
       const fromSequenceExclusive = recovery.getState().latestSequence;
       try {
-        const events = await api.orchestration.replayEvents(fromSequenceExclusive);
-        if (!disposed) {
-          applyEventBatch(events);
+        const events = await withTimeout(
+          api.orchestration.replayEvents(fromSequenceExclusive),
+          ORCHESTRATION_RECOVERY_REQUEST_TIMEOUT_MS,
+          "Timed out while replaying orchestration events.",
+        );
+        lastOrchestrationActivityAt = Date.now();
+        if (!disposed && !applyEventBatch(events, { recoverOnFailure: false })) {
+          recovery.failReplayRecovery();
+          void fallbackToSnapshotRecovery();
+          return;
         }
-      } catch {
+      } catch (error: unknown) {
+        logTelemetryErrorOnce("web.orchestration_replay_failed", {
+          message: error instanceof Error ? error.message : String(error),
+          fromSequenceExclusive,
+        });
         recovery.failReplayRecovery();
         void fallbackToSnapshotRecovery();
         return;
@@ -755,7 +813,9 @@ function EventRouter() {
       }
     };
 
-    const runSnapshotRecovery = async (reason: "bootstrap" | "replay-failed"): Promise<void> => {
+    const runSnapshotRecovery = async (
+      reason: "bootstrap" | "replay-failed" | "stale-running-thread",
+    ): Promise<void> => {
       const started = recovery.beginSnapshotRecovery(reason);
       if (import.meta.env.MODE !== "test") {
         const state = recovery.getState();
@@ -776,7 +836,12 @@ function EventRouter() {
       }
 
       try {
-        const snapshot = await api.orchestration.getSnapshot();
+        const snapshot = await withTimeout(
+          api.orchestration.getSnapshot(),
+          ORCHESTRATION_RECOVERY_REQUEST_TIMEOUT_MS,
+          "Timed out while loading orchestration snapshot.",
+        );
+        lastOrchestrationActivityAt = Date.now();
         if (!disposed) {
           const shouldApplySnapshot = recovery.shouldApplySnapshot(snapshot.snapshotSequence);
           if (shouldApplySnapshot) {
@@ -793,7 +858,11 @@ function EventRouter() {
             void recoverFromSequenceGap();
           }
         }
-      } catch {
+      } catch (error: unknown) {
+        logTelemetryErrorOnce("web.orchestration_snapshot_recovery_failed", {
+          message: error instanceof Error ? error.message : String(error),
+          reason,
+        });
         // Keep prior state and wait for welcome or a later replay attempt.
         recovery.failSnapshotRecovery();
       }
@@ -808,6 +877,7 @@ function EventRouter() {
       await runSnapshotRecovery("replay-failed");
     };
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
+      lastOrchestrationActivityAt = Date.now();
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
         domainEventBatcher.push(event);
@@ -818,6 +888,29 @@ function EventRouter() {
         void recoverFromSequenceGap();
       }
     });
+    const watchdogTimerId = window.setInterval(() => {
+      if (disposed) {
+        return;
+      }
+      if (recovery.getState().inFlight) {
+        return;
+      }
+
+      const state = useStore.getState();
+      if (
+        !shouldRecoverStaleRunningOrchestration({
+          now: Date.now(),
+          lastActivityAt: lastOrchestrationActivityAt,
+          staleAfterMs: ORCHESTRATION_RUNNING_STALE_AFTER_MS,
+          threads: state.threads,
+          pendingThreadDispatchById: state.pendingThreadDispatchById,
+        })
+      ) {
+        return;
+      }
+
+      void runSnapshotRecovery("stale-running-thread");
+    }, ORCHESTRATION_RUNNING_WATCHDOG_INTERVAL_MS);
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
       const thread = useStore.getState().threads.find((entry) => entry.id === event.threadId);
       if (thread && thread.archivedAt !== null) {
@@ -842,6 +935,7 @@ function EventRouter() {
       needsProviderInvalidation = false;
       domainEventBatcher.dispose();
       queryInvalidationThrottler.cancel();
+      window.clearInterval(watchdogTimerId);
       unsubDomainEvent();
       unsubTerminalEvent();
     };

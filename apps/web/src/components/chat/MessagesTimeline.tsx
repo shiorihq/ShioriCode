@@ -66,6 +66,7 @@ import {
   buildWorkGroupSummaryParts,
   DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT,
   deriveWorkGroupIconKind,
+  MAX_RENDERED_WORK_GROUP_ITEMS,
   deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
@@ -106,7 +107,6 @@ import { readNativeApi } from "~/nativeApi";
 
 const COLLAPSED_WORK_OUTPUT_LINE_THRESHOLD = 10;
 const MIN_ROWS_FOR_VIRTUALIZATION = 120;
-const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
 const TIMELINE_ROW_GAP_CLASS = "pb-2";
 const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
 const EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID = new Map<MessageId, TurnDiffSummary>();

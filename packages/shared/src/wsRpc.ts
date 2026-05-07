@@ -236,6 +236,7 @@ export interface WsRpcClient {
     readonly completeCommand: RpcUnaryMethod<typeof WS_METHODS.browserPanelCompleteCommand>;
     readonly onNavigateRequest: RpcStreamMethod<typeof WS_METHODS.subscribeBrowserPanelCommands>;
   };
+  readonly computer: NonNullable<NativeApi["computer"]>;
 }
 
 export function createWsRpcClient(options: {
@@ -373,6 +374,27 @@ export function createWsRpcClient(options: {
           (client) => client[WS_METHODS.subscribeBrowserPanelCommands]({}),
           listener,
         ),
+    },
+    computer: {
+      getPermissions: () =>
+        transport.request((client) => client[WS_METHODS.computerGetPermissions]({})),
+      requestPermission: (input) =>
+        transport.request((client) => client[WS_METHODS.computerRequestPermission](input)),
+      showPermissionGuide: (input) =>
+        transport.request((client) => client[WS_METHODS.computerShowPermissionGuide](input)),
+      createSession: (input = {}) =>
+        transport.request((client) => client[WS_METHODS.computerCreateSession](input)),
+      closeSession: (input) =>
+        transport
+          .request((client) => client[WS_METHODS.computerCloseSession](input))
+          .then(() => undefined),
+      screenshot: (input) =>
+        transport.request((client) => client[WS_METHODS.computerScreenshot](input)),
+      click: (input) => transport.request((client) => client[WS_METHODS.computerClick](input)),
+      move: (input) => transport.request((client) => client[WS_METHODS.computerMove](input)),
+      type: (input) => transport.request((client) => client[WS_METHODS.computerType](input)),
+      key: (input) => transport.request((client) => client[WS_METHODS.computerKey](input)),
+      scroll: (input) => transport.request((client) => client[WS_METHODS.computerScroll](input)),
     },
   };
 }

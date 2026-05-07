@@ -597,6 +597,79 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 });
 
+const stageMacComputerUseHelper = Effect.fn("stageMacComputerUseHelper")(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly skipBuild: boolean;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") {
+    return;
+  }
+
+  if (process.platform !== "darwin") {
+    return yield* new BuildScriptError({
+      message: "The macOS Computer Use helper can only be built on macOS.",
+    });
+  }
+
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const helperPackageDir = path.join(input.repoRoot, "apps/desktop/native/ShioriComputerUse");
+  const helperName = "ShioriComputerUseHelper";
+  const packageManifest = path.join(helperPackageDir, "Package.swift");
+  if (!(yield* fs.exists(packageManifest))) {
+    return yield* new BuildScriptError({
+      message: `Computer Use helper package is missing at ${packageManifest}.`,
+    });
+  }
+
+  if (!input.skipBuild) {
+    yield* Effect.log("[desktop-artifact] Building macOS Computer Use helper...");
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: helperPackageDir,
+        ...commandOutputOptions(input.verbose),
+      })`swift build -c release --product ${helperName}`,
+    );
+  }
+
+  const stagedHelperPath = path.join(input.stageResourcesDir, "native/macos", helperName);
+  const helperCandidates = [
+    path.join(helperPackageDir, ".build/release", helperName),
+    ...(input.skipBuild ? [path.join(helperPackageDir, ".build/debug", helperName)] : []),
+    stagedHelperPath,
+    path.join(input.repoRoot, "apps/desktop/resources/native/macos", helperName),
+  ];
+  let helperPath: string | null = null;
+  for (const candidate of helperCandidates) {
+    if (yield* fs.exists(candidate)) {
+      helperPath = candidate;
+      break;
+    }
+  }
+
+  if (!helperPath) {
+    const suffix = input.skipBuild
+      ? " Build the helper first or run without --skip-build."
+      : " Check the Swift build output above.";
+    return yield* new BuildScriptError({
+      message: `Computer Use helper binary was not found.${suffix}`,
+    });
+  }
+
+  yield* fs.makeDirectory(path.dirname(stagedHelperPath), { recursive: true });
+  if (path.resolve(helperPath) !== path.resolve(stagedHelperPath)) {
+    yield* fs.copyFile(helperPath, stagedHelperPath);
+  }
+  yield* runCommand(
+    ChildProcess.make({
+      ...commandOutputOptions(input.verbose),
+    })`chmod 755 ${stagedHelperPath}`,
+  );
+});
+
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -699,6 +772,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+  yield* stageMacComputerUseHelper({
+    platform: options.platform,
+    repoRoot,
+    stageResourcesDir,
+    skipBuild: options.skipBuild,
+    verbose: options.verbose,
+  });
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));

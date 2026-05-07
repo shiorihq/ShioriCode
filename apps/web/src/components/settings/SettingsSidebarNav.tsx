@@ -4,6 +4,7 @@ import {
   ArrowLeftIcon,
   BarChart3Icon,
   BlocksIcon,
+  MonitorIcon,
   MessageSquareIcon,
   PaletteIcon,
   Settings2Icon,
@@ -14,6 +15,7 @@ import {
   readSettingsReturnPath,
   resolveSettingsBackNavigation,
 } from "../../lib/settingsNavigation";
+import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 
 import {
   SidebarContent,
@@ -29,6 +31,7 @@ export type SettingsSectionPath =
   | "/settings/skills"
   | "/settings/account"
   | "/settings/archived"
+  | "/settings/computer-use"
   | "/settings/usage"
   | "/settings/feedback";
 
@@ -36,22 +39,33 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
+  feature?: "computerUse";
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
   { label: "Account", to: "/settings/account", icon: UserIcon },
   { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
+  {
+    label: "Computer Use",
+    to: "/settings/computer-use",
+    icon: MonitorIcon,
+    feature: "computerUse",
+  },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
   { label: "Feedback", to: "/settings/feedback", icon: MessageSquareIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const { computerUseEnabled } = useHostedShioriState();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };
   const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
+  const visibleItems = SETTINGS_NAV_ITEMS.filter(
+    (item) => item.feature !== "computerUse" || computerUseEnabled,
+  );
 
   return (
     <SidebarContent className="overflow-x-hidden">
@@ -67,7 +81,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       </SidebarGroup>
       <SidebarGroup className="px-2 py-3">
         <SidebarMenu>
-          {SETTINGS_NAV_ITEMS.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.to;
             return (

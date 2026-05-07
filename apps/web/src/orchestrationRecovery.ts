@@ -1,4 +1,8 @@
-export type OrchestrationRecoveryReason = "bootstrap" | "sequence-gap" | "replay-failed";
+export type OrchestrationRecoveryReason =
+  | "bootstrap"
+  | "sequence-gap"
+  | "replay-failed"
+  | "stale-running-thread";
 
 export interface OrchestrationRecoveryPhase {
   kind: "snapshot" | "replay";
@@ -14,6 +18,48 @@ export interface OrchestrationRecoveryState {
 }
 
 type SequencedEvent = Readonly<{ sequence: number }>;
+type RecoverableThreadActivity = Readonly<{
+  session:
+    | Readonly<{
+        status: string;
+        activeTurnId?: unknown;
+      }>
+    | null
+    | undefined;
+}>;
+
+export function hasPendingOrRunningThreadActivity(input: {
+  readonly threads: ReadonlyArray<RecoverableThreadActivity>;
+  readonly pendingThreadDispatchById: Readonly<Record<string, unknown>>;
+}): boolean {
+  if (Object.values(input.pendingThreadDispatchById).some((entry) => entry !== undefined)) {
+    return true;
+  }
+
+  return input.threads.some((thread) => {
+    const session = thread.session;
+    return (
+      session?.status === "running" &&
+      session.activeTurnId !== undefined &&
+      session.activeTurnId !== null
+    );
+  });
+}
+
+export function shouldRecoverStaleRunningOrchestration(input: {
+  readonly now: number;
+  readonly lastActivityAt: number;
+  readonly staleAfterMs: number;
+  readonly threads: ReadonlyArray<RecoverableThreadActivity>;
+  readonly pendingThreadDispatchById: Readonly<Record<string, unknown>>;
+}): boolean {
+  return (
+    hasPendingOrRunningThreadActivity({
+      threads: input.threads,
+      pendingThreadDispatchById: input.pendingThreadDispatchById,
+    }) && input.now - input.lastActivityAt >= input.staleAfterMs
+  );
+}
 
 export function createOrchestrationRecoveryCoordinator() {
   let state: OrchestrationRecoveryState = {
@@ -46,6 +92,13 @@ export function createOrchestrationRecoveryCoordinator() {
     };
   };
 
+  const selectApplicableEventBatch = <T extends SequencedEvent>(
+    events: ReadonlyArray<T>,
+  ): ReadonlyArray<T> =>
+    events
+      .filter((event) => event.sequence > state.latestSequence)
+      .toSorted((left, right) => left.sequence - right.sequence);
+
   return {
     getState(): OrchestrationRecoveryState {
       return snapshotState();
@@ -71,10 +124,14 @@ export function createOrchestrationRecoveryCoordinator() {
       return "apply";
     },
 
+    selectApplicableEventBatch<T extends SequencedEvent>(
+      events: ReadonlyArray<T>,
+    ): ReadonlyArray<T> {
+      return selectApplicableEventBatch(events);
+    },
+
     markEventBatchApplied<T extends SequencedEvent>(events: ReadonlyArray<T>): ReadonlyArray<T> {
-      const nextEvents = events
-        .filter((event) => event.sequence > state.latestSequence)
-        .toSorted((left, right) => left.sequence - right.sequence);
+      const nextEvents = selectApplicableEventBatch(events);
       if (nextEvents.length === 0) {
         return [];
       }

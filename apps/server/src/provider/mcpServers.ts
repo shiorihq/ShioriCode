@@ -929,8 +929,13 @@ export function toAcpMcpServers(
       }),
     );
   }
-  if (settings.computerUse.enabled) {
-    acpServers.push(makeBuiltInStdioMcpServer("shioricode-computer", "computer-use-mcp"));
+  if (settings.computerUse.enabled && !settings.computerUse.requireApproval) {
+    acpServers.push(
+      makeBuiltInStdioMcpServer("shioricode-computer", "computer-use-mcp", {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+      }),
+    );
   }
   return acpServers;
 }

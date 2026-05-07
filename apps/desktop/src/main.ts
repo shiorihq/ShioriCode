@@ -24,6 +24,9 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
+  ComputerUsePermissionActionResult,
+  ComputerUsePermissionKind,
+  ComputerUsePermissionsSnapshot,
 } from "contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -81,6 +84,8 @@ const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
+const COMPUTER_USE_GET_PERMISSIONS_CHANNEL = "desktop:computer-use-get-permissions";
+const COMPUTER_USE_PERMISSION_GUIDE_CHANNEL = "desktop:computer-use-permission-guide";
 const VIBRANT_WINDOW_BACKGROUND_COLOR = "#01000000";
 const OPAQUE_WINDOW_BACKGROUND_COLOR = "#FFFFFFFF";
 const BASE_DIR = process.env.SHIORICODE_HOME?.trim() || Path.join(OS.homedir(), ".shiori");
@@ -109,6 +114,9 @@ const COMPANION_CLI_PACKAGE_NAME = "shiori-cli";
 const COMPANION_CLI_BINARY_NAME = "shiori";
 const TOGGLE_DEVTOOLS_ACCELERATOR =
   process.platform === "darwin" ? "Command+Option+I" : "Ctrl+Shift+I";
+const COMPUTER_USE_HELPER_BINARY_NAME = "ShioriComputerUseHelper";
+const COMPUTER_USE_HELPER_TIMEOUT_MS = 30_000;
+const COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -610,6 +618,10 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.SHIORICODE_NO_BROWSER;
   delete env.SHIORICODE_HOST;
   delete env.SHIORICODE_DESKTOP_WS_URL;
+  const computerUseHelperPath = resolveComputerUseHelperPath();
+  if (computerUseHelperPath) {
+    env.SHIORICODE_COMPUTER_USE_HELPER_BINARY = computerUseHelperPath;
+  }
   return env;
 }
 
@@ -1180,6 +1192,184 @@ function resolveResourcePath(fileName: string): string | null {
   return null;
 }
 
+function unsupportedComputerUsePermissions(message: string): ComputerUsePermissionsSnapshot {
+  return {
+    platform: process.platform,
+    supported: false,
+    helperAvailable: false,
+    helperPath: null,
+    checkedAt: new Date().toISOString(),
+    message,
+    permissions: [
+      {
+        kind: "accessibility",
+        label: "Accessibility",
+        state: "unsupported",
+        detail: message,
+      },
+      {
+        kind: "screen-recording",
+        label: "Screen Recording",
+        state: "unsupported",
+        detail: message,
+      },
+    ],
+  };
+}
+
+function normalizeComputerUsePermissionKind(rawKind: unknown): ComputerUsePermissionKind {
+  return rawKind === "screen-recording" ? "screen-recording" : "accessibility";
+}
+
+function resolveComputerUseHelperPath(): string | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const configured = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY?.trim();
+  const resourcePath = resolveResourcePath(
+    Path.join("native", "macos", COMPUTER_USE_HELPER_BINARY_NAME),
+  );
+  const candidates = [
+    configured,
+    Path.join(
+      ROOT_DIR,
+      "apps/desktop/native/ShioriComputerUse/.build/release",
+      COMPUTER_USE_HELPER_BINARY_NAME,
+    ),
+    Path.join(
+      ROOT_DIR,
+      "apps/desktop/native/ShioriComputerUse/.build/debug",
+      COMPUTER_USE_HELPER_BINARY_NAME,
+    ),
+    resourcePath,
+  ].flatMap((candidate) => (candidate ? [candidate] : []));
+
+  return candidates.find((candidate) => FS.existsSync(candidate)) ?? null;
+}
+
+function parseComputerUseHelperOutput<T>(stdout: string): T {
+  const text = stdout.trim();
+  if (!text) {
+    return {} as T;
+  }
+  return JSON.parse(text) as T;
+}
+
+function computerUseHelperError(result: {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly code: number | null;
+  readonly timedOut: boolean;
+}): Error {
+  const text = result.stdout.trim();
+  const errorText = result.stderr.trim();
+  try {
+    const parsed = JSON.parse(text || errorText) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return new Error(parsed.error.trim());
+    }
+  } catch {
+    // Use raw output below.
+  }
+  if (result.timedOut) {
+    return new Error("Computer Use helper timed out.");
+  }
+  return new Error(
+    errorText || text || `Computer Use helper failed with code ${result.code ?? "null"}.`,
+  );
+}
+
+function runComputerUseHelper<T>(command: string, input: Record<string, unknown> = {}): Promise<T> {
+  const helperPath = resolveComputerUseHelperPath();
+  if (!helperPath) {
+    throw new Error("The macOS Computer Use helper is unavailable.");
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const child = ChildProcess.spawn(helperPath, [command], {
+      stdio: "pipe",
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, COMPUTER_USE_HELPER_TIMEOUT_MS);
+
+    function settle(callback: () => void): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    }
+
+    function appendOutput(stream: "stdout" | "stderr", chunk: Buffer | string): void {
+      const text = String(chunk);
+      const bytes = Buffer.byteLength(text);
+      if (stream === "stdout") {
+        stdoutBytes += bytes;
+        if (stdoutBytes <= COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES) stdout += text;
+      } else {
+        stderrBytes += bytes;
+        if (stderrBytes <= COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES) stderr += text;
+      }
+      if (
+        stdoutBytes > COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES ||
+        stderrBytes > COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES
+      ) {
+        child.kill("SIGTERM");
+      }
+    }
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => appendOutput("stdout", chunk));
+    child.stderr.on("data", (chunk) => appendOutput("stderr", chunk));
+    child.once("error", (error) => settle(() => reject(error)));
+    child.once("close", (code) =>
+      settle(() => {
+        if (
+          timedOut ||
+          code !== 0 ||
+          stdoutBytes > COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES ||
+          stderrBytes > COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES
+        ) {
+          reject(computerUseHelperError({ stdout, stderr, code, timedOut }));
+          return;
+        }
+        try {
+          resolve(parseComputerUseHelperOutput<T>(stdout));
+        } catch (error) {
+          reject(error);
+        }
+      }),
+    );
+    child.stdin.end(JSON.stringify(input));
+  });
+}
+
+async function getComputerUsePermissions(): Promise<ComputerUsePermissionsSnapshot> {
+  if (process.platform !== "darwin") {
+    return unsupportedComputerUsePermissions("Computer Use is currently only supported on macOS.");
+  }
+  try {
+    return await runComputerUseHelper<ComputerUsePermissionsSnapshot>("permissions");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ...unsupportedComputerUsePermissions(message),
+      supported: true,
+      message,
+    };
+  }
+}
+
 function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
 }
@@ -1649,6 +1839,24 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(LIST_SYSTEM_FONTS_CHANNEL);
   ipcMain.handle(LIST_SYSTEM_FONTS_CHANNEL, async () => listSystemFontsSync());
+
+  ipcMain.removeHandler(COMPUTER_USE_GET_PERMISSIONS_CHANNEL);
+  ipcMain.handle(COMPUTER_USE_GET_PERMISSIONS_CHANNEL, async () => getComputerUsePermissions());
+
+  ipcMain.removeHandler(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL);
+  ipcMain.handle(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, async (_event, rawKind: unknown) => {
+    const kind = normalizeComputerUsePermissionKind(rawKind);
+    try {
+      const result = await runComputerUseHelper<ComputerUsePermissionActionResult>(
+        "permission-guide",
+        { kind },
+      );
+      return result.ok;
+    } catch (error) {
+      console.warn("[desktop] failed to open Computer Use permission guide", error);
+      return false;
+    }
+  });
 
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {

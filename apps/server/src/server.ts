@@ -58,6 +58,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem"
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore";
 import { HostedBillingLive } from "./hostedBilling";
+import { ComputerUseManagerLive } from "./computer/Layers/MacOSComputerUseManager";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -218,6 +219,7 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
+  Layer.provideMerge(ComputerUseManagerLive),
   Layer.provideMerge(ServerLifecycleEventsLive),
 );
 

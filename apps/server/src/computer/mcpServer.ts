@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import readline from "node:readline";
+
+import { runProcess } from "../processRunner";
 
 const TOOL_SCHEMAS = [
   {
@@ -84,18 +86,29 @@ const TOOL_SCHEMAS = [
 ] as const;
 
 const HELPER_BINARY_NAME = "ShioriComputerUseHelper";
+const HELPER_TIMEOUT_MS = 30_000;
+const HELPER_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024;
+
+function resolveAppRootFromModule(moduleUrl: string): string {
+  const modulePath = fileURLToPath(moduleUrl);
+  const marker = `${path.sep}apps${path.sep}server${path.sep}`;
+  const markerIndex = modulePath.lastIndexOf(marker);
+  return markerIndex >= 0 ? modulePath.slice(0, markerIndex) : process.cwd();
+}
+
+const appRoot = resolveAppRootFromModule(import.meta.url);
 
 function helperCandidates(): string[] {
   const configured = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY?.trim();
   const packagePath =
     process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH?.trim() ||
-    path.resolve(process.cwd(), "apps/desktop/native/ShioriComputerUse");
+    path.join(appRoot, "apps/desktop/native/ShioriComputerUse");
   return [
     configured,
     path.join(packagePath, ".build/debug", HELPER_BINARY_NAME),
     path.join(packagePath, ".build/release", HELPER_BINARY_NAME),
-    path.resolve(process.cwd(), "apps/desktop/resources/native/macos", HELPER_BINARY_NAME),
-    path.resolve(process.cwd(), "apps/desktop/prod-resources/native/macos", HELPER_BINARY_NAME),
+    path.join(appRoot, "apps/desktop/resources/native/macos", HELPER_BINARY_NAME),
+    path.join(appRoot, "apps/desktop/prod-resources/native/macos", HELPER_BINARY_NAME),
   ].flatMap((candidate) => (candidate ? [candidate] : []));
 }
 
@@ -127,39 +140,57 @@ function helperCommandForTool(toolName: string): string {
   }
 }
 
-function runHelper(command: string, input: unknown): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(resolveHelperPath(), [command], { stdio: "pipe" });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      const text = stdout.trim();
-      if (code !== 0) {
-        try {
-          const parsed = JSON.parse(text || stderr.trim());
-          reject(new Error(parsed.error ?? `Computer Use helper failed with code ${code}.`));
-        } catch {
-          reject(new Error(stderr.trim() || `Computer Use helper failed with code ${code}.`));
-        }
-        return;
-      }
-      try {
-        resolve(text ? JSON.parse(text) : {});
-      } catch (error) {
-        reject(error);
-      }
-    });
-    child.stdin.end(JSON.stringify(input ?? {}));
+function readBooleanEnv(name: string): boolean | null {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return null;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return null;
+}
+
+function assertRuntimeAllowsComputerUse(): void {
+  if (readBooleanEnv("SHIORICODE_COMPUTER_USE_ENABLED") === false) {
+    throw new Error("Computer Use is disabled in ShioriCode settings.");
+  }
+  if (readBooleanEnv("SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL") === true) {
+    throw new Error(
+      "Computer Use requires approval, so the direct MCP desktop-control server is not available.",
+    );
+  }
+}
+
+function helperErrorMessage(result: {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}): string {
+  const text = result.stdout.trim();
+  const errorText = result.stderr.trim();
+  try {
+    const parsed = JSON.parse(text || errorText) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Use raw output below.
+  }
+  return errorText || text || `Computer Use helper failed with code ${result.code ?? "null"}.`;
+}
+
+async function runHelper(command: string, input: unknown): Promise<unknown> {
+  assertRuntimeAllowsComputerUse();
+  const result = await runProcess(resolveHelperPath(), [command], {
+    stdin: JSON.stringify(input ?? {}),
+    timeoutMs: HELPER_TIMEOUT_MS,
+    allowNonZeroExit: true,
+    maxBufferBytes: HELPER_STDOUT_LIMIT_BYTES,
+    outputMode: "truncate",
   });
+  if (result.code !== 0 || result.timedOut) {
+    throw new Error(helperErrorMessage(result));
+  }
+  const text = result.stdout.trim();
+  return text ? JSON.parse(text) : {};
 }
 
 function imageContentFromDataUrl(imageDataUrl: string): { data: string; mimeType: string } {

@@ -63,6 +63,10 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore.ts";
 import { HostedBillingService, type HostedBillingShape } from "./hostedBilling.ts";
 import { BrowserPanelRequestsLive } from "./browserPanelRequests.ts";
+import {
+  ComputerUseManager,
+  type ComputerUseManagerShape,
+} from "./computer/Services/ComputerUseManager.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -143,6 +147,7 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     hostedBilling?: Partial<HostedBillingShape>;
+    computerUseManager?: Partial<ComputerUseManagerShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -168,6 +173,20 @@ const buildAppUnderTest = (options?: {
       ...options?.config,
     } satisfies ServerConfigShape;
     const layerConfig = Layer.succeed(ServerConfig, config);
+    const computerUseManagerLayer = Layer.mock(ComputerUseManager)({
+      getPermissions: Effect.die("unused"),
+      requestPermission: () => Effect.die("unused"),
+      showPermissionGuide: () => Effect.die("unused"),
+      createSession: Effect.die("unused"),
+      closeSession: () => Effect.die("unused"),
+      screenshot: () => Effect.die("unused"),
+      click: () => Effect.die("unused"),
+      move: () => Effect.die("unused"),
+      type: () => Effect.die("unused"),
+      key: () => Effect.die("unused"),
+      scroll: () => Effect.die("unused"),
+      ...options?.layers?.computerUseManager,
+    });
 
     const appLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -300,7 +319,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.hostedBilling,
         }),
       ),
-      Layer.provide(BrowserPanelRequestsLive),
+      Layer.provide(Layer.mergeAll(BrowserPanelRequestsLive, computerUseManagerLayer)),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provide(HostedShioriAuthTokenStoreLive),
       Layer.provide(layerConfig),

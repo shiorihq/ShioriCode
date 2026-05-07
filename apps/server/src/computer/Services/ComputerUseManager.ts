@@ -4,6 +4,8 @@ import type {
   ComputerUseCloseSessionInput,
   ComputerUseKeyInput,
   ComputerUseMoveInput,
+  ComputerUsePermissionActionInput,
+  ComputerUsePermissionActionResult,
   ComputerUsePermissionsSnapshot,
   ComputerUseScreenshotInput,
   ComputerUseScreenshotResult,
@@ -16,6 +18,12 @@ import { Effect, ServiceMap } from "effect";
 
 export interface ComputerUseManagerShape {
   readonly getPermissions: Effect.Effect<ComputerUsePermissionsSnapshot, ComputerUseError>;
+  readonly requestPermission: (
+    input: ComputerUsePermissionActionInput,
+  ) => Effect.Effect<ComputerUsePermissionActionResult, ComputerUseError>;
+  readonly showPermissionGuide: (
+    input: ComputerUsePermissionActionInput,
+  ) => Effect.Effect<ComputerUsePermissionActionResult, ComputerUseError>;
   readonly createSession: Effect.Effect<ComputerUseSessionSnapshot, ComputerUseError>;
   readonly closeSession: (
     input: ComputerUseCloseSessionInput,

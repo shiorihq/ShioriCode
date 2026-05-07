@@ -92,6 +92,19 @@ const rpcClientMock = {
     capture: vi.fn(),
     log: vi.fn(),
   },
+  computer: {
+    getPermissions: vi.fn(),
+    requestPermission: vi.fn(),
+    showPermissionGuide: vi.fn(),
+    createSession: vi.fn(),
+    closeSession: vi.fn(),
+    screenshot: vi.fn(),
+    click: vi.fn(),
+    move: vi.fn(),
+    type: vi.fn(),
+    key: vi.fn(),
+    scroll: vi.fn(),
+  },
   orchestration: {
     getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
@@ -313,6 +326,53 @@ describe("wsNativeApi", () => {
       cwd: "/tmp/project",
       relativePath: "plan.md",
       contents: "# Plan\n",
+    });
+  });
+
+  it("forwards Computer Use calls to the RPC client", async () => {
+    const permissionsSnapshot = {
+      platform: "darwin",
+      supported: true,
+      helperAvailable: true,
+      helperPath: "/tmp/ShioriComputerUseHelper",
+      checkedAt: "2026-02-24T00:00:00.000Z",
+      message: null,
+      permissions: [
+        {
+          kind: "accessibility",
+          label: "Accessibility",
+          state: "granted",
+          detail: "",
+        },
+      ],
+    };
+    rpcClientMock.computer.getPermissions.mockResolvedValue(permissionsSnapshot);
+    rpcClientMock.computer.screenshot.mockResolvedValue({
+      sessionId: "computer-session-1",
+      imageDataUrl: "data:image/png;base64,abc",
+      width: 1280,
+      height: 720,
+      capturedAt: "2026-02-24T00:00:01.000Z",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(api.computer?.getPermissions()).resolves.toEqual(permissionsSnapshot);
+    await expect(
+      api.computer?.screenshot({
+        sessionId: "computer-session-1",
+      }),
+    ).resolves.toEqual({
+      sessionId: "computer-session-1",
+      imageDataUrl: "data:image/png;base64,abc",
+      width: 1280,
+      height: 720,
+      capturedAt: "2026-02-24T00:00:01.000Z",
+    });
+    expect(rpcClientMock.computer.getPermissions).toHaveBeenCalledWith();
+    expect(rpcClientMock.computer.screenshot).toHaveBeenCalledWith({
+      sessionId: "computer-session-1",
     });
   });
 

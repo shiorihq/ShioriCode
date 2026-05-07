@@ -12,6 +12,7 @@ import {
   ProtocolClient,
   type ApprovalRequestPayload,
   type ContentPart,
+  type HookRequest,
   type QuestionRequest,
   type RunResult,
   type StreamEvent,
@@ -68,6 +69,9 @@ const KIMI_REASONING_ITEM_TITLE = "Reasoning";
 const KIMI_ASSISTANT_ITEM_TITLE = "Assistant response";
 const DEFAULT_KIMI_MAX_STEPS_PER_TURN = 64;
 const DEFAULT_KIMI_MAX_RETRIES_PER_STEP = 2;
+const DEFAULT_KIMI_MAX_TOOL_CALLS_PER_TURN = 32;
+const DEFAULT_KIMI_MAX_SHELL_CALLS_PER_TURN = 24;
+const KIMI_LOOP_GUARD_HOOK_ID = "shioricode-kimi-tool-loop-guard";
 
 type KimiResumeCursor = {
   readonly sessionId: string;
@@ -141,6 +145,15 @@ type ActiveTurnState = {
   assistantTextSeen: boolean;
   reasoningStarted: boolean;
   reasoningCompleted: boolean;
+  toolGuardToolCallCount: number;
+  toolGuardShellCallCount: number;
+  toolGuardMaxToolCallsPerTurn: number;
+  toolGuardMaxShellCallsPerTurn: number;
+  toolGuardToolsDisabledReason: string | undefined;
+  toolGuardTriggered: boolean;
+  toolGuardWarningEmitted: boolean;
+  toolGuardCancelRequested: boolean;
+  toolGuardReason: string | undefined;
 };
 
 type KimiSessionContext = {
@@ -169,6 +182,17 @@ type KimiSessionContext = {
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
 };
 
+function requestKimiLoopGuardCancel(context: KimiSessionContext, turn: ActiveTurnState): void {
+  if (turn.toolGuardCancelRequested) {
+    return;
+  }
+  turn.toolGuardCancelRequested = true;
+  context.interrupting = true;
+  queueMicrotask(() => {
+    void context.client.sendCancel().catch(() => undefined);
+  });
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -196,6 +220,8 @@ function parsePositiveIntegerEnv(value: string | undefined, fallback: number): n
 export function resolveKimiLoopControlFromEnv(env: NodeJS.ProcessEnv = process.env): {
   readonly maxStepsPerTurn: number;
   readonly maxRetriesPerStep: number;
+  readonly maxToolCallsPerTurn: number;
+  readonly maxShellCallsPerTurn: number;
 } {
   return {
     maxStepsPerTurn: parsePositiveIntegerEnv(
@@ -206,6 +232,101 @@ export function resolveKimiLoopControlFromEnv(env: NodeJS.ProcessEnv = process.e
       env.SHIORICODE_KIMI_MAX_RETRIES_PER_STEP,
       DEFAULT_KIMI_MAX_RETRIES_PER_STEP,
     ),
+    maxToolCallsPerTurn: parsePositiveIntegerEnv(
+      env.SHIORICODE_KIMI_MAX_TOOL_CALLS_PER_TURN,
+      DEFAULT_KIMI_MAX_TOOL_CALLS_PER_TURN,
+    ),
+    maxShellCallsPerTurn: parsePositiveIntegerEnv(
+      env.SHIORICODE_KIMI_MAX_SHELL_CALLS_PER_TURN,
+      DEFAULT_KIMI_MAX_SHELL_CALLS_PER_TURN,
+    ),
+  };
+}
+
+function isKimiShellToolName(toolName: string): boolean {
+  const normalized = normalizeProviderToolName(toolName);
+  return normalized === "shell" || normalized === "bash" || normalized === "terminal";
+}
+
+export function shouldAvoidKimiToolsForUserInput(input: string | undefined): boolean {
+  const normalized = trimOrUndefined(input)?.toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === "??" || normalized === "?" || normalized === "stop") {
+    return true;
+  }
+
+  if (normalized.length > 240) {
+    return false;
+  }
+
+  return (
+    normalized.includes("stop running") ||
+    normalized.includes("too many commands") ||
+    normalized.includes("so many commands") ||
+    normalized.includes("what are you doing")
+  );
+}
+
+export function evaluateKimiToolLoopGuard(input: {
+  readonly toolName: string;
+  readonly toolCallCount: number;
+  readonly shellCallCount: number;
+  readonly maxToolCallsPerTurn: number;
+  readonly maxShellCallsPerTurn: number;
+  readonly toolsDisabledReason?: string;
+}): {
+  readonly toolCallCount: number;
+  readonly shellCallCount: number;
+  readonly shouldBlock: boolean;
+  readonly shouldCancel: boolean;
+  readonly reason?: string;
+  readonly trigger: "tools_disabled" | "tool_call_limit" | "shell_call_limit" | null;
+} {
+  const toolCallCount = input.toolCallCount + 1;
+  const shellCallCount = input.shellCallCount + (isKimiShellToolName(input.toolName) ? 1 : 0);
+
+  if (input.toolsDisabledReason) {
+    return {
+      toolCallCount,
+      shellCallCount,
+      shouldBlock: true,
+      shouldCancel: false,
+      reason: input.toolsDisabledReason,
+      trigger: "tools_disabled",
+    };
+  }
+
+  if (shellCallCount > input.maxShellCallsPerTurn) {
+    return {
+      toolCallCount,
+      shellCallCount,
+      shouldBlock: true,
+      shouldCancel: true,
+      reason: `Kimi Code tried to run too many shell commands in one turn (${shellCallCount}/${input.maxShellCallsPerTurn}).`,
+      trigger: "shell_call_limit",
+    };
+  }
+
+  if (toolCallCount > input.maxToolCallsPerTurn) {
+    return {
+      toolCallCount,
+      shellCallCount,
+      shouldBlock: true,
+      shouldCancel: true,
+      reason: `Kimi Code tried to call too many tools in one turn (${toolCallCount}/${input.maxToolCallsPerTurn}).`,
+      trigger: "tool_call_limit",
+    };
+  }
+
+  return {
+    toolCallCount,
+    shellCallCount,
+    shouldBlock: false,
+    shouldCancel: false,
+    trigger: null,
   };
 }
 
@@ -251,6 +372,42 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? trimOrUndefined(value) : undefined;
+}
+
+function firstString(...values: ReadonlyArray<unknown>): string | undefined {
+  for (const value of values) {
+    const text = asString(value);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+function extractKimiHookToolName(request: HookRequest): string {
+  const inputData = asRecord(request.input_data);
+  const toolInput =
+    asRecord(inputData?.tool_input) ??
+    asRecord(inputData?.toolInput) ??
+    asRecord(inputData?.input) ??
+    asRecord(inputData?.tool);
+  return (
+    trimOrUndefined(request.target) ??
+    firstString(
+      inputData?.tool_name,
+      inputData?.toolName,
+      inputData?.name,
+      inputData?.tool,
+      toolInput?.tool_name,
+      toolInput?.toolName,
+      toolInput?.name,
+    ) ??
+    "tool"
+  );
 }
 
 function normalizeExternalToolResult(result: unknown): string {
@@ -364,6 +521,9 @@ async function buildKimiAgentFileContents(input: {
       "## Loop Avoidance",
       "Avoid repetitive reasoning or repeated tool calls. If you notice you are revisiting the same step, summarize what is known, choose the next concrete action, and move forward.",
       "If you are blocked, state the blocker once with the relevant evidence instead of retrying the same failed approach indefinitely.",
+      "Keep command sweeps small. Do not enumerate many files, routes, pages, or commands one by one when a focused sample and summary would answer the user.",
+      "After roughly a dozen shell commands without a clear result, pause and summarize what you found before continuing.",
+      "If the user asks you to stop, complains about too many commands, asks what you are doing, or sends a short confusion message such as '??', answer directly in prose and do not call tools unless they explicitly ask for a concrete local action.",
       "",
       "## Tooling Expectations",
       "You have Kimi Code's native local tools available for code, files, and shell work in this workspace.",
@@ -418,10 +578,6 @@ function parseResumeCursor(value: unknown): string | undefined {
 
 function buildResumeCursor(sessionId: string): KimiResumeCursor {
   return { sessionId };
-}
-
-function appendBufferedKimiText(previous: string, next: string): string {
-  return `${previous}${next}`;
 }
 
 export function shouldFlushKimiPendingTextAsAssistantAnswer(input: {
@@ -514,6 +670,10 @@ function isThinkContentPart(part: unknown): part is KimiThinkContentPart {
     "think" in part &&
     typeof part.think === "string"
   );
+}
+
+export function kimiAssistantDeltaFromContentPart(part: unknown): string | undefined {
+  return isTextContentPart(part) ? part.text : undefined;
 }
 
 function rawEvent(messageType: string, payload: unknown): NonNullable<ProviderRuntimeEvent["raw"]> {
@@ -959,6 +1119,112 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     };
   });
 
+  const publishKimiToolLoopGuardWarning = Effect.fn("publishKimiToolLoopGuardWarning")(
+    function* (input: {
+      readonly context: KimiSessionContext;
+      readonly turn: ActiveTurnState;
+      readonly toolName: string;
+      readonly trigger: "tools_disabled" | "tool_call_limit" | "shell_call_limit" | null;
+      readonly reason: string;
+      readonly request: HookRequest;
+    }) {
+      if (input.turn.toolGuardWarningEmitted) {
+        return;
+      }
+      input.turn.toolGuardWarningEmitted = true;
+      yield* publish({
+        type: "runtime.warning",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: input.context.session.threadId,
+        createdAt: nowIso(),
+        turnId: input.turn.turnId,
+        payload: {
+          message: `Kimi Code tool loop guard blocked ${input.toolName}: ${input.reason}`,
+          detail: {
+            toolName: input.toolName,
+            trigger: input.trigger,
+            toolCalls: input.turn.toolGuardToolCallCount,
+            shellCalls: input.turn.toolGuardShellCallCount,
+            maxToolCallsPerTurn: input.turn.toolGuardMaxToolCallsPerTurn,
+            maxShellCallsPerTurn: input.turn.toolGuardMaxShellCallsPerTurn,
+          },
+        },
+        providerRefs: {
+          providerTurnId: input.context.sessionId,
+        },
+        raw: rawEvent("HookRequest", input.request),
+      });
+    },
+  );
+
+  const handleKimiToolLoopGuardHook = Effect.fn("handleKimiToolLoopGuardHook")(function* (
+    context: KimiSessionContext,
+    request: HookRequest,
+  ) {
+    if (request.event !== "PreToolUse") {
+      return { action: "allow" as const };
+    }
+
+    const turn = context.activeTurn;
+    if (!turn) {
+      return { action: "allow" as const };
+    }
+
+    if (turn.toolGuardTriggered) {
+      return {
+        action: "block" as const,
+        reason: turn.toolGuardReason ?? "ShioriCode already stopped this tool loop.",
+      };
+    }
+
+    const toolName = extractKimiHookToolName(request);
+    const decision = evaluateKimiToolLoopGuard({
+      toolName,
+      toolCallCount: turn.toolGuardToolCallCount,
+      shellCallCount: turn.toolGuardShellCallCount,
+      maxToolCallsPerTurn: turn.toolGuardMaxToolCallsPerTurn,
+      maxShellCallsPerTurn: turn.toolGuardMaxShellCallsPerTurn,
+      ...(turn.toolGuardToolsDisabledReason
+        ? { toolsDisabledReason: turn.toolGuardToolsDisabledReason }
+        : {}),
+    });
+    turn.toolGuardToolCallCount = decision.toolCallCount;
+    turn.toolGuardShellCallCount = decision.shellCallCount;
+
+    if (!decision.shouldBlock) {
+      return { action: "allow" as const };
+    }
+
+    const reason = decision.reason ?? "ShioriCode blocked a runaway Kimi Code tool loop.";
+    turn.toolGuardTriggered = true;
+    turn.toolGuardReason = reason;
+    yield* publishKimiToolLoopGuardWarning({
+      context,
+      turn,
+      toolName,
+      trigger: decision.trigger,
+      reason,
+      request,
+    });
+    if (decision.shouldCancel) {
+      requestKimiLoopGuardCancel(context, turn);
+    }
+    return {
+      action: "block" as const,
+      reason,
+    };
+  });
+
+  const buildKimiToolLoopGuardHook = (context: KimiSessionContext) => ({
+    id: KIMI_LOOP_GUARD_HOOK_ID,
+    event: "PreToolUse",
+    matcher: "",
+    timeout: 2,
+    handler: (request: HookRequest) =>
+      Effect.runPromise(handleKimiToolLoopGuardHook(context, request)),
+  });
+
   const startClient = Effect.fn("startClient")(function* (
     context: KimiSessionContext,
     options?: {
@@ -990,6 +1256,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           yoloMode: context.yoloMode,
           executablePath: context.executablePath,
           externalTools: [...context.externalTools],
+          hooks: [buildKimiToolLoopGuardHook(context)],
           ...(context.agentFilePath ? { agentFile: context.agentFilePath } : {}),
           ...(context.shareDir
             ? { environmentVariables: { KIMI_SHARE_DIR: context.shareDir } }
@@ -1620,15 +1887,12 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       return;
     }
 
-    if (!isTextContentPart(payload)) {
+    const assistantDelta = kimiAssistantDeltaFromContentPart(payload);
+    if (assistantDelta === undefined) {
       return;
     }
 
-    yield* emitReasoningCompleted(input.context, input.turn);
-    input.turn.pendingAssistantText = appendBufferedKimiText(
-      input.turn.pendingAssistantText,
-      payload.text,
-    );
+    yield* emitAssistantText(input.context, input.turn, assistantDelta);
   });
 
   const handleStreamEvent: (input: {
@@ -1781,6 +2045,11 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     });
     input.context.pendingApprovals.clear();
     input.context.pendingQuestions.clear();
+    const guardStopReason = input.turn.toolGuardTriggered
+      ? input.turn.toolGuardCancelRequested
+        ? "tool_loop_guard"
+        : "tool_use_blocked"
+      : undefined;
     const turnState =
       input.result.status === "cancelled"
         ? input.context.interrupting
@@ -1813,6 +2082,8 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           detail: {
             maxStepsPerTurn: loopControl.maxStepsPerTurn,
             maxRetriesPerStep: loopControl.maxRetriesPerStep,
+            maxToolCallsPerTurn: loopControl.maxToolCallsPerTurn,
+            maxShellCallsPerTurn: loopControl.maxShellCallsPerTurn,
             status: input.result.status,
           },
         },
@@ -1832,7 +2103,11 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       turnId: input.turn.turnId,
       payload: {
         state: turnState,
-        ...(input.result.status === "max_steps_reached" ? { stopReason: "max_steps_reached" } : {}),
+        ...(guardStopReason
+          ? { stopReason: guardStopReason }
+          : input.result.status === "max_steps_reached"
+            ? { stopReason: "max_steps_reached" }
+            : {}),
       },
       providerRefs: {
         providerTurnId: input.context.sessionId,
@@ -2139,6 +2414,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     }
 
     const turnId = TurnId.makeUnsafe(randomUUID());
+    const loopControl = resolveKimiLoopControlFromEnv();
+    const toolsDisabledReason = shouldAvoidKimiToolsForUserInput(input.input)
+      ? "The user is asking about excessive command usage or asking Kimi Code to stop; answer directly without tools."
+      : undefined;
     const turn: ActiveTurnState = {
       turnId,
       assistantItemId: `assistant:${turnId}`,
@@ -2153,6 +2432,15 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       assistantTextSeen: false,
       reasoningStarted: false,
       reasoningCompleted: false,
+      toolGuardToolCallCount: 0,
+      toolGuardShellCallCount: 0,
+      toolGuardMaxToolCallsPerTurn: loopControl.maxToolCallsPerTurn,
+      toolGuardMaxShellCallsPerTurn: loopControl.maxShellCallsPerTurn,
+      toolGuardToolsDisabledReason: toolsDisabledReason,
+      toolGuardTriggered: false,
+      toolGuardWarningEmitted: false,
+      toolGuardCancelRequested: false,
+      toolGuardReason: undefined,
     };
     context.activeTurn = turn;
     context.session = {

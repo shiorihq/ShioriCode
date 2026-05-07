@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import {
   type ComputerUseActionResult,
@@ -9,6 +10,8 @@ import {
   ComputerUseError,
   type ComputerUseKeyInput,
   type ComputerUseMoveInput,
+  type ComputerUsePermissionActionInput,
+  type ComputerUsePermissionActionResult,
   type ComputerUsePermissionsSnapshot,
   type ComputerUseScreenshotInput,
   type ComputerUseScreenshotResult,
@@ -23,14 +26,23 @@ import { ServerSettingsService } from "../../serverSettings";
 import { runProcess } from "../../processRunner";
 import { ComputerUseManager } from "../Services/ComputerUseManager";
 
-const DEFAULT_HELPER_PACKAGE_PATH = path.resolve(
-  process.cwd(),
+function resolveAppRootFromModule(moduleUrl: string): string {
+  const modulePath = fileURLToPath(moduleUrl);
+  const marker = `${path.sep}apps${path.sep}server${path.sep}`;
+  const markerIndex = modulePath.lastIndexOf(marker);
+  return markerIndex >= 0 ? modulePath.slice(0, markerIndex) : process.cwd();
+}
+
+const DEFAULT_APP_ROOT = resolveAppRootFromModule(import.meta.url);
+const DEFAULT_HELPER_PACKAGE_PATH = path.join(
+  DEFAULT_APP_ROOT,
   "apps/desktop/native/ShioriComputerUse",
 );
 const DEFAULT_HELPER_BUILD_PATHS = [
   path.join(DEFAULT_HELPER_PACKAGE_PATH, ".build/debug/ShioriComputerUseHelper"),
   path.join(DEFAULT_HELPER_PACKAGE_PATH, ".build/release/ShioriComputerUseHelper"),
-  path.resolve(process.cwd(), "apps/desktop/resources/native/macos/ShioriComputerUseHelper"),
+  path.join(DEFAULT_APP_ROOT, "apps/desktop/resources/native/macos/ShioriComputerUseHelper"),
+  path.join(DEFAULT_APP_ROOT, "apps/desktop/prod-resources/native/macos/ShioriComputerUseHelper"),
 ];
 const HELPER_TIMEOUT_MS = 30_000;
 const HELPER_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -384,6 +396,18 @@ export const ComputerUseManagerLive = Layer.effect(
 
     return {
       getPermissions,
+      requestPermission: (input: ComputerUsePermissionActionInput) =>
+        runHelper<ComputerUsePermissionActionResult>(
+          "request-permission",
+          input,
+          "Failed to request macOS Computer Use permission.",
+        ),
+      showPermissionGuide: (input: ComputerUsePermissionActionInput) =>
+        runHelper<ComputerUsePermissionActionResult>(
+          "permission-guide",
+          input,
+          "Failed to open macOS Computer Use permission settings.",
+        ),
       createSession: Effect.gen(function* () {
         yield* ensureEnabled();
         const session = makeSession(`computer-${randomUUID()}`);

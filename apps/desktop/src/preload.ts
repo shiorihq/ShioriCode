@@ -18,6 +18,8 @@ const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
+const COMPUTER_USE_GET_PERMISSIONS_CHANNEL = "desktop:computer-use-get-permissions";
+const COMPUTER_USE_PERMISSION_GUIDE_CHANNEL = "desktop:computer-use-permission-guide";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -49,6 +51,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
   getCompanionCliState: () => ipcRenderer.invoke(COMPANION_CLI_GET_STATE_CHANNEL),
   installCompanionCli: () => ipcRenderer.invoke(COMPANION_CLI_INSTALL_CHANNEL),
+  getComputerUsePermissions: () => ipcRenderer.invoke(COMPUTER_USE_GET_PERMISSIONS_CHANNEL),
+  showComputerUsePermissionGuide: (kind) =>
+    ipcRenderer.invoke(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, kind),
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

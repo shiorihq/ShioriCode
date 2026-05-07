@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 import { hostedUsageStatsQuery } from "../../convex/api";
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useSettings } from "../../hooks/useSettings";
 import { deriveLocalProviderUsageSummaries } from "../../lib/usageMetrics";
 import { ensureNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
@@ -248,10 +249,21 @@ function buildLocalProviderUsage(input: {
 }
 
 export function UsagePanel() {
+  const settings = useSettings();
   const { isAuthenticated, isAuthLoading } = useHostedShioriState();
   const threads = useStore((store) => store.threads);
 
-  const hostedUsageStats = useConvexQuery(hostedUsageStatsQuery, isAuthenticated ? {} : "skip");
+  const shioriEnabled = settings.providers.shiori.enabled;
+  const codexEnabled = settings.providers.codex.enabled;
+  const claudeEnabled = settings.providers.claudeAgent.enabled;
+  const kimiCodeEnabled = settings.providers.kimiCode.enabled;
+  const geminiEnabled = settings.providers.gemini.enabled;
+  const cursorEnabled = settings.providers.cursor.enabled;
+
+  const hostedUsageStats = useConvexQuery(
+    hostedUsageStatsQuery,
+    isAuthenticated && shioriEnabled ? {} : "skip",
+  );
   const localUsageByProvider = useMemo(
     () =>
       new Map(deriveLocalProviderUsageSummaries(threads).map((usage) => [usage.provider, usage])),
@@ -263,6 +275,7 @@ export function UsagePanel() {
     queryFn: () => ensureNativeApi().server.getProviderUsage("codex"),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
+    enabled: codexEnabled,
   });
 
   const claudeUsage = useServerQuery({
@@ -270,6 +283,7 @@ export function UsagePanel() {
     queryFn: () => ensureNativeApi().server.getProviderUsage("claudeAgent"),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
+    enabled: claudeEnabled,
   });
 
   const providerUsage = useMemo(() => {
@@ -279,65 +293,102 @@ export function UsagePanel() {
     const geminiUsage = localUsageByProvider.get("gemini");
     const cursorUsage = localUsageByProvider.get("cursor");
 
-    return [
-      buildShioriAccountUsage({
-        isAuthenticated,
-        isAuthLoading,
-        monthlyPercentLeft: toRemainingPercentage(hostedUsageStats?.percentUsed),
-        fiveHourPercentLeft: toRemainingPercentage(hostedUsageStats?.fiveHourPercentUsed),
-        isRateLimited: hostedUsageStats?.isRateLimited ?? false,
-        isBudgetExhausted: hostedUsageStats?.isBudgetExhausted ?? false,
-      }),
-      buildRemoteProviderUsage({
-        provider: "codex",
-        source: "Codex account usage",
-        isLoading: codexUsage.isLoading,
-        available: codexSnapshot?.available ?? false,
-        primaryPercent: toRemainingPercentage(codexSnapshot?.primary?.usedPercent),
-        secondaryPercent: toRemainingPercentage(codexSnapshot?.secondary?.usedPercent),
-        primaryLabel: "Session",
-        secondaryLabel: "Weekly",
-        unavailableReason: codexSnapshot?.unavailableReason ?? null,
-      }),
-      buildRemoteProviderUsage({
-        provider: "claudeAgent",
-        source: "Claude account usage",
-        isLoading: claudeUsage.isLoading,
-        available: claudeSnapshot?.available ?? false,
-        primaryPercent: toRemainingPercentage(claudeSnapshot?.fiveHour?.usedPercent),
-        secondaryPercent: toRemainingPercentage(claudeSnapshot?.sevenDay?.usedPercent),
-        primaryLabel: "Session",
-        secondaryLabel: "Weekly",
-        unavailableReason: claudeSnapshot?.unavailableReason ?? null,
-      }),
-      buildLocalProviderUsage({
-        provider: "kimiCode",
-        last5Hours: kimiCodeUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
-        last7Days: kimiCodeUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
-      }),
-      buildLocalProviderUsage({
-        provider: "gemini",
-        last5Hours: geminiUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
-        last7Days: geminiUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
-      }),
-      buildLocalProviderUsage({
-        provider: "cursor",
-        last5Hours: cursorUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
-        last7Days: cursorUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
-      }),
-    ] satisfies readonly ProviderUsage[];
+    const usages: ProviderUsage[] = [];
+
+    if (shioriEnabled) {
+      usages.push(
+        buildShioriAccountUsage({
+          isAuthenticated,
+          isAuthLoading,
+          monthlyPercentLeft: toRemainingPercentage(hostedUsageStats?.percentUsed),
+          fiveHourPercentLeft: toRemainingPercentage(hostedUsageStats?.fiveHourPercentUsed),
+          isRateLimited: hostedUsageStats?.isRateLimited ?? false,
+          isBudgetExhausted: hostedUsageStats?.isBudgetExhausted ?? false,
+        }),
+      );
+    }
+
+    if (codexEnabled) {
+      usages.push(
+        buildRemoteProviderUsage({
+          provider: "codex",
+          source: "Codex account usage",
+          isLoading: codexUsage.isLoading,
+          available: codexSnapshot?.available ?? false,
+          primaryPercent: toRemainingPercentage(codexSnapshot?.primary?.usedPercent),
+          secondaryPercent: toRemainingPercentage(codexSnapshot?.secondary?.usedPercent),
+          primaryLabel: "Session",
+          secondaryLabel: "Weekly",
+          unavailableReason: codexSnapshot?.unavailableReason ?? null,
+        }),
+      );
+    }
+
+    if (claudeEnabled) {
+      usages.push(
+        buildRemoteProviderUsage({
+          provider: "claudeAgent",
+          source: "Claude account usage",
+          isLoading: claudeUsage.isLoading,
+          available: claudeSnapshot?.available ?? false,
+          primaryPercent: toRemainingPercentage(claudeSnapshot?.fiveHour?.usedPercent),
+          secondaryPercent: toRemainingPercentage(claudeSnapshot?.sevenDay?.usedPercent),
+          primaryLabel: "Session",
+          secondaryLabel: "Weekly",
+          unavailableReason: claudeSnapshot?.unavailableReason ?? null,
+        }),
+      );
+    }
+
+    if (kimiCodeEnabled) {
+      usages.push(
+        buildLocalProviderUsage({
+          provider: "kimiCode",
+          last5Hours: kimiCodeUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+          last7Days: kimiCodeUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+        }),
+      );
+    }
+
+    if (geminiEnabled) {
+      usages.push(
+        buildLocalProviderUsage({
+          provider: "gemini",
+          last5Hours: geminiUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+          last7Days: geminiUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+        }),
+      );
+    }
+
+    if (cursorEnabled) {
+      usages.push(
+        buildLocalProviderUsage({
+          provider: "cursor",
+          last5Hours: cursorUsage?.last5Hours ?? { turns: 0, approxTokens: 0 },
+          last7Days: cursorUsage?.last7Days ?? { turns: 0, approxTokens: 0 },
+        }),
+      );
+    }
+
+    return usages;
   }, [
+    claudeEnabled,
     claudeUsage.data,
     claudeUsage.isLoading,
+    codexEnabled,
     codexUsage.data,
     codexUsage.isLoading,
+    cursorEnabled,
+    geminiEnabled,
     hostedUsageStats?.fiveHourPercentUsed,
     hostedUsageStats?.isBudgetExhausted,
     hostedUsageStats?.isRateLimited,
     hostedUsageStats?.percentUsed,
     isAuthenticated,
     isAuthLoading,
+    kimiCodeEnabled,
     localUsageByProvider,
+    shioriEnabled,
   ]);
 
   return (

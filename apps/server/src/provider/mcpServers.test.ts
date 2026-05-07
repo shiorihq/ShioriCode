@@ -115,7 +115,7 @@ describe("toAcpMcpServers", () => {
       "gemini",
       {
         browserUse: { enabled: true },
-        computerUse: { enabled: true, requireApproval: true },
+        computerUse: { enabled: true, requireApproval: false },
         mcpServers: { servers: [] },
       } as never,
       undefined,
@@ -150,7 +150,35 @@ describe("toAcpMcpServers", () => {
     expect(servers[1]).toMatchObject({
       command: process.execPath,
       args: expect.arrayContaining(["computer-use-mcp"]),
+      env: expect.arrayContaining([
+        { name: "SHIORICODE_COMPUTER_USE_ENABLED", value: "1" },
+        { name: "SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL", value: "0" },
+      ]),
     });
+  });
+
+  it("does not expose the built-in computer MCP server while approvals are required", () => {
+    const servers = toAcpMcpServers(
+      "gemini",
+      {
+        browserUse: { enabled: true },
+        computerUse: { enabled: true, requireApproval: true },
+        mcpServers: { servers: [] },
+      } as never,
+      undefined,
+      {
+        browserPanel: {
+          config: {
+            host: "0.0.0.0",
+            port: 4321,
+            authToken: "secret-token",
+          } as never,
+          threadId: "thread-browser" as never,
+        },
+      },
+    );
+
+    expect(servers.map((server) => server.name)).toEqual(["shioricode-browser"]);
   });
 
   it("does not expose built-in MCP servers when their settings are disabled", () => {

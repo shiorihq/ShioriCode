@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createOrchestrationRecoveryCoordinator } from "./orchestrationRecovery";
+import {
+  createOrchestrationRecoveryCoordinator,
+  hasPendingOrRunningThreadActivity,
+  shouldRecoverStaleRunningOrchestration,
+} from "./orchestrationRecovery";
 
 describe("createOrchestrationRecoveryCoordinator", () => {
   it("defers live events until bootstrap completes and then requests replay", () => {
@@ -47,6 +51,21 @@ describe("createOrchestrationRecoveryCoordinator", () => {
       bootstrapped: true,
       inFlight: null,
     });
+  });
+
+  it("can select an applicable event batch without committing progress", () => {
+    const coordinator = createOrchestrationRecoveryCoordinator();
+
+    coordinator.beginSnapshotRecovery("bootstrap");
+    coordinator.completeSnapshotRecovery(3);
+
+    expect(coordinator.selectApplicableEventBatch([{ sequence: 2 }, { sequence: 5 }])).toEqual([
+      { sequence: 5 },
+    ]);
+    expect(coordinator.getState().latestSequence).toBe(3);
+
+    coordinator.markEventBatchApplied([{ sequence: 5 }]);
+    expect(coordinator.getState().latestSequence).toBe(5);
   });
 
   it("rejects stale snapshots once newer live events were already applied", () => {
@@ -142,5 +161,49 @@ describe("createOrchestrationRecoveryCoordinator", () => {
         reason: "sequence-gap",
       },
     });
+  });
+});
+
+describe("stale running orchestration recovery", () => {
+  it("detects running sessions and pending dispatches as active work", () => {
+    expect(
+      hasPendingOrRunningThreadActivity({
+        threads: [{ session: { status: "running", activeTurnId: "turn-1" } }],
+        pendingThreadDispatchById: {},
+      }),
+    ).toBe(true);
+    expect(
+      hasPendingOrRunningThreadActivity({
+        threads: [{ session: { status: "ready", activeTurnId: undefined } }],
+        pendingThreadDispatchById: { "thread-1": { commandId: "cmd-1" } },
+      }),
+    ).toBe(true);
+    expect(
+      hasPendingOrRunningThreadActivity({
+        threads: [{ session: { status: "running", activeTurnId: null } }],
+        pendingThreadDispatchById: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("requests snapshot recovery only after active work goes stale", () => {
+    expect(
+      shouldRecoverStaleRunningOrchestration({
+        now: 20_000,
+        lastActivityAt: 4_000,
+        staleAfterMs: 15_000,
+        threads: [{ session: { status: "running", activeTurnId: "turn-1" } }],
+        pendingThreadDispatchById: {},
+      }),
+    ).toBe(true);
+    expect(
+      shouldRecoverStaleRunningOrchestration({
+        now: 10_000,
+        lastActivityAt: 4_000,
+        staleAfterMs: 15_000,
+        threads: [{ session: { status: "running", activeTurnId: "turn-1" } }],
+        pendingThreadDispatchById: {},
+      }),
+    ).toBe(false);
   });
 });

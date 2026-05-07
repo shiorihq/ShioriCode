@@ -2,7 +2,6 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
-import Permiso
 
 enum HelperExitCode: Int32 {
     case ok = 0
@@ -239,32 +238,29 @@ func scroll(input: [String: Any]) throws -> [String: Any] {
     return actionResult(input, "Scrolled.")
 }
 
-@MainActor
-func permisoHostApp(from input: [String: Any]) -> PermisoHostApp {
-    guard
-        let bundlePath = input["bundlePath"] as? String,
-        !bundlePath.isEmpty,
-        FileManager.default.fileExists(atPath: bundlePath)
-    else {
-        return .current()
-    }
-    let bundleURL = URL(fileURLWithPath: bundlePath)
-    let displayName = (input["displayName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        ?? bundleURL.deletingPathExtension().lastPathComponent
-    let icon = NSWorkspace.shared.icon(forFile: bundlePath)
-    icon.size = NSSize(width: 48, height: 48)
-    return PermisoHostApp(displayName: displayName, bundleURL: bundleURL, icon: icon)
+func permissionKind(_ input: [String: Any]) -> String {
+    (input["kind"] as? String) == "screen-recording" ? "screen-recording" : "accessibility"
 }
 
-@MainActor
-func presentPermissionGuide(input: [String: Any]) {
-    let kind = (input["kind"] as? String) ?? "accessibility"
-    let panel: PermisoPanel = kind == "screen-recording" ? .screenRecording : .accessibility
-    PermisoAssistant.shared.present(panel: panel, hostApp: permisoHostApp(from: input))
+func permissionSettingsURL(kind: String) -> URL {
+    let pane = kind == "screen-recording" ? "Privacy_ScreenCapture" : "Privacy_Accessibility"
+    return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!
+}
+
+func openPermissionGuide(input: [String: Any]) -> [String: Any] {
+    let kind = permissionKind(input)
+    let opened = NSWorkspace.shared.open(permissionSettingsURL(kind: kind))
+    return [
+        "ok": opened,
+        "kind": kind,
+        "message": opened
+            ? "Opened macOS Privacy & Security settings."
+            : "Could not open macOS Privacy & Security settings."
+    ]
 }
 
 func requestPermission(input: [String: Any]) -> [String: Any] {
-    let kind = (input["kind"] as? String) ?? "accessibility"
+    let kind = permissionKind(input)
     if kind == "screen-recording" {
         let granted = CGRequestScreenCaptureAccess()
         return [
@@ -308,11 +304,7 @@ do {
     case "request-permission":
         writeJSON(requestPermission(input: input))
     case "permission-guide":
-        DispatchQueue.main.async {
-            presentPermissionGuide(input: input)
-        }
-        RunLoop.main.run(until: Date().addingTimeInterval(600))
-        writeJSON(["ok": true, "message": "Permission guide closed."])
+        writeJSON(openPermissionGuide(input: input))
     default:
         fail("actionFailed", "Unsupported command '\(command)'.")
     }

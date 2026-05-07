@@ -3,6 +3,23 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { BrowserPanelCommand, BrowserPanelCommandResult } from "./browser";
+import {
+  ComputerUseActionResult,
+  ComputerUseClickInput,
+  ComputerUseCloseSessionInput,
+  ComputerUseCreateSessionInput,
+  ComputerUseError,
+  ComputerUseKeyInput,
+  ComputerUseMoveInput,
+  ComputerUsePermissionActionInput,
+  ComputerUsePermissionActionResult,
+  ComputerUsePermissionsSnapshot,
+  ComputerUseScreenshotInput,
+  ComputerUseScreenshotResult,
+  ComputerUseScrollInput,
+  ComputerUseSessionSnapshot,
+  ComputerUseTypeInput,
+} from "./computer";
 import { OpenError, OpenInEditorInput } from "./editor";
 import {
   GitCheckoutInput,
@@ -171,6 +188,19 @@ export const WS_METHODS = {
 
   // Browser panel
   browserPanelCompleteCommand: "browserPanel.completeCommand",
+
+  // Computer Use
+  computerGetPermissions: "computer.getPermissions",
+  computerRequestPermission: "computer.requestPermission",
+  computerShowPermissionGuide: "computer.showPermissionGuide",
+  computerCreateSession: "computer.createSession",
+  computerCloseSession: "computer.closeSession",
+  computerScreenshot: "computer.screenshot",
+  computerClick: "computer.click",
+  computerMove: "computer.move",
+  computerType: "computer.type",
+  computerKey: "computer.key",
+  computerScroll: "computer.scroll",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -522,6 +552,72 @@ export const WsBrowserPanelCompleteCommandRpc = Rpc.make(WS_METHODS.browserPanel
   success: Schema.Struct({}),
 });
 
+export const WsComputerGetPermissionsRpc = Rpc.make(WS_METHODS.computerGetPermissions, {
+  payload: Schema.Struct({}),
+  success: ComputerUsePermissionsSnapshot,
+  error: ComputerUseError,
+});
+
+export const WsComputerRequestPermissionRpc = Rpc.make(WS_METHODS.computerRequestPermission, {
+  payload: ComputerUsePermissionActionInput,
+  success: ComputerUsePermissionActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerShowPermissionGuideRpc = Rpc.make(WS_METHODS.computerShowPermissionGuide, {
+  payload: ComputerUsePermissionActionInput,
+  success: ComputerUsePermissionActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerCreateSessionRpc = Rpc.make(WS_METHODS.computerCreateSession, {
+  payload: ComputerUseCreateSessionInput,
+  success: ComputerUseSessionSnapshot,
+  error: ComputerUseError,
+});
+
+export const WsComputerCloseSessionRpc = Rpc.make(WS_METHODS.computerCloseSession, {
+  payload: ComputerUseCloseSessionInput,
+  success: Schema.Struct({}),
+  error: ComputerUseError,
+});
+
+export const WsComputerScreenshotRpc = Rpc.make(WS_METHODS.computerScreenshot, {
+  payload: ComputerUseScreenshotInput,
+  success: ComputerUseScreenshotResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerClickRpc = Rpc.make(WS_METHODS.computerClick, {
+  payload: ComputerUseClickInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerMoveRpc = Rpc.make(WS_METHODS.computerMove, {
+  payload: ComputerUseMoveInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerTypeRpc = Rpc.make(WS_METHODS.computerType, {
+  payload: ComputerUseTypeInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerKeyRpc = Rpc.make(WS_METHODS.computerKey, {
+  payload: ComputerUseKeyInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerScrollRpc = Rpc.make(WS_METHODS.computerScroll, {
+  payload: ComputerUseScrollInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -573,6 +669,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeBrowserPanelCommandsRpc,
   WsBrowserPanelCompleteCommandRpc,
+  WsComputerGetPermissionsRpc,
+  WsComputerRequestPermissionRpc,
+  WsComputerShowPermissionGuideRpc,
+  WsComputerCreateSessionRpc,
+  WsComputerCloseSessionRpc,
+  WsComputerScreenshotRpc,
+  WsComputerClickRpc,
+  WsComputerMoveRpc,
+  WsComputerTypeRpc,
+  WsComputerKeyRpc,
+  WsComputerScrollRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

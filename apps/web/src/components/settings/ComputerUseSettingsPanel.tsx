@@ -59,11 +59,7 @@ function PermissionCard({
   guidePending: boolean;
 }) {
   const tone = permissionTone(permission);
-  const canGuide =
-    permission.state !== "granted" &&
-    permission.state !== "unsupported" &&
-    typeof window !== "undefined" &&
-    Boolean(window.desktopBridge?.showComputerUsePermissionGuide);
+  const canGuide = permission.state !== "granted" && permission.state !== "unsupported";
 
   return (
     <div className="flex items-start gap-3 border-t border-border px-4 py-4 first:border-t-0 sm:px-5">
@@ -210,18 +206,13 @@ export function ComputerUseSettingsPanel() {
 
   async function showPermissionGuide(kind: ComputerUsePermissionKind) {
     const guide = window.desktopBridge?.showComputerUsePermissionGuide;
-    if (!guide) {
-      toastManager.add({
-        type: "error",
-        title: "Permission guide unavailable",
-        description: "Open ShioriCode in the macOS desktop app to use the guided permission flow.",
-      });
-      return;
-    }
+    const computer = ensureNativeApi().computer;
     setGuideKind(kind);
     try {
-      const shown = await guide(kind);
-      if (!shown) {
+      const result = guide
+        ? { ok: await guide(kind), message: null }
+        : await computer?.showPermissionGuide({ kind });
+      if (!result?.ok) {
         throw new Error("The macOS permission guide could not be opened.");
       }
       setTimeout(() => {
@@ -270,8 +261,8 @@ export function ComputerUseSettingsPanel() {
           }
         />
         <SettingsRow
-          title="Ask before desktop actions"
-          description="Require explicit approval before an agent can use Computer Use tools."
+          title="Gate direct desktop tools"
+          description="Keep raw MCP desktop actions hidden unless the approval gate is disabled."
           control={
             <Switch
               checked={settings.computerUse.requireApproval}
@@ -284,7 +275,7 @@ export function ComputerUseSettingsPanel() {
                   },
                 })
               }
-              aria-label="Require approval for Computer Use"
+              aria-label="Gate direct Computer Use tools"
             />
           }
         />
