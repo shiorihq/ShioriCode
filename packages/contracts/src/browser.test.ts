@@ -33,6 +33,8 @@ describe("BrowserPanelCommand", () => {
         includeText: false,
         includeLinks: true,
         includeForms: true,
+        includeElements: true,
+        maxElements: 40,
       }),
     ).toMatchObject({ type: "snapshot" });
     expect(
@@ -60,6 +62,56 @@ describe("BrowserPanelCommand", () => {
         text: "search text",
       }),
     ).toMatchObject({ type: "type-selector" });
+    expect(
+      decodeCommand({
+        id: "cmd-7",
+        threadId: "thread-1",
+        type: "hover-selector",
+        selector: "button",
+      }),
+    ).toMatchObject({ type: "hover-selector" });
+    expect(
+      decodeCommand({
+        id: "cmd-8",
+        threadId: "thread-1",
+        type: "select-selector",
+        selector: "select[name=sort]",
+        value: "recent",
+      }),
+    ).toMatchObject({ type: "select-selector" });
+    expect(
+      decodeCommand({
+        id: "cmd-9",
+        threadId: "thread-1",
+        type: "wait",
+        selector: "#ready",
+        timeoutMs: 2500,
+      }),
+    ).toMatchObject({ type: "wait" });
+    expect(
+      decodeCommand({
+        id: "cmd-10",
+        threadId: "thread-1",
+        type: "press-key",
+        key: "Enter",
+      }),
+    ).toMatchObject({ type: "press-key" });
+    expect(
+      decodeCommand({
+        id: "cmd-11",
+        threadId: "thread-1",
+        type: "scroll",
+        deltaY: 600,
+      }),
+    ).toMatchObject({ type: "scroll" });
+    expect(
+      decodeCommand({
+        id: "cmd-12",
+        threadId: "thread-1",
+        type: "console",
+        clear: true,
+      }),
+    ).toMatchObject({ type: "console" });
   });
 
   it("rejects malformed commands and invalid actions", () => {

@@ -5,10 +5,17 @@ import readline from "node:readline";
 
 import { runProcess } from "../processRunner";
 
-const TOOL_SCHEMAS = [
+interface ToolSchema {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+
+const TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
   {
     name: "computer_screenshot",
-    description: "Capture the current macOS desktop as a screenshot.",
+    description:
+      "Computer Use: capture the current macOS desktop as a screenshot. Use this when the user asks for Computer Use or asks to inspect visible desktop/app state.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -17,7 +24,8 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "computer_click",
-    description: "Click an absolute macOS screen coordinate. Use computer_screenshot first.",
+    description:
+      "Computer Use: click an absolute macOS screen coordinate. Use computer_screenshot first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -32,7 +40,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "computer_move",
-    description: "Move the macOS pointer to an absolute screen coordinate.",
+    description: "Computer Use: move the macOS pointer to an absolute screen coordinate.",
     inputSchema: {
       type: "object",
       properties: {
@@ -45,7 +53,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "computer_type",
-    description: "Type text into the currently focused macOS control.",
+    description: "Computer Use: type text into the currently focused macOS control.",
     inputSchema: {
       type: "object",
       properties: {
@@ -57,7 +65,8 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "computer_key",
-    description: "Press a macOS key with optional command/control/option/shift modifiers.",
+    description:
+      "Computer Use: press a macOS key with optional command/control/option/shift modifiers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -73,7 +82,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: "computer_scroll",
-    description: "Scroll the current macOS desktop target by line deltas.",
+    description: "Computer Use: scroll the current macOS desktop target by line deltas.",
     inputSchema: {
       type: "object",
       properties: {
@@ -84,6 +93,23 @@ const TOOL_SCHEMAS = [
     },
   },
 ] as const;
+
+function toolSchemas() {
+  if (readBooleanEnv("SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL") !== true) {
+    return TOOL_SCHEMAS;
+  }
+  const schemas: ToolSchema[] = [];
+  for (const tool of TOOL_SCHEMAS) {
+    schemas.push({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: Object.assign({}, tool.inputSchema, {
+        "x-shioricode-needs-approval": true,
+      }),
+    });
+  }
+  return schemas;
+}
 
 const HELPER_BINARY_NAME = "ShioriComputerUseHelper";
 const HELPER_TIMEOUT_MS = 30_000;
@@ -151,11 +177,6 @@ function readBooleanEnv(name: string): boolean | null {
 function assertRuntimeAllowsComputerUse(): void {
   if (readBooleanEnv("SHIORICODE_COMPUTER_USE_ENABLED") === false) {
     throw new Error("Computer Use is disabled in ShioriCode settings.");
-  }
-  if (readBooleanEnv("SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL") === true) {
-    throw new Error(
-      "Computer Use requires approval, so the direct MCP desktop-control server is not available.",
-    );
   }
 }
 
@@ -257,7 +278,7 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
         });
         return;
       case "tools/list":
-        success(id, { tools: TOOL_SCHEMAS });
+        success(id, { tools: toolSchemas() });
         return;
       case "tools/call": {
         const params =

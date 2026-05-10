@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeShioriModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
@@ -306,6 +307,40 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
     ).toEqual({
       thinking: false,
       reasoningEffort: "medium",
+    });
+  });
+
+  it("leaves omitted Kimi thinking unset so the CLI config can supply the default", () => {
+    expect(
+      normalizeKimiCodeModelOptionsWithCapabilities(
+        {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        undefined,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("preserves explicit Kimi thinking state", () => {
+    expect(
+      normalizeKimiCodeModelOptionsWithCapabilities(
+        {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        {
+          thinking: false,
+        },
+      ),
+    ).toEqual({
+      thinking: false,
     });
   });
 

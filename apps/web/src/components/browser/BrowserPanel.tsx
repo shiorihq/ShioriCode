@@ -27,6 +27,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { runBrowserPanelCommandOnWebview } from "./browserPanelCommandRunner";
 import {
+  type BrowserPanelConsoleEntry,
   type BrowserPanelSnapshot,
   type BrowserWebviewElement,
   DEFAULT_BROWSER_URL,
@@ -77,6 +78,7 @@ export default function BrowserPanel({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<BrowserWebviewElement | null>(null);
   const pendingNavigateUrlRef = useRef<string | null>(null);
+  const consoleEntriesRef = useRef<BrowserPanelConsoleEntry[]>([]);
   const [snapshot, setSnapshot] = useState<BrowserPanelSnapshot>(BLANK_SNAPSHOT);
   const [address, setAddress] = useState(snapshot.url);
   const [addressFocused, setAddressFocused] = useState(false);
@@ -99,6 +101,7 @@ export default function BrowserPanel({
 
     const webview = document.createElement("webview") as BrowserWebviewElement;
     webviewRef.current = webview;
+    consoleEntriesRef.current = [];
     webview.setAttribute("partition", browserPartitionForThread(threadId));
     webview.setAttribute("src", DEFAULT_BROWSER_URL);
     webview.setAttribute("allowpopups", "false");
@@ -132,6 +135,28 @@ export default function BrowserPanel({
       }
       update();
     };
+    const recordConsoleMessage = (event: Event) => {
+      const detail = event as Event & {
+        level?: number | string;
+        message?: string;
+        sourceId?: string;
+        line?: number;
+      };
+      const level =
+        typeof detail.level === "number"
+          ? (["log", "warning", "error", "debug"][detail.level] ?? String(detail.level))
+          : (detail.level ?? "log");
+      consoleEntriesRef.current = [
+        ...consoleEntriesRef.current,
+        {
+          level,
+          message: detail.message ?? "",
+          sourceId: detail.sourceId ?? null,
+          line: typeof detail.line === "number" ? detail.line : null,
+          timestamp: Date.now(),
+        },
+      ].slice(-100);
+    };
     const registrations: Array<[string, EventListener]> = [
       ["did-start-loading", updateWithoutError],
       ["did-stop-loading", update],
@@ -140,6 +165,7 @@ export default function BrowserPanel({
       ["page-title-updated", update],
       ["dom-ready", update],
       ["did-fail-load", updateWithError],
+      ["console-message", recordConsoleMessage],
     ];
     for (const [eventName, listener] of registrations) {
       webview.addEventListener(eventName, listener);
@@ -211,7 +237,12 @@ export default function BrowserPanel({
       }
 
       try {
-        const result = await runBrowserPanelCommandOnWebview(request, webview);
+        const result = await runBrowserPanelCommandOnWebview(request, webview, {
+          consoleEntries: consoleEntriesRef.current,
+          clearConsoleEntries: () => {
+            consoleEntriesRef.current = [];
+          },
+        });
         if (result.address !== undefined) {
           setAddress(result.address);
         }

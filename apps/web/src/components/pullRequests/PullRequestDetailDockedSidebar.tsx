@@ -356,11 +356,11 @@ function PullRequestDetailContent({
     gitPullRequestConversationQueryOptions({ cwd: projectCwd, number }),
   );
 
-  const [activeTab, setActiveTab] = useState<"files" | "conversation" | "kanban">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "conversation" | "goals">("files");
   const summary = summaryQuery.data?.summary ?? null;
 
   useEffect(() => {
-    if (!kanbanEnabled && activeTab === "kanban") {
+    if (!kanbanEnabled && activeTab === "goals") {
       setActiveTab("files");
     }
   }, [activeTab, kanbanEnabled]);
@@ -580,7 +580,7 @@ function PullRequestDetailContent({
             if (
               next === "files" ||
               next === "conversation" ||
-              (kanbanEnabled && next === "kanban")
+              (kanbanEnabled && next === "goals")
             ) {
               setActiveTab(next);
             }
@@ -603,14 +603,14 @@ function PullRequestDetailContent({
               : null}
           </Toggle>
           {kanbanEnabled ? (
-            <Toggle value="kanban" className="h-6 px-2 text-xs">
-              Kanban
+            <Toggle value="goals" className="h-6 px-2 text-xs">
+              Goals
             </Toggle>
           ) : null}
         </ToggleGroup>
       </div>
 
-      {activeTab === "kanban" ? (
+      {activeTab === "goals" ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           {project && pullRequest ? (
             <PrKanbanBoard
@@ -625,9 +625,9 @@ function PullRequestDetailContent({
             <div className="flex h-full items-center justify-center p-6">
               <Empty>
                 <EmptyHeader>
-                  <EmptyTitle className="text-pretty">Kanban unavailable</EmptyTitle>
+                  <EmptyTitle className="text-pretty">Goals unavailable</EmptyTitle>
                   <EmptyDescription className="text-pretty">
-                    Select a project pull request to manage tasks.
+                    Select a project pull request to manage linked goals.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>

@@ -60,6 +60,8 @@ import {
   buildCodexInitializeParams,
   CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS,
   killCodexChildProcess,
+  readCodexModelListSnapshot,
+  type CodexAppServerModelSnapshot,
 } from "./provider/codexAppServer";
 import type { CodexUsageSnapshot } from "./provider/Services/ProviderUsage.ts";
 import { ServerSettingsService } from "./serverSettings";
@@ -92,10 +94,8 @@ interface CodexSessionContext {
   stopping: boolean;
 }
 
-function isUserInputRequestMethod(
-  method: string,
-): method is "item/tool/requestUserInput" | "tool/requestUserInput" {
-  return method === "item/tool/requestUserInput" || method === "tool/requestUserInput";
+function isUserInputRequestMethod(method: string): method is CodexUserInputRequestMethod {
+  return CODEX_SERVER_REQUEST_HANDLERS[method as CodexServerRequestMethod] === "user-input";
 }
 
 export interface CodexAppServerSendTurnInput {
@@ -132,6 +132,26 @@ export interface CodexThreadSnapshot {
 }
 
 const CODEX_VERSION_CHECK_TIMEOUT_MS = 4_000;
+const CODEX_SESSION_METADATA_TIMEOUT_MS = 4_000;
+
+const CODEX_SERVER_REQUEST_HANDLERS = {
+  "account/chatgptAuthTokens/refresh": "unsupported",
+  "item/commandExecution/requestApproval": "approval",
+  "item/fileChange/requestApproval": "approval",
+  "item/fileRead/requestApproval": "approval",
+  "item/tool/call": "unsupported",
+  "item/tool/requestUserInput": "user-input",
+  "mcpServer/elicitation/request": "user-input",
+  "permissions/requestApproval": "approval",
+  "tool/requestUserInput": "user-input",
+} as const;
+
+type CodexServerRequestMethod = keyof typeof CODEX_SERVER_REQUEST_HANDLERS;
+
+type CodexUserInputRequestMethod = Extract<
+  CodexServerRequestMethod,
+  "item/tool/requestUserInput" | "tool/requestUserInput" | "mcpServer/elicitation/request"
+>;
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: "on-request" | "never";
@@ -217,48 +237,68 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
   }
 
-  private async hydrateSessionMetadataInBackground(
+  private async refreshSessionMetadata(
     context: CodexSessionContext,
-    input: { readonly requestedModel?: string },
-  ): Promise<void> {
-    const logBackgroundFailure = async (method: string, error: unknown) => {
-      await Effect.logDebug("codex app-server background session metadata request failed", {
+    input: { readonly requestedModel?: string; readonly timeoutMs?: number },
+  ): Promise<{
+    readonly model?: string;
+    readonly models: ReadonlyArray<CodexAppServerModelSnapshot> | null;
+  }> {
+    const timeoutMs = input.timeoutMs ?? CODEX_SESSION_METADATA_TIMEOUT_MS;
+    const logFailure = async (method: string, error: unknown) => {
+      await Effect.logDebug("codex app-server session metadata request failed", {
         threadId: context.session.threadId,
         method,
         cause: error instanceof Error ? error.message : String(error),
       }).pipe(this.runPromise);
     };
 
-    const modelListPromise = this.sendRequest(context, "model/list", {}).catch(async (error) => {
-      await logBackgroundFailure("model/list", error);
-    });
+    let models: ReadonlyArray<CodexAppServerModelSnapshot> | null = null;
 
-    const accountReadPromise = this.sendRequest(context, "account/read", {})
+    const modelListPromise = this.sendRequest(context, "model/list", {}, timeoutMs)
+      .then((response) => {
+        models = readCodexModelListSnapshot(response);
+      })
+      .catch(async (error) => {
+        await logFailure("model/list", error);
+      });
+
+    const accountReadPromise = this.sendRequest(context, "account/read", {}, timeoutMs)
       .then(async (response) => {
         const account = readCodexAccountSnapshot(response);
         context.account = account;
-
-        const resolvedModel = resolveCodexModelForAccount(
-          normalizeCodexModelSlug(input.requestedModel ?? context.session.model),
-          account,
-        );
-        if (resolvedModel && resolvedModel !== context.session.model) {
-          this.updateSession(context, { model: resolvedModel });
-        }
 
         await Effect.logDebug("codex app-server hydrated session account metadata", {
           threadId: context.session.threadId,
           accountType: account.type,
           planType: account.planType,
           sparkEnabled: account.sparkEnabled,
-          resolvedModel: resolvedModel ?? null,
         }).pipe(this.runPromise);
       })
       .catch(async (error) => {
-        await logBackgroundFailure("account/read", error);
+        await logFailure("account/read", error);
       });
 
     await Promise.allSettled([modelListPromise, accountReadPromise]);
+
+    const requestedModel = normalizeCodexModelSlug(input.requestedModel ?? context.session.model);
+    const resolvedModel = this.resolveModelForSessionMetadata({
+      ...(requestedModel ? { requestedModel } : {}),
+      account: context.account,
+      models,
+    });
+    if (resolvedModel !== context.session.model) {
+      this.updateSession(context, { model: resolvedModel });
+    }
+
+    return { ...(resolvedModel !== undefined ? { model: resolvedModel } : {}), models };
+  }
+
+  private async hydrateSessionMetadataInBackground(
+    context: CodexSessionContext,
+    input: { readonly requestedModel?: string },
+  ): Promise<void> {
+    await this.refreshSessionMetadata(context, input);
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -303,7 +343,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         account: {
           type: "unknown",
           planType: null,
-          sparkEnabled: true,
+          sparkEnabled: false,
         },
         supportsReasoningSummary: input.supportsReasoningSummary === true,
         child,
@@ -330,7 +370,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.writeMessage(context, { method: "initialized" });
       const requestedModel = normalizeCodexModelSlug(input.model);
-      const normalizedModel = resolveCodexModelForAccount(requestedModel, context.account);
+      const metadata = await this.refreshSessionMetadata(
+        context,
+        requestedModel === undefined ? {} : { requestedModel },
+      );
+      const normalizedModel = metadata.model;
       const sessionOverrides = {
         model: normalizedModel ?? null,
         ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
@@ -414,11 +458,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const providerThreadId = threadIdRaw;
 
       context.providerThreadId = providerThreadId;
+      const resumeCursor = { threadId: providerThreadId };
       this.updateSession(context, {
         status: "ready",
-        ...(threadOpenMethod === "thread/resume"
-          ? { resumeCursor: { threadId: providerThreadId } }
-          : {}),
+        resumeCursor,
       });
       this.emitLifecycleEvent(
         context,
@@ -433,8 +476,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         requestedRuntimeMode: input.runtimeMode,
       }).pipe(this.runPromise);
       this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
-      const metadataHydrationInput = requestedModel === undefined ? {} : { requestedModel };
-      void this.hydrateSessionMetadataInBackground(context, metadataHydrationInput);
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -674,11 +715,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     context.pendingUserInputs.delete(requestId);
     const codexAnswers = toCodexUserInputAnswers(answers);
+    const result =
+      pendingRequest.requestMethod === "mcpServer/elicitation/request"
+        ? {
+            action: "accept",
+            content: this.toPlainUserInputAnswers(answers),
+          }
+        : {
+            answers: codexAnswers,
+          };
     this.writeMessage(context, {
       id: pendingRequest.jsonRpcId,
-      result: {
-        answers: codexAnswers,
-      },
+      result,
     });
 
     this.emitEvent({
@@ -687,16 +735,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       provider: "codex",
       threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
-      method:
-        pendingRequest.requestMethod === "tool/requestUserInput"
-          ? "tool/requestUserInput/answered"
-          : "item/tool/requestUserInput/answered",
+      method: this.userInputResolvedMethod(pendingRequest.requestMethod),
       turnId: pendingRequest.turnId,
       itemId: pendingRequest.itemId,
       requestId: pendingRequest.requestId,
       payload: {
         requestId: pendingRequest.requestId,
-        answers: codexAnswers,
+        answers:
+          pendingRequest.requestMethod === "mcpServer/elicitation/request"
+            ? this.toPlainUserInputAnswers(answers)
+            : codexAnswers,
       },
     });
   }
@@ -709,13 +757,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     context.stopping = true;
 
-    for (const pending of context.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("Session stopped before request completed."));
-    }
-    context.pending.clear();
-    context.pendingApprovals.clear();
-    context.pendingUserInputs.clear();
+    this.failPendingRequests(context, "Session stopped before request completed.");
 
     context.output.close();
 
@@ -804,6 +846,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         status: "error",
         lastError: message,
       });
+      this.failPendingRequests(context, message);
       this.emitErrorEvent(context, "process/error", message);
     });
 
@@ -818,6 +861,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         activeTurnId: undefined,
         lastError: code === 0 ? context.session.lastError : message,
       });
+      this.failPendingRequests(context, message);
       this.emitLifecycleEvent(context, "session/exited", message);
       this.sessions.delete(context.session.threadId);
     });
@@ -908,6 +952,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       );
       if (providerThreadId) {
         context.providerThreadId = providerThreadId;
+        this.updateSession(context, {
+          resumeCursor: { threadId: providerThreadId },
+        });
       }
       return;
     }
@@ -955,23 +1002,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
+    const handler = CODEX_SERVER_REQUEST_HANDLERS[request.method as CodexServerRequestMethod];
     const rawRoute = this.readRouteFields(request.params);
     const childRoute = this.readChildRoute(context, request.params);
     const childParentTurnId = childRoute?.parentTurnId;
     const effectiveTurnId = childParentTurnId ?? rawRoute.turnId;
-    const requestKind = this.requestKindForMethod(request.method);
+    const requestKind =
+      handler === "approval" ? this.requestKindForMethod(request.method) : undefined;
     let requestId: ApprovalRequestId | undefined;
     if (requestKind) {
       requestId = ApprovalRequestId.makeUnsafe(randomUUID());
       const pendingRequest: PendingApprovalRequest = {
         requestId,
         jsonRpcId: request.id,
-        method:
-          requestKind === "command"
-            ? "item/commandExecution/requestApproval"
-            : requestKind === "file-read"
-              ? "item/fileRead/requestApproval"
-              : "item/fileChange/requestApproval",
+        method: this.approvalMethodForRequest(request.method, requestKind),
         requestKind,
         threadId: context.session.threadId,
         ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
@@ -991,6 +1035,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         requestMethod: request.method,
       });
     }
+    const payload = this.payloadForServerRequest(request.method, request.params);
 
     this.emitEvent({
       id: EventId.makeUnsafe(randomUUID()),
@@ -1003,7 +1048,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
       requestId,
       requestKind,
-      payload: this.attachChildParentItemId(request.params, childRoute?.parentItemId),
+      payload: this.attachChildParentItemId(payload, childRoute?.parentItemId),
     });
 
     if (requestKind) {
@@ -1014,13 +1059,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return;
     }
 
-    this.writeMessage(context, {
-      id: request.id,
-      error: {
-        code: -32601,
-        message: `Unsupported server request: ${request.method}`,
-      },
-    });
+    this.rejectUnsupportedServerRequest(context, request);
   }
 
   private handleResponse(context: CodexSessionContext, response: JsonRpcResponse): void {
@@ -1072,13 +1111,94 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return result as TResponse;
   }
 
+  private failPendingRequests(context: CodexSessionContext, message: string): void {
+    const error = new Error(message);
+    for (const pending of context.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    context.pending.clear();
+
+    const pendingApprovals = Array.from(context.pendingApprovals.values());
+    context.pendingApprovals.clear();
+    for (const pendingRequest of pendingApprovals) {
+      this.emitEvent({
+        id: EventId.makeUnsafe(randomUUID()),
+        kind: "notification",
+        provider: "codex",
+        threadId: context.session.threadId,
+        createdAt: new Date().toISOString(),
+        method: "serverRequest/resolved",
+        ...(pendingRequest.turnId ? { turnId: pendingRequest.turnId } : {}),
+        ...(pendingRequest.itemId ? { itemId: pendingRequest.itemId } : {}),
+        requestId: pendingRequest.requestId,
+        requestKind: pendingRequest.requestKind,
+        payload: {
+          requestId: pendingRequest.requestId,
+          requestKind: pendingRequest.requestKind,
+          status: "cancelled",
+          reason: message,
+          request: {
+            method: pendingRequest.method,
+            kind: pendingRequest.requestKind,
+          },
+        },
+      });
+    }
+
+    const pendingUserInputs = Array.from(context.pendingUserInputs.values());
+    context.pendingUserInputs.clear();
+    for (const pendingRequest of pendingUserInputs) {
+      this.emitEvent({
+        id: EventId.makeUnsafe(randomUUID()),
+        kind: "notification",
+        provider: "codex",
+        threadId: context.session.threadId,
+        createdAt: new Date().toISOString(),
+        method: this.userInputResolvedMethod(pendingRequest.requestMethod),
+        ...(pendingRequest.turnId ? { turnId: pendingRequest.turnId } : {}),
+        ...(pendingRequest.itemId ? { itemId: pendingRequest.itemId } : {}),
+        requestId: pendingRequest.requestId,
+        payload: {
+          requestId: pendingRequest.requestId,
+          status: "cancelled",
+          reason: message,
+          answers: {},
+        },
+      });
+    }
+  }
+
+  private handleWriteFailure(context: CodexSessionContext, error: unknown): Error {
+    const normalizedError =
+      error instanceof Error
+        ? error
+        : new Error(`Failed to write to codex app-server stdin: ${String(error)}`);
+    const message = normalizedError.message || "Failed to write to codex app-server stdin.";
+    this.updateSession(context, {
+      status: "error",
+      lastError: message,
+    });
+    this.failPendingRequests(context, message);
+    this.emitErrorEvent(context, "process/stdinWriteFailed", message);
+    return normalizedError;
+  }
+
   private writeMessage(context: CodexSessionContext, message: unknown): void {
     const encoded = JSON.stringify(message);
     if (!context.child.stdin.writable) {
-      throw new Error("Cannot write to codex app-server stdin.");
+      throw this.handleWriteFailure(context, new Error("Cannot write to codex app-server stdin."));
     }
 
-    context.child.stdin.write(`${encoded}\n`);
+    try {
+      context.child.stdin.write(`${encoded}\n`, (error) => {
+        if (error) {
+          this.handleWriteFailure(context, error);
+        }
+      });
+    } catch (error) {
+      throw this.handleWriteFailure(context, error);
+    }
   }
 
   private emitLifecycleEvent(context: CodexSessionContext, method: string, message: string): void {
@@ -1141,6 +1261,37 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     };
   }
 
+  private resolveModelForSessionMetadata(input: {
+    readonly requestedModel?: string;
+    readonly account: CodexAccountSnapshot;
+    readonly models: ReadonlyArray<CodexAppServerModelSnapshot> | null;
+  }): string | undefined {
+    if (!input.requestedModel) {
+      return undefined;
+    }
+
+    if (input.account.type === "unknown" && input.requestedModel === CODEX_SPARK_MODEL) {
+      return undefined;
+    }
+
+    const resolvedModel = resolveCodexModelForAccount(input.requestedModel, input.account);
+    if (!resolvedModel) {
+      return undefined;
+    }
+
+    if (!input.models || input.models.length === 0) {
+      return resolvedModel;
+    }
+
+    const availableModels = new Set(
+      input.models.flatMap((model) => [
+        normalizeCodexModelSlug(model.model ?? undefined),
+        normalizeCodexModelSlug(model.id ?? undefined),
+      ]),
+    );
+    return availableModels.has(resolvedModel) ? resolvedModel : undefined;
+  }
+
   private readProviderThreadId(context: CodexSessionContext): string | undefined {
     return (
       context.providerThreadId ??
@@ -1157,6 +1308,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return "command";
     }
 
+    if (method === "permissions/requestApproval") {
+      return "command";
+    }
+
     if (method === "item/fileRead/requestApproval") {
       return "file-read";
     }
@@ -1166,6 +1321,168 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return undefined;
+  }
+
+  private approvalMethodForRequest(
+    method: string,
+    requestKind: ProviderRequestKind,
+  ): PendingApprovalRequest["method"] {
+    if (method === "permissions/requestApproval") {
+      return "permissions/requestApproval";
+    }
+
+    if (requestKind === "command") {
+      return "item/commandExecution/requestApproval";
+    }
+
+    if (requestKind === "file-read") {
+      return "item/fileRead/requestApproval";
+    }
+
+    return "item/fileChange/requestApproval";
+  }
+
+  private payloadForServerRequest(method: string, params: unknown): unknown {
+    if (method !== "mcpServer/elicitation/request") {
+      return params;
+    }
+
+    const payload = this.readObject(params);
+    return {
+      ...payload,
+      questions: this.questionsForMcpElicitationRequest(params),
+    };
+  }
+
+  private questionsForMcpElicitationRequest(params: unknown): Array<{
+    id: string;
+    header: string;
+    question: string;
+    options: Array<{ label: string; description: string }>;
+  }> {
+    const paramsRecord = this.readObject(params) ?? {};
+    const message =
+      this.readString(paramsRecord, "message") ??
+      this.readString(this.readObject(paramsRecord, "params"), "message") ??
+      "Provide the requested MCP input.";
+    const schema =
+      this.readObject(paramsRecord, "requestedSchema") ??
+      this.readObject(this.readObject(paramsRecord, "params"), "requestedSchema") ??
+      this.readObject(paramsRecord, "schema");
+    const properties = this.readObject(schema, "properties");
+    const entries = Object.entries(properties ?? {});
+
+    if (entries.length === 0) {
+      return [
+        {
+          id: "response",
+          header: "MCP input",
+          question: message,
+          options: [
+            {
+              label: "Accept",
+              description: "Provide a custom response for this MCP request.",
+            },
+          ],
+        },
+      ];
+    }
+
+    return entries.map(([id, value]) => {
+      const property = this.readObject(value) ?? {};
+      const title = this.readString(property, "title") ?? id;
+      const description = this.readString(property, "description") ?? message;
+      const enumValues =
+        this.readArray(property, "enum")
+          ?.filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => ({
+            label: entry,
+            description,
+          })) ??
+        this.readArray(property, "oneOf")?.flatMap((entry) => {
+          const option = this.readObject(entry);
+          const label = this.readString(option, "title") ?? this.readString(option, "const");
+          if (!label) {
+            return [];
+          }
+          return [
+            {
+              label,
+              description: this.readString(option, "description") ?? description,
+            },
+          ];
+        }) ??
+        [];
+      const options =
+        enumValues.length > 0
+          ? enumValues
+          : [
+              {
+                label: "Provide value",
+                description: "Enter a custom value for this field.",
+              },
+            ];
+
+      return {
+        id,
+        header: title,
+        question: description,
+        options,
+      };
+    });
+  }
+
+  private rejectUnsupportedServerRequest(
+    context: CodexSessionContext,
+    request: JsonRpcRequest,
+  ): void {
+    const message = `Unsupported server request: ${request.method}`;
+    this.writeMessage(context, {
+      id: request.id,
+      error: {
+        code: -32601,
+        message,
+      },
+    });
+    this.emitEvent({
+      id: EventId.makeUnsafe(randomUUID()),
+      kind: "notification",
+      provider: "codex",
+      threadId: context.session.threadId,
+      createdAt: new Date().toISOString(),
+      method: "serverRequest/resolved",
+      payload: {
+        status: "unsupported",
+        reason: message,
+        request: {
+          method: request.method,
+        },
+      },
+    });
+  }
+
+  private userInputResolvedMethod(
+    method: PendingUserInputRequest["requestMethod"] | undefined,
+  ): "item/tool/requestUserInput/answered" | "tool/requestUserInput/answered" {
+    return method === "tool/requestUserInput"
+      ? "tool/requestUserInput/answered"
+      : "item/tool/requestUserInput/answered";
+  }
+
+  private toPlainUserInputAnswers(answers: ProviderUserInputAnswers): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(answers).map(([key, value]) => {
+        const answerObject = this.readObject(value);
+        const answerList = this.readArray(answerObject, "answers");
+        if (answerList?.length === 1) {
+          return [key, answerList[0]] as const;
+        }
+        if (answerList) {
+          return [key, answerList] as const;
+        }
+        return [key, value] as const;
+      }),
+    );
   }
 
   private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {

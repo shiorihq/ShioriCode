@@ -4,9 +4,14 @@ import type { BrowserPanelCommand } from "contracts";
 import type { BrowserWebviewElement } from "./browserWebviewStore";
 import {
   clickSelectorScript,
+  fillSelectorScript,
+  hoverSelectorScript,
+  scrollScript,
+  selectSelectorScript,
   runBrowserPanelCommandOnWebview,
   snapshotScript,
   typeSelectorScript,
+  waitScript,
 } from "./browserPanelCommandRunner";
 
 type FakeWebviewOverrides = Partial<
@@ -23,6 +28,7 @@ function makeWebview(overrides: FakeWebviewOverrides = {}): BrowserWebviewElemen
   goForward: ReturnType<typeof vi.fn>;
   reload: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
+  sendInputEvent: ReturnType<typeof vi.fn>;
 } {
   const attributes = new Map<string, string>();
   return {
@@ -42,6 +48,7 @@ function makeWebview(overrides: FakeWebviewOverrides = {}): BrowserWebviewElemen
     goForward: vi.fn(),
     reload: vi.fn(),
     stop: vi.fn(),
+    sendInputEvent: vi.fn(),
     ...overrides,
   } as never;
 }
@@ -188,6 +195,131 @@ describe("runBrowserPanelCommandOnWebview", () => {
       typeSelectorScript("input[name=q]", "hello"),
       true,
     );
+
+    await runBrowserPanelCommandOnWebview(
+      {
+        id: "cmd-hover",
+        threadId: "thread-1",
+        type: "hover-selector",
+        selector: "#save",
+      } as BrowserPanelCommand,
+      webview,
+    );
+    expect(webview.executeJavaScript).toHaveBeenLastCalledWith(hoverSelectorScript("#save"), true);
+
+    await runBrowserPanelCommandOnWebview(
+      {
+        id: "cmd-fill",
+        threadId: "thread-1",
+        type: "fill-selector",
+        selector: "input[name=q]",
+        text: "replacement",
+      } as BrowserPanelCommand,
+      webview,
+    );
+    expect(webview.executeJavaScript).toHaveBeenLastCalledWith(
+      fillSelectorScript("input[name=q]", "replacement"),
+      true,
+    );
+
+    await runBrowserPanelCommandOnWebview(
+      {
+        id: "cmd-select",
+        threadId: "thread-1",
+        type: "select-selector",
+        selector: "select[name=sort]",
+        value: "recent",
+      } as BrowserPanelCommand,
+      webview,
+    );
+    expect(webview.executeJavaScript).toHaveBeenLastCalledWith(
+      selectSelectorScript("select[name=sort]", "recent"),
+      true,
+    );
+
+    const waitCommand = {
+      id: "cmd-wait",
+      threadId: "thread-1",
+      type: "wait",
+      selector: "#ready",
+      timeoutMs: 250,
+    } as Extract<BrowserPanelCommand, { type: "wait" }>;
+    await runBrowserPanelCommandOnWebview(waitCommand, webview);
+    expect(webview.executeJavaScript).toHaveBeenLastCalledWith(waitScript(waitCommand), true);
+
+    const scrollCommand = {
+      id: "cmd-scroll",
+      threadId: "thread-1",
+      type: "scroll",
+      deltaY: 500,
+    } as Extract<BrowserPanelCommand, { type: "scroll" }>;
+    await runBrowserPanelCommandOnWebview(scrollCommand, webview);
+    expect(webview.executeJavaScript).toHaveBeenLastCalledWith(scrollScript(scrollCommand), true);
+  });
+
+  it("sends keyboard input through Electron when available", async () => {
+    const webview = makeWebview();
+
+    const result = await runBrowserPanelCommandOnWebview(
+      {
+        id: "cmd-key",
+        threadId: "thread-1",
+        type: "press-key",
+        key: "Mod+L",
+      } as BrowserPanelCommand,
+      webview,
+    );
+
+    expect(result).toEqual({ ok: true, value: { pressed: true, key: "Mod+L" } });
+    expect(webview.sendInputEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "keyDown", keyCode: "L" }),
+    );
+    expect(webview.sendInputEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "keyUp", keyCode: "L" }),
+    );
+    expect(webview.executeJavaScript).not.toHaveBeenCalled();
+  });
+
+  it("returns captured console messages and can clear them", async () => {
+    const webview = makeWebview();
+    const clearConsoleEntries = vi.fn();
+    const result = await runBrowserPanelCommandOnWebview(
+      {
+        id: "cmd-console",
+        threadId: "thread-1",
+        type: "console",
+        clear: true,
+      } as BrowserPanelCommand,
+      webview,
+      {
+        consoleEntries: [
+          {
+            level: "error",
+            message: "boom",
+            sourceId: "app.js",
+            line: 12,
+            timestamp: 1,
+          },
+        ],
+        clearConsoleEntries,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        messages: [
+          {
+            level: "error",
+            message: "boom",
+            sourceId: "app.js",
+            line: 12,
+            timestamp: 1,
+          },
+        ],
+      },
+    });
+    expect(clearConsoleEntries).toHaveBeenCalledTimes(1);
   });
 
   it("fails JS-backed commands when executeJavaScript is unavailable", async () => {

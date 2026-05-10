@@ -261,8 +261,8 @@ export function ComputerUseSettingsPanel() {
           }
         />
         <SettingsRow
-          title="Gate direct desktop tools"
-          description="Keep raw MCP desktop actions hidden unless the approval gate is disabled."
+          title="Require approval for desktop tools"
+          description="Ask before hosted Shiori runs raw desktop actions; some external providers may hide these tools while approval is required."
           control={
             <Switch
               checked={settings.computerUse.requireApproval}

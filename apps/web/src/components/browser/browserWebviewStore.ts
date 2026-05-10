@@ -11,6 +11,14 @@ export interface BrowserPanelSnapshot {
   error: string | null;
 }
 
+export interface BrowserPanelConsoleEntry {
+  level: string;
+  message: string;
+  sourceId: string | null;
+  line: number | null;
+  timestamp: number;
+}
+
 export interface BrowserWebviewElement extends HTMLElement {
   getURL?: () => string;
   getTitle?: () => string;
@@ -24,6 +32,11 @@ export interface BrowserWebviewElement extends HTMLElement {
   loadURL?: (url: string) => Promise<void>;
   executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
   getWebContentsId?: () => number;
+  sendInputEvent?: (event: {
+    type: "keyDown" | "keyUp" | "char";
+    keyCode?: string;
+    modifiers?: string[];
+  }) => void;
 }
 
 export const DEFAULT_BROWSER_URL = "about:blank";

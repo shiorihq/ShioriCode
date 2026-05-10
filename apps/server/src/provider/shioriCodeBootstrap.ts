@@ -5,6 +5,11 @@ import {
   isHostedShioriAuthToken,
   normalizeHostedShioriApiBaseUrl,
 } from "../hostedShioriApi";
+import {
+  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
+  hostedShioriAuthTokenMatchesConvexUrl,
+  resolveHostedShioriConvexUrl,
+} from "shared/hostedShioriConvex";
 
 export interface ShioriCodeBootstrapToolProfile {
   readonly supported: boolean;
@@ -45,6 +50,48 @@ export interface ShioriCodeBootstrapProbe {
 }
 
 const BOOTSTRAP_REQUEST_TIMEOUT_MS = 2_500;
+const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
+  process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
+  process.env.VITE_DEV_SERVER_URL ? HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL : undefined,
+);
+
+const CONSERVATIVE_BOOTSTRAP_DEFAULTS: ShioriCodeBootstrapConfig = {
+  approvalPolicies: {
+    fileWrite: "ask",
+    shellCommand: "ask",
+    destructiveChange: "ask",
+    networkCommand: "ask",
+    mcpSideEffect: "ask",
+    outsideWorkspace: "ask",
+  },
+  protectedPaths: [
+    ".git",
+    ".env",
+    ".env.*",
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/.shioricode",
+  ],
+  browserUse: { enabled: false },
+  computerUse: { enabled: false },
+  mobileApp: { enabled: false },
+  kanban: { enabled: false },
+  subagents: {
+    enabled: false,
+    profiles: {},
+  },
+};
+
+function isExpectedHostedShioriAuthToken(token: string | null): token is string {
+  return (
+    isHostedShioriAuthToken(token) &&
+    hostedShioriAuthTokenMatchesConvexUrl({
+      token,
+      convexUrl: hostedShioriConvexUrl,
+    })
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -72,35 +119,52 @@ function normalizeFeatureGate(value: unknown): ShioriCodeBootstrapFeatureGate {
   };
 }
 
+function normalizeApprovalPolicy(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeBootstrapConfig {
   const approvalPolicies = isRecord(payload.approvalPolicies) ? payload.approvalPolicies : {};
   const rawSubagents = isRecord(payload.subagents) ? payload.subagents : null;
   const rawProfiles = rawSubagents && isRecord(rawSubagents.profiles) ? rawSubagents.profiles : {};
+  const protectedPaths = Array.isArray(payload.protectedPaths)
+    ? payload.protectedPaths.flatMap((entry) => (typeof entry === "string" ? [entry] : []))
+    : [];
+  const codexProfile = normalizeToolProfile(rawProfiles.codex);
+  const claudeProfile = normalizeToolProfile(rawProfiles.claude);
+  const shioriProfile = normalizeToolProfile(rawProfiles.shiori);
+  const normalizedApprovalPolicies = {
+    fileWrite:
+      normalizeApprovalPolicy(approvalPolicies.fileWrite) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.fileWrite ??
+      "ask",
+    shellCommand:
+      normalizeApprovalPolicy(approvalPolicies.shellCommand) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.shellCommand ??
+      "ask",
+    destructiveChange:
+      normalizeApprovalPolicy(approvalPolicies.destructiveChange) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.destructiveChange ??
+      "ask",
+    networkCommand:
+      normalizeApprovalPolicy(approvalPolicies.networkCommand) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.networkCommand ??
+      "ask",
+    mcpSideEffect:
+      normalizeApprovalPolicy(approvalPolicies.mcpSideEffect) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.mcpSideEffect ??
+      "ask",
+    outsideWorkspace:
+      normalizeApprovalPolicy(approvalPolicies.outsideWorkspace) ??
+      CONSERVATIVE_BOOTSTRAP_DEFAULTS.approvalPolicies.outsideWorkspace ??
+      "ask",
+  };
 
   return {
-    approvalPolicies: {
-      ...(typeof approvalPolicies.fileWrite === "string"
-        ? { fileWrite: approvalPolicies.fileWrite }
-        : {}),
-      ...(typeof approvalPolicies.shellCommand === "string"
-        ? { shellCommand: approvalPolicies.shellCommand }
-        : {}),
-      ...(typeof approvalPolicies.destructiveChange === "string"
-        ? { destructiveChange: approvalPolicies.destructiveChange }
-        : {}),
-      ...(typeof approvalPolicies.networkCommand === "string"
-        ? { networkCommand: approvalPolicies.networkCommand }
-        : {}),
-      ...(typeof approvalPolicies.mcpSideEffect === "string"
-        ? { mcpSideEffect: approvalPolicies.mcpSideEffect }
-        : {}),
-      ...(typeof approvalPolicies.outsideWorkspace === "string"
-        ? { outsideWorkspace: approvalPolicies.outsideWorkspace }
-        : {}),
-    },
-    protectedPaths: Array.isArray(payload.protectedPaths)
-      ? payload.protectedPaths.flatMap((entry) => (typeof entry === "string" ? [entry] : []))
-      : [],
+    approvalPolicies: normalizedApprovalPolicies,
+    protectedPaths: Array.from(
+      new Set([...CONSERVATIVE_BOOTSTRAP_DEFAULTS.protectedPaths, ...protectedPaths]),
+    ),
     browserUse: normalizeFeatureGate(payload.browserUse),
     computerUse: normalizeFeatureGate(payload.computerUse),
     mobileApp: normalizeFeatureGate(payload.mobileApp),
@@ -109,18 +173,12 @@ function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeB
       ? {
           enabled: rawSubagents.enabled === true,
           profiles: {
-            ...(normalizeToolProfile(rawProfiles.codex)
-              ? { codex: normalizeToolProfile(rawProfiles.codex)! }
-              : {}),
-            ...(normalizeToolProfile(rawProfiles.claude)
-              ? { claude: normalizeToolProfile(rawProfiles.claude)! }
-              : {}),
-            ...(normalizeToolProfile(rawProfiles.shiori)
-              ? { shiori: normalizeToolProfile(rawProfiles.shiori)! }
-              : {}),
+            ...(codexProfile ? { codex: codexProfile } : {}),
+            ...(claudeProfile ? { claude: claudeProfile } : {}),
+            ...(shioriProfile ? { shiori: shioriProfile } : {}),
           },
         }
-      : null,
+      : CONSERVATIVE_BOOTSTRAP_DEFAULTS.subagents,
   };
 }
 
@@ -128,7 +186,7 @@ export const fetchShioriCodeBootstrap = Effect.fn("fetchShioriCodeBootstrap")(fu
   readonly apiBaseUrl: string;
   readonly authToken: string | null;
 }): Effect.fn.Return<ShioriCodeBootstrapProbe> {
-  if (!isHostedShioriAuthToken(input.authToken)) {
+  if (!isExpectedHostedShioriAuthToken(input.authToken)) {
     return {
       bootstrap: null,
       message: null,
@@ -173,15 +231,21 @@ export const fetchShioriCodeBootstrap = Effect.fn("fetchShioriCodeBootstrap")(fu
     };
   }
 
-  const payload = yield* Effect.promise(() =>
-    response
-      .json()
-      .then((value) => (isRecord(value) ? value : {}))
-      .catch(() => ({})),
+  const payloadResult = yield* Effect.result(
+    Effect.tryPromise({
+      try: () => response.json(),
+      catch: (error) => error,
+    }),
   );
+  if (payloadResult._tag === "Failure" || !isRecord(payloadResult.success)) {
+    return {
+      bootstrap: CONSERVATIVE_BOOTSTRAP_DEFAULTS,
+      message: "Failed to parse hosted ShioriCode bootstrap policy; using conservative defaults.",
+    };
+  }
 
   return {
-    bootstrap: normalizeBootstrapConfig(payload),
+    bootstrap: normalizeBootstrapConfig(payloadResult.success),
     message: null,
   };
 });

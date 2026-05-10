@@ -6,6 +6,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+  buildCursorAgentArgs,
+  resolveCursorAgentCommand,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
@@ -36,12 +38,10 @@ export function buildCursorAcpSpawnInput(
   cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined,
   cwd: string,
 ): AcpSpawnInput {
+  const agentCommand = resolveCursorAgentCommand(cursorSettings?.binaryPath);
   return {
-    command: cursorSettings?.binaryPath || "agent",
-    args: [
-      ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
-      "acp",
-    ],
+    command: agentCommand.command,
+    args: buildCursorAgentArgs(cursorSettings, ["acp"]),
     cwd,
   };
 }
@@ -74,6 +74,12 @@ interface CursorAcpModelSelectionRuntime {
   readonly setModel: (model: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
 }
 
+export interface CursorAcpAppliedModelSelection {
+  readonly requestedModel: string;
+  readonly appliedModel: string | undefined;
+  readonly fallbackReason?: string;
+}
+
 function findModelConfigOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ): EffectAcpSchema.SessionConfigOption | undefined {
@@ -91,18 +97,24 @@ function collectModelOptionValues(
   );
 }
 
-function resolveSupportedCursorModel(input: {
+export function resolveSupportedCursorModel(input: {
   readonly requestedModel: string;
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-}): string | undefined {
+}): CursorAcpAppliedModelSelection {
   const modelConfigOption = findModelConfigOption(input.configOptions);
   const supportedValues = collectModelOptionValues(modelConfigOption);
   if (supportedValues.length === 0) {
-    return input.requestedModel;
+    return {
+      requestedModel: input.requestedModel,
+      appliedModel: input.requestedModel,
+    };
   }
 
   if (supportedValues.includes(input.requestedModel)) {
-    return input.requestedModel;
+    return {
+      requestedModel: input.requestedModel,
+      appliedModel: input.requestedModel,
+    };
   }
 
   const aliases = [
@@ -114,7 +126,11 @@ function resolveSupportedCursorModel(input: {
 
   for (const alias of aliases) {
     if (supportedValues.includes(alias)) {
-      return alias;
+      return {
+        requestedModel: input.requestedModel,
+        appliedModel: alias,
+        fallbackReason: `Requested Cursor model '${input.requestedModel}' is unavailable; using '${alias}'.`,
+      };
     }
   }
 
@@ -122,7 +138,13 @@ function resolveSupportedCursorModel(input: {
     modelConfigOption?.type === "select" && typeof modelConfigOption.currentValue === "string"
       ? modelConfigOption.currentValue.trim()
       : "";
-  return currentValue && supportedValues.includes(currentValue) ? currentValue : undefined;
+  return {
+    requestedModel: input.requestedModel,
+    appliedModel: currentValue && supportedValues.includes(currentValue) ? currentValue : undefined,
+    fallbackReason: currentValue
+      ? `Requested Cursor model '${input.requestedModel}' is unavailable; keeping current model '${currentValue}'.`
+      : `Requested Cursor model '${input.requestedModel}' is unavailable and Cursor did not report a fallback model.`,
+  };
 }
 
 export function applyCursorAcpModelSelection<E>(input: {
@@ -130,16 +152,16 @@ export function applyCursorAcpModelSelection<E>(input: {
   readonly model: string | null | undefined;
   readonly modelOptions: CursorModelOptions | null | undefined;
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
-}): Effect.Effect<void, E> {
+}): Effect.Effect<CursorAcpAppliedModelSelection, E> {
   return Effect.gen(function* () {
     const configOptions = yield* input.runtime.getConfigOptions;
     const requestedModel = resolveCursorAcpBaseModelId(input.model);
-    const model = resolveSupportedCursorModel({
+    const modelSelection = resolveSupportedCursorModel({
       requestedModel,
       configOptions,
     });
-    if (model !== undefined) {
-      yield* input.runtime.setModel(model).pipe(
+    if (modelSelection.appliedModel !== undefined) {
+      yield* input.runtime.setModel(modelSelection.appliedModel).pipe(
         Effect.mapError((cause) =>
           input.mapError({
             cause,
@@ -161,5 +183,7 @@ export function applyCursorAcpModelSelection<E>(input: {
         ),
       );
     }
+
+    return modelSelection;
   });
 }

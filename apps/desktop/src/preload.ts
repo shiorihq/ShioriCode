@@ -20,6 +20,7 @@ const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const COMPUTER_USE_GET_PERMISSIONS_CHANNEL = "desktop:computer-use-get-permissions";
 const COMPUTER_USE_PERMISSION_GUIDE_CHANNEL = "desktop:computer-use-permission-guide";
+const BROWSER_CAPTURE_VISIBLE_PAGE_CHANNEL = "desktop:browser-capture-visible-page";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -51,6 +52,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
   getCompanionCliState: () => ipcRenderer.invoke(COMPANION_CLI_GET_STATE_CHANNEL),
   installCompanionCli: () => ipcRenderer.invoke(COMPANION_CLI_INSTALL_CHANNEL),
+  browser: {
+    captureVisiblePage: (input) => ipcRenderer.invoke(BROWSER_CAPTURE_VISIBLE_PAGE_CHANNEL, input),
+  },
   getComputerUsePermissions: () => ipcRenderer.invoke(COMPUTER_USE_GET_PERMISSIONS_CHANNEL),
   showComputerUsePermissionGuide: (kind) =>
     ipcRenderer.invoke(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, kind),

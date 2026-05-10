@@ -126,6 +126,36 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
   });
 }
 
+function capDiagnostic(value: string, limit = 4_000): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}... (${value.length - limit} chars truncated)`;
+}
+
+function usageDiagnostic(input: {
+  readonly probeError?: unknown;
+  readonly oauthError?: unknown;
+  readonly oauthReturnedEmpty: boolean;
+}): string {
+  const details = [
+    input.probeError
+      ? `app-server probe failed: ${toMessage(input.probeError, "unknown error")}`
+      : undefined,
+    input.oauthError
+      ? `direct OAuth fallback failed: ${toMessage(input.oauthError, "unknown error")}`
+      : input.oauthReturnedEmpty
+        ? "direct OAuth fallback did not return usage; your Codex login may be expired"
+        : undefined,
+  ].filter((detail): detail is string => detail !== undefined);
+
+  return capDiagnostic(
+    details.length > 0
+      ? `Failed to read Codex account usage (${details.join("; ")}).`
+      : "Failed to read Codex account usage.",
+  );
+}
+
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -440,6 +470,7 @@ function extractSummaryIndex(payload: Record<string, unknown> | undefined): numb
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
+    case "permissions/requestApproval":
       return "command_execution_approval";
     case "item/fileRead/requestApproval":
       return "file_read_approval";
@@ -451,6 +482,7 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "exec_command_approval";
     case "item/tool/requestUserInput":
     case "tool/requestUserInput":
+    case "mcpServer/elicitation/request":
       return "tool_user_input";
     case "item/tool/call":
       return "dynamic_tool_call";
@@ -808,7 +840,11 @@ function mapToRuntimeEvents(
   }
 
   if (event.kind === "request") {
-    if (event.method === "item/tool/requestUserInput" || event.method === "tool/requestUserInput") {
+    if (
+      event.method === "item/tool/requestUserInput" ||
+      event.method === "tool/requestUserInput" ||
+      event.method === "mcpServer/elicitation/request"
+    ) {
       const questions = toUserInputQuestions(payload);
       if (!questions) {
         return [];
@@ -1894,21 +1930,46 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
     return yield* Effect.tryPromise({
       try: async () => {
-        const oauthUsage = codexSettings.homePath
-          ? await (options?.fetchOAuthUsage ?? fetchCodexOAuthUsageSnapshot)({
-              homePath: codexSettings.homePath,
-            })
-          : await (options?.fetchOAuthUsage ?? fetchCodexOAuthUsageSnapshot)();
-        if (oauthUsage) {
-          return oauthUsage;
+        if (activeSession) {
+          try {
+            return await manager.readUsage(activeSession.threadId);
+          } catch {
+            // Fall through to a standalone app-server probe. The active session
+            // may have exited between listSessions and readUsage.
+          }
         }
 
-        return activeSession
-          ? manager.readUsage(activeSession.threadId)
-          : (options?.probeUsage ?? probeCodexUsage)({
-              binaryPath: resolvePreferredCodexBinaryPath(codexSettings.binaryPath),
-              ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
-            });
+        let probeError: unknown;
+        try {
+          return await (options?.probeUsage ?? probeCodexUsage)({
+            binaryPath: resolvePreferredCodexBinaryPath(codexSettings.binaryPath),
+            ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+          });
+        } catch (error) {
+          probeError = error;
+        }
+
+        let oauthError: unknown;
+        try {
+          const oauthUsage = codexSettings.homePath
+            ? await (options?.fetchOAuthUsage ?? fetchCodexOAuthUsageSnapshot)({
+                homePath: codexSettings.homePath,
+              })
+            : await (options?.fetchOAuthUsage ?? fetchCodexOAuthUsageSnapshot)();
+          if (oauthUsage) {
+            return oauthUsage;
+          }
+        } catch (error) {
+          oauthError = error;
+        }
+
+        throw new Error(
+          usageDiagnostic({
+            probeError,
+            oauthError,
+            oauthReturnedEmpty: oauthError === undefined,
+          }),
+        );
       },
       catch: (cause) =>
         new ProviderAdapterRequestError({

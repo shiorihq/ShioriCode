@@ -143,10 +143,19 @@ function readPersistedModelSelection(
 function shouldReusePersistedResumeCursor(input: {
   readonly binding: ProviderRuntimeBinding | undefined;
   readonly provider: ProviderSession["provider"];
+  readonly requestedCwd?: string;
   readonly requestedModelSelection?: ModelSelection;
 }): boolean {
   if (!input.binding || input.binding.provider !== input.provider) {
     return false;
+  }
+
+  const requestedCwd = input.requestedCwd?.trim();
+  if (requestedCwd) {
+    const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
+    if (persistedCwd !== requestedCwd) {
+      return false;
+    }
   }
 
   if (input.requestedModelSelection === undefined) {
@@ -605,6 +614,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         (shouldReusePersistedResumeCursor({
           binding: persistedBinding,
           provider: input.provider,
+          ...(input.cwd !== undefined ? { requestedCwd: input.cwd } : {}),
           ...(input.modelSelection !== undefined
             ? { requestedModelSelection: input.modelSelection }
             : {}),

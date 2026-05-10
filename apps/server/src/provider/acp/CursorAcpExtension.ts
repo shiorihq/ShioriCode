@@ -106,7 +106,8 @@ export function buildCursorAskQuestionResponse(
   params: typeof CursorAskQuestionRequest.Type,
   answers: ProviderUserInputAnswers,
 ): CursorAskQuestionResponse {
-  if (Object.keys(answers).length === 0) {
+  const hasSelectableQuestion = params.questions.some((question) => question.options.length > 0);
+  if (Object.keys(answers).length === 0 && hasSelectableQuestion) {
     return { outcome: { outcome: "cancelled" } };
   }
 
@@ -168,4 +169,98 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
     return [{ step, status }];
   });
   return { plan };
+}
+
+type CursorTodoInput = typeof CursorTodo.Type;
+
+interface CursorTodoStateEntry {
+  readonly id: string;
+  readonly content?: string;
+  readonly title?: string;
+  readonly status?: string;
+}
+
+export interface CursorTodoPlanState {
+  readonly todosById: Map<string, CursorTodoStateEntry>;
+  readonly order: Array<string>;
+  lastPlan:
+    | {
+        readonly explanation?: string;
+        readonly plan: ReadonlyArray<{
+          readonly step: string;
+          readonly status: "pending" | "inProgress" | "completed";
+        }>;
+      }
+    | undefined;
+}
+
+export function makeCursorTodoPlanState(): CursorTodoPlanState {
+  return {
+    todosById: new Map(),
+    order: [],
+    lastPlan: undefined,
+  };
+}
+
+function normalizeTodoId(todo: CursorTodoInput, index: number): string {
+  const explicitId = todo.id?.trim();
+  if (explicitId) {
+    return explicitId;
+  }
+  const contentKey = todo.content?.trim() || todo.title?.trim();
+  return contentKey ? `content:${contentKey}` : `index:${index}`;
+}
+
+function mergeTodoEntry(
+  previous: CursorTodoStateEntry | undefined,
+  id: string,
+  todo: CursorTodoInput,
+): CursorTodoStateEntry {
+  return {
+    id,
+    ...(previous?.content !== undefined ? { content: previous.content } : {}),
+    ...(previous?.title !== undefined ? { title: previous.title } : {}),
+    ...(previous?.status !== undefined ? { status: previous.status } : {}),
+    ...(todo.content !== undefined ? { content: todo.content } : {}),
+    ...(todo.title !== undefined ? { title: todo.title } : {}),
+    ...(todo.status !== undefined ? { status: todo.status } : {}),
+  };
+}
+
+function todoEntryToInput(entry: CursorTodoStateEntry): CursorTodoInput {
+  return {
+    id: entry.id,
+    ...(entry.content !== undefined ? { content: entry.content } : {}),
+    ...(entry.title !== undefined ? { title: entry.title } : {}),
+    ...(entry.status !== undefined ? { status: entry.status } : {}),
+  };
+}
+
+export function applyCursorTodosUpdate(
+  state: CursorTodoPlanState,
+  params: typeof CursorUpdateTodosRequest.Type,
+): CursorTodoPlanState["lastPlan"] {
+  if (!params.merge) {
+    state.todosById.clear();
+    state.order.splice(0);
+  }
+
+  params.todos.forEach((todo, index) => {
+    const id = normalizeTodoId(todo, index);
+    if (!state.todosById.has(id)) {
+      state.order.push(id);
+    }
+    state.todosById.set(id, mergeTodoEntry(state.todosById.get(id), id, todo));
+  });
+
+  const mergedTodos = state.order
+    .map((id) => state.todosById.get(id))
+    .filter((entry): entry is CursorTodoStateEntry => entry !== undefined)
+    .map(todoEntryToInput);
+  state.lastPlan = extractTodosAsPlan({
+    toolCallId: params.toolCallId,
+    merge: false,
+    todos: mergedTodos,
+  });
+  return state.lastPlan;
 }

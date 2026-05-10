@@ -48,8 +48,8 @@ describe("PrKanbanBoard", () => {
     });
 
     try {
-      await expect.element(page.getByText("Loading board…")).toBeInTheDocument();
-      await expect.element(page.getByText("No tasks yet")).not.toBeInTheDocument();
+      await expect.element(page.getByText("Loading goals...")).toBeInTheDocument();
+      await expect.element(page.getByText("No goals yet")).not.toBeInTheDocument();
     } finally {
       await screen.unmount();
       host.remove();

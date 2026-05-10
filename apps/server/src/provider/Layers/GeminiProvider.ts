@@ -22,7 +22,11 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
 } from "../providerSnapshot";
-import { detectGeminiAcpFlag, normalizeGeminiAcpFlag } from "../acp/GeminiAcpSupport";
+import {
+  checkGeminiAcpAuthReadiness,
+  detectGeminiAcpFlag,
+  normalizeGeminiAcpFlag,
+} from "../acp/GeminiAcpSupport";
 import { GeminiProvider } from "../Services/GeminiProvider";
 
 const PROVIDER = "gemini" as const;
@@ -186,19 +190,68 @@ export const checkGeminiProviderStatus = Effect.fn("checkGeminiProviderStatus")(
   }
 
   const binaryPath = geminiSettings.binaryPath.trim() || "gemini";
+  const flagDetection = normalizedExplicitFlag
+    ? Option.some({
+        supportedFlag: normalizedExplicitFlag,
+        reason: "help-output" as const,
+        raw: "",
+      })
+    : yield* detectGeminiAcpFlag(binaryPath, version).pipe(
+        Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      );
+
+  if (!normalizedExplicitFlag && Option.isNone(flagDetection)) {
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Timed out while detecting the Gemini ACP flag.",
+      },
+    });
+  }
+
   const acpFlag =
     normalizedExplicitFlag ??
-    (yield* detectGeminiAcpFlag(binaryPath).pipe(
-      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-      Effect.map((result) => (Option.isSome(result) ? result.value : "--acp")),
-    ));
-  const loggedIn = hasGeminiOAuthCache();
+    (Option.isSome(flagDetection) ? flagDetection.value.supportedFlag : null);
+  if (!acpFlag) {
+    const detection = Option.isSome(flagDetection) ? flagDetection.value : undefined;
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          detection?.reason === "help-command-failed"
+            ? `Could not detect Gemini ACP support: ${detection.raw}.`
+            : "Gemini CLI does not expose `--acp` or `--experimental-acp` in `gemini --help`.",
+      },
+    });
+  }
+
+  const oauthCacheHint = hasGeminiOAuthCache();
+  const authReadiness = yield* checkGeminiAcpAuthReadiness({
+    geminiSettings,
+    childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+    cwd: process.cwd(),
+    acpFlag,
+    oauthCacheHint,
+    cacheKeyVersion: version,
+  });
   const usingLegacyFlag = acpFlag === "--experimental-acp";
   const hasApiKeyEnv = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
   const messages = [
-    !loggedIn
-      ? "Gemini CLI is not authenticated. Run `gemini` and choose Sign in with Google."
-      : "",
+    authReadiness.message ?? "",
     usingLegacyFlag
       ? "This Gemini CLI exposes ACP as `--experimental-acp`; upgrade for `--acp`."
       : "",
@@ -215,11 +268,21 @@ export const checkGeminiProviderStatus = Effect.fn("checkGeminiProviderStatus")(
     probe: {
       installed: true,
       version,
-      status: loggedIn ? "ready" : "error",
+      status:
+        authReadiness.status === "authenticated"
+          ? "ready"
+          : authReadiness.status === "auth_required"
+            ? "error"
+            : "warning",
       auth: {
-        status: loggedIn ? "authenticated" : "unauthenticated",
+        status:
+          authReadiness.status === "authenticated"
+            ? "authenticated"
+            : authReadiness.status === "auth_required"
+              ? "unauthenticated"
+              : "unknown",
         type: "oauth-personal",
-        ...(loggedIn ? { label: "Signed in with Google" } : {}),
+        ...(authReadiness.status === "authenticated" ? { label: "Signed in with Google" } : {}),
       },
       ...(messages.length > 0 ? { message: messages.join(" ") } : {}),
     },

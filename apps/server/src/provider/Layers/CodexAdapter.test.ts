@@ -261,6 +261,41 @@ const probeUsageImpl = vi.fn(
   }),
 );
 const fetchOAuthUsageImpl = vi.fn(async (): Promise<CodexUsageSnapshot | null> => null);
+const resetUsageMocks = () => {
+  usageManager.listSessionsImpl.mockReset();
+  usageManager.listSessionsImpl.mockReturnValue([]);
+  usageManager.readUsageImpl.mockReset();
+  usageManager.readUsageImpl.mockImplementation(
+    async (_threadId: ThreadId): Promise<CodexUsageSnapshot> => ({
+      provider: "codex",
+      source: "app-server",
+      fetchedAt: "2026-04-04T00:00:00.000Z",
+      rateLimits: null,
+      rateLimitsByLimitId: {},
+    }),
+  );
+  probeUsageImpl.mockReset();
+  probeUsageImpl.mockResolvedValue({
+    provider: "codex",
+    source: "app-server",
+    fetchedAt: "2026-04-04T01:00:00.000Z",
+    rateLimits: {
+      limitId: "codex",
+      limitName: null,
+      primary: {
+        usedPercent: 12,
+        windowDurationMinutes: 300,
+        resetsAt: "2026-04-04T05:00:00.000Z",
+      },
+      secondary: null,
+      credits: null,
+      planType: "pro",
+    },
+    rateLimitsByLimitId: {},
+  });
+  fetchOAuthUsageImpl.mockReset();
+  fetchOAuthUsageImpl.mockResolvedValue(null);
+};
 const usageLayer = it.layer(
   makeCodexAdapterLive({
     manager: usageManager,
@@ -275,9 +310,38 @@ const usageLayer = it.layer(
 );
 
 usageLayer("CodexAdapterLive usage", (it) => {
-  it.effect("prefers OAuth usage when available", () =>
+  it.effect("reads usage from an active manager session before probing or OAuth fallback", () =>
     Effect.gen(function* () {
-      usageManager.listSessionsImpl.mockReturnValueOnce([]);
+      resetUsageMocks();
+      usageManager.listSessionsImpl.mockReturnValueOnce([
+        {
+          provider: "codex",
+          status: "ready",
+          runtimeMode: "full-access",
+          threadId: asThreadId("thread-active"),
+          cwd: process.cwd(),
+          createdAt: "2026-04-04T00:00:00.000Z",
+          updatedAt: "2026-04-04T00:00:00.000Z",
+        },
+      ]);
+      usageManager.readUsageImpl.mockResolvedValueOnce({
+        provider: "codex",
+        source: "app-server",
+        fetchedAt: "2026-04-04T02:00:00.000Z",
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 7,
+            windowDurationMinutes: 300,
+            resetsAt: "2026-04-04T05:00:00.000Z",
+          },
+          secondary: null,
+          credits: null,
+          planType: "pro",
+        },
+        rateLimitsByLimitId: {},
+      });
       fetchOAuthUsageImpl.mockResolvedValueOnce({
         provider: "codex",
         source: "app-server",
@@ -304,53 +368,109 @@ usageLayer("CodexAdapterLive usage", (it) => {
       const adapter = yield* CodexAdapter;
       const usage = yield* adapter.readUsage();
 
-      assert.equal(usage.rateLimits?.primary?.usedPercent, 18);
+      assert.equal(usage.rateLimits?.primary?.usedPercent, 7);
       assert.equal(probeUsageImpl.mock.calls.length, 0);
-      assert.equal(usageManager.readUsageImpl.mock.calls.length, 0);
+      assert.equal(fetchOAuthUsageImpl.mock.calls.length, 0);
     }),
   );
 
-  it.effect("reads usage from an active manager session when available", () =>
+  it.effect("uses a standalone app-server probe before direct OAuth fallback", () =>
     Effect.gen(function* () {
-      fetchOAuthUsageImpl.mockResolvedValueOnce(null);
+      resetUsageMocks();
       usageManager.listSessionsImpl.mockReturnValueOnce([
         {
           provider: "codex",
-          status: "ready",
+          status: "closed",
           runtimeMode: "full-access",
-          threadId: asThreadId("thread-active"),
+          threadId: asThreadId("thread-closed"),
           cwd: process.cwd(),
           createdAt: "2026-04-04T00:00:00.000Z",
           updatedAt: "2026-04-04T00:00:00.000Z",
         },
       ]);
-      usageManager.readUsageImpl.mockResolvedValueOnce({
+      usageManager.readUsageImpl.mockRejectedValueOnce(new Error("session closed"));
+      fetchOAuthUsageImpl.mockResolvedValueOnce({
         provider: "codex",
         source: "app-server",
         fetchedAt: "2026-04-04T02:00:00.000Z",
-        rateLimits: null,
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 99,
+            windowDurationMinutes: 300,
+            resetsAt: "2026-04-04T05:00:00.000Z",
+          },
+          secondary: null,
+          credits: null,
+          planType: null,
+        },
         rateLimitsByLimitId: {},
       });
 
       const adapter = yield* CodexAdapter;
       const usage = yield* adapter.readUsage();
 
-      assert.equal(usage.provider, "codex");
-      assert.equal(usageManager.readUsageImpl.mock.calls[0]?.[0], asThreadId("thread-active"));
-      assert.equal(probeUsageImpl.mock.calls.length, 0);
+      assert.equal(usage.rateLimits?.primary?.usedPercent, 12);
+      assert.equal(usageManager.readUsageImpl.mock.calls[0]?.[0], asThreadId("thread-closed"));
+      assert.equal(probeUsageImpl.mock.calls.length > 0, true);
+      assert.equal(fetchOAuthUsageImpl.mock.calls.length, 0);
     }),
   );
 
-  it.effect("probes usage when no active codex session exists", () =>
+  it.effect("falls back to direct OAuth usage when the standalone app-server probe fails", () =>
     Effect.gen(function* () {
-      fetchOAuthUsageImpl.mockResolvedValueOnce(null);
+      resetUsageMocks();
       usageManager.listSessionsImpl.mockReturnValueOnce([]);
+      probeUsageImpl.mockRejectedValueOnce(new Error("app-server unavailable"));
+      fetchOAuthUsageImpl.mockResolvedValueOnce({
+        provider: "codex",
+        source: "app-server",
+        fetchedAt: "2026-04-04T02:00:00.000Z",
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 18,
+            windowDurationMinutes: 300,
+            resetsAt: "2026-04-04T05:00:00.000Z",
+          },
+          secondary: null,
+          credits: null,
+          planType: null,
+        },
+        rateLimitsByLimitId: {},
+      });
       const adapter = yield* CodexAdapter;
 
       const usage = yield* adapter.readUsage();
 
-      assert.equal(usage.rateLimits?.primary?.usedPercent, 12);
+      assert.equal(usage.rateLimits?.primary?.usedPercent, 18);
       assert.equal(probeUsageImpl.mock.calls.length > 0, true);
+      assert.equal(fetchOAuthUsageImpl.mock.calls.length > 0, true);
+    }),
+  );
+
+  it.effect("returns an expired-login diagnostic when app-server and OAuth usage fail", () =>
+    Effect.gen(function* () {
+      resetUsageMocks();
+      usageManager.listSessionsImpl.mockReturnValueOnce([]);
+      probeUsageImpl.mockRejectedValueOnce(new Error("app-server unavailable"));
+      fetchOAuthUsageImpl.mockResolvedValueOnce(null);
+      const adapter = yield* CodexAdapter;
+
+      const result = yield* adapter.readUsage().pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.equal(result.failure._tag, "ProviderAdapterRequestError");
+      if (result.failure._tag !== "ProviderAdapterRequestError") {
+        return;
+      }
+      assert.match(result.failure.detail, /Codex login may be expired/i);
+      assert.match(result.failure.detail, /app-server unavailable/);
     }),
   );
 });
@@ -1362,6 +1482,51 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           runtime_mode: "default",
         });
       }
+    }),
+  );
+
+  it.effect("maps mcp elicitation requests to canonical user-input events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-mcp-elicitation-requested"),
+        kind: "request",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "mcpServer/elicitation/request",
+        requestId: ApprovalRequestId.makeUnsafe("req-mcp-elicitation-1"),
+        payload: {
+          questions: [
+            {
+              id: "project",
+              header: "Project",
+              question: "Project to inspect",
+              options: [
+                {
+                  label: "server",
+                  description: "Use the server package",
+                },
+              ],
+            },
+          ],
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "user-input.requested");
+      if (firstEvent.value.type !== "user-input.requested") {
+        return;
+      }
+      assert.equal(firstEvent.value.requestId, "req-mcp-elicitation-1");
+      assert.equal(firstEvent.value.payload.questions[0]?.id, "project");
     }),
   );
 

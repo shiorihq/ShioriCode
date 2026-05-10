@@ -13,6 +13,8 @@ import type {
 const CLAUDE_OAUTH_USAGE_BETA_HEADER = "oauth-2025-04-20";
 const CLAUDE_REMOTE_OAUTH_TOKEN_PATH = "/home/claude/.claude/remote/.oauth_token";
 const CLAUDE_KEYCHAIN_SERVICE_SUFFIX = "-credentials";
+const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
+const CLAUDE_USAGE_FETCH_TIMEOUT_MS = 8_000;
 
 interface ClaudeStoredOAuth {
   readonly accessToken: string;
@@ -129,7 +131,7 @@ function readClaudeStoredOAuthFromKeychain(): ClaudeStoredOAuth | null {
         "-s",
         getMacOsKeychainStorageServiceName(),
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS },
     ).trim();
     if (!raw) {
       return null;
@@ -265,18 +267,31 @@ export async function fetchClaudeUsageSnapshot(input?: {
     );
   }
 
-  const response = await fetch(
-    `${process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com"}/api/oauth/usage`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${storedOAuth.accessToken}`,
-        "anthropic-beta": CLAUDE_OAUTH_USAGE_BETA_HEADER,
-        "Content-Type": "application/json",
+  const timeoutSignal = AbortSignal.timeout(CLAUDE_USAGE_FETCH_TIMEOUT_MS);
+  const signal = input?.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal;
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `${process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com"}/api/oauth/usage`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${storedOAuth.accessToken}`,
+          "anthropic-beta": CLAUDE_OAUTH_USAGE_BETA_HEADER,
+          "Content-Type": "application/json",
+        },
+        signal,
       },
-      ...(input?.signal ? { signal: input.signal } : {}),
-    },
-  );
+    );
+  } catch (error) {
+    return buildUnavailableClaudeUsageSnapshot(
+      storedOAuth,
+      error instanceof Error && error.name === "TimeoutError"
+        ? "Claude usage request timed out."
+        : `Claude usage request failed: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  }
 
   if (response.status === 401 || response.status === 403) {
     return buildUnavailableClaudeUsageSnapshot(
@@ -285,10 +300,26 @@ export async function fetchClaudeUsageSnapshot(input?: {
     );
   }
 
-  if (!response.ok) {
-    throw new Error(`Claude usage request failed: ${response.status} ${response.statusText}`);
+  if (response.status === 429 || response.status >= 500) {
+    return buildUnavailableClaudeUsageSnapshot(
+      storedOAuth,
+      `Claude usage endpoint is temporarily unavailable (${response.status}).`,
+    );
   }
 
-  const parsed = (await response.json()) as ClaudeOAuthUsageResponse;
+  if (!response.ok) {
+    return buildUnavailableClaudeUsageSnapshot(
+      storedOAuth,
+      `Claude usage request failed: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const parsed = (await response.json().catch(() => null)) as ClaudeOAuthUsageResponse | null;
+  if (!parsed) {
+    return buildUnavailableClaudeUsageSnapshot(
+      storedOAuth,
+      "Claude usage endpoint returned malformed JSON.",
+    );
+  }
   return readClaudeUsageResponse(parsed, storedOAuth);
 }

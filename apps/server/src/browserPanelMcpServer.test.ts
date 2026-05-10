@@ -55,6 +55,8 @@ describe("browserPanelCommandForTool", () => {
       includeText: false,
       includeLinks: true,
       includeForms: true,
+      includeElements: true,
+      maxElements: 80,
     });
     expect(browserPanelCommandForTool("browser_go_back", {})).toEqual({
       type: "action",
@@ -76,6 +78,10 @@ describe("browserPanelCommandForTool", () => {
       type: "click-selector",
       selector: "#save",
     });
+    expect(browserPanelCommandForTool("browser_hover_selector", { selector: "#save" })).toEqual({
+      type: "hover-selector",
+      selector: "#save",
+    });
     expect(
       browserPanelCommandForTool("browser_type_selector", {
         selector: "input[name=q]",
@@ -85,6 +91,44 @@ describe("browserPanelCommandForTool", () => {
       type: "type-selector",
       selector: "input[name=q]",
       text: "hello",
+    });
+    expect(
+      browserPanelCommandForTool("browser_fill_selector", {
+        selector: "input[name=q]",
+        text: "hello",
+      }),
+    ).toEqual({
+      type: "fill-selector",
+      selector: "input[name=q]",
+      text: "hello",
+    });
+    expect(
+      browserPanelCommandForTool("browser_select_selector", {
+        selector: "select[name=sort]",
+        value: "recent",
+      }),
+    ).toEqual({
+      type: "select-selector",
+      selector: "select[name=sort]",
+      value: "recent",
+    });
+    expect(browserPanelCommandForTool("browser_wait_for", { text: "Ready" })).toEqual({
+      type: "wait",
+      text: "Ready",
+      timeoutMs: 5000,
+    });
+    expect(browserPanelCommandForTool("browser_press_key", { key: "Enter" })).toEqual({
+      type: "press-key",
+      key: "Enter",
+    });
+    expect(browserPanelCommandForTool("browser_scroll", { deltaY: -300 })).toEqual({
+      type: "scroll",
+      deltaX: 0,
+      deltaY: -300,
+    });
+    expect(browserPanelCommandForTool("browser_console_messages", { clear: true })).toEqual({
+      type: "console",
+      clear: true,
     });
   });
 
@@ -102,6 +146,8 @@ describe("browserPanelCommandForTool", () => {
       () => browserPanelCommandForTool("browser_type_selector", { selector: "#q" }),
       /text is required/,
     );
+    assert.throws(() => browserPanelCommandForTool("browser_wait_for", {}), /selector or text/);
+    assert.throws(() => browserPanelCommandForTool("browser_press_key", {}), /key is required/);
   });
 });
 

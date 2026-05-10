@@ -202,7 +202,7 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 }
 
 // ---------------------------------------------------------------------------
-// Kanban task prompt
+// Goal plan prompt
 // ---------------------------------------------------------------------------
 
 export interface KanbanTaskPromptInput {
@@ -214,21 +214,23 @@ export interface KanbanTaskPromptInput {
 
 export function buildKanbanTaskPrompt(input: KanbanTaskPromptInput) {
   const prompt = [
-    "You write implementation prompts for coding agents.",
+    "You write concise, editable plans for coding agents.",
     "Return a JSON object with key: prompt.",
     "Rules:",
-    "- Write a direct prompt that can be pasted as the first message in a new coding thread.",
-    "- Include clear objective, relevant context, constraints, and expected verification.",
+    "- Write a markdown bullet plan, not an implementation essay.",
+    "- Use 3 to 8 bullets.",
+    "- Each bullet should be short, human-readable, and action-oriented.",
+    "- Include validation or testing when appropriate.",
+    "- Preserve user constraints and PR context if provided.",
     "- Do not add markdown frontmatter, signatures, or meta commentary.",
-    "- If the user supplied a prompt, improve it without changing the intent.",
-    "- Keep it focused and actionable.",
+    "- If the user supplied plan bullets, improve them without changing the intent.",
     "",
-    `Task title: ${input.title}`,
+    `Goal title: ${input.title}`,
     "",
     "Description:",
     limitSection(input.description.trim() || "(none)", 8_000),
     "",
-    "User prompt:",
+    "User plan or instructions:",
     limitSection(input.prompt.trim() || "(none)", 8_000),
     ...(input.pullRequest
       ? [

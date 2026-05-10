@@ -39,6 +39,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = {
 };
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_CLI_MODEL_DISCOVERY_TIMEOUT_MS = 8_000;
 const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "4 seconds";
 const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 4;
 const CURSOR_REFRESH_INTERVAL = "1 hour";
@@ -93,6 +94,46 @@ interface CursorAcpDiscoveredModel {
   readonly slug: string;
   readonly name: string;
   readonly capabilities: ModelCapabilities;
+}
+
+export interface CursorAgentCommand {
+  readonly command: string;
+  readonly argsPrefix: ReadonlyArray<string>;
+  readonly kind: "direct" | "wrapper";
+}
+
+export function resolveCursorAgentCommand(
+  binaryPath: string | null | undefined,
+): CursorAgentCommand {
+  const command = binaryPath?.trim() || "agent";
+  const basename = nodePath
+    .basename(command)
+    .toLowerCase()
+    .replace(/\.exe$/u, "");
+  if (basename === "cursor") {
+    return {
+      command,
+      argsPrefix: ["agent"],
+      kind: "wrapper",
+    };
+  }
+  return {
+    command,
+    argsPrefix: [],
+    kind: "direct",
+  };
+}
+
+export function buildCursorAgentArgs(
+  cursorSettings: Pick<CursorSettings, "apiEndpoint" | "binaryPath"> | null | undefined,
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const resolved = resolveCursorAgentCommand(cursorSettings?.binaryPath);
+  return [
+    ...resolved.argsPrefix,
+    ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
+    ...args,
+  ];
 }
 
 function flattenSessionConfigSelectOptions(
@@ -349,11 +390,8 @@ const makeCursorAcpProbeRuntime = (cursorSettings: CursorSettings) =>
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         spawn: {
-          command: cursorSettings.binaryPath,
-          args: [
-            ...(cursorSettings.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
-            "acp",
-          ],
+          command: resolveCursorAgentCommand(cursorSettings.binaryPath).command,
+          args: buildCursorAgentArgs(cursorSettings, ["acp"]),
           cwd: process.cwd(),
         },
         cwd: process.cwd(),
@@ -588,6 +626,122 @@ export function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings([], PROVIDER, cursorSettings.customModels, EMPTY_CAPABILITIES);
+}
+
+interface CursorCliModelListEntry {
+  readonly slug: string;
+  readonly name: string;
+}
+
+function readStringField(
+  record: Record<string, unknown>,
+  keys: ReadonlyArray<string>,
+): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function collectCursorCliJsonModelEntries(value: unknown): ReadonlyArray<CursorCliModelListEntry> {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectCursorCliJsonModelEntries);
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  const record = value as Record<string, unknown>;
+  const nested = ["models", "availableModels", "data", "items"].flatMap((key) =>
+    collectCursorCliJsonModelEntries(record[key]),
+  );
+  const slug = readStringField(record, ["slug", "id", "model", "value", "name"]);
+  if (!slug) {
+    return nested;
+  }
+  const name = readStringField(record, ["name", "label", "displayName", "title"]) ?? slug;
+  return [{ slug, name }, ...nested];
+}
+
+function parseCursorCliModelLine(line: string): CursorCliModelListEntry | undefined {
+  const stripped = stripAnsi(line)
+    .trim()
+    .replace(/^[-*]\s+/u, "")
+    .replace(/^\d+[.)]\s+/u, "")
+    .trim();
+  if (!stripped) {
+    return undefined;
+  }
+  const lower = stripped.toLowerCase();
+  if (lower === "models" || lower === "available models" || lower.startsWith("available models:")) {
+    return undefined;
+  }
+  const withoutDefaultMarker = stripped.replace(/\s+\((?:default|current)\)$/iu, "").trim();
+  const [slugPart, namePart] = withoutDefaultMarker.split(/\s{2,}|\t+/u, 2);
+  const slug = slugPart?.trim();
+  if (!slug || slug.includes(" ")) {
+    return undefined;
+  }
+  return {
+    slug,
+    name: namePart?.trim() || slug,
+  };
+}
+
+export function parseCursorCliModelsOutput(
+  result: CommandResult,
+): ReadonlyArray<ServerProviderModel> {
+  const raw = result.stdout.trim() || result.stderr.trim();
+  if (!raw) {
+    return [];
+  }
+
+  let entries: ReadonlyArray<CursorCliModelListEntry> = [];
+  if (raw.startsWith("{") || raw.startsWith("[")) {
+    try {
+      entries = collectCursorCliJsonModelEntries(JSON.parse(raw) as unknown);
+    } catch {
+      entries = [];
+    }
+  }
+
+  if (entries.length === 0) {
+    entries = raw
+      .split(/\r?\n/u)
+      .map(parseCursorCliModelLine)
+      .filter((entry): entry is CursorCliModelListEntry => entry !== undefined);
+  }
+
+  return buildCursorDiscoveredModels(
+    entries.map((entry) => ({
+      slug: entry.slug,
+      name: entry.name,
+      capabilities: EMPTY_CAPABILITIES,
+    })),
+  );
+}
+
+function mergeCursorModelCapabilities(
+  inventoryModels: ReadonlyArray<ServerProviderModel>,
+  capabilityModels: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const capabilitiesBySlug = new Map(capabilityModels.map((model) => [model.slug, model]));
+  return inventoryModels.map((model) => {
+    const capabilityModel = capabilitiesBySlug.get(model.slug);
+    return capabilityModel
+      ? {
+          ...model,
+          capabilities: capabilityModel.capabilities,
+        }
+      : model;
+  });
+}
+
+interface CursorCliModelDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly warning?: string;
 }
 
 /** Timeout for `agent about` — it's slower than a simple `--version` probe. */
@@ -937,16 +1091,20 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
   return { version, status: "ready", auth: { status: "authenticated" } };
 }
 
-const runCursorCommand = (args: ReadonlyArray<string>) =>
+const runCursorCommandWithSettings = (
+  cursorSettings: Pick<CursorSettings, "apiEndpoint" | "binaryPath">,
+  args: ReadonlyArray<string>,
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cursorSettings = yield* Effect.service(ServerSettingsService).pipe(
-      Effect.flatMap((service) => service.getSettings),
-      Effect.map((settings) => settings.providers.cursor),
+    const agentCommand = resolveCursorAgentCommand(cursorSettings.binaryPath);
+    const command = ChildProcess.make(
+      agentCommand.command,
+      [...buildCursorAgentArgs(cursorSettings, args)],
+      {
+        shell: process.platform === "win32",
+      },
     );
-    const command = ChildProcess.make(cursorSettings.binaryPath, [...args], {
-      shell: process.platform === "win32",
-    });
 
     const child = yield* spawner.spawn(command);
     const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -961,6 +1119,13 @@ const runCursorCommand = (args: ReadonlyArray<string>) =>
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
   }).pipe(Effect.scoped);
 
+const runCursorCommand = (args: ReadonlyArray<string>) =>
+  Effect.service(ServerSettingsService).pipe(
+    Effect.flatMap((service) => service.getSettings),
+    Effect.map((settings) => settings.providers.cursor),
+    Effect.flatMap((cursorSettings) => runCursorCommandWithSettings(cursorSettings, args)),
+  );
+
 const runCursorAboutCommand = Effect.gen(function* () {
   const jsonResult = yield* runCursorCommand(["about", "--format", "json"]);
   if (!isCursorAboutJsonFormatUnsupported(jsonResult)) {
@@ -968,6 +1133,41 @@ const runCursorAboutCommand = Effect.gen(function* () {
   }
   return yield* runCursorCommand(["about"]);
 });
+
+const CURSOR_MODEL_COMMANDS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["models", "--format", "json"],
+  ["models"],
+  ["--list-models"],
+];
+
+export const discoverCursorModelsViaCli = (
+  cursorSettings: Pick<CursorSettings, "apiEndpoint" | "binaryPath">,
+): Effect.Effect<CursorCliModelDiscoveryResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const failures: Array<string> = [];
+    for (const args of CURSOR_MODEL_COMMANDS) {
+      const exit = yield* Effect.exit(runCursorCommandWithSettings(cursorSettings, args));
+      if (Exit.isFailure(exit)) {
+        failures.push(`${args.join(" ")} failed: ${Cause.pretty(exit.cause)}`);
+        continue;
+      }
+      const result = exit.value;
+      const parsedModels = result.code === 0 ? parseCursorCliModelsOutput(result) : [];
+      if (parsedModels.length > 0) {
+        return { models: parsedModels };
+      }
+      failures.push(
+        `${args.join(" ")} returned no models${result.code === 0 ? "" : ` (exit ${result.code})`}`,
+      );
+    }
+    return {
+      models: [],
+      warning:
+        failures.length > 0
+          ? `Cursor CLI model inventory unavailable. ${failures[0]}`
+          : "Cursor CLI model inventory unavailable.",
+    };
+  });
 
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   function* (): Effect.fn.Return<
@@ -1066,22 +1266,62 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
     let discoveryWarning: string | undefined;
     if (parsed.auth.status !== "unauthenticated") {
-      const discoveryExit = yield* Effect.exit(
-        discoverCursorModelsViaAcp(cursorSettings).pipe(
-          Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+      const cliDiscoveryExit = yield* Effect.exit(
+        discoverCursorModelsViaCli(cursorSettings).pipe(
+          Effect.timeoutOption(CURSOR_CLI_MODEL_DISCOVERY_TIMEOUT_MS),
         ),
       );
-      if (Exit.isFailure(discoveryExit)) {
-        yield* Effect.logWarning("Cursor ACP model discovery failed", {
-          cause: Cause.pretty(discoveryExit.cause),
+      let cliInventoryModels: ReadonlyArray<ServerProviderModel> = [];
+      if (Exit.isSuccess(cliDiscoveryExit) && Option.isSome(cliDiscoveryExit.value)) {
+        cliInventoryModels = cliDiscoveryExit.value.value.models;
+        if (cliDiscoveryExit.value.value.warning) {
+          yield* Effect.logWarning(cliDiscoveryExit.value.value.warning);
+        }
+      } else if (Exit.isFailure(cliDiscoveryExit)) {
+        yield* Effect.logWarning("Cursor CLI model inventory failed", {
+          cause: Cause.pretty(cliDiscoveryExit.cause),
         });
-        discoveryWarning = "Cursor ACP model discovery failed. Check server logs for details.";
-      } else if (Option.isNone(discoveryExit.value)) {
-        discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
-      } else if (discoveryExit.value.value.length === 0) {
-        discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
+      }
+
+      if (cliInventoryModels.length > 0) {
+        discoveredModels = Option.some(cliInventoryModels);
+        const capabilityExit = yield* Effect.exit(
+          discoverCursorModelCapabilitiesViaAcp(cursorSettings, cliInventoryModels).pipe(
+            Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+          ),
+        );
+        if (Exit.isFailure(capabilityExit)) {
+          yield* Effect.logWarning("Cursor ACP model capability discovery failed", {
+            cause: Cause.pretty(capabilityExit.cause),
+          });
+          discoveryWarning =
+            "Cursor model inventory is available, but ACP capability discovery failed. Check server logs for details.";
+        } else if (Option.isNone(capabilityExit.value)) {
+          discoveryWarning = `Cursor ACP model capability discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
+        } else if (capabilityExit.value.value.length > 0) {
+          discoveredModels = Option.some(
+            mergeCursorModelCapabilities(cliInventoryModels, capabilityExit.value.value),
+          );
+        }
       } else {
-        discoveredModels = discoveryExit.value;
+        const discoveryExit = yield* Effect.exit(
+          discoverCursorModelsViaAcp(cursorSettings).pipe(
+            Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+          ),
+        );
+        if (Exit.isFailure(discoveryExit)) {
+          yield* Effect.logWarning("Cursor ACP model discovery failed", {
+            cause: Cause.pretty(discoveryExit.cause),
+          });
+          discoveryWarning =
+            "Cursor CLI model inventory and ACP model discovery failed. Check server logs for details.";
+        } else if (Option.isNone(discoveryExit.value)) {
+          discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
+        } else if (discoveryExit.value.value.length === 0) {
+          discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
+        } else {
+          discoveredModels = discoveryExit.value;
+        }
       }
     }
     return buildCursorProviderSnapshot({

@@ -44,6 +44,8 @@ export const BrowserPanelSnapshotCommand = Schema.Struct({
   includeText: Schema.optional(Schema.Boolean),
   includeLinks: Schema.optional(Schema.Boolean),
   includeForms: Schema.optional(Schema.Boolean),
+  includeElements: Schema.optional(Schema.Boolean),
+  maxElements: Schema.optional(NonNegativeInt),
 });
 
 export const BrowserPanelActionCommand = Schema.Struct({
@@ -54,9 +56,44 @@ export const BrowserPanelActionCommand = Schema.Struct({
 
 export const BrowserPanelSelectorCommand = Schema.Struct({
   ...BrowserPanelCommandBase,
-  type: Schema.Literals(["click-selector", "type-selector"]),
+  type: Schema.Literals([
+    "click-selector",
+    "type-selector",
+    "hover-selector",
+    "fill-selector",
+    "select-selector",
+  ]),
   selector: TrimmedNonEmptyString,
   text: Schema.optional(Schema.String),
+  value: Schema.optional(Schema.String),
+});
+
+export const BrowserPanelWaitCommand = Schema.Struct({
+  ...BrowserPanelCommandBase,
+  type: Schema.Literal("wait"),
+  selector: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  timeoutMs: Schema.optional(NonNegativeInt),
+});
+
+export const BrowserPanelKeyboardCommand = Schema.Struct({
+  ...BrowserPanelCommandBase,
+  type: Schema.Literal("press-key"),
+  key: TrimmedNonEmptyString,
+});
+
+export const BrowserPanelScrollCommand = Schema.Struct({
+  ...BrowserPanelCommandBase,
+  type: Schema.Literal("scroll"),
+  selector: Schema.optional(Schema.String),
+  deltaX: Schema.optional(Schema.Number),
+  deltaY: Schema.optional(Schema.Number),
+});
+
+export const BrowserPanelConsoleCommand = Schema.Struct({
+  ...BrowserPanelCommandBase,
+  type: Schema.Literal("console"),
+  clear: Schema.optional(Schema.Boolean),
 });
 
 export const BrowserPanelCommand = Schema.Union([
@@ -65,6 +102,10 @@ export const BrowserPanelCommand = Schema.Union([
   BrowserPanelSnapshotCommand,
   BrowserPanelActionCommand,
   BrowserPanelSelectorCommand,
+  BrowserPanelWaitCommand,
+  BrowserPanelKeyboardCommand,
+  BrowserPanelScrollCommand,
+  BrowserPanelConsoleCommand,
 ]);
 export type BrowserPanelCommand = typeof BrowserPanelCommand.Type;
 

@@ -27,6 +27,11 @@ interface AssistantSelectionAddToChatButtonProps {
   onAddSelectedText: (selectedText: string) => void;
 }
 
+interface AssistantSelectionAddToChatControlProps {
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onClick: () => void;
+}
+
 function clampToViewportX(value: number): number {
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
   if (viewportWidth <= OVERLAY_EDGE_PADDING_PX * 2) {
@@ -110,7 +115,13 @@ export const AssistantSelectionAddToChatButton = memo(function AssistantSelectio
   const animationFrameRef = useRef<number | null>(null);
 
   const updateSelectionOverlay = useCallback(() => {
-    setSelectionOverlay(readAssistantSelectionOverlayState(containerRef.current));
+    const nextOverlay = readAssistantSelectionOverlayState(containerRef.current);
+    if (nextOverlay) {
+      setSelectionOverlay(nextOverlay);
+      return;
+    }
+
+    setSelectionOverlay(null);
   }, [containerRef]);
 
   const scheduleSelectionOverlayUpdate = useCallback(() => {
@@ -171,24 +182,36 @@ export const AssistantSelectionAddToChatButton = memo(function AssistantSelectio
           selectionOverlay.placement === "above" ? "translate(-50%, -100%)" : "translate(-50%, 0)",
       }}
     >
-      <div className="pointer-events-auto rounded-full border border-border/70 bg-popover/95 p-0.5 shadow-md backdrop-blur-md">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-6 gap-1 rounded-full px-2 text-[10px]/3 before:rounded-full",
-            "text-foreground hover:bg-foreground/10",
-          )}
-          data-assistant-selection-add-to-chat="true"
-          onPointerDown={handlePointerDown}
-          onClick={handleAddSelectedText}
-        >
-          <MessageCircleIcon className="size-3" aria-hidden="true" />
-          Add to chat
-        </Button>
-      </div>
+      <AssistantSelectionAddToChatControl
+        onPointerDown={handlePointerDown}
+        onClick={handleAddSelectedText}
+      />
     </div>,
     document.body,
   );
 });
+
+export function AssistantSelectionAddToChatControl({
+  onPointerDown,
+  onClick,
+}: AssistantSelectionAddToChatControlProps) {
+  return (
+    <div className="pointer-events-auto rounded-full border border-border/70 bg-popover p-0.5 shadow-md">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "h-6 gap-1 rounded-full bg-popover px-2 text-[10px]/3 before:rounded-full",
+          "text-popover-foreground hover:bg-accent hover:text-accent-foreground",
+        )}
+        data-assistant-selection-add-to-chat="true"
+        onPointerDown={onPointerDown}
+        onClick={onClick}
+      >
+        <MessageCircleIcon className="size-3" aria-hidden="true" />
+        Add to chat
+      </Button>
+    </div>
+  );
+}

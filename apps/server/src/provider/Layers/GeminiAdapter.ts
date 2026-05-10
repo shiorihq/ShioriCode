@@ -13,6 +13,7 @@ import {
   ApprovalRequestId,
   EventId,
   type ProviderApprovalDecision,
+  type ProviderApprovalPolicy,
   type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -62,18 +63,28 @@ import {
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
 import { normalizeAcpPromptUsage, parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
-import { makeGeminiAcpRuntime } from "../acp/GeminiAcpSupport.ts";
+import {
+  type GeminiAcpApprovalMode,
+  type GeminiAcpRuntimeInput,
+  makeGeminiAcpRuntime,
+  resolveGeminiAcpApprovalMode,
+  selectGeminiAutoApprovedPermissionOption,
+} from "../acp/GeminiAcpSupport.ts";
 import { materializeMcpServersForRuntime, toAcpMcpServers } from "../mcpServers.ts";
 import { GeminiAdapter, type GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "gemini" as const;
+const GEMINI_RESUME_VERSION = 1 as const;
 const IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const PLAN_MODE_ALIASES = ["plan", "architect"];
 
 export interface GeminiAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly makeAcpRuntime?: (
+    input: GeminiAcpRuntimeInput,
+  ) => Effect.Effect<AcpSessionRuntimeShape, import("effect-acp/errors").AcpError, Scope.Scope>;
 }
 
 interface PendingApproval {
@@ -91,6 +102,8 @@ interface GeminiSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeTurnId: TurnId | undefined;
   model: string | undefined;
+  approvalMode: GeminiAcpApprovalMode;
+  approvalPolicy: ProviderApprovalPolicy | undefined;
   stopped: boolean;
 }
 
@@ -133,16 +146,6 @@ function findPermissionOption(
   return acpPermissionOutcome(decision);
 }
 
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-): string | undefined {
-  const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
-  if (allowAlwaysOption?.optionId?.trim()) return allowAlwaysOption.optionId.trim();
-  const allowOnceOption = request.options.find((option) => option.kind === "allow_once");
-  if (allowOnceOption?.optionId?.trim()) return allowOnceOption.optionId.trim();
-  return undefined;
-}
-
 function normalizeModeSearchText(mode: { id: string; name: string; description?: string }): string {
   return [mode.id, mode.name, mode.description]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
@@ -150,6 +153,17 @@ function normalizeModeSearchText(mode: { id: string; name: string; description?:
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseGeminiResume(raw: unknown): { sessionId: string } | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (raw.schemaVersion !== GEMINI_RESUME_VERSION) return undefined;
+  if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
+  return { sessionId: raw.sessionId.trim() };
 }
 
 function findModeByAliases(
@@ -301,7 +315,10 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
       readonly threadId: ThreadId;
       readonly cwd: string;
       readonly runtimeMode: RuntimeMode;
+      readonly approvalPolicy: ProviderApprovalPolicy | undefined;
+      readonly approvalMode: GeminiAcpApprovalMode;
       readonly model: string | undefined;
+      readonly resumeSessionId?: string | undefined;
     }) {
       const serverSettings = yield* serverSettingsService.getSettings.pipe(
         Effect.mapError(
@@ -352,7 +369,8 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         mcpServers: { servers: runtimeMcpServers },
       };
 
-      const acp = yield* makeGeminiAcpRuntime({
+      const makeRuntime = options?.makeAcpRuntime ?? makeGeminiAcpRuntime;
+      const acp = yield* makeRuntime({
         geminiSettings,
         childProcessSpawner,
         cwd: input.cwd,
@@ -363,6 +381,8 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           },
         }),
         ...(input.model !== undefined ? { model: input.model } : {}),
+        approvalMode: input.approvalMode,
+        ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
         clientInfo: { name: "shiori-code", version: "0.0.0" },
         ...acpNativeLoggers,
       }).pipe(
@@ -382,16 +402,17 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         yield* acp.handleRequestPermission((params) =>
           Effect.gen(function* () {
             yield* logNative(input.threadId, "session/request_permission", params);
-            if (input.runtimeMode === "full-access") {
-              const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
-              if (autoApprovedOptionId !== undefined) {
-                return {
-                  outcome: {
-                    outcome: "selected" as const,
-                    optionId: autoApprovedOptionId,
-                  },
-                };
-              }
+            const autoApprovedOptionId = selectGeminiAutoApprovedPermissionOption(
+              params,
+              input.approvalMode,
+            );
+            if (autoApprovedOptionId !== undefined) {
+              return {
+                outcome: {
+                  outcome: "selected" as const,
+                  optionId: autoApprovedOptionId,
+                },
+              };
             }
 
             const permissionRequest = parsePermissionRequest(params);
@@ -453,6 +474,10 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         cwd: input.cwd,
         ...(input.model ? { model: input.model } : {}),
         threadId: input.threadId,
+        resumeCursor: {
+          schemaVersion: GEMINI_RESUME_VERSION,
+          sessionId: started.sessionId,
+        },
         createdAt: now,
         updatedAt: now,
       };
@@ -468,6 +493,8 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         turns: [],
         activeTurnId: undefined,
         model: input.model,
+        approvalMode: input.approvalMode,
+        approvalPolicy: input.approvalPolicy,
         stopped: false,
       };
 
@@ -621,16 +648,24 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           const cwd = nodePath.resolve(trimOrUndefined(input.cwd) ?? serverConfig.cwd);
           const geminiModelSelection =
             input.modelSelection?.provider === PROVIDER ? input.modelSelection : undefined;
+          const approvalMode = resolveGeminiAcpApprovalMode({
+            runtimeMode: input.runtimeMode,
+            approvalPolicy: input.approvalPolicy,
+          });
           const existing = sessions.get(input.threadId);
           if (existing && !existing.stopped) {
             yield* stopSessionInternal(existing);
           }
 
+          const resumeSessionId = parseGeminiResume(input.resumeCursor)?.sessionId;
           const ctx = yield* createSessionContext({
             threadId: input.threadId,
             cwd,
             runtimeMode: input.runtimeMode,
+            approvalPolicy: input.approvalPolicy,
+            approvalMode,
             model: geminiModelSelection?.model,
+            ...(resumeSessionId ? { resumeSessionId } : {}),
           }).pipe(Effect.scoped);
           return ctx.session;
         }),
@@ -686,14 +721,26 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           const turnModelSelection =
             input.modelSelection?.provider === PROVIDER ? input.modelSelection : undefined;
           const requestedModel = turnModelSelection?.model ?? ctx.model;
-          if (requestedModel && requestedModel !== ctx.model) {
+          const requestedApprovalMode = resolveGeminiAcpApprovalMode({
+            runtimeMode: ctx.session.runtimeMode,
+            approvalPolicy: ctx.approvalPolicy,
+            interactionMode: input.interactionMode,
+          });
+          if (
+            (requestedModel && requestedModel !== ctx.model) ||
+            requestedApprovalMode !== ctx.approvalMode
+          ) {
             const { cwd, runtimeMode } = ctx.session;
+            const resumeSessionId = parseGeminiResume(ctx.session.resumeCursor)?.sessionId;
             yield* stopSessionInternal(ctx);
             ctx = yield* createSessionContext({
               threadId: input.threadId,
               cwd: cwd ?? serverConfig.cwd,
               runtimeMode,
+              approvalPolicy: ctx.approvalPolicy,
+              approvalMode: requestedApprovalMode,
               model: requestedModel,
+              ...(resumeSessionId ? { resumeSessionId } : {}),
             }).pipe(Effect.scoped);
           }
 
@@ -827,6 +874,7 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           return {
             threadId: input.threadId,
             turnId,
+            resumeCursor: ctx.session.resumeCursor,
           };
         }),
       );
@@ -922,7 +970,7 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
       capabilities: {
         sessionModelSwitch: "restart-session",
         recovery: {
-          supportsResumeCursor: false,
+          supportsResumeCursor: true,
           supportsAdoptActiveSession: true,
         },
         observability: {

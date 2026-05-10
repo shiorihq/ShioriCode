@@ -10,7 +10,14 @@ type BrowserToolName =
   | "browser_reload"
   | "browser_stop"
   | "browser_click_selector"
-  | "browser_type_selector";
+  | "browser_type_selector"
+  | "browser_hover_selector"
+  | "browser_fill_selector"
+  | "browser_select_selector"
+  | "browser_wait_for"
+  | "browser_press_key"
+  | "browser_scroll"
+  | "browser_console_messages";
 
 const TOOL_SCHEMAS = [
   {
@@ -62,6 +69,14 @@ const TOOL_SCHEMAS = [
           type: "boolean",
           description: "Include inputs/buttons/selects. Defaults to true.",
         },
+        includeElements: {
+          type: "boolean",
+          description: "Include a compact list of visible interactive elements. Defaults to true.",
+        },
+        maxElements: {
+          type: "number",
+          description: "Maximum number of element descriptors to return. Defaults to 80.",
+        },
       },
       additionalProperties: false,
     },
@@ -87,6 +102,19 @@ const TOOL_SCHEMAS = [
     },
   },
   {
+    name: "browser_hover_selector",
+    description:
+      "Hover the first element matching a CSS selector in the current built-in Browser panel page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector for the element to hover." },
+      },
+      required: ["selector"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "browser_type_selector",
     description:
       "Focus an input/textarea/contenteditable element matching a CSS selector and type text into it.",
@@ -97,6 +125,90 @@ const TOOL_SCHEMAS = [
         text: { type: "string", description: "Text to place in the target field." },
       },
       required: ["selector", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_fill_selector",
+    description:
+      "Replace the value of an input/textarea/contenteditable element matching a CSS selector.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector for the target field." },
+        text: { type: "string", description: "Text to place in the target field." },
+      },
+      required: ["selector", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_select_selector",
+    description:
+      "Select an option by value or label in the first select element matching a selector.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector for the target select." },
+        value: { type: "string", description: "Option value or visible label to select." },
+      },
+      required: ["selector", "value"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_wait_for",
+    description:
+      "Wait until text appears or a CSS selector is visible in the current built-in Browser panel page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector expected to become visible." },
+        text: { type: "string", description: "Text expected to appear in the document body." },
+        timeoutMs: { type: "number", description: "Timeout in milliseconds. Defaults to 5000." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_press_key",
+    description: "Send a keyboard key or shortcut to the current Browser panel page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: {
+          type: "string",
+          description: "Key name such as Enter, Escape, Tab, ArrowDown, or Mod+L.",
+        },
+      },
+      required: ["key"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_scroll",
+    description: "Scroll the page or a selected scroll container.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "Optional CSS selector for a scroll container." },
+        deltaX: { type: "number", description: "Horizontal scroll delta. Defaults to 0." },
+        deltaY: { type: "number", description: "Vertical scroll delta. Defaults to 600." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_console_messages",
+    description: "Return recent console messages captured from the Browser panel page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        clear: {
+          type: "boolean",
+          description: "Clear the stored console messages after reading. Defaults to false.",
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -137,6 +249,24 @@ function requiredString(input: Record<string, unknown>, key: string): string {
   return trimmed;
 }
 
+function optionalString(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalNumber(input: Record<string, unknown>, key: string): number | undefined {
+  const value = input[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalNonNegativeInt(input: Record<string, unknown>, key: string): number | undefined {
+  const value = optionalNumber(input, key);
+  if (value === undefined) return undefined;
+  return Math.max(0, Math.floor(value));
+}
+
 export function browserPanelCommandForTool(name: BrowserToolName, input: Record<string, unknown>) {
   switch (name) {
     case "browser_navigate":
@@ -153,6 +283,8 @@ export function browserPanelCommandForTool(name: BrowserToolName, input: Record<
         includeText: input.includeText !== false,
         includeLinks: input.includeLinks !== false,
         includeForms: input.includeForms !== false,
+        includeElements: input.includeElements !== false,
+        maxElements: optionalNonNegativeInt(input, "maxElements") ?? 80,
       };
     case "browser_go_back":
       return { type: "action" as const, action: "back" as const };
@@ -164,12 +296,50 @@ export function browserPanelCommandForTool(name: BrowserToolName, input: Record<
       return { type: "action" as const, action: "stop" as const };
     case "browser_click_selector":
       return { type: "click-selector" as const, selector: requiredString(input, "selector") };
+    case "browser_hover_selector":
+      return { type: "hover-selector" as const, selector: requiredString(input, "selector") };
     case "browser_type_selector":
       return {
         type: "type-selector" as const,
         selector: requiredString(input, "selector"),
         text: requiredString(input, "text"),
       };
+    case "browser_fill_selector":
+      return {
+        type: "fill-selector" as const,
+        selector: requiredString(input, "selector"),
+        text: requiredString(input, "text"),
+      };
+    case "browser_select_selector":
+      return {
+        type: "select-selector" as const,
+        selector: requiredString(input, "selector"),
+        value: requiredString(input, "value"),
+      };
+    case "browser_wait_for": {
+      const selector = optionalString(input, "selector");
+      const text = optionalString(input, "text");
+      if (!selector && !text) throw new Error("selector or text is required.");
+      return {
+        type: "wait" as const,
+        ...(selector ? { selector } : {}),
+        ...(text ? { text } : {}),
+        timeoutMs: optionalNonNegativeInt(input, "timeoutMs") ?? 5_000,
+      };
+    }
+    case "browser_press_key":
+      return { type: "press-key" as const, key: requiredString(input, "key") };
+    case "browser_scroll": {
+      const selector = optionalString(input, "selector");
+      return {
+        type: "scroll" as const,
+        ...(selector ? { selector } : {}),
+        deltaX: optionalNumber(input, "deltaX") ?? 0,
+        deltaY: optionalNumber(input, "deltaY") ?? 600,
+      };
+    }
+    case "browser_console_messages":
+      return { type: "console" as const, clear: input.clear === true };
   }
 }
 
@@ -225,7 +395,7 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
         success(id, {
           protocolVersion: "2025-11-25",
           capabilities: { tools: {} },
-          serverInfo: { name: "shioricode-browser-panel", version: "0.2.0" },
+          serverInfo: { name: "shioricode-browser-panel", version: "0.3.0" },
         });
         return;
       case "tools/list":

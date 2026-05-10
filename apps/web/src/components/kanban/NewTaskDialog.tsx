@@ -64,10 +64,9 @@ export function NewTaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>New task</DialogTitle>
+          <DialogTitle>New Goal</DialogTitle>
           <DialogDescription>
-            Created tasks land in <span className="text-foreground/80">Backlog</span> and can be
-            moved across columns.
+            Describe the outcome. ShioriCode will create or refine the plan before running code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex flex-col gap-3">
@@ -105,7 +104,7 @@ export function NewTaskDialog({
           </div>
           <Input
             autoFocus
-            placeholder="Task title"
+            placeholder="Goal title"
             value={title}
             onChange={(event) => onTitleChange(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -116,13 +115,13 @@ export function NewTaskDialog({
             }}
           />
           <Textarea
-            placeholder="Add description (optional)"
+            placeholder="Description, constraints, context, or files to consider"
             value={description}
             onChange={(event) => onDescriptionChange(event.currentTarget.value)}
             rows={4}
           />
           <Textarea
-            placeholder="Prompt (optional)"
+            placeholder="Plan bullets (optional)"
             value={prompt}
             onChange={(event) => onPromptChange(event.currentTarget.value)}
             rows={5}
@@ -138,7 +137,7 @@ export function NewTaskDialog({
             ) : (
               <PlusIcon className="size-3.5" aria-hidden />
             )}
-            Create task
+            Create Goal
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -4,9 +4,7 @@ import {
   type KanbanItem,
   type KanbanItemAssigneeRole,
   type KanbanItemId,
-  type KanbanItemStatus,
   type ModelSelection,
-  type ProjectId,
   type ProviderKind,
   type ThreadId,
 } from "contracts";
@@ -297,7 +295,7 @@ export async function runGoal(input: {
     modelSelection,
     titleSeed: input.goal.title,
     runtimeMode: existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-    interactionMode: "default",
+    interactionMode: existingThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
     createdAt: now,
   });
 

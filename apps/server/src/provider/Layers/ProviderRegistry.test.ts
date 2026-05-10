@@ -30,6 +30,7 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
+import { checkKimiCodeProviderStatus } from "./KimiCodeProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
@@ -632,6 +633,107 @@ it.layer(
     );
   });
 
+  describe("checkKimiCodeProviderStatus", () => {
+    it.effect("uses version as the health check and info as the wire compatibility probe", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const shareDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-test-kimi-share-",
+        });
+        yield* fileSystem.writeFileString(
+          `${shareDir}/config.toml`,
+          ['[providers."managed:kimi-code"]', 'api_key = "test-key"', ""].join("\n"),
+        );
+        const seenArgs: string[] = [];
+        const serverSettingsLayer = ServerSettingsService.layerTest({
+          providers: {
+            kimiCode: {
+              shareDir,
+            },
+          },
+        });
+
+        const status = yield* checkKimiCodeProviderStatus().pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              serverSettingsLayer,
+              mockCommandSpawnerLayer((_command, args) => {
+                seenArgs.push(args.join(" "));
+                if (args.join(" ") === "--version") {
+                  return { stdout: "kimi 0.9.1\n", stderr: "", code: 0 };
+                }
+                if (args.join(" ") === "info --json") {
+                  return {
+                    stdout: JSON.stringify({
+                      cli_version: "0.9.1",
+                      wire_protocol_version: "1.7.0",
+                    }),
+                    stderr: "",
+                    code: 0,
+                  };
+                }
+                throw new Error(`Unexpected args: ${args.join(" ")}`);
+              }),
+            ),
+          ),
+        );
+
+        assert.strictEqual(status.provider, "kimiCode");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+        assert.deepStrictEqual(seenArgs, ["--version", "info --json"]);
+      }),
+    );
+
+    it.effect("warns when the Kimi wire protocol is older than ShioriCode expects", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const shareDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-test-kimi-share-",
+        });
+        yield* fileSystem.writeFileString(
+          `${shareDir}/config.toml`,
+          ['[providers."managed:kimi-code"]', 'api_key = "test-key"', ""].join("\n"),
+        );
+        const serverSettingsLayer = ServerSettingsService.layerTest({
+          providers: {
+            kimiCode: {
+              shareDir,
+            },
+          },
+        });
+
+        const status = yield* checkKimiCodeProviderStatus().pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              serverSettingsLayer,
+              mockCommandSpawnerLayer((_command, args) => {
+                if (args.join(" ") === "--version") {
+                  return { stdout: "kimi 0.9.1\n", stderr: "", code: 0 };
+                }
+                if (args.join(" ") === "info --json") {
+                  return {
+                    stdout: JSON.stringify({
+                      cli_version: "0.9.1",
+                      wire_protocol_version: "1.6.0",
+                    }),
+                    stderr: "",
+                    code: 0,
+                  };
+                }
+                throw new Error(`Unexpected args: ${args.join(" ")}`);
+              }),
+            ),
+          ),
+        );
+
+        assert.strictEqual(status.provider, "kimiCode");
+        assert.strictEqual(status.status, "warning");
+        assert.match(status.message ?? "", /wire protocol v1\.6\.0/);
+      }),
+    );
+  });
+
   describe("ProviderRegistryLive", () => {
     it("treats equal provider snapshots as unchanged", () => {
       const providers = [
@@ -757,7 +859,7 @@ it.layer(
               if (joined === "login status") {
                 return { stdout: "Logged in\n", stderr: "", code: 0 };
               }
-              if (joined === "auth status") {
+              if (joined === "auth status --json") {
                 return {
                   stdout: JSON.stringify({ authenticated: true, subscriptionType: "pro" }),
                   stderr: "",
@@ -1060,7 +1162,7 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
+            if (joined === "auth status --json")
               return {
                 stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
                 stderr: "",
@@ -1085,7 +1187,7 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
+            if (joined === "auth status --json")
               return {
                 stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
                 stderr: "",
@@ -1110,7 +1212,7 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
+            if (joined === "auth status --json")
               return {
                 stdout: '{"loggedIn":true,"authMethod":"api-key"}\n',
                 stderr: "",
@@ -1170,7 +1272,7 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
+            if (joined === "auth status --json")
               return {
                 stdout: '{"loggedIn":false}\n',
                 stderr: "",
@@ -1194,7 +1296,8 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status") return { stdout: "Not logged in\n", stderr: "", code: 1 };
+            if (joined === "auth status --json")
+              return { stdout: "Not logged in\n", stderr: "", code: 1 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -1217,7 +1320,7 @@ it.layer(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-            if (joined === "auth status")
+            if (joined === "auth status --json")
               return { stdout: "", stderr: "error: unknown command 'auth'", code: 2 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
@@ -1229,10 +1332,10 @@ it.layer(
   // ── parseClaudeAuthStatusFromOutput pure tests ────────────────────
 
   describe("parseClaudeAuthStatusFromOutput", () => {
-    it("exit code 0 with no auth markers is ready", () => {
+    it("exit code 0 with no auth markers is warning", () => {
       const parsed = parseClaudeAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
-      assert.strictEqual(parsed.status, "ready");
-      assert.strictEqual(parsed.auth.status, "authenticated");
+      assert.strictEqual(parsed.status, "warning");
+      assert.strictEqual(parsed.auth.status, "unknown");
     });
 
     it("JSON with loggedIn=true is authenticated", () => {

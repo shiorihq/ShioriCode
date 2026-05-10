@@ -64,6 +64,10 @@ import {
   normalizeDesktopDeepLink,
   resolveDesktopDeepLinkWindowUrl,
 } from "./deepLink";
+import {
+  installBrowserPanelWebviewHandlers,
+  registerBrowserPanelIpcHandlers,
+} from "./browserPanel";
 
 syncShellEnvironment();
 
@@ -1707,6 +1711,7 @@ function startBackend(): void {
         mode: "desktop",
         noBrowser: true,
         port: backendPort,
+        host: "0.0.0.0",
         shioriCodeHome: BASE_DIR,
         authToken: backendAuthToken,
       })}\n`,
@@ -1831,6 +1836,7 @@ function registerIpcHandlers(): void {
   ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
     event.returnValue = backendWsUrl;
   });
+  registerBrowserPanelIpcHandlers();
 
   ipcMain.removeHandler(GET_WINDOW_CONTROLS_INSET_CHANNEL);
   ipcMain.handle(GET_WINDOW_CONTROLS_INSET_CHANNEL, async () =>
@@ -2126,8 +2132,11 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   });
+
+  installBrowserPanelWebviewHandlers(window);
 
   window.webContents.on("context-menu", (event, params) => {
     event.preventDefault();

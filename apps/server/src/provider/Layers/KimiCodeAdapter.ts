@@ -8,6 +8,8 @@ import {
   extractBrief,
   forkSession,
   formatContentOutput,
+  type InitializeResult,
+  parseConfig,
   parseSessionEvents,
   ProtocolClient,
   type ApprovalRequestPayload,
@@ -71,10 +73,24 @@ const DEFAULT_KIMI_MAX_STEPS_PER_TURN = 64;
 const DEFAULT_KIMI_MAX_RETRIES_PER_STEP = 2;
 const DEFAULT_KIMI_MAX_TOOL_CALLS_PER_TURN = 32;
 const DEFAULT_KIMI_MAX_SHELL_CALLS_PER_TURN = 24;
+const DEFAULT_KIMI_EXTERNAL_TOOL_TIMEOUT_MS = 60_000;
+const DEFAULT_KIMI_TURN_WATCHDOG_TIMEOUT_MS = 10 * 60_000;
 const KIMI_LOOP_GUARD_HOOK_ID = "shioricode-kimi-tool-loop-guard";
 
 type KimiResumeCursor = {
   readonly sessionId: string;
+  readonly fingerprint?: KimiSessionFingerprint;
+};
+
+type KimiSessionFingerprint = {
+  readonly version: 1;
+  readonly agentSignature: string;
+  readonly workDir: string;
+  readonly shareDir?: string;
+  readonly cliVersion?: string;
+  readonly wireVersion?: string;
+  readonly capabilities?: unknown;
+  readonly hooks?: unknown;
 };
 
 type KimiQuestionOption = {
@@ -165,6 +181,7 @@ type KimiSessionContext = {
   shareDir: string | undefined;
   model: string | undefined;
   thinking: boolean;
+  resumeFingerprint: KimiSessionFingerprint;
   yoloMode: boolean;
   planMode: boolean;
   agentFilePath: string | undefined;
@@ -215,6 +232,24 @@ function parsePositiveIntegerEnv(value: string | undefined, fallback: number): n
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
+}
+
+export function resolveKimiExternalToolTimeoutMsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parsePositiveIntegerEnv(
+    env.SHIORICODE_KIMI_EXTERNAL_TOOL_TIMEOUT_MS,
+    DEFAULT_KIMI_EXTERNAL_TOOL_TIMEOUT_MS,
+  );
+}
+
+export function resolveKimiTurnWatchdogTimeoutMsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parsePositiveIntegerEnv(
+    env.SHIORICODE_KIMI_TURN_WATCHDOG_MS ?? env.SHIORICODE_KIMI_TURN_WATCHDOG_TIMEOUT_MS,
+    DEFAULT_KIMI_TURN_WATCHDOG_TIMEOUT_MS,
+  );
 }
 
 export function resolveKimiLoopControlFromEnv(env: NodeJS.ProcessEnv = process.env): {
@@ -417,6 +452,42 @@ function normalizeExternalToolResult(result: unknown): string {
   return JSON.stringify(result, null, 2);
 }
 
+function formatKimiToolTimeoutMessage(toolName: string, timeoutMs: number): string {
+  return `Kimi external tool '${toolName}' timed out after ${timeoutMs}ms. ShioriCode stopped waiting for the tool so the turn can continue.`;
+}
+
+export async function runKimiExternalToolWithTimeout(input: {
+  readonly toolName: string;
+  readonly timeoutMs: number;
+  readonly execute: () => Promise<{ output: string; message: string }>;
+  readonly onTimeout?: (message: string) => void | Promise<void>;
+}): Promise<{ output: string; message: string }> {
+  let timeout: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  const timeoutPromise = new Promise<{ output: string; message: string }>((resolve) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      const message = formatKimiToolTimeoutMessage(input.toolName, input.timeoutMs);
+      Promise.resolve(input.onTimeout?.(message))
+        .catch(() => undefined)
+        .finally(() => {
+          resolve({
+            output: message,
+            message: `Tool '${input.toolName}' timed out.`,
+          });
+        });
+    }, input.timeoutMs);
+  });
+
+  try {
+    return await Promise.race([input.execute(), timeoutPromise]);
+  } finally {
+    if (!timedOut && timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function formatLocalDate(value: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
@@ -566,18 +637,163 @@ function buildKimiAgentYaml(): string {
   ].join("\n");
 }
 
-function parseResumeCursor(value: unknown): string | undefined {
+function asKimiSessionFingerprint(value: unknown): KimiSessionFingerprint | undefined {
+  const record = asRecord(value);
+  if (!record || record.version !== 1) {
+    return undefined;
+  }
+  const agentSignature = asString(record.agentSignature);
+  const workDir = asString(record.workDir);
+  if (!agentSignature || !workDir) {
+    return undefined;
+  }
+  const shareDir = asString(record.shareDir);
+  const cliVersion = asString(record.cliVersion);
+  const wireVersion = asString(record.wireVersion);
+  return {
+    version: 1,
+    agentSignature,
+    workDir,
+    ...(shareDir ? { shareDir } : {}),
+    ...(cliVersion ? { cliVersion } : {}),
+    ...(wireVersion ? { wireVersion } : {}),
+    ...(record.capabilities !== undefined ? { capabilities: record.capabilities } : {}),
+    ...(record.hooks !== undefined ? { hooks: record.hooks } : {}),
+  };
+}
+
+function parseResumeCursor(value: unknown): KimiResumeCursor | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  const sessionId = "sessionId" in value ? value.sessionId : undefined;
-  return typeof sessionId === "string" && sessionId.trim().length > 0
-    ? sessionId.trim()
-    : undefined;
+  const record = value as Record<string, unknown>;
+  const sessionId = "sessionId" in record ? record.sessionId : undefined;
+  if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+    return undefined;
+  }
+  const fingerprint = asKimiSessionFingerprint(record.fingerprint);
+  return {
+    sessionId: sessionId.trim(),
+    ...(fingerprint ? { fingerprint } : {}),
+  };
 }
 
-function buildResumeCursor(sessionId: string): KimiResumeCursor {
-  return { sessionId };
+function buildResumeCursor(
+  sessionId: string,
+  fingerprint: KimiSessionFingerprint | undefined,
+): KimiResumeCursor {
+  return {
+    sessionId,
+    ...(fingerprint ? { fingerprint } : {}),
+  };
+}
+
+export function buildKimiSessionFingerprint(input: {
+  readonly agentSignature: string;
+  readonly workDir: string;
+  readonly shareDir?: string;
+  readonly initializeResult?: InitializeResult;
+}): KimiSessionFingerprint {
+  return {
+    version: 1,
+    agentSignature: input.agentSignature,
+    workDir: input.workDir,
+    ...(input.shareDir ? { shareDir: input.shareDir } : {}),
+    ...(input.initializeResult?.server.version
+      ? { cliVersion: input.initializeResult.server.version }
+      : {}),
+    ...(input.initializeResult?.protocol_version
+      ? { wireVersion: input.initializeResult.protocol_version }
+      : {}),
+    ...(input.initializeResult?.capabilities !== undefined
+      ? { capabilities: input.initializeResult.capabilities }
+      : {}),
+    ...(input.initializeResult?.hooks !== undefined ? { hooks: input.initializeResult.hooks } : {}),
+  };
+}
+
+export function findKimiResumeFingerprintMismatch(input: {
+  readonly previous: KimiSessionFingerprint | undefined;
+  readonly next: KimiSessionFingerprint;
+  readonly compareRuntime?: boolean;
+}): string | undefined {
+  const previous = input.previous;
+  if (!previous) {
+    return undefined;
+  }
+
+  const comparisons: ReadonlyArray<readonly [string, unknown, unknown]> = [
+    ["workDir", previous.workDir, input.next.workDir],
+    ["shareDir", previous.shareDir, input.next.shareDir],
+    ["agentSignature", previous.agentSignature, input.next.agentSignature],
+    ...(input.compareRuntime
+      ? ([
+          ["cliVersion", previous.cliVersion, input.next.cliVersion],
+          ["wireVersion", previous.wireVersion, input.next.wireVersion],
+        ] as const)
+      : []),
+  ];
+
+  for (const [name, before, after] of comparisons) {
+    if (before !== undefined && after !== undefined && before !== after) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
+function contextResumeCursor(context: KimiSessionContext): KimiResumeCursor {
+  return buildResumeCursor(context.sessionId, context.resumeFingerprint);
+}
+
+export function normalizeKimiQuestionAnswers(
+  questions: ReadonlyArray<UserInputQuestion>,
+  answers: Record<string, unknown>,
+): Record<string, string> {
+  const normalizedAnswers: Record<string, string> = {};
+  for (const question of questions) {
+    const rawAnswer =
+      answers[question.id] !== undefined ? answers[question.id] : answers[question.question];
+    if (typeof rawAnswer === "string" && rawAnswer.trim().length > 0) {
+      normalizedAnswers[question.question] = rawAnswer.trim();
+      continue;
+    }
+    if (Array.isArray(rawAnswer)) {
+      const joined = rawAnswer
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0)
+        .join(", ");
+      if (joined.length > 0) {
+        normalizedAnswers[question.question] = joined;
+      }
+    }
+  }
+  return normalizedAnswers;
+}
+
+function readExplicitKimiThinking(
+  modelSelection: ProviderSendTurnInput["modelSelection"] | undefined,
+): boolean | undefined {
+  if (modelSelection?.provider !== PROVIDER) {
+    return undefined;
+  }
+  const options = asRecord(modelSelection.options);
+  return typeof options?.thinking === "boolean" ? options.thinking : undefined;
+}
+
+export function resolveKimiThinking(input: {
+  readonly modelSelection?: ProviderSendTurnInput["modelSelection"];
+  readonly shareDir?: string;
+  readonly fallback?: boolean;
+}): boolean {
+  const explicitThinking = readExplicitKimiThinking(input.modelSelection);
+  if (explicitThinking !== undefined) {
+    return explicitThinking;
+  }
+  if (input.modelSelection?.provider === PROVIDER || input.fallback === undefined) {
+    return parseConfig(input.shareDir).defaultThinking;
+  }
+  return input.fallback;
 }
 
 export function shouldFlushKimiPendingTextAsAssistantAnswer(input: {
@@ -689,6 +905,7 @@ function buildSession(
     readonly threadId: ThreadId;
     readonly workDir: string;
     readonly sessionId: string;
+    readonly fingerprint?: KimiSessionFingerprint;
     readonly runtimeMode: ProviderSession["runtimeMode"];
     readonly model?: string;
   },
@@ -701,7 +918,7 @@ function buildSession(
     cwd: input.workDir,
     ...(input.model ? { model: input.model } : {}),
     threadId: input.threadId,
-    resumeCursor: buildResumeCursor(input.sessionId),
+    resumeCursor: buildResumeCursor(input.sessionId, input.fingerprint),
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -996,11 +1213,35 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
               message: `Tool '${descriptor.name}' is unavailable.`,
             };
           }
-          const result = await executor.execute(params);
-          return {
-            output: normalizeExternalToolResult(result),
-            message: executor.title,
-          };
+          return runKimiExternalToolWithTimeout({
+            toolName: descriptor.name,
+            timeoutMs: resolveKimiExternalToolTimeoutMsFromEnv(),
+            execute: async () => {
+              const result = await executor.execute(params);
+              return {
+                output: normalizeExternalToolResult(result),
+                message: executor.title,
+              };
+            },
+            onTimeout: (message) =>
+              Effect.runPromise(
+                publish({
+                  type: "runtime.warning",
+                  eventId: nextEventId(),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  createdAt: nowIso(),
+                  payload: {
+                    message,
+                    detail: {
+                      toolName: descriptor.name,
+                      timeoutMs: resolveKimiExternalToolTimeoutMsFromEnv(),
+                    },
+                  },
+                  providerRefs: {},
+                }),
+              ),
+          });
         },
       })),
       ...skillRuntime.descriptors.map((descriptor) => ({
@@ -1015,11 +1256,35 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
               message: `Tool '${descriptor.name}' is unavailable.`,
             };
           }
-          const result = await executor.execute(params);
-          return {
-            output: normalizeExternalToolResult(result),
-            message: executor.title,
-          };
+          return runKimiExternalToolWithTimeout({
+            toolName: descriptor.name,
+            timeoutMs: resolveKimiExternalToolTimeoutMsFromEnv(),
+            execute: async () => {
+              const result = await executor.execute(params);
+              return {
+                output: normalizeExternalToolResult(result),
+                message: executor.title,
+              };
+            },
+            onTimeout: (message) =>
+              Effect.runPromise(
+                publish({
+                  type: "runtime.warning",
+                  eventId: nextEventId(),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  createdAt: nowIso(),
+                  payload: {
+                    message,
+                    detail: {
+                      toolName: descriptor.name,
+                      timeoutMs: resolveKimiExternalToolTimeoutMsFromEnv(),
+                    },
+                  },
+                  providerRefs: {},
+                }),
+              ),
+          });
         },
       })),
     ];
@@ -1246,7 +1511,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     }
 
     context.client = new ProtocolClient();
-    yield* Effect.tryPromise({
+    const initializeResult = yield* Effect.tryPromise({
       try: () =>
         context.client.start({
           sessionId: context.sessionId,
@@ -1270,13 +1535,19 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           cause,
         }),
     });
+    context.resumeFingerprint = buildKimiSessionFingerprint({
+      agentSignature: context.toolRuntime?.signature ?? context.resumeFingerprint.agentSignature,
+      workDir: context.workDir,
+      ...(context.shareDir ? { shareDir: context.shareDir } : {}),
+      initializeResult,
+    });
 
     const timestamp = nowIso();
     context.session = {
       ...context.session,
       status: "ready",
       ...(context.model ? { model: context.model } : {}),
-      resumeCursor: buildResumeCursor(context.sessionId),
+      resumeCursor: contextResumeCursor(context),
       updatedAt: timestamp,
       lastError: undefined,
     };
@@ -1305,6 +1576,15 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             ...(context.model ? { model: context.model } : {}),
             thinking: context.thinking,
             yoloMode: context.yoloMode,
+            ...(initializeResult.server.version
+              ? { cliVersion: initializeResult.server.version }
+              : {}),
+            ...(initializeResult.protocol_version
+              ? { wireVersion: initializeResult.protocol_version }
+              : {}),
+            ...(initializeResult.capabilities !== undefined
+              ? { capabilities: initializeResult.capabilities }
+              : {}),
           },
         },
         providerRefs: {},
@@ -2184,7 +2464,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     },
   ) =>
     Effect.promise(async () => {
-      try {
+      const watchdogTimeoutMs = resolveKimiTurnWatchdogTimeoutMsFromEnv();
+      let timeout: NodeJS.Timeout | undefined;
+      let timedOut = false;
+      const consumeTurn = (async () => {
         for await (const event of stream.events) {
           await Effect.runPromise(
             handleStreamEvent({
@@ -2194,7 +2477,26 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             }),
           );
         }
-        const result = await stream.result;
+        return stream.result;
+      })();
+      const watchdog = new Promise<RunResult>((_, reject) => {
+        timeout = setTimeout(() => {
+          timedOut = true;
+          void context.client.sendCancel().catch(() => undefined);
+          reject(
+            new Error(
+              `Kimi Code turn timed out after ${watchdogTimeoutMs}ms. ShioriCode cancelled the turn so the session can accept new input.`,
+            ),
+          );
+        }, watchdogTimeoutMs);
+      });
+
+      try {
+        const result = await Promise.race([consumeTurn, watchdog]);
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
         await Effect.runPromise(
           completeTurn({
             context,
@@ -2203,6 +2505,32 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           }),
         );
       } catch (cause) {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+        consumeTurn.catch(() => undefined);
+        if (timedOut) {
+          await Effect.runPromise(
+            publish({
+              type: "runtime.warning",
+              eventId: nextEventId(),
+              provider: PROVIDER,
+              threadId: context.session.threadId,
+              createdAt: nowIso(),
+              turnId: turn.turnId,
+              payload: {
+                message: toMessage(cause, "Kimi Code turn timed out."),
+                detail: {
+                  timeoutMs: watchdogTimeoutMs,
+                },
+              },
+              providerRefs: {
+                providerTurnId: context.sessionId,
+              },
+            }),
+          );
+        }
         await Effect.runPromise(
           failTurn({
             context,
@@ -2265,13 +2593,9 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       );
       const kimiSettings = settings.providers.kimiCode;
       const workDir = trimOrUndefined(input.cwd) ?? serverConfig.cwd;
-      const sessionId = parseResumeCursor(input.resumeCursor) ?? randomUUID();
+      const resumeCursor = parseResumeCursor(input.resumeCursor);
       const model =
         input.modelSelection?.provider === PROVIDER ? input.modelSelection.model : DEFAULT_MODEL;
-      const thinking =
-        input.modelSelection?.provider === PROVIDER
-          ? input.modelSelection.options?.thinking === true
-          : false;
       const yoloMode = input.runtimeMode === "full-access";
       const timestamp = nowIso();
       const executablePath = yield* prepareKimiExecutable({
@@ -2282,12 +2606,47 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         threadId: input.threadId,
         cwd: workDir,
       });
+      const shareDir = trimOrUndefined(kimiSettings.shareDir);
+      const thinking = resolveKimiThinking({
+        ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+        ...(shareDir ? { shareDir } : {}),
+      });
+      const baseFingerprint = buildKimiSessionFingerprint({
+        agentSignature: resources.toolRuntime?.signature ?? "",
+        workDir,
+        ...(shareDir ? { shareDir } : {}),
+      });
+      const fingerprintMismatch = findKimiResumeFingerprintMismatch({
+        previous: resumeCursor?.fingerprint,
+        next: baseFingerprint,
+      });
+      const shouldResume = resumeCursor !== undefined && fingerprintMismatch === undefined;
+      const sessionId = shouldResume ? resumeCursor.sessionId : randomUUID();
+      const hydratedSnapshot =
+        shouldResume && resumeCursor
+          ? yield* Effect.tryPromise({
+              try: () => parseSessionEvents(workDir, resumeCursor.sessionId),
+              catch: (cause) =>
+                new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/resume",
+                  detail: toMessage(cause, "Failed to hydrate Kimi Code session history."),
+                  cause,
+                }),
+            }).pipe(
+              Effect.map((events) => turnSnapshotFromEvents(input.threadId, sessionId, events)),
+            )
+          : {
+              threadId: input.threadId,
+              turns: [],
+            };
       const context: KimiSessionContext = {
         session: buildSession(
           {
             threadId: input.threadId,
             workDir,
             sessionId,
+            fingerprint: baseFingerprint,
             runtimeMode: input.runtimeMode,
             model,
           },
@@ -2297,9 +2656,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         client: new ProtocolClient(),
         workDir,
         executablePath,
-        shareDir: trimOrUndefined(kimiSettings.shareDir),
+        shareDir,
         model,
         thinking,
+        resumeFingerprint: baseFingerprint,
         yoloMode,
         planMode: false,
         agentFilePath: resources.agentFilePath,
@@ -2310,12 +2670,59 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         pendingApprovals: new Map(),
         pendingQuestions: new Map(),
         activeTurn: null,
-        turns: [],
+        turns: hydratedSnapshot.turns.map((turn) => ({
+          id: turn.id,
+          items: [...turn.items],
+        })),
       };
 
-      yield* startClient(context, {
-        resumePayload: input.resumeCursor,
-      });
+      if (shouldResume) {
+        yield* startClient(context, { resumePayload: input.resumeCursor });
+      } else {
+        yield* startClient(context);
+      }
+      if (fingerprintMismatch) {
+        yield* publish({
+          type: "runtime.warning",
+          eventId: nextEventId(),
+          provider: PROVIDER,
+          threadId: input.threadId,
+          createdAt: nowIso(),
+          payload: {
+            message:
+              "Kimi Code resume metadata changed; ShioriCode started a fresh session instead of reusing incompatible history.",
+            detail: {
+              changedField: fingerprintMismatch,
+              previousSessionId: resumeCursor?.sessionId,
+              nextSessionId: sessionId,
+            },
+          },
+          providerRefs: {},
+        });
+      } else if (resumeCursor?.fingerprint) {
+        const runtimeMismatch = findKimiResumeFingerprintMismatch({
+          previous: resumeCursor.fingerprint,
+          next: context.resumeFingerprint,
+          compareRuntime: true,
+        });
+        if (runtimeMismatch) {
+          yield* publish({
+            type: "runtime.warning",
+            eventId: nextEventId(),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            createdAt: nowIso(),
+            payload: {
+              message: "Kimi Code runtime metadata changed since the saved session was created.",
+              detail: {
+                changedField: runtimeMismatch,
+                sessionId,
+              },
+            },
+            providerRefs: {},
+          });
+        }
+      }
       return context.session;
     },
   );
@@ -2346,16 +2753,17 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       input.modelSelection?.provider === PROVIDER
         ? input.modelSelection.model
         : (context.model ?? DEFAULT_MODEL);
-    const thinking =
-      input.modelSelection?.provider === PROVIDER
-        ? input.modelSelection.options?.thinking === true
-        : context.thinking;
     const yoloMode = context.session.runtimeMode === "full-access";
     const executablePath = yield* prepareKimiExecutable({
       threadId: input.threadId,
       executablePath: trimOrUndefined(kimiSettings.binaryPath) ?? "kimi",
     });
     const shareDir = trimOrUndefined(kimiSettings.shareDir);
+    const thinking = resolveKimiThinking({
+      ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+      ...(shareDir ? { shareDir } : {}),
+      fallback: context.thinking,
+    });
     const resources = yield* buildSessionResources({
       threadId: input.threadId,
       cwd: context.workDir,
@@ -2485,7 +2893,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         {
           threadId: input.threadId,
           turnId,
-          resumeCursor: buildResumeCursor(context.sessionId),
+          resumeCursor: contextResumeCursor(context),
         } satisfies ProviderTurnStartResult
       ),
     );
@@ -2566,23 +2974,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         });
       }
 
-      const normalizedAnswers: Record<string, string> = {};
-      for (const question of pending.questions) {
-        const rawAnswer = answers[question.question];
-        if (typeof rawAnswer === "string" && rawAnswer.trim().length > 0) {
-          normalizedAnswers[question.question] = rawAnswer.trim();
-          continue;
-        }
-        if (Array.isArray(rawAnswer)) {
-          const joined = rawAnswer
-            .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-            .filter((entry) => entry.length > 0)
-            .join(", ");
-          if (joined.length > 0) {
-            normalizedAnswers[question.question] = joined;
-          }
-        }
-      }
+      const normalizedAnswers = normalizeKimiQuestionAnswers(pending.questions, answers);
 
       yield* Effect.tryPromise({
         try: () => context.client.sendQuestionResponse(requestId, requestId, normalizedAnswers),
@@ -2674,6 +3066,12 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             cause,
           }),
       });
+      if (events.length === 0 && context.turns.length > 0) {
+        return {
+          threadId,
+          turns: context.turns,
+        };
+      }
       return turnSnapshotFromEvents(threadId, context.sessionId, events);
     });
 
@@ -2736,10 +3134,15 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         threadId,
         cwd: context.workDir,
       });
+      context.resumeFingerprint = buildKimiSessionFingerprint({
+        agentSignature: resources.toolRuntime?.signature ?? "",
+        workDir: context.workDir,
+        ...(context.shareDir ? { shareDir: context.shareDir } : {}),
+      });
       context.session = {
         ...context.session,
         status: "ready",
-        resumeCursor: buildResumeCursor(nextSessionId),
+        resumeCursor: contextResumeCursor(context),
         updatedAt: nowIso(),
         lastError: undefined,
       };
@@ -2749,7 +3152,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
 
       yield* startClient(context, {
         emitLifecycle: true,
-        resumePayload: buildResumeCursor(nextSessionId),
+        resumePayload: contextResumeCursor(context),
       });
 
       return keepTurns <= 0

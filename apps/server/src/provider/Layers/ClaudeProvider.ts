@@ -211,7 +211,12 @@ export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
     };
   }
   if (result.code === 0) {
-    return { status: "ready", auth: { status: "authenticated" } };
+    return {
+      status: "warning",
+      auth: { status: "unknown" },
+      message:
+        "Could not verify Claude authentication status because JSON output did not include a recognized auth marker.",
+    };
   }
 
   const detail = detailFromResult(result);
@@ -485,7 +490,10 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (args: Readonly
 });
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
-  resolveSubscriptionType?: (binaryPath: string) => Effect.Effect<string | undefined>,
+  resolveSubscriptionType?: (
+    binaryPath: string,
+    authContext: string | undefined,
+  ) => Effect.Effect<string | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -578,7 +586,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   // ── Auth check + subscription detection ────────────────────────────
 
-  const authProbe = yield* runClaudeCommand(["auth", "status"]).pipe(
+  const authProbe = yield* runClaudeCommand(["auth", "status", "--json"]).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -598,7 +606,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   if (!subscriptionType && resolveSubscriptionType) {
-    subscriptionType = yield* resolveSubscriptionType(claudeSettings.binaryPath);
+    const authContext =
+      Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
+        ? `${extractClaudeAuthMethodFromOutput(authProbe.success.value) ?? "unknown"}:${authProbe.success.value.stdout.trim()}`
+        : undefined;
+    subscriptionType = yield* resolveSubscriptionType(claudeSettings.binaryPath, authContext);
   }
 
   const resolvedModels = adjustModelsForSubscription(models, subscriptionType);
@@ -670,12 +682,16 @@ export const ClaudeProviderLive = Layer.effect(
     const subscriptionProbeCache = yield* Cache.make({
       capacity: 1,
       timeToLive: Duration.minutes(5),
-      lookup: (binaryPath: string) =>
-        probeClaudeCapabilities(binaryPath).pipe(Effect.map((r) => r?.subscriptionType)),
+      lookup: (cacheKey: string) => {
+        const [binaryPath] = cacheKey.split("\u0000", 1);
+        return probeClaudeCapabilities(binaryPath ?? cacheKey).pipe(
+          Effect.map((r) => r?.subscriptionType),
+        );
+      },
     });
 
-    const checkProvider = checkClaudeProviderStatus((binaryPath) =>
-      Cache.get(subscriptionProbeCache, binaryPath),
+    const checkProvider = checkClaudeProviderStatus((binaryPath, authContext) =>
+      Cache.get(subscriptionProbeCache, `${binaryPath}\u0000${authContext ?? "unknown"}`),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

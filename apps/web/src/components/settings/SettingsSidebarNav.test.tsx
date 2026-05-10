@@ -28,9 +28,10 @@ vi.mock("../../lib/settingsNavigation", () => ({
 }));
 
 let computerUseEnabled = false;
+let mobileAppEnabled = false;
 
 vi.mock("../../convex/HostedShioriProvider", () => ({
-  useHostedShioriState: () => ({ computerUseEnabled }),
+  useHostedShioriState: () => ({ computerUseEnabled, mobileAppEnabled }),
 }));
 
 import { SidebarProvider } from "../ui/sidebar";
@@ -47,6 +48,7 @@ function renderSettingsSidebar(pathname = "/settings/general") {
 describe("SettingsSidebarNav", () => {
   beforeEach(() => {
     computerUseEnabled = false;
+    mobileAppEnabled = false;
   });
 
   it("inherits the shared sidebar hover color for back and section items", () => {
@@ -69,6 +71,21 @@ describe("SettingsSidebarNav", () => {
     const html = renderSettingsSidebar("/settings/computer-use");
 
     expect(html).toContain("Computer Use");
+    expect(html).toContain('data-active="true"');
+  });
+
+  it("hides Mobile App when the hosted feature flag is off", () => {
+    const html = renderSettingsSidebar();
+
+    expect(html).not.toContain("Mobile App");
+  });
+
+  it("shows Mobile App when the hosted feature flag is on", () => {
+    mobileAppEnabled = true;
+
+    const html = renderSettingsSidebar("/settings/mobile");
+
+    expect(html).toContain("Mobile App");
     expect(html).toContain('data-active="true"');
   });
 });

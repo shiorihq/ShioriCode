@@ -122,7 +122,7 @@ export function normalizeKimiCodeModelOptionsWithCapabilities(
   caps: ModelCapabilities,
   modelOptions: KimiCodeModelOptions | null | undefined,
 ): KimiCodeModelOptions | undefined {
-  const thinking = caps.supportsThinkingToggle ? (modelOptions?.thinking ?? false) : undefined;
+  const thinking = caps.supportsThinkingToggle ? modelOptions?.thinking : undefined;
   const nextOptions =
     thinking !== undefined ? ({ thinking } as KimiCodeModelOptions) : ({} as KimiCodeModelOptions);
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;

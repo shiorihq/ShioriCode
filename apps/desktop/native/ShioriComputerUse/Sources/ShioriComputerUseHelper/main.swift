@@ -66,6 +66,143 @@ func sessionId(_ input: [String: Any]) -> String {
     (input["sessionId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "computer-default"
 }
 
+func activeDisplayBounds() -> [CGRect] {
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+        return [CGDisplayBounds(CGMainDisplayID())]
+    }
+    var displays = Array(repeating: CGDirectDisplayID(), count: Int(count))
+    guard CGGetActiveDisplayList(count, &displays, &count) == .success else {
+        return [CGDisplayBounds(CGMainDisplayID())]
+    }
+    return displays.prefix(Int(count)).map(CGDisplayBounds)
+}
+
+func virtualScreenBounds() -> CGRect {
+    activeDisplayBounds().reduce(CGRect.null) { partial, bounds in
+        partial.union(bounds)
+    }
+}
+
+func cursorPointInScreenshot(bitmap: NSBitmapImageRep) -> CGPoint? {
+    guard let location = CGEvent(source: nil)?.location else { return nil }
+    let bounds = virtualScreenBounds()
+    guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { return nil }
+    let normalizedX = (location.x - bounds.minX) / bounds.width
+    let normalizedY = (location.y - bounds.minY) / bounds.height
+    guard normalizedX.isFinite, normalizedY.isFinite else { return nil }
+    return CGPoint(
+        x: normalizedX * CGFloat(bitmap.pixelsWide),
+        y: normalizedY * CGFloat(bitmap.pixelsHigh)
+    )
+}
+
+func drawShioriCursor(context: CGContext, tip: CGPoint, scale: CGFloat) {
+    context.saveGState()
+    context.translateBy(x: tip.x, y: tip.y)
+    context.scaleBy(x: scale, y: scale)
+
+    context.setLineCap(.round)
+    context.setLineJoin(.round)
+    context.setShadow(
+        offset: CGSize(width: 0, height: -2),
+        blur: 12,
+        color: NSColor.black.withAlphaComponent(0.32).cgColor
+    )
+
+    let glow = CGMutablePath()
+    glow.addEllipse(in: CGRect(x: -10, y: -30, width: 42, height: 42))
+    context.addPath(glow)
+    context.setStrokeColor(NSColor.systemCyan.withAlphaComponent(0.24).cgColor)
+    context.setLineWidth(2)
+    context.strokePath()
+
+    let cursor = CGMutablePath()
+    cursor.move(to: CGPoint(x: 0, y: 0))
+    cursor.addLine(to: CGPoint(x: 7, y: -24))
+    cursor.addCurve(
+        to: CGPoint(x: 13, y: -14),
+        control1: CGPoint(x: 8.2, y: -20.2),
+        control2: CGPoint(x: 10.2, y: -16.8)
+    )
+    cursor.addLine(to: CGPoint(x: 23, y: -12))
+    cursor.addCurve(
+        to: CGPoint(x: 25, y: -7),
+        control1: CGPoint(x: 26.2, y: -11.3),
+        control2: CGPoint(x: 27.1, y: -8.7)
+    )
+    cursor.addCurve(
+        to: CGPoint(x: 20, y: -5),
+        control1: CGPoint(x: 23.8, y: -5.6),
+        control2: CGPoint(x: 22.1, y: -5)
+    )
+    cursor.addLine(to: CGPoint(x: 11, y: -7))
+    cursor.addLine(to: CGPoint(x: 5, y: 1))
+    cursor.addCurve(
+        to: CGPoint(x: 0, y: 0),
+        control1: CGPoint(x: 3.1, y: 3.5),
+        control2: CGPoint(x: 0.1, y: 2.7)
+    )
+    cursor.closeSubpath()
+
+    context.addPath(cursor)
+    context.setFillColor(NSColor(calibratedWhite: 0.06, alpha: 0.94).cgColor)
+    context.fillPath()
+
+    context.addPath(cursor)
+    context.setStrokeColor(NSColor.white.withAlphaComponent(0.94).cgColor)
+    context.setLineWidth(2.2)
+    context.strokePath()
+
+    let highlight = CGMutablePath()
+    highlight.move(to: CGPoint(x: 4.8, y: -5.5))
+    highlight.addLine(to: CGPoint(x: 8.8, y: -17.4))
+    context.addPath(highlight)
+    context.setStrokeColor(NSColor.white.withAlphaComponent(0.45).cgColor)
+    context.setLineWidth(1.1)
+    context.strokePath()
+
+    context.setShadow(offset: .zero, blur: 0, color: nil)
+    context.addEllipse(in: CGRect(x: -2.6, y: -2.6, width: 5.2, height: 5.2))
+    context.setFillColor(NSColor.systemCyan.cgColor)
+    context.fillPath()
+
+    context.restoreGState()
+}
+
+func dataWithCursorOverlay(_ png: Data, bitmap: NSBitmapImageRep) -> Data {
+    guard
+        let image = NSImage(data: png),
+        let cursorPoint = cursorPointInScreenshot(bitmap: bitmap)
+    else {
+        return png
+    }
+
+    let outputSize = NSSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
+    let output = NSImage(size: outputSize)
+    output.lockFocus()
+    image.draw(in: NSRect(origin: .zero, size: outputSize))
+    if let context = NSGraphicsContext.current?.cgContext {
+        let minimumDimension = min(outputSize.width, outputSize.height)
+        let scale = max(0.9, min(1.8, minimumDimension / 900))
+        drawShioriCursor(
+            context: context,
+            tip: CGPoint(x: cursorPoint.x, y: outputSize.height - cursorPoint.y),
+            scale: scale
+        )
+    }
+    output.unlockFocus()
+
+    guard
+        let tiff = output.tiffRepresentation,
+        let representation = NSBitmapImageRep(data: tiff),
+        let cursorPng = representation.representation(using: .png, properties: [:])
+    else {
+        return png
+    }
+    return cursorPng
+}
+
 func actionResult(_ input: [String: Any], _ message: String? = nil) -> [String: Any] {
     [
         "sessionId": sessionId(input),
@@ -125,9 +262,10 @@ func screenshot(input: [String: Any]) throws -> [String: Any] {
     guard let bitmap = NSBitmapImageRep(data: png) else {
         throw HelperFailure(code: "actionFailed", message: "Failed to decode the captured PNG.")
     }
+    let annotatedPng = dataWithCursorOverlay(png, bitmap: bitmap)
     return [
         "sessionId": sessionId(input),
-        "imageDataUrl": "data:image/png;base64,\(png.base64EncodedString())",
+        "imageDataUrl": "data:image/png;base64,\(annotatedPng.base64EncodedString())",
         "width": bitmap.pixelsWide,
         "height": bitmap.pixelsHigh,
         "capturedAt": ISO8601DateFormatter().string(from: Date())

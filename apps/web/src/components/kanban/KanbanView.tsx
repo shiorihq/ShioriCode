@@ -1,6 +1,6 @@
 import type { ProjectId } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { KanbanIcon } from "lucide-react";
+import { CircleDotDashedIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { KanbanHeaderControls } from "~/components/kanban/KanbanHeaderControls";
@@ -81,10 +81,10 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const changeProject = useCallback(
     (next: string) => {
       if (next === ALL_PROJECTS_VALUE) {
-        void navigate({ to: "/kanban", search: {} });
+        void navigate({ to: "/goals", search: {} });
         return;
       }
-      void navigate({ to: "/kanban", search: { projectId: next } });
+      void navigate({ to: "/goals", search: { projectId: next } });
     },
     [navigate],
   );
@@ -112,10 +112,8 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const heading = (
     <div className="app-titlebar-window-controls-inset flex h-full items-center gap-3 px-4 [--app-titlebar-base-left-padding:1rem]">
       <div className="flex min-w-0 items-center gap-2">
-        <KanbanIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <h1 className="truncate text-[14px] font-semibold tracking-tight text-foreground">
-          Kanban
-        </h1>
+        <CircleDotDashedIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <h1 className="truncate text-[14px] font-semibold tracking-tight text-foreground">Goals</h1>
       </div>
       {projectSelect}
       <div className="ml-auto flex items-center">
@@ -157,11 +155,11 @@ export function KanbanView({ projectId }: KanbanViewProps) {
               <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
-                    <KanbanIcon />
+                    <CircleDotDashedIcon />
                   </EmptyMedia>
                   <EmptyTitle className="text-balance">No projects registered</EmptyTitle>
                   <EmptyDescription className="text-pretty">
-                    Open a project in ShioriCode to start planning work on the Kanban board.
+                    Open a project in ShioriCode to start turning goals into plans and runs.
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>

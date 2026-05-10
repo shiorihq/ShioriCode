@@ -1,16 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { KanbanView } from "~/components/kanban/KanbanView";
-import { useSettings } from "~/hooks/useSettings";
-import { useServerConfig } from "~/rpc/serverState";
-
 export interface KanbanSearch {
   projectId?: string;
 }
 
 export const Route = createFileRoute("/kanban")({
-  component: KanbanRouteView,
+  component: KanbanCompatRedirect,
   validateSearch: (search: Record<string, unknown>): KanbanSearch => {
     const out: KanbanSearch = {};
     const projectId = search.projectId;
@@ -21,21 +17,13 @@ export const Route = createFileRoute("/kanban")({
   },
 });
 
-function KanbanRouteView() {
+function KanbanCompatRedirect() {
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const serverConfig = useServerConfig();
-  const kanbanEnabled = useSettings().kanban.enabled;
 
   useEffect(() => {
-    if (serverConfig && !kanbanEnabled) {
-      void navigate({ to: "/", replace: true });
-    }
-  }, [kanbanEnabled, navigate, serverConfig]);
+    void navigate({ to: "/goals", search, replace: true });
+  }, [navigate, search]);
 
-  if (!serverConfig || !kanbanEnabled) {
-    return null;
-  }
-
-  return <KanbanView projectId={search.projectId ?? null} />;
+  return null;
 }

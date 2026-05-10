@@ -1,15 +1,4 @@
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Queue,
-  Ref,
-  Scope,
-  ServiceMap,
-  Stream,
-} from "effect";
+import { Cause, Deferred, Effect, Layer, Queue, Ref, Scope, ServiceMap, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -411,27 +400,12 @@ const makeAcpSessionRuntime = (
           cwd: options.cwd,
           mcpServers,
         } satisfies EffectAcpSchema.LoadSessionRequest;
-        const resumed = yield* runLoggedRequest(
+        sessionSetupResult = yield* runLoggedRequest(
           "session/load",
           loadPayload,
           acp.agent.loadSession(loadPayload),
-        ).pipe(Effect.exit);
-        if (Exit.isSuccess(resumed)) {
-          sessionId = options.resumeSessionId;
-          sessionSetupResult = resumed.value;
-        } else {
-          const createPayload = {
-            cwd: options.cwd,
-            mcpServers,
-          } satisfies EffectAcpSchema.NewSessionRequest;
-          const created = yield* runLoggedRequest(
-            "session/new",
-            createPayload,
-            acp.agent.createSession(createPayload),
-          );
-          sessionId = created.sessionId;
-          sessionSetupResult = created;
-        }
+        );
+        sessionId = options.resumeSessionId;
       } else {
         const createPayload = {
           cwd: options.cwd,

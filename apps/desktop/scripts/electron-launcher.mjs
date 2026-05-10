@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "ShioriCode (Dev)" : "ShioriCode";
 const APP_BUNDLE_ID = "com.shioritools.shioricode";
-const LAUNCHER_VERSION = 1;
+const LAUNCHER_VERSION = 2;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
@@ -89,6 +89,18 @@ function patchHelperBundleInfoPlists(appBundlePath) {
   }
 }
 
+function signMacLauncher(appBundlePath) {
+  const result = spawnSync("codesign", ["--force", "--deep", "--sign", "-", appBundlePath], {
+    encoding: "utf8",
+  });
+  if (result.status === 0) {
+    return;
+  }
+
+  const details = [result.stderr, result.stdout].filter(Boolean).join("\n");
+  throw new Error(`Failed to sign macOS dev app bundle at ${appBundlePath}: ${details}`.trim());
+}
+
 function readJson(path) {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -127,6 +139,7 @@ function buildMacLauncher(electronBinaryPath) {
   cpSync(sourceAppBundlePath, targetAppBundlePath, { recursive: true });
   patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
   patchHelperBundleInfoPlists(targetAppBundlePath);
+  signMacLauncher(targetAppBundlePath);
   writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
 
   return targetBinaryPath;

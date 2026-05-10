@@ -1019,6 +1019,47 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }),
   );
 
+  it.effect("does not auto-reuse a persisted resume cursor when starting in a different cwd", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const threadId = asThreadId("thread-cwd-switch-no-resume");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-a",
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(initial.resumeCursor, { opaque: "resume-thread-cwd-switch-no-resume" });
+
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-b",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const restartedInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof restartedInput === "object" && restartedInput !== null, true);
+      if (restartedInput && typeof restartedInput === "object") {
+        const startPayload = restartedInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, "/tmp/project-b");
+        assert.equal(startPayload.threadId, threadId);
+        assert.equal("resumeCursor" in startPayload, false);
+      }
+    }),
+  );
+
   it.effect("rejects structured approval decisions for non-codex providers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;

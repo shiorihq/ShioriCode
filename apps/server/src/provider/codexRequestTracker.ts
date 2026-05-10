@@ -23,7 +23,8 @@ export interface PendingApprovalRequest {
   method:
     | "item/commandExecution/requestApproval"
     | "item/fileChange/requestApproval"
-    | "item/fileRead/requestApproval";
+    | "item/fileRead/requestApproval"
+    | "permissions/requestApproval";
   requestKind: ProviderRequestKind;
   threadId: ThreadId;
   turnId?: TurnId;
@@ -36,7 +37,10 @@ export interface PendingUserInputRequest {
   threadId: ThreadId;
   turnId?: TurnId;
   itemId?: ProviderItemId;
-  requestMethod?: "item/tool/requestUserInput" | "tool/requestUserInput";
+  requestMethod?:
+    | "item/tool/requestUserInput"
+    | "tool/requestUserInput"
+    | "mcpServer/elicitation/request";
 }
 
 export interface CodexRequestTrackerState {

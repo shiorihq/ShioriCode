@@ -8,6 +8,7 @@ import {
   MessageSquareIcon,
   PaletteIcon,
   Settings2Icon,
+  SmartphoneIcon,
   UserIcon,
 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -32,20 +33,29 @@ export type SettingsSectionPath =
   | "/settings/account"
   | "/settings/archived"
   | "/settings/computer-use"
+  | "/settings/mobile"
   | "/settings/usage"
   | "/settings/feedback";
+
+type SettingsFeature = "computerUse" | "mobileApp";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
-  feature?: "computerUse";
+  feature?: SettingsFeature;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
   { label: "Account", to: "/settings/account", icon: UserIcon },
   { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
+  {
+    label: "Mobile App",
+    to: "/settings/mobile",
+    icon: SmartphoneIcon,
+    feature: "mobileApp",
+  },
   {
     label: "Computer Use",
     to: "/settings/computer-use",
@@ -58,13 +68,17 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const { computerUseEnabled } = useHostedShioriState();
+  const { computerUseEnabled, mobileAppEnabled } = useHostedShioriState();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };
   const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
+  const enabledFeatures = {
+    computerUse: computerUseEnabled,
+    mobileApp: mobileAppEnabled,
+  } satisfies Record<SettingsFeature, boolean>;
   const visibleItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.feature !== "computerUse" || computerUseEnabled,
+    (item) => item.feature === undefined || enabledFeatures[item.feature],
   );
 
   return (

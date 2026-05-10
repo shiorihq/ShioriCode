@@ -14,6 +14,8 @@ import {
   query,
   type Options as ClaudeQueryOptions,
   type McpServerConfig as ClaudeMcpServerConfig,
+  type McpSetServersResult,
+  type McpServerStatus,
   type McpStdioServerConfig,
   type McpSSEServerConfig,
   type McpHttpServerConfig,
@@ -23,6 +25,7 @@ import {
   type SDKMessage,
   type SDKResultMessage,
   type SettingSource,
+  type Settings as ClaudeSdkSettings,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -50,6 +53,7 @@ import {
 } from "contracts";
 import {
   applyClaudePromptEffortPrefix,
+  resolveContextWindow,
   resolveApiModelId,
   resolveEffort,
   trimOrNull,
@@ -84,7 +88,7 @@ import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
-import { filterMcpServersForProvider, materializeMcpServersForRuntime } from "../mcpServers.ts";
+import { materializeMcpServersForRuntime } from "../mcpServers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -98,11 +102,23 @@ import type { ClaudeUsageSnapshot } from "../Services/ProviderUsage.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeAgent" as const;
+const CLAUDE_RESUME_CURSOR_VERSION = 1;
+const CLAUDE_CLIENT_APP = "shiori-code";
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
   "command_output" | "file_change_output"
 >;
+type ClaudeEffectiveEffort = Exclude<ClaudeCodeEffort, "ultrathink">;
+
+interface ClaudeRuntimeConfig {
+  readonly requestedModel?: string;
+  readonly apiModelId?: string;
+  readonly effort: ClaudeEffectiveEffort | null;
+  readonly fastMode: boolean;
+  readonly thinking?: boolean;
+  readonly contextWindow?: string;
+}
 
 type PromptQueueItem =
   | {
@@ -182,6 +198,7 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
+  currentRuntimeConfig: ClaudeRuntimeConfig | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -212,6 +229,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
+  readonly applyFlagSettings?: (settings: ClaudeSdkSettings) => Promise<void>;
+  readonly mcpServerStatus?: () => Promise<McpServerStatus[]>;
+  readonly setMcpServers?: (
+    servers: Record<string, ClaudeMcpServerConfig>,
+  ) => Promise<McpSetServersResult>;
   readonly close: () => void;
   readonly rewindFiles?: (userMessageUuid: string) => Promise<unknown>;
 }
@@ -222,6 +244,7 @@ export interface ClaudeAdapterLiveOptions {
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
   readonly fetchUsage?: (input?: { readonly signal?: AbortSignal }) => Promise<ClaudeUsageSnapshot>;
+  readonly materializeMcpServers?: typeof materializeMcpServersForRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   // Max time a canUseTool approval or user-input question can wait for the UI
@@ -268,14 +291,98 @@ function buildClaudeMcpServers(
   servers: readonly McpServerEntry[],
 ): Record<string, ClaudeMcpServerConfig> | undefined {
   const result: Record<string, ClaudeMcpServerConfig> = {};
-  for (const server of filterMcpServersForProvider("claudeAgent", servers)) {
+  for (const server of servers) {
     result[server.name] = translateToClaudeMcpConfig(server);
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === "authorization");
+}
+
+function hasStaticMcpAuthorization(server: McpServerEntry): boolean {
+  return (
+    hasAuthorizationHeader(server.headers) ||
+    hasAuthorizationHeader(server.envHttpHeaders) ||
+    Boolean(server.bearerTokenEnvVar?.trim())
+  );
+}
+
+function isClaudeMcpServerReservedName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return (
+    normalized.length === 0 ||
+    normalized.startsWith("mcp__") ||
+    normalized === "shioricode-browser" ||
+    normalized === "shioricode-computer"
+  );
+}
+
+function validateClaudeMcpServers(input: {
+  readonly servers: readonly McpServerEntry[];
+  readonly requireMaterializedOauth?: boolean;
+}): { readonly servers: readonly McpServerEntry[]; readonly warnings: readonly string[] } {
+  const servers: McpServerEntry[] = [];
+  const warnings: string[] = [];
+  const seenNames = new Set<string>();
+
+  for (const server of input.servers) {
+    const appliesToClaude =
+      server.providers.length === 0 || server.providers.includes("claudeAgent");
+    if (!appliesToClaude) {
+      continue;
+    }
+
+    const name = server.name.trim();
+    if (!server.enabled) {
+      warnings.push(`Skipping disabled Claude MCP server '${name || "(empty name)"}'.`);
+      continue;
+    }
+    if (!name) {
+      warnings.push("Skipping Claude MCP server with an empty name.");
+      continue;
+    }
+    if (isClaudeMcpServerReservedName(name)) {
+      warnings.push(`Skipping Claude MCP server '${name}' because the name is reserved.`);
+      continue;
+    }
+
+    const normalizedName = name.toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      warnings.push(`Skipping duplicate Claude MCP server '${name}'.`);
+      continue;
+    }
+    seenNames.add(normalizedName);
+
+    if (server.transport === "stdio" && !server.command?.trim()) {
+      warnings.push(
+        `Skipping Claude MCP server '${name}' because stdio transport needs a command.`,
+      );
+      continue;
+    }
+    if (server.transport !== "stdio" && !server.url?.trim()) {
+      warnings.push(
+        `Skipping Claude MCP server '${name}' because ${server.transport} transport needs a URL.`,
+      );
+      continue;
+    }
+    if (
+      input.requireMaterializedOauth === true &&
+      server.transport !== "stdio" &&
+      (server.oauthResource?.trim() || (server.oauthScopes?.length ?? 0) > 0) &&
+      !hasStaticMcpAuthorization(server)
+    ) {
+      warnings.push(
+        `Skipping Claude MCP server '${name}' because OAuth credentials are missing or expired.`,
+      );
+      continue;
+    }
+
+    servers.push(name === server.name ? server : { ...server, name });
+  }
+
+  return { servers, warnings };
 }
 
 function isSyntheticClaudeThreadId(value: string): boolean {
@@ -306,12 +413,80 @@ function normalizeClaudeStreamMessages(cause: Cause.Cause<Error>): ReadonlyArray
 }
 
 function getEffectiveClaudeCodeEffort(
-  effort: ClaudeCodeEffort | null | undefined,
-): Exclude<ClaudeCodeEffort, "ultrathink"> | null {
+  effort: string | null | undefined,
+): ClaudeEffectiveEffort | null {
   if (!effort) {
     return null;
   }
-  return effort === "ultrathink" ? null : effort;
+  return effort === "ultrathink" ? null : (effort as ClaudeEffectiveEffort);
+}
+
+function resolveClaudeRuntimeConfig(
+  modelSelection:
+    | Extract<ProviderSendTurnInput["modelSelection"], { provider: "claudeAgent" }>
+    | undefined,
+): ClaudeRuntimeConfig | undefined {
+  if (!modelSelection) {
+    return undefined;
+  }
+
+  const caps = getClaudeModelCapabilities(modelSelection.model);
+  const resolvedEffort = resolveEffort(caps, modelSelection.options?.effort) ?? null;
+  const effectiveEffort = getEffectiveClaudeCodeEffort(resolvedEffort);
+  const contextWindow = resolveContextWindow(caps, modelSelection.options?.contextWindow);
+  const apiModelId = resolveApiModelId({
+    ...modelSelection,
+    options: {
+      ...modelSelection.options,
+      ...(contextWindow ? { contextWindow } : {}),
+    },
+  });
+
+  return {
+    requestedModel: modelSelection.model,
+    apiModelId,
+    effort: effectiveEffort,
+    fastMode: modelSelection.options?.fastMode === true && caps.supportsFastMode,
+    ...(typeof modelSelection.options?.thinking === "boolean" && caps.supportsThinkingToggle
+      ? { thinking: modelSelection.options.thinking }
+      : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+  };
+}
+
+function startupSettingsFromClaudeRuntimeConfig(
+  config: ClaudeRuntimeConfig | undefined,
+): ClaudeSdkSettings | undefined {
+  if (!config) {
+    return undefined;
+  }
+  const settings: Record<string, unknown> = {
+    ...(typeof config.thinking === "boolean" ? { alwaysThinkingEnabled: config.thinking } : {}),
+    ...(config.fastMode ? { fastMode: true } : {}),
+  };
+  return Object.keys(settings).length > 0 ? (settings as ClaudeSdkSettings) : undefined;
+}
+
+function changedFlagSettings(
+  previous: ClaudeRuntimeConfig | undefined,
+  next: ClaudeRuntimeConfig,
+): ClaudeSdkSettings | undefined {
+  const settings: Record<string, unknown> = {};
+
+  if (previous?.effort !== next.effort && next.effort) {
+    settings.effortLevel = next.effort;
+  }
+  if ((previous?.fastMode ?? false) !== next.fastMode) {
+    settings.fastMode = next.fastMode;
+  }
+  if (
+    previous?.thinking !== next.thinking &&
+    (previous?.thinking !== undefined || next.thinking !== undefined)
+  ) {
+    settings.alwaysThinkingEnabled = next.thinking ?? true;
+  }
+
+  return Object.keys(settings).length > 0 ? (settings as ClaudeSdkSettings) : undefined;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -519,12 +694,21 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     return undefined;
   }
   const cursor = resumeCursor as {
+    provider?: unknown;
+    version?: unknown;
     threadId?: unknown;
     resume?: unknown;
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
   };
+
+  if (cursor.provider !== undefined && cursor.provider !== PROVIDER) {
+    return undefined;
+  }
+  if (cursor.version !== undefined && cursor.version !== CLAUDE_RESUME_CURSOR_VERSION) {
+    return undefined;
+  }
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
   const threadId =
@@ -537,9 +721,11 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
       : typeof cursor.sessionId === "string"
         ? cursor.sessionId
         : undefined;
-  const resume = resumeCandidate && isUuid(resumeCandidate) ? resumeCandidate : undefined;
+  const resume = resumeCandidate && resumeCandidate.trim().length > 0 ? resumeCandidate : undefined;
   const resumeSessionAt =
-    typeof cursor.resumeSessionAt === "string" ? cursor.resumeSessionAt : undefined;
+    typeof cursor.resumeSessionAt === "string" && cursor.resumeSessionAt.trim().length > 0
+      ? cursor.resumeSessionAt
+      : undefined;
   const turnCountValue = typeof cursor.turnCount === "number" ? cursor.turnCount : undefined;
 
   return {
@@ -1238,6 +1424,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (!threadId) return;
 
     const resumeCursor = {
+      provider: PROVIDER,
+      version: CLAUDE_RESUME_CURSOR_VERSION,
       threadId,
       ...(context.resumeSessionId ? { resume: context.resumeSessionId } : {}),
       ...(context.lastAssistantUuid ? { resumeSessionAt: context.lastAssistantUuid } : {}),
@@ -1526,6 +1714,50 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const emitRuntimeWarnings = Effect.fn("emitRuntimeWarnings")(function* (
+    context: ClaudeSessionContext,
+    warnings: ReadonlyArray<string>,
+  ) {
+    for (const warning of warnings) {
+      yield* emitRuntimeWarning(context, warning);
+    }
+  });
+
+  const emitMcpServerStatusWarnings = Effect.fn("emitMcpServerStatusWarnings")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    const readStatus = context.query.mcpServerStatus;
+    if (!readStatus) {
+      return;
+    }
+
+    const statuses = yield* Effect.tryPromise({
+      try: () => readStatus(),
+      catch: (cause) => toRequestError(context.session.threadId, "mcp/status", cause),
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logDebug("claude mcp server status probe failed", {
+            threadId: context.session.threadId,
+            detail: cause,
+          });
+          return [] as ReadonlyArray<McpServerStatus>;
+        }),
+      ),
+    );
+
+    for (const status of statuses) {
+      if (status.status === "connected" || status.status === "pending") {
+        continue;
+      }
+      yield* emitRuntimeWarning(
+        context,
+        `Claude MCP server '${status.name}' is ${status.status}.`,
+        status.error ?? status,
+      );
+    }
+  });
+
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
     context: ClaudeSessionContext,
     input: {
@@ -1611,6 +1843,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const turnState = context.turnState;
     if (!turnState) {
+      context.interrupting = false;
       if (usageSnapshot) {
         const usageStamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -1762,6 +1995,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const updatedAt = yield* nowIso;
     context.turnState = undefined;
+    context.interrupting = false;
     context.session = {
       ...context.session,
       status: "ready",
@@ -3180,45 +3414,48 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       );
       const claudeSettings = serverSettings.providers.claudeAgent;
       const claudeBinaryPath = claudeSettings.binaryPath;
+      const prevalidatedMcpServers = validateClaudeMcpServers({
+        servers: serverSettings.mcpServers.servers,
+      });
+      const mcpWarnings: string[] = [...prevalidatedMcpServers.warnings];
+      const materializeMcpServers =
+        options?.materializeMcpServers ?? materializeMcpServersForRuntime;
       const runtimeMcpServers = yield* Effect.tryPromise(() =>
-        materializeMcpServersForRuntime({
-          servers: serverSettings.mcpServers.servers,
+        materializeMcpServers({
+          servers: prevalidatedMcpServers.servers,
           oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
         }),
       ).pipe(
         Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning(
-              "claude mcp OAuth materialization failed; continuing with static MCP config",
+          Effect.sync(() => {
+            mcpWarnings.push(
+              `Failed to materialize Claude MCP authentication; continuing with static MCP config. ${toMessage(
+                cause,
+                "Unknown materialization error.",
+              )}`,
             );
-            yield* Effect.logWarning(toMessage(cause, "Failed to materialize Claude MCP auth."));
-            return serverSettings.mcpServers.servers;
+            return prevalidatedMcpServers.servers;
           }),
         ),
       );
-      const claudeMcpServers = buildClaudeMcpServers(runtimeMcpServers);
+      const postvalidatedMcpServers = validateClaudeMcpServers({
+        servers: runtimeMcpServers,
+        requireMaterializedOauth: true,
+      });
+      mcpWarnings.push(...postvalidatedMcpServers.warnings);
+      const claudeMcpServers = buildClaudeMcpServers(postvalidatedMcpServers.servers);
       const assistantSettingsAppendix = buildAssistantSettingsAppendix({
         personality: serverSettings.assistantPersonality,
         generateMemories: serverSettings.generateMemories,
       });
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
-      const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
-        null) as ClaudeCodeEffort | null;
-      const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
-      const thinking =
-        typeof modelSelection?.options?.thinking === "boolean" && caps.supportsThinkingToggle
-          ? modelSelection.options.thinking
-          : undefined;
-      const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
+      const runtimeConfig = resolveClaudeRuntimeConfig(modelSelection);
+      const startupSettings = startupSettingsFromClaudeRuntimeConfig(runtimeConfig);
+      const apiModelId = runtimeConfig?.apiModelId;
+      const effectiveEffort = runtimeConfig?.effort ?? null;
       const permissionMode: PermissionMode =
         input.runtimeMode === "full-access" ? "bypassPermissions" : "default";
-      const settings = {
-        ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-        ...(fastMode ? { fastMode: true } : {}),
-      };
 
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3230,7 +3467,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
-        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        ...(startupSettings ? { settings: startupSettings } : {}),
         ...(assistantSettingsAppendix
           ? {
               systemPrompt: {
@@ -3246,10 +3483,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // there causes later restarts to try resuming conversations that never
         // actually existed.
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
+        ...(existingResumeSessionId && resumeState?.resumeSessionAt
+          ? { resumeSessionAt: resumeState.resumeSessionAt }
+          : {}),
         includePartialMessages: true,
         canUseTool,
         env: {
           ...process.env,
+          CLAUDE_AGENT_SDK_CLIENT_APP: CLAUDE_CLIENT_APP,
           ...(fileCheckpointingEnabled ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1" } : {}),
         },
         ...(fileCheckpointingEnabled
@@ -3286,6 +3527,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
+          provider: PROVIDER,
+          version: CLAUDE_RESUME_CURSOR_VERSION,
           ...(threadId ? { threadId } : {}),
           ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
@@ -3303,6 +3546,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
+        currentRuntimeConfig: runtimeConfig,
         resumeSessionId: existingResumeSessionId,
         pendingApprovals,
         pendingUserInputs,
@@ -3345,7 +3589,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(input.cwd ? { cwd: input.cwd } : {}),
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
             ...(permissionMode ? { permissionMode } : {}),
-            ...(fastMode ? { fastMode: true } : {}),
+            ...(runtimeConfig?.fastMode ? { fastMode: true } : {}),
           },
         },
         providerRefs: {},
@@ -3363,6 +3607,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         },
         providerRefs: {},
       });
+
+      yield* emitRuntimeWarnings(context, mcpWarnings);
+      yield* emitMcpServerStatusWarnings(context);
 
       let streamFiber: Fiber.Fiber<void, never>;
       streamFiber = runFork(
@@ -3402,8 +3649,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    if (modelSelection?.model) {
-      const apiModelId = resolveApiModelId(modelSelection);
+    const message = yield* buildUserMessageEffect(input, {
+      fileSystem,
+      attachmentsDir: serverConfig.attachmentsDir,
+    });
+
+    const runtimeConfig = resolveClaudeRuntimeConfig(modelSelection);
+    if (runtimeConfig?.apiModelId) {
+      const apiModelId = runtimeConfig.apiModelId;
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
@@ -3411,9 +3664,26 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         context.currentApiModelId = apiModelId;
       }
+      const flagSettings = changedFlagSettings(context.currentRuntimeConfig, runtimeConfig);
+      if (flagSettings && context.query.applyFlagSettings) {
+        yield* Effect.tryPromise({
+          try: () => context.query.applyFlagSettings!(flagSettings),
+          catch: (cause) => toRequestError(input.threadId, "turn/applyFlagSettings", cause),
+        });
+      } else if (flagSettings && context.query.setMaxThinkingTokens) {
+        const maybeThinking = (flagSettings as { alwaysThinkingEnabled?: unknown })
+          .alwaysThinkingEnabled;
+        if (typeof maybeThinking === "boolean") {
+          yield* Effect.tryPromise({
+            try: () => context.query.setMaxThinkingTokens(maybeThinking ? null : 0),
+            catch: (cause) => toRequestError(input.threadId, "turn/setMaxThinkingTokens", cause),
+          });
+        }
+      }
+      context.currentRuntimeConfig = runtimeConfig;
       context.session = {
         ...context.session,
-        model: modelSelection.model,
+        model: runtimeConfig.requestedModel,
       };
     }
 
@@ -3432,6 +3702,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
     }
+
+    context.interrupting = false;
 
     const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
     const turnState: ClaudeTurnState = {
@@ -3463,11 +3735,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       turnId,
       payload: modelSelection?.model ? { model: modelSelection.model } : {},
       providerRefs: {},
-    });
-
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
     });
 
     yield* Queue.offer(context.promptQueue, {

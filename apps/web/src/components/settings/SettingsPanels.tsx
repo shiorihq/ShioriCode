@@ -884,7 +884,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.kanban.enabled &&
       settings.autoGenerateKanbanTaskPrompts !==
         DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts
-        ? ["Kanban prompts"]
+        ? ["Goal planning"]
         : []),
       ...(settings.assistantPersonality !== DEFAULT_ASSISTANT_PERSONALITY
         ? ["Assistant personality"]
@@ -1341,13 +1341,13 @@ export function GeneralSettingsPanel() {
 
         {settings.kanban.enabled ? (
           <SettingsRow
-            title="Kanban prompts"
-            description="Generate a suggested agent prompt in the background when a Kanban task is created."
+            title="Goal planning"
+            description="Generate a concise editable plan in the background when a goal is created."
             resetAction={
               settings.autoGenerateKanbanTaskPrompts !==
               DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts ? (
                 <SettingResetButton
-                  label="Kanban prompts"
+                  label="Goal planning"
                   onClick={() =>
                     updateSettings({
                       autoGenerateKanbanTaskPrompts:
@@ -1363,7 +1363,7 @@ export function GeneralSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ autoGenerateKanbanTaskPrompts: Boolean(checked) })
                 }
-                aria-label="Generate Kanban task prompts"
+                aria-label="Generate goal plans"
               />
             }
           />

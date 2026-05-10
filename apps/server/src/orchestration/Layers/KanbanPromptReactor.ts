@@ -26,16 +26,16 @@ function toErrorMessage(cause: unknown): string {
 }
 
 function fallbackPrompt(item: KanbanItem): string {
-  const sections = [
-    `Task: ${item.title}`,
-    item.description.trim().length > 0 ? `Description:\n${item.description.trim()}` : null,
-    item.prompt.trim().length > 0 ? `User prompt:\n${item.prompt.trim()}` : null,
-    item.pullRequest
-      ? `Pull request: #${item.pullRequest.number}${item.pullRequest.title ? ` - ${item.pullRequest.title}` : ""}`
-      : null,
-    "Please implement this task, keep changes scoped, and verify the result.",
-  ].filter((section): section is string => section !== null);
-  return sections.join("\n\n");
+  if (item.prompt.trim().length > 0) {
+    return item.prompt.trim();
+  }
+  return [
+    `- Clarify the current implementation related to ${item.title}`,
+    "- Identify the smallest reliable implementation path",
+    "- Make the scoped code changes",
+    "- Validate behavior with checks or focused tests",
+    "- Summarize changes, risks, and follow-up work",
+  ].join("\n");
 }
 
 const makeKanbanPromptReactor = Effect.gen(function* () {

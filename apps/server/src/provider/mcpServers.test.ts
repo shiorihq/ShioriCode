@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildCodexLeanAppServerConfig,
+  builtInShioriMcpServers,
   listEffectiveMcpServerRows,
   buildProviderMcpToolRuntime,
   buildCodexManagedMcpConfigFragment,
@@ -179,6 +180,46 @@ describe("toAcpMcpServers", () => {
     );
 
     expect(servers.map((server) => server.name)).toEqual(["shioricode-browser"]);
+  });
+
+  it("exposes built-in Shiori MCP servers with Computer Use approval metadata enabled", () => {
+    const servers = builtInShioriMcpServers({
+      settings: {
+        browserUse: { enabled: true },
+        computerUse: { enabled: true, requireApproval: true },
+        mcpServers: { servers: [] },
+      } as never,
+      browserPanel: {
+        config: {
+          host: "0.0.0.0",
+          port: 4321,
+          authToken: "secret-token",
+        } as never,
+        threadId: "thread-browser" as never,
+      },
+      exposeComputerWhenApprovalRequired: true,
+    });
+
+    expect(servers.map((server) => server.name)).toEqual([
+      "shioricode-browser",
+      "shioricode-computer",
+    ]);
+    expect(servers[0]).toMatchObject({
+      transport: "stdio",
+      command: process.execPath,
+      args: expect.arrayContaining(["browser-panel-mcp"]),
+      providers: ["shiori"],
+    });
+    expect(servers[1]).toMatchObject({
+      transport: "stdio",
+      command: process.execPath,
+      args: expect.arrayContaining(["computer-use-mcp"]),
+      env: {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+      },
+      providers: ["shiori"],
+    });
   });
 
   it("does not expose built-in MCP servers when their settings are disabled", () => {

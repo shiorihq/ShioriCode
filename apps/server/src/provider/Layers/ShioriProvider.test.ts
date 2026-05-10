@@ -17,6 +17,11 @@ const jwtToken = `${encodeBase64UrlJson({ alg: "RS256" })}.${encodeBase64UrlJson
   aud: "convex",
   sub: "user|session",
 })}.signature`;
+const wrongDeploymentJwtToken = `${encodeBase64UrlJson({ alg: "RS256" })}.${encodeBase64UrlJson({
+  iss: "https://wrong-deployment.convex.site",
+  aud: "convex",
+  sub: "user|session",
+})}.signature`;
 
 const hostedShioriAuthTokenStoreTestLayer = Layer.effect(
   HostedShioriAuthTokenStore,
@@ -67,6 +72,18 @@ it.layer(shioriProviderTestLayer)("ShioriProviderLive", (it) => {
 
         const refreshed = yield* provider.getSnapshot;
         assert.strictEqual(refreshed.auth.status, "authenticated");
+      }),
+    );
+
+    it.effect("does not authenticate a JWT from another Convex deployment", () =>
+      Effect.gen(function* () {
+        const provider = yield* ShioriProvider;
+        const authTokenStore = yield* HostedShioriAuthTokenStore;
+
+        yield* authTokenStore.setToken(wrongDeploymentJwtToken);
+
+        const refreshed = yield* provider.getSnapshot;
+        assert.strictEqual(refreshed.auth.status, "unknown");
       }),
     );
 

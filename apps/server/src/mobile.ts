@@ -247,24 +247,40 @@ function addCandidate(
   candidates.push({ apiBaseUrl, label });
 }
 
+function isLoopbackHost(host: string | undefined): boolean {
+  return host === undefined || host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function isWildcardHost(host: string | undefined): boolean {
+  return host === "0.0.0.0" || host === "::" || host === "[::]";
+}
+
 function mobilePairingCandidates(config: ServerConfigShape, url: URL): MobilePairingCandidate[] {
   const candidates: MobilePairingCandidate[] = [];
   const seen = new Set<string>();
   const port = config.port;
+  const acceptsLanConnections = isWildcardHost(config.host) || !isLoopbackHost(config.host);
 
   addCandidate(candidates, seen, `http://127.0.0.1:${port}`, "Simulator on this Mac");
 
   const requestHost = url.hostname;
-  if (requestHost && requestHost !== "127.0.0.1" && requestHost !== "localhost") {
+  if (
+    acceptsLanConnections &&
+    requestHost &&
+    requestHost !== "127.0.0.1" &&
+    requestHost !== "localhost"
+  ) {
     addCandidate(candidates, seen, `http://${requestHost}:${port}`, "Current desktop address");
   }
 
-  for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
-    for (const address of addresses ?? []) {
-      if (address.family !== "IPv4" || address.internal) {
-        continue;
+  if (acceptsLanConnections) {
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+      for (const address of addresses ?? []) {
+        if (address.family !== "IPv4" || address.internal) {
+          continue;
+        }
+        addCandidate(candidates, seen, `http://${address.address}:${port}`, name);
       }
-      addCandidate(candidates, seen, `http://${address.address}:${port}`, name);
     }
   }
 

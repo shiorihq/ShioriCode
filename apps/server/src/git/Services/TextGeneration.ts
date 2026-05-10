@@ -132,7 +132,7 @@ export interface TextGenerationShape {
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
 
   /**
-   * Generate or improve an executable agent prompt from a Kanban task.
+   * Generate or improve an editable goal plan from the legacy Kanban item shape.
    */
   readonly generateKanbanTaskPrompt: (
     input: KanbanTaskPromptGenerationInput,

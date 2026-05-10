@@ -13,6 +13,7 @@ import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as KanbanRouteImport } from './routes/kanban'
+import { Route as GoalsRouteImport } from './routes/goals'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
@@ -46,6 +47,11 @@ const PullRequestsRoute = PullRequestsRouteImport.update({
 const KanbanRoute = KanbanRouteImport.update({
   id: '/kanban',
   path: '/kanban',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GoalsRoute = GoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
@@ -120,6 +126,7 @@ const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/goals': typeof GoalsRoute
   '/kanban': typeof KanbanRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -138,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/settings/usage': typeof SettingsUsageRoute
 }
 export interface FileRoutesByTo {
+  '/goals': typeof GoalsRoute
   '/kanban': typeof KanbanRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -159,6 +167,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/goals': typeof GoalsRoute
   '/kanban': typeof KanbanRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/goals'
     | '/kanban'
     | '/pull-requests'
     | '/settings'
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/settings/usage'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/goals'
     | '/kanban'
     | '/pull-requests'
     | '/settings'
@@ -219,6 +230,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_chat'
+    | '/goals'
     | '/kanban'
     | '/pull-requests'
     | '/settings'
@@ -240,6 +252,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  GoalsRoute: typeof GoalsRoute
   KanbanRoute: typeof KanbanRoute
   PullRequestsRoute: typeof PullRequestsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
@@ -274,6 +287,13 @@ declare module '@tanstack/react-router' {
       path: '/kanban'
       fullPath: '/kanban'
       preLoaderRoute: typeof KanbanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/goals': {
+      id: '/goals'
+      path: '/goals'
+      fullPath: '/goals'
+      preLoaderRoute: typeof GoalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat': {
@@ -423,6 +443,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  GoalsRoute: GoalsRoute,
   KanbanRoute: KanbanRoute,
   PullRequestsRoute: PullRequestsRoute,
   SettingsRoute: SettingsRouteWithChildren,

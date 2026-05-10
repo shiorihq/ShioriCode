@@ -10,6 +10,7 @@ import {
 } from "./browserPanelRequests";
 import { type ServerConfigShape, ServerConfig } from "./config";
 import { attachmentsRouteLayer, projectFaviconRouteLayer, staticAndDevRouteLayer } from "./http";
+import { mobileRoutesLayer } from "./mobile";
 import { fixPath } from "./os-jank";
 import { websocketRpcRouteLayer } from "./ws";
 import { OpenLive } from "./open";
@@ -229,6 +230,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   avatarDeleteRouteLayer,
   browserPanelRequestRouteLayer,
   browserPanelCommandRouteLayer,
+  mobileRoutesLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,

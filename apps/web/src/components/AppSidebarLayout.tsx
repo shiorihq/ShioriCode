@@ -44,7 +44,7 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
       const command = resolveAppSidebarShortcutCommand(event, keybindings, {
         terminalFocus,
         terminalOpen,
-        kanbanView: pathname === "/kanban",
+        kanbanView: pathname === "/goals" || pathname === "/kanban",
       });
       if (!command) return;
 
@@ -75,7 +75,7 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
         }
         event.preventDefault();
         event.stopPropagation();
-        void navigate({ to: "/kanban", search: {} });
+        void navigate({ to: "/goals", search: {} });
         return;
       }
 

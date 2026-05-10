@@ -1,10 +1,17 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import {
   readCodexAccountSnapshot,
   readCodexUsageSnapshot,
   type CodexAccountSnapshot,
 } from "./codexAccount";
+import {
+  classifyCodexStderrLine,
+  consumeCodexStderrChunk,
+  flushCodexStderrStream,
+  type CodexStderrStreamState,
+} from "./codexStderr";
 import type { CodexUsageSnapshot } from "./Services/ProviderUsage.ts";
 
 interface JsonRpcProbeResponse {
@@ -37,6 +44,7 @@ export interface CodexAppServerMetadataSnapshot {
 }
 
 export const CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS = 60_000;
+const CODEX_PROBE_STDERR_DETAIL_LIMIT = 4_000;
 
 export function buildCodexAppServerArgs(): string[] {
   // Current Codex CLI releases expose app-server over stdio without any
@@ -47,6 +55,50 @@ export function buildCodexAppServerArgs(): string[] {
 
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {
   return typeof response.error?.message === "string" ? response.error.message : undefined;
+}
+
+function capProbeStderrDetail(value: string): string {
+  if (value.length <= CODEX_PROBE_STDERR_DETAIL_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, CODEX_PROBE_STDERR_DETAIL_LIMIT)}... (${value.length - CODEX_PROBE_STDERR_DETAIL_LIMIT} chars truncated)`;
+}
+
+function createProbeStderrCollector(child: ChildProcessWithoutNullStreams) {
+  const decoder = new StringDecoder("utf8");
+  let stderrState: CodexStderrStreamState = { pendingBlock: null, remainder: "" };
+  const classifiedLines: string[] = [];
+
+  const collectLines = (rawLines: ReadonlyArray<string>) => {
+    for (const rawLine of rawLines) {
+      const classified = classifyCodexStderrLine(rawLine);
+      if (classified) {
+        classifiedLines.push(classified.message);
+      }
+    }
+  };
+
+  child.stderr.on("data", (chunk: Buffer) => {
+    const next = consumeCodexStderrChunk(stderrState, decoder.write(chunk));
+    stderrState = next.state;
+    collectLines(next.emittedLines);
+  });
+
+  child.stderr.on("end", () => {
+    const raw = decoder.end();
+    if (raw.length > 0) {
+      const next = consumeCodexStderrChunk(stderrState, raw);
+      stderrState = next.state;
+      collectLines(next.emittedLines);
+    }
+    const flushed = flushCodexStderrStream(stderrState);
+    stderrState = flushed.state;
+    collectLines(flushed.emittedLines);
+  });
+
+  return {
+    detail: () => capProbeStderrDetail(classifiedLines.join("\n")),
+  };
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
@@ -426,6 +478,7 @@ export async function probeCodexUsage(input: {
       shell: process.platform === "win32",
     });
     const output = readline.createInterface({ input: child.stdout });
+    const stderr = createProbeStderrCollector(child);
 
     let completed = false;
     let unsubscribeAbort: (() => void) | undefined;
@@ -512,9 +565,12 @@ export async function probeCodexUsage(input: {
     child.once("error", fail);
     child.once("exit", (code, signal) => {
       if (completed) return;
+      const stderrDetail = stderr.detail();
       fail(
         new Error(
-          `codex app-server exited before usage probe completed (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+          `codex app-server exited before usage probe completed (code=${code ?? "null"}, signal=${signal ?? "null"}).${
+            stderrDetail ? ` stderr: ${stderrDetail}` : ""
+          }`,
         ),
       );
     });

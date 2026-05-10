@@ -39,6 +39,11 @@ import {
   summarizeProviderToolInvocation,
 } from "shared/providerTool";
 import { resolveModelSlugForProvider } from "shared/model";
+import {
+  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
+  hostedShioriAuthTokenMatchesConvexUrl,
+  resolveHostedShioriConvexUrl,
+} from "shared/hostedShioriConvex";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
@@ -51,6 +56,7 @@ import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import {
   buildProviderMcpToolRuntime,
+  builtInShioriMcpServers,
   loadEffectiveMcpServersForProvider,
   type ProviderMcpToolExecutor,
   type ProviderMcpToolRuntime,
@@ -219,6 +225,7 @@ export function buildShioriWorkspaceRules(
             "Browser use is enabled for this session.",
             "If the user asks to open or inspect a browser page and an available browser tool can perform the action, use it.",
             "If a browser-opening command such as open, start, or xdg-open exits with code 0 and does not report an error, treat the open request as completed.",
+            "This does not override explicit Computer Use requests.",
           ].join("\n"),
         ]
       : []),
@@ -226,8 +233,11 @@ export function buildShioriWorkspaceRules(
       ? [
           [
             "## Computer Use",
-            "Computer Use is enabled for this session when a corresponding tool is available.",
-            "Use desktop screenshot, pointer, keyboard, and scroll tools only when they are exposed in the current tool surface.",
+            "Computer Use means the ShioriCode desktop-control tools whose names end with computer_screenshot, computer_click, computer_move, computer_type, computer_key, and computer_scroll.",
+            "When the user explicitly asks to use Computer Use, satisfy that request with those Computer Use tools.",
+            "Do not substitute shell commands such as open, osascript, screencapture, xdotool, cliclick, or browser automation for an explicit Computer Use request.",
+            "If the Computer Use tools are not exposed in the current tool surface, say Computer Use is unavailable or gated in this session instead of simulating it with shell commands.",
+            "Use computer_screenshot before claiming what is visible on the desktop or choosing screen coordinates.",
             "Do not claim to have visually verified desktop state unless a Computer Use screenshot or another tool result provided that evidence.",
           ].join("\n"),
         ]
@@ -300,6 +310,7 @@ export const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
 };
 
 export type ApprovalRequestKind = "command" | "file-read" | "file-change";
+type HostedDescriptorRequestKind = ApprovalRequestKind | "mcp-side-effect";
 
 type HostedShioriMessage = UIMessage;
 
@@ -526,8 +537,14 @@ export interface ShioriAdapterLiveOptions {
   // Overridable stream-read timeout. Tests can shorten this to exercise the timeout
   // path without waiting 5 minutes.
   readonly streamReadTimeout?: Duration.Input;
+  // Overridable response-header timeout. This guards the period before fetch resolves
+  // with a Response, which is separate from streaming body reads.
+  readonly hostedFetchResponseTimeout?: Duration.Input;
   // Overridable payload byte cap. Tests can lower this to force an overflow error.
   readonly maxStreamBytes?: number;
+  // Overridable local command timeout. Tests can shorten this without changing the
+  // production command deadline.
+  readonly localToolCommandTimeoutMs?: number;
 }
 
 function buildHostedModelSettings(
@@ -574,16 +591,34 @@ function isJwtLikeToken(token: string | null | undefined): token is string {
   return typeof token === "string" && JWT_LIKE_TOKEN_PATTERN.test(token.trim());
 }
 
+function isExpectedHostedShioriAuthToken(token: string | null | undefined): token is string {
+  return (
+    isJwtLikeToken(token) &&
+    hostedShioriAuthTokenMatchesConvexUrl({
+      token,
+      convexUrl: hostedShioriConvexUrl,
+    })
+  );
+}
+
 function describeToken(token: string | null | undefined) {
   return {
     present: typeof token === "string",
     jwtLike: isJwtLikeToken(token),
+    expectedDeployment: isExpectedHostedShioriAuthToken(token),
   };
 }
 
 const SHIORI_API_VERSION = "1" as const;
+const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
+  process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
+  process.env.VITE_DEV_SERVER_URL ? HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL : undefined,
+);
 // 300s is the remote Next.js maxDuration; allow 15s buffer for the final chunk / close.
 const STREAM_READ_TIMEOUT = Duration.seconds(315);
+// Deadline for the hosted fetch to resolve with response headers. Stream body reads keep
+// their own longer timeout once the response exists.
+const HOSTED_FETCH_RESPONSE_TIMEOUT = Duration.seconds(30);
 // Hard cap on the total bytes the adapter will consume from the hosted stream. Matches
 // remote practice of ~16 MiB max response and protects against runaway/malformed bodies.
 const MAX_STREAM_BYTES = 16 * 1024 * 1024;
@@ -628,6 +663,66 @@ interface HostedFetchFailure {
   readonly detail: string;
   readonly retryable: boolean;
   readonly cause?: unknown;
+}
+
+function makeHostedFetchResponseTimeoutError(timeout: Duration.Duration): Error {
+  const error = new Error(
+    `Shiori API request timed out waiting for response headers after ${Duration.format(timeout)}.`,
+  );
+  error.name = "HostedFetchResponseTimeoutError";
+  return error;
+}
+
+function isHostedFetchResponseTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === "HostedFetchResponseTimeoutError";
+}
+
+function fetchHostedStreamResponse(input: {
+  readonly url: string;
+  readonly requestBody: Buffer;
+  readonly authToken: string;
+  readonly signal: AbortSignal;
+  readonly responseTimeout: Duration.Input;
+}): Promise<Response> {
+  const responseTimeout = Duration.fromInputUnsafe(input.responseTimeout);
+  const responseTimeoutMs = Math.max(1, Duration.toMillis(responseTimeout));
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const abortForCaller = () => {
+    controller.abort(input.signal.reason);
+  };
+
+  if (input.signal.aborted) {
+    abortForCaller();
+  } else {
+    input.signal.addEventListener("abort", abortForCaller, { once: true });
+  }
+
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = makeHostedFetchResponseTimeoutError(responseTimeout);
+      controller.abort(error);
+      reject(error);
+    }, responseTimeoutMs);
+  });
+
+  const fetchPromise = fetch(input.url, {
+    method: "POST",
+    headers: buildShioriRequestHeaders({
+      authToken: input.authToken,
+      contentLength: input.requestBody.byteLength,
+    }),
+    body: input.requestBody,
+    signal: controller.signal,
+  });
+
+  return Promise.race([fetchPromise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    input.signal.removeEventListener("abort", abortForCaller);
+  });
 }
 
 function buildShioriRequestHeaders(input: {
@@ -904,6 +999,33 @@ export function toolRequestKind(toolName: string): ApprovalRequestKind | undefin
   return classifyProviderToolRequestKind(toolName);
 }
 
+function hostedDescriptorRequestKindFromSchema(
+  inputSchema: Record<string, unknown>,
+): HostedDescriptorRequestKind | undefined {
+  const requestKind = inputSchema["x-shioricode-request-kind"];
+  switch (requestKind) {
+    case "command":
+    case "file-read":
+    case "file-change":
+      return requestKind;
+    case "side-effect":
+    case "mcp-side-effect":
+    case "mcp_side_effect":
+      return "mcp-side-effect";
+    default:
+      return undefined;
+  }
+}
+
+function approvalRequestKindForHostedDescriptor(
+  requestKind: HostedDescriptorRequestKind | undefined,
+): ApprovalRequestKind | undefined {
+  if (requestKind === "mcp-side-effect") {
+    return "command";
+  }
+  return requestKind;
+}
+
 function isSubagentToolName(toolName: string): boolean {
   return SUBAGENT_TOOL_NAMES.has(toolName);
 }
@@ -1078,16 +1200,12 @@ function withHostedToolApproval(
   bootstrap: ShioriCodeBootstrapConfig | null | undefined,
 ): HostedToolDescriptor {
   const schema = { ...descriptor.inputSchema };
-  const requestKindValue = schema["x-shioricode-request-kind"];
-  const requestKind =
-    requestKindValue === "command" ||
-    requestKindValue === "file-read" ||
-    requestKindValue === "file-change"
-      ? requestKindValue
-      : undefined;
+  const requestKind = hostedDescriptorRequestKindFromSchema(schema);
   const alreadyNeedsApproval = schema["x-shioricode-needs-approval"] === true;
   const mcpNeedsApproval =
-    requestKind !== "file-read" && hostedPolicyAsks(bootstrap, "mcpSideEffect");
+    requestKind !== undefined &&
+    requestKind !== "file-read" &&
+    hostedPolicyAsks(bootstrap, "mcpSideEffect");
 
   if (!alreadyNeedsApproval && !mcpNeedsApproval) {
     return descriptor;
@@ -1097,6 +1215,9 @@ function withHostedToolApproval(
     ...descriptor,
     inputSchema: {
       ...schema,
+      ...(requestKind === "mcp-side-effect"
+        ? { "x-shioricode-request-kind": "mcp-side-effect" }
+        : {}),
       "x-shioricode-needs-approval": alreadyNeedsApproval || mcpNeedsApproval,
     },
   };
@@ -1181,7 +1302,8 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
     {
       name: "exec_command",
       title: "Execute command",
-      description: "Run a shell command inside the local workspace.",
+      description:
+        "Run a shell command inside the local workspace. Do not use this as a substitute when the user explicitly asks for Computer Use desktop interaction; use the Computer Use tools instead, or report that those tools are unavailable.",
       inputSchema: {
         type: "object",
         properties: {
@@ -2535,6 +2657,7 @@ function execShellCommand(
   command: string,
   cwd: string,
   signal?: AbortSignal,
+  timeoutMs = LOCAL_TOOL_COMMAND_TIMEOUT_MS,
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -2549,6 +2672,8 @@ function execShellCommand(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
+    let aborted = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
     let onAbort: (() => void) | undefined;
     const finalize = (callback: () => void): void => {
@@ -2564,11 +2689,12 @@ function execShellCommand(
       callback();
     };
     const timeout = setTimeout(() => {
+      timedOut = true;
       killChildProcessTree(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
         killChildProcessTree(child, "SIGKILL");
       }, 1_000);
-    }, LOCAL_TOOL_COMMAND_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -2582,6 +2708,7 @@ function execShellCommand(
       });
     });
     onAbort = () => {
+      aborted = true;
       killChildProcessTree(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
         killChildProcessTree(child, "SIGKILL");
@@ -2591,12 +2718,19 @@ function execShellCommand(
       });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
-    child.on("close", (code) => {
+    child.on("close", (code, closeSignal) => {
       finalize(() => {
+        const timeoutStderr = timedOut ? `Command timed out after ${timeoutMs}ms.` : "";
+        const nextStderr =
+          timeoutStderr.length > 0
+            ? stderr.trim().length > 0
+              ? `${stderr.replace(/\s*$/u, "")}\n${timeoutStderr}\n`
+              : `${timeoutStderr}\n`
+            : stderr;
         resolve({
           stdout,
-          stderr,
-          exitCode: code ?? 0,
+          stderr: nextStderr,
+          exitCode: timedOut ? 124 : (code ?? (aborted || closeSignal ? 1 : 0)),
         });
       });
     });
@@ -3111,24 +3245,31 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         authToken: string;
         requestBody: Buffer;
         signal: AbortSignal;
+        responseTimeout: Duration.Input;
       }) {
         const response = yield* Effect.tryPromise({
           try: () =>
-            fetch(`${input.apiBaseUrl}/api/shiori-code/agent/stream`, {
-              method: "POST",
-              headers: buildShioriRequestHeaders({
-                authToken: input.authToken,
-                contentLength: input.requestBody.byteLength,
-              }),
-              body: input.requestBody,
+            fetchHostedStreamResponse({
+              url: `${input.apiBaseUrl}/api/shiori-code/agent/stream`,
+              requestBody: input.requestBody,
+              authToken: input.authToken,
               signal: input.signal,
+              responseTimeout: input.responseTimeout,
             }),
-          catch: (error): HostedFetchFailure => ({
-            kind: "network",
-            detail: toMessage(error),
-            retryable: !isAbortCause(error) && isRetryableCause(error),
-            cause: error,
-          }),
+          catch: (error): HostedFetchFailure =>
+            isHostedFetchResponseTimeoutError(error)
+              ? {
+                  kind: "timeout",
+                  detail: toMessage(error),
+                  retryable: true,
+                  cause: error,
+                }
+              : {
+                  kind: "network",
+                  detail: toMessage(error),
+                  retryable: !isAbortCause(error) && isRetryableCause(error),
+                  cause: error,
+                },
         });
 
         if (response.ok && response.body) {
@@ -3150,7 +3291,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         options?.fetchRetryDelayMs ?? ((attempt: number) => 250 * 2 ** (attempt - 1));
       const effectiveStreamReadTimeout: Duration.Input =
         options?.streamReadTimeout ?? STREAM_READ_TIMEOUT;
+      const effectiveHostedFetchResponseTimeout: Duration.Input =
+        options?.hostedFetchResponseTimeout ?? HOSTED_FETCH_RESPONSE_TIMEOUT;
       const effectiveMaxStreamBytes = options?.maxStreamBytes ?? MAX_STREAM_BYTES;
+      const effectiveLocalToolCommandTimeoutMs =
+        options?.localToolCommandTimeoutMs ?? LOCAL_TOOL_COMMAND_TIMEOUT_MS;
 
       // Perform the hosted stream fetch with exponential backoff. 401 responses clear
       // the cached Shiori token so the UI prompts for a fresh sign-in instead of
@@ -3181,6 +3326,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               authToken: input.authToken,
               requestBody: input.requestBody,
               signal: input.signal,
+              responseTimeout: effectiveHostedFetchResponseTimeout,
             }),
           );
           if (attemptResult._tag === "Success") {
@@ -3206,11 +3352,15 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
         const failure = lastFailure;
         if (failure.kind === "http" && failure.status === 401) {
-          yield* Effect.logWarning("shiori hosted fetch 401; clearing cached auth token", {
+          const tokenMatchesExpectedDeployment = isExpectedHostedShioriAuthToken(input.authToken);
+          yield* Effect.logWarning("shiori hosted fetch 401", {
             label: input.logLabel,
             detail: failure.detail,
+            tokenMatchesExpectedDeployment,
           });
-          yield* hostedAuthTokenStore.setToken(null);
+          if (tokenMatchesExpectedDeployment) {
+            yield* hostedAuthTokenStore.setToken(null);
+          }
           return yield* Effect.fail(
             requestError(
               input.logLabel,
@@ -3274,16 +3424,24 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             settings: currentSettings,
             ...(input.cwd ? { cwd: input.cwd } : {}),
           }).then(async (effectiveServers) => {
+            const builtInServers = builtInShioriMcpServers({
+              settings: currentSettings,
+              browserPanel: {
+                config: serverConfig,
+                threadId: input.threadId,
+              },
+              exposeComputerWhenApprovalRequired: true,
+            });
             const runtime = options?.buildMcpToolRuntime
               ? await options.buildMcpToolRuntime({
                   provider: PROVIDER,
-                  servers: effectiveServers.servers,
+                  servers: [...effectiveServers.servers, ...builtInServers],
                   ...(input.cwd ? { cwd: input.cwd } : {}),
                 })
               : await buildProviderMcpToolRuntime(
                   {
                     provider: PROVIDER,
-                    servers: effectiveServers.servers,
+                    servers: [...effectiveServers.servers, ...builtInServers],
                     ...(input.cwd ? { cwd: input.cwd } : {}),
                   },
                   {
@@ -3458,6 +3616,12 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const fetchHostedBootstrapForToken = Effect.fn("fetchHostedBootstrapForToken")(function* (
         authToken: string,
       ) {
+        if (!isExpectedHostedShioriAuthToken(authToken)) {
+          yield* Effect.logWarning("shiori hosted bootstrap skipped for invalid deployment token", {
+            token: describeToken(authToken),
+          });
+          return CONSERVATIVE_SHIORI_BOOTSTRAP;
+        }
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError((error) =>
             requestError(
@@ -4298,7 +4462,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         }
 
         const authToken = yield* hostedAuthTokenStore.getToken;
-        if (!isJwtLikeToken(authToken)) {
+        if (!isExpectedHostedShioriAuthToken(authToken)) {
           return yield* Effect.fail(
             requestError(
               "shiori.subagent.run",
@@ -4974,14 +5138,29 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
         const context = yield* getContext(input.threadId);
         const requestKind = toolRequestKind(toolName);
+        const mcpDescriptor = context.activeTurn?.mcpToolDescriptors.find(
+          (descriptor) => descriptor.name === toolName,
+        );
+        const mcpDescriptorRequestKind = mcpDescriptor
+          ? hostedDescriptorRequestKindFromSchema(mcpDescriptor.inputSchema)
+          : undefined;
+        const mcpDescriptorNeedsApproval =
+          mcpDescriptor?.inputSchema["x-shioricode-needs-approval"] === true;
+        const effectiveRequestKind =
+          requestKind ??
+          (mcpDescriptorNeedsApproval
+            ? (approvalRequestKindForHostedDescriptor(mcpDescriptorRequestKind) ?? "command")
+            : undefined);
         if (
-          isHostedApprovalRequired({
-            toolName,
-            requestKind,
-            runtimeMode: context.session.runtimeMode,
-            allowedRequestKinds: context.allowedRequestKinds,
-            bootstrap: context.activeTurn?.hostedBootstrap,
-          })
+          (effectiveRequestKind !== undefined &&
+            isHostedApprovalRequired({
+              toolName,
+              requestKind: effectiveRequestKind,
+              runtimeMode: context.session.runtimeMode,
+              allowedRequestKinds: context.allowedRequestKinds,
+              bootstrap: context.activeTurn?.hostedBootstrap,
+            })) ||
+          mcpDescriptorNeedsApproval
         ) {
           return {
             state: "output-error" as const,
@@ -5161,7 +5340,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             const command =
               typeof input.toolInput.command === "string" ? input.toolInput.command : "";
             const result = yield* Effect.tryPromise({
-              try: () => execShellCommand(command, input.cwd ?? process.cwd(), input.signal),
+              try: () =>
+                execShellCommand(
+                  command,
+                  input.cwd ?? process.cwd(),
+                  input.signal,
+                  effectiveLocalToolCommandTimeoutMs,
+                ),
               catch: (error) =>
                 requestError(`shiori.tool.${input.toolName}`, "Failed to run command.", error),
             });
@@ -5538,12 +5723,31 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             hostedToolExecutions.delete(chunk.toolCallId);
             const requestKind = toolRequestKind(toolName);
             const mcpTool = input.context.activeTurn?.mcpTools.get(toolName);
+            const mcpDescriptor = input.context.activeTurn?.mcpToolDescriptors.find(
+              (descriptor) => descriptor.name === toolName,
+            );
+            const mcpDescriptorRequestKind = mcpDescriptor
+              ? hostedDescriptorRequestKindFromSchema(mcpDescriptor.inputSchema)
+              : undefined;
+            const mcpDescriptorNeedsApproval =
+              mcpDescriptor?.inputSchema["x-shioricode-needs-approval"] === true;
+            const mcpPolicyRequiresApproval =
+              mcpTool !== undefined &&
+              (mcpDescriptorNeedsApproval ||
+                (mcpDescriptorRequestKind !== undefined &&
+                  mcpDescriptorRequestKind !== "file-read" &&
+                  hostedPolicyAsks(input.context.activeTurn?.hostedBootstrap, "mcpSideEffect")));
+            const effectiveRequestKind =
+              requestKind ??
+              (mcpPolicyRequiresApproval
+                ? (approvalRequestKindForHostedDescriptor(mcpDescriptorRequestKind) ?? "command")
+                : undefined);
             const requestId = ApprovalRequestId.makeUnsafe(crypto.randomUUID());
             const approvalRequired =
-              mcpTool === undefined &&
-              requestKind !== undefined &&
-              input.context.session.runtimeMode !== "full-access" &&
-              !input.context.allowedRequestKinds.has(requestKind);
+              (effectiveRequestKind !== undefined &&
+                input.context.session.runtimeMode !== "full-access" &&
+                !input.context.allowedRequestKinds.has(effectiveRequestKind)) ||
+              mcpPolicyRequiresApproval;
 
             if (toolName === "update_plan") {
               const planUpdate = extractPlanUpdatePayload(toolInput);
@@ -5716,7 +5920,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               continue;
             }
 
-            if (approvalRequired && requestKind) {
+            if (approvalRequired && effectiveRequestKind) {
               nextPendingApprovals.set(requestId, {
                 requestId,
                 toolCallId: chunk.toolCallId,
@@ -5724,7 +5928,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 input: toolInput,
                 assistantMessageId,
                 approvalId: requestId,
-                requestKind,
+                requestKind: effectiveRequestKind,
                 ...(reasoningBlockIds.length > 0 ? { reasoningBlockIds } : {}),
                 ...(chunk.providerMetadata !== undefined
                   ? { callProviderMetadata: chunk.providerMetadata }
@@ -5750,7 +5954,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                 requestId,
                 toolName,
                 toolInput,
-                requestKind,
+                requestKind: effectiveRequestKind,
               });
               waitingOnUser = true;
               continue;
@@ -5765,15 +5969,18 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
                     errorText: "Kanban tools are disabled for this ShioriCode deployment.",
                   }
                 : mcpTool
-                  ? yield* Effect.tryPromise({
-                      try: async () => ({
-                        state: "output-available" as const,
-                        output: await mcpTool.execute(toolInput),
-                      }),
-                      catch: (error) => ({
-                        state: "output-error" as const,
-                        errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
-                      }),
+                  ? yield* Effect.promise(async () => {
+                      try {
+                        return {
+                          state: "output-available" as const,
+                          output: await mcpTool.execute(toolInput),
+                        };
+                      } catch (error) {
+                        return {
+                          state: "output-error" as const,
+                          errorText: toMessage(error) || `MCP tool '${toolName}' failed.`,
+                        };
+                      }
                     })
                   : isSubagentToolName(toolName)
                     ? yield* executeSubagentToolForTurn({
@@ -6512,7 +6719,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           }
           const authToken = yield* hostedAuthTokenStore.getToken;
           if (
-            isJwtLikeToken(authToken) &&
+            isExpectedHostedShioriAuthToken(authToken) &&
             context.hostedBootstrap === undefined &&
             context.activeTurn === null
           ) {
@@ -6557,7 +6764,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }
 
             const authToken = yield* hostedAuthTokenStore.getToken;
-            if (!isJwtLikeToken(authToken)) {
+            if (!isExpectedHostedShioriAuthToken(authToken)) {
               return yield* Effect.fail(
                 requestError(
                   `shiori.turn.start:${String(input.threadId)}`,
@@ -6722,7 +6929,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }
             const activeTurn = context.activeTurn;
             const bootstrapAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isJwtLikeToken(bootstrapAuthToken)) {
+            if (!isExpectedHostedShioriAuthToken(bootstrapAuthToken)) {
               return yield* Effect.fail(
                 requestError(
                   "shiori.respondToRequest",
@@ -6764,6 +6971,22 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               decision === "decline"
                 ? { state: "output-denied" as const }
                 : yield* Effect.gen(function* () {
+                    const mcpTool = activeTurn.mcpTools.get(pending.toolName);
+                    if (mcpTool) {
+                      return yield* Effect.promise(async () => {
+                        try {
+                          return {
+                            state: "output-available" as const,
+                            output: await mcpTool.execute(pending.input),
+                          };
+                        } catch (error) {
+                          return {
+                            state: "output-error" as const,
+                            errorText: toMessage(error) || `MCP tool '${pending.toolName}' failed.`,
+                          };
+                        }
+                      });
+                    }
                     const attempt = yield* Effect.result(
                       executeLocalToolForTurn({
                         toolName: pending.toolName,
@@ -6867,7 +7090,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isJwtLikeToken(continuedAuthToken)) {
+            if (!isExpectedHostedShioriAuthToken(continuedAuthToken)) {
               const detail =
                 "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.";
               yield* failTurn({
@@ -6979,7 +7202,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isJwtLikeToken(continuedAuthToken)) {
+            if (!isExpectedHostedShioriAuthToken(continuedAuthToken)) {
               const detail =
                 "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.";
               yield* failTurn({
@@ -7081,6 +7304,14 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }
 
             const context = yield* getContext(threadId);
+            if (context.activeTurn) {
+              return yield* Effect.fail(
+                requestError(
+                  "shiori.rollbackThread",
+                  "Cannot rollback a Shiori thread while a turn is still running.",
+                ),
+              );
+            }
             const nextTurns = context.turns.slice(0, Math.max(0, context.turns.length - numTurns));
             const nextMessageCount =
               nextTurns.length === 0

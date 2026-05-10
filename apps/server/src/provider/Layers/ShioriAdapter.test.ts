@@ -38,6 +38,24 @@ const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asRuntimeItemId = (value: string): RuntimeItemId => RuntimeItemId.makeUnsafe(value);
 const TEST_WORKSPACE_ROOT = path.resolve(new URL("../../../../../", import.meta.url).pathname);
+
+function encodeBase64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+const validHostedAuthToken = `${encodeBase64UrlJson({ alg: "RS256" })}.${encodeBase64UrlJson({
+  iss: "https://cautious-puma-129.convex.site",
+  aud: "convex",
+  sub: "user|session",
+})}.signature`;
+const wrongDeploymentHostedAuthToken = `${encodeBase64UrlJson({
+  alg: "RS256",
+})}.${encodeBase64UrlJson({
+  iss: "https://wrong-deployment.convex.site",
+  aud: "convex",
+  sub: "user|session",
+})}.signature`;
+
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
   getProvider: () =>
@@ -48,7 +66,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
 });
 
 const hostedShioriAuthTokenStoreTestLayer = Layer.succeed(HostedShioriAuthTokenStore, {
-  getToken: Effect.succeed("header.payload.signature"),
+  getToken: Effect.succeed(validHostedAuthToken),
   setToken: () => Effect.void,
   streamChanges: Stream.empty,
 });
@@ -668,6 +686,79 @@ describe("ShioriAdapterLive session state", () => {
           const restored = yield* adapter.readThread(threadId);
           assert.equal(restored.turns.length, 1);
           assert.equal(restored.turns[0]?.id, beforeRollback.turns[0]?.id);
+        }).pipe(Effect.provide(shioriAdapterTestLayer)),
+      ),
+    );
+  });
+
+  it("rejects rollback while a hosted stream is active", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streamController = controller;
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          },
+        ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-active-rollback");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: TEST_WORKSPACE_ROOT,
+            runtimeMode: "full-access",
+          });
+
+          const completionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({ threadId, input: "slow stream" });
+          for (let attempt = 0; attempt < 50; attempt += 1) {
+            if (streamController !== null) {
+              break;
+            }
+            yield* Effect.sleep("10 millis");
+          }
+
+          const rollbackResult = yield* Effect.result(adapter.rollbackThread(threadId, 1));
+          assert.equal(rollbackResult._tag, "Failure");
+
+          streamController?.enqueue(encodeSseChunk({ type: "text-start", id: "text-slow" }));
+          streamController?.enqueue(
+            encodeSseChunk({ type: "text-delta", id: "text-slow", delta: "finished" }),
+          );
+          streamController?.enqueue(encodeSseChunk({ type: "text-end", id: "text-slow" }));
+          streamController?.enqueue(encodeSseChunk({ type: "finish", finishReason: "stop" }));
+          streamController?.close();
+
+          const completed = yield* Fiber.join(completionFiber);
+          assert.equal(completed._tag, "Some");
+
+          const thread = yield* adapter.readThread(threadId);
+          assert.equal(thread.turns.length, 1);
         }).pipe(Effect.provide(shioriAdapterTestLayer)),
       ),
     );
@@ -3412,6 +3503,102 @@ describe("ShioriAdapterLive session state", () => {
     );
   });
 
+  it("returns a nonzero exec_command result with timeout stderr when the command times out", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-timeout-command",
+            toolName: "exec_command",
+            input: {
+              command: `node -e "setTimeout(() => {}, 1000)"`,
+            },
+          },
+        ]);
+      }
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-command-timeout" },
+        {
+          type: "text-delta",
+          id: "text-command-timeout",
+          delta: "Reported the timeout.",
+        },
+        { type: "text-end", id: "text-command-timeout" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-timeout-command");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: TEST_WORKSPACE_ROOT,
+            runtimeMode: "full-access",
+          });
+
+          const completionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Run a command that times out.",
+          });
+
+          const completed = yield* Fiber.join(completionFiber);
+          assert.equal(completed._tag, "Some");
+          assert.equal(requestBodies.length, 2);
+
+          const secondMessages = Array.isArray(requestBodies[1]?.messages)
+            ? (requestBodies[1].messages as Array<Record<string, unknown>>)
+            : [];
+          const lastAssistantMessage = secondMessages.at(-1);
+          const lastParts = Array.isArray(lastAssistantMessage?.parts)
+            ? (lastAssistantMessage.parts as Array<Record<string, unknown>>)
+            : [];
+          const toolPart = lastParts.find(
+            (part) => part?.type === "dynamic-tool" && part.toolCallId === "tool-timeout-command",
+          ) as Record<string, unknown> | undefined;
+          const outputRecord =
+            toolPart?.output && typeof toolPart.output === "object"
+              ? (toolPart.output as Record<string, unknown>)
+              : null;
+
+          assert.equal(outputRecord?.exitCode, 124);
+          assert.match(String(outputRecord?.stderr ?? ""), /timed out/i);
+        }).pipe(
+          Effect.provide(
+            makeShioriAdapterTestLayer({
+              localToolCommandTimeoutMs: 20,
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("injects configured MCP tools into Shiori turns and executes them locally", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     let callCount = 0;
@@ -3534,6 +3721,122 @@ describe("ShioriAdapterLive session state", () => {
 
           yield* adapter.stopSession(threadId);
           assert.equal(closeMcpRuntime.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+  });
+
+  it("requires approval before executing MCP side-effect tools", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const executeMcp = vi.fn(async () => ({ ok: true }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      callCount += 1;
+      requestBodies.push(JSON.parse(bodyToString(init?.body)));
+
+      if (callCount === 1) {
+        return responseFromChunks([
+          {
+            type: "tool-input-available",
+            toolCallId: "tool-mcp-side-effect",
+            toolName: "mcp__demo__mutate",
+            input: { id: "123" },
+          },
+        ]);
+      }
+
+      return responseFromChunks([
+        { type: "text-start", id: "text-mcp-side-effect" },
+        { type: "text-delta", id: "text-mcp-side-effect", delta: "Mutation approved." },
+        { type: "text-end", id: "text-mcp-side-effect" },
+        { type: "finish", finishReason: "stop" },
+      ]);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const layer = makeShioriAdapterTestLayer({
+      buildMcpToolRuntime: async () => ({
+        descriptors: [
+          {
+            name: "mcp__demo__mutate",
+            title: "Demo · mutate",
+            description: "Mutate external state.",
+            inputSchema: {
+              type: "object",
+              additionalProperties: false,
+              "x-shioricode-request-kind": "mcp-side-effect",
+            },
+          },
+        ],
+        executors: new Map([
+          [
+            "mcp__demo__mutate",
+            {
+              title: "Demo · mutate",
+              execute: executeMcp,
+            },
+          ],
+        ]),
+        warnings: [],
+        close: async () => undefined,
+      }),
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-mcp-side-effect");
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+
+          const approvalFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "request.opened" }> =>
+                    event.type === "request.opened",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          const completionFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Use the MCP side-effect tool.",
+          });
+
+          const approval = yield* Fiber.join(approvalFiber);
+          assert.equal(approval._tag, "Some");
+          assert.equal(executeMcp.mock.calls.length, 0);
+          assert.ok(approval.value.requestId);
+
+          yield* adapter.respondToRequest(threadId, approval.value.requestId, "accept");
+
+          const completed = yield* Fiber.join(completionFiber);
+          assert.equal(completed._tag, "Some");
+          assert.equal(executeMcp.mock.calls.length, 1);
+          assert.deepStrictEqual(executeMcp.mock.calls[0]?.[0], { id: "123" });
+          assert.equal(requestBodies.length, 2);
         }).pipe(Effect.provide(layer)),
       ),
     );
@@ -4199,6 +4502,21 @@ describe("hosted tools", () => {
     assert.ok(enabledRules.some((rule) => rule.includes("## Browser Use")));
     assert.ok(enabledRules.some((rule) => rule.includes("## Computer Use")));
     assert.ok(enabledRules.some((rule) => rule.includes("browser-opening command")));
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes(
+          "Computer Use means the ShioriCode desktop-control tools whose names end with",
+        ),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) => rule.includes("Do not substitute shell commands such as open")),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("Computer Use is unavailable or gated in this session"),
+      ),
+    );
   });
 
   it("builds runtime context rules with machine and local time details", () => {
@@ -4426,6 +4744,7 @@ describe("hosted tools", () => {
     const execDescriptor = tools.find((tool) => tool.name === "exec_command");
     assert.ok(execDescriptor);
     assert.equal(execDescriptor.inputSchema["x-shioricode-needs-approval"], true);
+    assert.match(execDescriptor.description, /Do not use this as a substitute/);
     assert.ok(!tools.some((tool) => tool.name === "spawn_agent"));
     assert.ok(!tools.some((tool) => tool.name === "agent"));
   });
@@ -4449,6 +4768,33 @@ describe("hosted tools", () => {
 
     const descriptor = tools.find((tool) => tool.name === "exec_command");
     assert.ok(descriptor);
+    assert.equal(descriptor.inputSchema["x-shioricode-needs-approval"], true);
+  });
+
+  it("forces approval for MCP side-effect descriptors under conservative policy", () => {
+    const tools = buildHostedToolDescriptors({
+      allowedRequestKinds: new Set(),
+      session: {
+        runtimeMode: "full-access",
+      } satisfies Pick<ProviderSession, "runtimeMode">,
+      hostedBootstrap: CONSERVATIVE_SHIORI_BOOTSTRAP,
+      mcpToolDescriptors: [
+        {
+          name: "mcp__demo__mutate",
+          title: "Demo · Mutate",
+          description: "Mutate external state.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            "x-shioricode-request-kind": "mcp-side-effect",
+          },
+        },
+      ],
+    });
+
+    const descriptor = tools.find((tool) => tool.name === "mcp__demo__mutate");
+    assert.ok(descriptor);
+    assert.equal(descriptor.inputSchema["x-shioricode-request-kind"], "mcp-side-effect");
     assert.equal(descriptor.inputSchema["x-shioricode-needs-approval"], true);
   });
 });
@@ -4603,6 +4949,80 @@ describe("ShioriAdapterLive fetch reliability", () => {
     );
   });
 
+  it("times out unresolved hosted fetch responses before stream headers and fails the turn", async () => {
+    let streamCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : (input as URL).toString();
+      if (url.includes("/config/bootstrap")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      streamCalls += 1;
+      return new Promise<Response>(() => undefined);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-fetch-response-timeout");
+          const observedEvents: ProviderRuntimeEvent[] = [];
+
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+
+          yield* Effect.forkScoped(
+            Stream.runForEach(adapter.streamEvents, (event) =>
+              Effect.sync(() => {
+                observedEvents.push(event);
+              }),
+            ),
+          );
+          yield* Effect.sleep("10 millis");
+
+          const completedFiber = yield* Effect.forkScoped(
+            Stream.runHead(
+              adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+                    event.type === "turn.completed",
+                ),
+              ),
+            ),
+          );
+
+          yield* adapter.sendTurn({ threadId, input: "hello" });
+          const completed = yield* Fiber.join(completedFiber);
+
+          assert.equal(completed._tag, "Some");
+          if (completed._tag === "Some") {
+            assert.equal(completed.value.payload.state, "failed");
+            assert.match(
+              String(completed.value.payload.errorMessage ?? ""),
+              /timed out waiting for response headers/i,
+            );
+          }
+          assert.ok(observedEvents.some((event) => event.type === "runtime.error"));
+          assert.equal(streamCalls, 4);
+        }).pipe(
+          Effect.provide(
+            makeShioriTestLayerWithInstantRetries({
+              hostedFetchResponseTimeout: "5 millis",
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("does not retry 4xx responses and surfaces the server detail", async () => {
     let streamCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -4660,7 +5080,7 @@ describe("ShioriAdapterLive fetch reliability", () => {
   });
 
   it("clears the cached auth token and surfaces a sign-in prompt on 401", async () => {
-    const tokens = { current: "header.payload.signature" as string | null };
+    const tokens = { current: validHostedAuthToken as string | null };
     const setToken = vi.fn(async (value: string | null) => {
       tokens.current = value;
     });
@@ -4739,6 +5159,66 @@ describe("ShioriAdapterLive fetch reliability", () => {
           }
           assert.equal(tokens.current, null);
           assert.ok(setToken.mock.calls.some(([value]) => value === null));
+        }).pipe(Effect.provide(customLayer)),
+      ),
+    );
+  });
+
+  it("rejects a JWT from the wrong Convex deployment before fetching and does not clear it", async () => {
+    const tokens = { current: wrongDeploymentHostedAuthToken as string | null };
+    const setToken = vi.fn(async (value: string | null) => {
+      tokens.current = value;
+    });
+    const customTokenLayer = Layer.succeed(HostedShioriAuthTokenStore, {
+      getToken: Effect.sync(() => tokens.current),
+      setToken: (value) => Effect.sync(() => setToken(value)),
+      streamChanges: Stream.empty,
+    });
+    const fetchMock = vi.fn(async () => responseFromChunks([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const customLayer = makeShioriAdapterLive({
+      buildMcpToolRuntime: emptyMcpToolRuntime,
+      buildSkillToolRuntime: emptyMcpToolRuntime,
+      maxFetchRetries: INSTANT_RETRY_MAX,
+      fetchRetryDelayMs: INSTANT_RETRY_DELAY,
+    }).pipe(
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-shiori-adapter-test-" }),
+      ),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          providers: { shiori: { apiBaseUrl: "http://shiori.test" } },
+        }),
+      ),
+      Layer.provideMerge(customTokenLayer),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(workspaceEntriesTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* ShioriAdapter;
+          const threadId = asThreadId("thread-shiori-wrong-deployment-token");
+          yield* adapter.startSession({
+            provider: "shiori",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+
+          const result = yield* Effect.result(
+            adapter.sendTurn({
+              threadId,
+              input: "hello",
+            }),
+          );
+
+          assert.equal(result._tag, "Failure");
+          assert.equal(fetchMock.mock.calls.length, 0);
+          assert.equal(tokens.current, wrongDeploymentHostedAuthToken);
+          assert.equal(setToken.mock.calls.length, 0);
         }).pipe(Effect.provide(customLayer)),
       ),
     );

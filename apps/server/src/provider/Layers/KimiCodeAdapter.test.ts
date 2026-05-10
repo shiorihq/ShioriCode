@@ -1,18 +1,38 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { ThreadId } from "contracts";
 import type { StreamEvent } from "@moonshot-ai/kimi-agent-sdk";
 
 import {
+  buildKimiSessionFingerprint,
   buildKimiExecutableWrapperScript,
   evaluateKimiToolLoopGuard,
+  findKimiResumeFingerprintMismatch,
   kimiAssistantDeltaFromContentPart,
+  normalizeKimiQuestionAnswers,
+  resolveKimiExternalToolTimeoutMsFromEnv,
   resolveKimiLoopControlFromEnv,
+  resolveKimiThinking,
+  resolveKimiTurnWatchdogTimeoutMsFromEnv,
+  runKimiExternalToolWithTimeout,
   shouldFlushKimiPendingTextAsAssistantAnswer,
   shouldAvoidKimiToolsForUserInput,
   shouldOmitKimiCompletedToolData,
   turnSnapshotFromEvents,
 } from "./KimiCodeAdapter.ts";
+import { evaluateKimiCliWireCompatibility, parseKimiInfoOutput } from "./KimiCodeProvider.ts";
+
+function makeKimiShareDir(defaultThinking: boolean): string {
+  const shareDir = mkdtempSync(path.join(tmpdir(), "shioricode-kimi-test-"));
+  writeFileSync(
+    path.join(shareDir, "config.toml"),
+    [`default_thinking = ${defaultThinking ? "true" : "false"}`, ""].join("\n"),
+  );
+  return shareDir;
+}
 
 describe("KimiCodeAdapter helpers", () => {
   it("uses stable turn ids when rebuilding snapshots from Kimi wire events", () => {
@@ -169,5 +189,233 @@ describe("KimiCodeAdapter helpers", () => {
       shouldCancel: false,
       trigger: "tools_disabled",
     });
+  });
+
+  it("normalizes Kimi question answers by generated question id first", () => {
+    const questions = [
+      {
+        id: "request:1",
+        header: "Q1",
+        question: "Pick a branch",
+        options: [{ label: "main", description: "main" }],
+      },
+    ];
+
+    expect(
+      normalizeKimiQuestionAnswers(questions, {
+        "request:1": " feature ",
+        "Pick a branch": "main",
+      }),
+    ).toEqual({
+      "Pick a branch": "feature",
+    });
+  });
+
+  it("normalizes Kimi multi-select answers and keeps legacy question text fallback", () => {
+    const questions = [
+      {
+        id: "request:1",
+        header: "Q1",
+        question: "Choose tools",
+        options: [{ label: "lint", description: "lint" }],
+        multiSelect: true,
+      },
+      {
+        id: "request:2",
+        header: "Q2",
+        question: "Proceed?",
+        options: [{ label: "yes", description: "yes" }],
+      },
+    ];
+
+    expect(
+      normalizeKimiQuestionAnswers(questions, {
+        "request:1": [" lint ", "", "typecheck"],
+        "Proceed?": " yes ",
+      }),
+    ).toEqual({
+      "Choose tools": "lint, typecheck",
+      "Proceed?": "yes",
+    });
+  });
+
+  it("omits missing or empty Kimi question answers", () => {
+    expect(
+      normalizeKimiQuestionAnswers(
+        [
+          {
+            id: "request:1",
+            header: "Q1",
+            question: "Proceed?",
+            options: [{ label: "yes", description: "yes" }],
+          },
+        ],
+        {
+          "request:1": "   ",
+        },
+      ),
+    ).toEqual({});
+  });
+
+  it("uses Kimi config default thinking when the UI omits the thinking option", () => {
+    const enabledShareDir = makeKimiShareDir(true);
+    const disabledShareDir = makeKimiShareDir(false);
+
+    expect(
+      resolveKimiThinking({
+        shareDir: enabledShareDir,
+        modelSelection: {
+          provider: "kimiCode",
+          model: "kimi-code/kimi-for-coding",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      resolveKimiThinking({
+        shareDir: disabledShareDir,
+        modelSelection: {
+          provider: "kimiCode",
+          model: "kimi-code/kimi-for-coding",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("lets explicit Kimi thinking override the config default", () => {
+    const enabledShareDir = makeKimiShareDir(true);
+    const disabledShareDir = makeKimiShareDir(false);
+
+    expect(
+      resolveKimiThinking({
+        shareDir: enabledShareDir,
+        modelSelection: {
+          provider: "kimiCode",
+          model: "kimi-code/kimi-for-coding",
+          options: { thinking: false },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      resolveKimiThinking({
+        shareDir: disabledShareDir,
+        modelSelection: {
+          provider: "kimiCode",
+          model: "kimi-code/kimi-for-coding",
+          options: { thinking: true },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("detects Kimi resume fingerprint changes that should not silently resume", () => {
+    const previous = buildKimiSessionFingerprint({
+      agentSignature: "agent-v1",
+      workDir: "/workspace",
+      shareDir: "/share",
+    });
+    const next = buildKimiSessionFingerprint({
+      agentSignature: "agent-v2",
+      workDir: "/workspace",
+      shareDir: "/share",
+    });
+
+    expect(findKimiResumeFingerprintMismatch({ previous, next })).toBe("agentSignature");
+  });
+
+  it("can compare Kimi CLI and wire metadata after initialize", () => {
+    const previous = buildKimiSessionFingerprint({
+      agentSignature: "agent",
+      workDir: "/workspace",
+      initializeResult: {
+        protocol_version: "1.7.0",
+        server: { name: "kimi", version: "1.2.3" },
+        slash_commands: [],
+      },
+    });
+    const next = buildKimiSessionFingerprint({
+      agentSignature: "agent",
+      workDir: "/workspace",
+      initializeResult: {
+        protocol_version: "1.8.0",
+        server: { name: "kimi", version: "1.2.3" },
+        slash_commands: [],
+      },
+    });
+
+    expect(
+      findKimiResumeFingerprintMismatch({
+        previous,
+        next,
+        compareRuntime: true,
+      }),
+    ).toBe("wireVersion");
+  });
+
+  it("returns a deterministic Kimi external tool timeout result", async () => {
+    const warnings: string[] = [];
+    const result = await runKimiExternalToolWithTimeout({
+      toolName: "stuck_tool",
+      timeoutMs: 1,
+      execute: () => new Promise(() => undefined),
+      onTimeout: (message) => {
+        warnings.push(message);
+      },
+    });
+
+    expect(result.message).toBe("Tool 'stuck_tool' timed out.");
+    expect(result.output).toContain("stuck_tool");
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("lets environment variables tune Kimi timeout controls", () => {
+    expect(
+      resolveKimiExternalToolTimeoutMsFromEnv({
+        SHIORICODE_KIMI_EXTERNAL_TOOL_TIMEOUT_MS: "7",
+      }),
+    ).toBe(7);
+    expect(
+      resolveKimiTurnWatchdogTimeoutMsFromEnv({
+        SHIORICODE_KIMI_TURN_WATCHDOG_MS: "9",
+      }),
+    ).toBe(9);
+  });
+
+  it("parses Kimi CLI and wire versions from JSON info output", () => {
+    const info = parseKimiInfoOutput(
+      JSON.stringify({
+        cli_version: "0.9.1",
+        wire_protocol_version: "1.7.0",
+        capabilities: { supports_question: true },
+      }),
+    );
+
+    expect(info).toEqual({
+      cliVersion: "0.9.1",
+      wireVersion: "1.7.0",
+      capabilities: { supports_question: true },
+    });
+    expect(evaluateKimiCliWireCompatibility(info)).toEqual({ status: "ready" });
+  });
+
+  it("parses Kimi CLI and wire versions from text info output", () => {
+    expect(parseKimiInfoOutput("Kimi Code 0.9.1\nWire protocol: 1.7\n")).toEqual({
+      cliVersion: "0.9.1",
+      wireVersion: "1.7.0",
+    });
+  });
+
+  it("warns when Kimi wire compatibility cannot be verified or is too old", () => {
+    expect(
+      evaluateKimiCliWireCompatibility({
+        cliVersion: "0.9.1",
+        wireVersion: null,
+      }),
+    ).toMatchObject({ status: "warning" });
+    expect(
+      evaluateKimiCliWireCompatibility({
+        cliVersion: "0.9.1",
+        wireVersion: "1.6.0",
+      }),
+    ).toMatchObject({ status: "warning" });
   });
 });

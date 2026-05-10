@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronDownIcon,
+  CircleDotDashedIcon,
   Columns2Icon,
   FolderClosedIcon,
   FolderIcon,
@@ -9,7 +10,6 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   CopyIcon,
-  KanbanIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
@@ -1243,7 +1243,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
       context: {
         terminalFocus: false,
         terminalOpen: routeTerminalOpen,
-        kanbanView: pathname === "/kanban",
+        kanbanView: pathname === "/goals" || pathname === "/kanban",
       },
     }),
     [pathname, platform, routeTerminalOpen],
@@ -2652,7 +2652,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
     "pullRequests.open",
     sidebarShortcutLabelOptions,
   );
-  const kanbanShortcutLabel = shortcutLabelForCommand(
+  const goalsShortcutLabel = shortcutLabelForCommand(
     keybindings,
     "kanban.open",
     sidebarShortcutLabelOptions,
@@ -2805,16 +2805,16 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
             {appSettings.kanban.enabled ? (
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  render={<Link to="/kanban" />}
+                  render={<Link to="/goals" />}
                   size="sm"
-                  isActive={pathname === "/kanban"}
-                  data-testid="kanban-button"
+                  isActive={pathname === "/goals" || pathname === "/kanban"}
+                  data-testid="goals-button"
                   className="h-7 gap-2 rounded-lg px-2 text-foreground"
                 >
-                  <KanbanIcon className="size-4 shrink-0" aria-hidden />
-                  <span className={SIDEBAR_ROW_LABEL_CLASS}>Kanban</span>
-                  {kanbanShortcutLabel ? (
-                    <span className={SIDEBAR_ROW_META_CLASS}>{kanbanShortcutLabel}</span>
+                  <CircleDotDashedIcon className="size-4 shrink-0" aria-hidden />
+                  <span className={SIDEBAR_ROW_LABEL_CLASS}>Goals</span>
+                  {goalsShortcutLabel ? (
+                    <span className={SIDEBAR_ROW_META_CLASS}>{goalsShortcutLabel}</span>
                   ) : null}
                 </SidebarMenuButton>
               </SidebarMenuItem>

@@ -940,6 +940,45 @@ export function toAcpMcpServers(
   return acpServers;
 }
 
+export function builtInShioriMcpServers(input: {
+  readonly settings: ServerSettings;
+  readonly browserPanel?: {
+    readonly config: ServerConfigShape;
+    readonly threadId: ThreadId;
+  };
+  readonly exposeComputerWhenApprovalRequired?: boolean;
+}): McpServerEntry[] {
+  const servers: McpServerEntry[] = [];
+
+  if (input.settings.browserUse.enabled && input.browserPanel) {
+    servers.push(
+      makeBuiltInStdioMcpServerEntry("shioricode-browser", "browser-panel-mcp", {
+        SHIORICODE_BROWSER_CONTROL_URL: browserPanelControlUrl(input.browserPanel.config),
+        SHIORICODE_BROWSER_THREAD_ID: input.browserPanel.threadId,
+        ...(input.browserPanel.config.authToken
+          ? { SHIORICODE_BROWSER_CONTROL_TOKEN: input.browserPanel.config.authToken }
+          : {}),
+      }),
+    );
+  }
+
+  if (
+    input.settings.computerUse.enabled &&
+    (input.exposeComputerWhenApprovalRequired || !input.settings.computerUse.requireApproval)
+  ) {
+    servers.push(
+      makeBuiltInStdioMcpServerEntry("shioricode-computer", "computer-use-mcp", {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: input.settings.computerUse.requireApproval
+          ? "1"
+          : "0",
+      }),
+    );
+  }
+
+  return servers;
+}
+
 function makeBuiltInStdioMcpServer(
   name: string,
   subcommand: string,
@@ -954,6 +993,22 @@ function makeBuiltInStdioMcpServer(
       value,
     })),
   };
+}
+
+function makeBuiltInStdioMcpServerEntry(
+  name: string,
+  subcommand: string,
+  env?: Record<string, string>,
+): McpServerEntry {
+  const entry: McpServerEntry = {
+    name,
+    transport: "stdio",
+    command: process.execPath,
+    args: [...serverEntrypointArgs(), subcommand],
+    enabled: true,
+    providers: ["shiori"],
+  };
+  return env ? { ...entry, env } : entry;
 }
 
 function serverEntrypointArgs(): ReadonlyArray<string> {

@@ -15,7 +15,7 @@ import {
 import { cn } from "~/lib/utils";
 
 import { type KanbanAgentFilter } from "./PrKanbanBoard";
-import { PROVIDERS } from "./kanbanShared";
+import { PROVIDERS } from "./goalShared";
 
 interface KanbanHeaderControlsProps {
   searchQuery: string;
@@ -72,10 +72,10 @@ export function KanbanHeaderControls({
             <Input
               ref={searchInputRef}
               size="sm"
-              placeholder="Search tasks"
+              placeholder="Search goals"
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-              aria-label="Search tasks"
+              aria-label="Search goals"
               autoFocus
             />
 
@@ -138,7 +138,7 @@ export function KanbanHeaderControls({
 
       <Button type="button" size="xs" variant="outline" disabled={!canCreate} onClick={onNewTask}>
         <PlusIcon className="size-3" aria-hidden />
-        New task
+        New Goal
       </Button>
     </div>
   );
