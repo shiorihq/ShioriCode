@@ -139,6 +139,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  isProjectThread: boolean;
   onAddAssistantSelectionToChat?: (selectedText: string) => void;
   onVirtualizerSnapshot?: (snapshot: {
     totalSize: number;
@@ -179,6 +180,7 @@ function MessagesTimelineView({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  isProjectThread,
   onAddAssistantSelectionToChat,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
@@ -702,92 +704,115 @@ function MessagesTimelineView({
             const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
             const terminalContexts = displayedUserMessage.contexts;
             const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
-            return (
-              <div className="glass-user-message group ml-auto w-fit max-w-full">
-                <div className="flex w-full items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    {userImages.length > 0 && (
-                      <div
-                        className={cn(
-                          "mb-2 max-w-full gap-2",
-                          userImages.length === 1
-                            ? "inline-grid w-fit max-w-[420px] grid-cols-1"
-                            : "grid max-w-[420px] grid-cols-2",
-                        )}
-                      >
-                        {userImages.map(
-                          (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                            <div
-                              key={image.id}
-                              className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                            >
-                              {image.previewUrl ? (
-                                <button
-                                  type="button"
-                                  className="h-full w-full cursor-zoom-in"
-                                  aria-label={`Preview ${image.name}`}
-                                  onClick={() => {
-                                    const preview = buildExpandedImagePreview(userImages, image.id);
-                                    if (!preview) return;
-                                    onImageExpand(preview);
-                                  }}
-                                >
-                                  <img
-                                    src={image.previewUrl}
-                                    alt={image.name}
-                                    className={cn(
-                                      "max-h-[220px] max-w-full",
-                                      userImages.length === 1
-                                        ? "block h-auto w-auto object-contain"
-                                        : "h-full w-full object-cover",
-                                    )}
-                                    onLoad={onTimelineImageLoad}
-                                    onError={onTimelineImageLoad}
-                                  />
-                                </button>
-                              ) : (
-                                <div
-                                  className={cn(
-                                    CHAT_THREAD_BODY_CLASS,
-                                    "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70",
-                                  )}
-                                >
-                                  {image.name}
-                                </div>
-                              )}
-                            </div>
-                          ),
-                        )}
-                      </div>
+            const hasActions = Boolean(displayedUserMessage.copyText) || canRevertAgentWork;
+            const actionButtons = hasActions ? (
+              <>
+                {displayedUserMessage.copyText && (
+                  <MessageCopyButton text={displayedUserMessage.copyText} />
+                )}
+                {canRevertAgentWork && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={isRevertingCheckpoint || isWorking}
+                    onClick={() => onRevertUserMessage(row.message.id)}
+                    title="Revert to this message"
+                  >
+                    <Undo2Icon className="size-3" />
+                  </Button>
+                )}
+              </>
+            ) : null;
+            const messageBody = (
+              <>
+                {userImages.length > 0 && (
+                  <div
+                    className={cn(
+                      "mb-2 max-w-full gap-2",
+                      userImages.length === 1
+                        ? "inline-grid w-fit max-w-[420px] grid-cols-1"
+                        : "grid max-w-[420px] grid-cols-2",
                     )}
-                    {(displayedUserMessage.visibleText.trim().length > 0 ||
-                      terminalContexts.length > 0) && (
-                      <UserMessageBody
-                        text={displayedUserMessage.visibleText}
-                        terminalContexts={terminalContexts}
-                      />
+                  >
+                    {userImages.map(
+                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                        <div
+                          key={image.id}
+                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                        >
+                          {image.previewUrl ? (
+                            <button
+                              type="button"
+                              className="h-full w-full cursor-zoom-in"
+                              aria-label={`Preview ${image.name}`}
+                              onClick={() => {
+                                const preview = buildExpandedImagePreview(userImages, image.id);
+                                if (!preview) return;
+                                onImageExpand(preview);
+                              }}
+                            >
+                              <img
+                                src={image.previewUrl}
+                                alt={image.name}
+                                className={cn(
+                                  "max-h-[220px] max-w-full",
+                                  userImages.length === 1
+                                    ? "block h-auto w-auto object-contain"
+                                    : "h-full w-full object-cover",
+                                )}
+                                onLoad={onTimelineImageLoad}
+                                onError={onTimelineImageLoad}
+                              />
+                            </button>
+                          ) : (
+                            <div
+                              className={cn(
+                                CHAT_THREAD_BODY_CLASS,
+                                "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70",
+                              )}
+                            >
+                              {image.name}
+                            </div>
+                          )}
+                        </div>
+                      ),
                     )}
                   </div>
-                  {(displayedUserMessage.copyText || canRevertAgentWork) && (
-                    <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                      {displayedUserMessage.copyText && (
-                        <MessageCopyButton text={displayedUserMessage.copyText} />
-                      )}
-                      {canRevertAgentWork && (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          disabled={isRevertingCheckpoint || isWorking}
-                          onClick={() => onRevertUserMessage(row.message.id)}
-                          title="Revert to this message"
-                        >
-                          <Undo2Icon className="size-3" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
+                )}
+                {(displayedUserMessage.visibleText.trim().length > 0 ||
+                  terminalContexts.length > 0) && (
+                  <UserMessageBody
+                    text={displayedUserMessage.visibleText}
+                    terminalContexts={terminalContexts}
+                  />
+                )}
+              </>
+            );
+            if (isProjectThread) {
+              return (
+                <div className="glass-user-message group w-full">
+                  <div className="flex w-full items-start gap-3">
+                    <div className="min-w-0 flex-1">{messageBody}</div>
+                    {actionButtons && (
+                      <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                        {actionButtons}
+                      </div>
+                    )}
+                  </div>
                 </div>
+              );
+            }
+            return (
+              <div className="group ml-auto w-fit max-w-[75%]">
+                <div className="glass-user-message">
+                  <div className="min-w-0">{messageBody}</div>
+                </div>
+                {actionButtons && (
+                  <div className="mt-1.5 flex items-center justify-end gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                    {actionButtons}
+                  </div>
+                )}
               </div>
             );
           })()}

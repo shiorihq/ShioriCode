@@ -106,6 +106,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -151,6 +152,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -195,6 +197,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -243,6 +246,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -295,6 +299,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -349,6 +354,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -399,6 +405,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -448,6 +455,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -517,6 +525,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -589,6 +598,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -652,6 +662,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -726,6 +737,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -795,6 +807,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -851,6 +864,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -912,6 +926,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -971,6 +986,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1026,6 +1042,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1073,6 +1090,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1122,6 +1140,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1182,6 +1201,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1230,6 +1250,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1320,6 +1341,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1386,6 +1408,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1447,6 +1470,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1565,6 +1589,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1614,6 +1639,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1734,6 +1760,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1794,6 +1821,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1915,6 +1943,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -1981,6 +2010,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2048,6 +2078,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2109,6 +2140,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2163,6 +2195,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2239,6 +2272,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2303,6 +2337,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2363,6 +2398,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2411,6 +2447,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2459,6 +2496,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2509,6 +2547,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2556,6 +2595,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2595,6 +2635,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2686,6 +2727,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2774,6 +2816,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2821,6 +2864,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2884,6 +2928,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -2934,6 +2979,7 @@ describe("MessagesTimeline", () => {
           resolvedTheme="light"
           timestampFormat="locale"
           workspaceRoot={undefined}
+          isProjectThread={false}
         />,
       );
 
@@ -2985,6 +3031,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 
@@ -3045,6 +3092,7 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        isProjectThread={false}
       />,
     );
 

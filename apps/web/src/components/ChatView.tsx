@@ -5405,6 +5405,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   resolvedTheme={resolvedTheme}
                   timestampFormat={timestampFormat}
                   workspaceRoot={activeProject?.cwd ?? undefined}
+                  isProjectThread={isProjectThread}
                   {...(isComposerApprovalState ? {} : { onAddAssistantSelectionToChat })}
                 />
               </div>

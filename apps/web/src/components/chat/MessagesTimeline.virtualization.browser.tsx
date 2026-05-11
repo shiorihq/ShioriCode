@@ -182,6 +182,7 @@ function createBaseTimelineProps(input: {
     resolvedTheme: "light",
     timestampFormat: "locale",
     workspaceRoot: MARKDOWN_CWD,
+    isProjectThread: true,
     ...(input.onVirtualizerSnapshot ? { onVirtualizerSnapshot: input.onVirtualizerSnapshot } : {}),
   };
 }
