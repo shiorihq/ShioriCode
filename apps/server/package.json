@@ -4,7 +4,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/FujiwaraChoki/shioricode",
+    "url": "https://github.com/shiorihq/shioricode",
     "directory": "apps/server"
   },
   "bin": {

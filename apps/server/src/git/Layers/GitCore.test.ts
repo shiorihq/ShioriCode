@@ -1636,17 +1636,12 @@ it.layer(TestLayer)("git integration", (it) => {
           yield* initRepoWithCommit(tmp);
           const core = yield* GitCore;
 
-          yield* git(tmp, [
-            "remote",
-            "add",
-            "origin",
-            "git@github.com:FujiwaraChoki/shioricode.git",
-          ]);
+          yield* git(tmp, ["remote", "add", "origin", "git@github.com:shiorihq/shioricode.git"]);
 
           const remoteName = yield* core.ensureRemote({
             cwd: tmp,
             preferredName: "origin",
-            url: "git@github.com:FujiwaraChoki/shioricode.git/",
+            url: "git@github.com:shiorihq/shioricode.git/",
           });
 
           expect(remoteName).toBe("origin");
