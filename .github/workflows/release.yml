@@ -128,8 +128,26 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Select Xcode 16
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          xcode_path="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | tail -n 1)"
+          if [[ -z "$xcode_path" ]]; then
+            echo "Xcode 16 is required to build the macOS helper." >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode_path/Contents/Developer"
+          xcodebuild -version
+
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            bun install --frozen-lockfile --ignore-scripts
+          else
+            bun install --frozen-lockfile
+          fi
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
