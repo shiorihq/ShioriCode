@@ -9,6 +9,7 @@ import {
   decodeHostedShioriAuthTokenClaims,
   hostedShioriAuthTokenMatchesConvexUrl,
 } from "shared/hostedShioriConvex";
+import { readHostedShioriFeatureFlagOverride } from "shared/hostedShioriFeatureFlags";
 
 import {
   hostedFlagGetQuery,
@@ -25,6 +26,8 @@ import {
 } from "./hostedSubscriptionPlan";
 import { readNativeApi, setNativeApiWebConnectGate } from "../nativeApi";
 import { convexDeploymentUrl } from "./config";
+
+const hostedFeatureFlagEnv = import.meta.env as Record<string, unknown>;
 
 function normalizeHostedShioriAuthToken(token: string | null): string | null {
   const trimmed = token?.trim() ?? "";
@@ -94,22 +97,53 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
   const authToken = useAuthToken();
   const normalizedAuthToken = normalizeHostedShioriAuthToken(authToken);
   const viewer = useQuery(hostedCurrentUserQuery, {});
+  const mobileAppEnabledOverride = readHostedShioriFeatureFlagOverride(
+    "shioricode_mobile_enabled",
+    hostedFeatureFlagEnv,
+  );
+  const browserUseEnabledOverride = readHostedShioriFeatureFlagOverride(
+    "shioricode_browser_use_enabled",
+    hostedFeatureFlagEnv,
+  );
+  const computerUseEnabledOverride = readHostedShioriFeatureFlagOverride(
+    "shioricode_computer_use_enabled",
+    hostedFeatureFlagEnv,
+  );
+  const goalsEnabledOverride = readHostedShioriFeatureFlagOverride(
+    "shioricode_goals_enabled",
+    hostedFeatureFlagEnv,
+  );
   const mobileAppEnabledFlag = useQuery(
     hostedFlagGetQuery,
-    isAuthenticated ? { key: "shioricode_mobile_enabled" } : "skip",
+    isAuthenticated && mobileAppEnabledOverride === undefined
+      ? { key: "shioricode_mobile_enabled" }
+      : "skip",
   );
   const browserUseEnabledFlag = useQuery(
     hostedFlagGetQuery,
-    isAuthenticated ? { key: "shioricode_browser_use_enabled" } : "skip",
+    isAuthenticated && browserUseEnabledOverride === undefined
+      ? { key: "shioricode_browser_use_enabled" }
+      : "skip",
   );
   const computerUseEnabledFlag = useQuery(
     hostedFlagGetQuery,
-    isAuthenticated ? { key: "shioricode_computer_use_enabled" } : "skip",
+    isAuthenticated && computerUseEnabledOverride === undefined
+      ? { key: "shioricode_computer_use_enabled" }
+      : "skip",
   );
   const goalsEnabledFlag = useQuery(
     hostedFlagGetQuery,
-    isAuthenticated ? { key: "shioricode_goals_enabled" } : "skip",
+    isAuthenticated && goalsEnabledOverride === undefined
+      ? { key: "shioricode_goals_enabled" }
+      : "skip",
   );
+  const mobileAppEnabled =
+    mobileAppEnabledOverride ?? (isAuthenticated && mobileAppEnabledFlag === true);
+  const browserUseEnabled =
+    browserUseEnabledOverride ?? (isAuthenticated && browserUseEnabledFlag === true);
+  const computerUseEnabled =
+    computerUseEnabledOverride ?? (isAuthenticated && computerUseEnabledFlag === true);
+  const goalsEnabled = goalsEnabledOverride ?? (isAuthenticated && goalsEnabledFlag === true);
   const userWithUsage = useQuery(hostedUserWithUsageQuery, isAuthenticated ? {} : "skip");
   const subscriptionPlanId =
     !isAuthenticated || userWithUsage === undefined
@@ -119,10 +153,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
     subscriptionPlanId === null ? null : hostedSubscriptionPlanLabel(subscriptionPlanId);
   const isPaidSubscriber = subscriptionPlanId !== null && subscriptionPlanId !== "free";
   const isSubscriptionLoading = isAuthenticated && userWithUsage === undefined;
-  const catalogProviders = useQuery(
-    hostedModelsListQuery,
-    isAuthenticated && isPaidSubscriber ? {} : "skip",
-  );
+  const catalogProviders = useQuery(hostedModelsListQuery, isAuthenticated ? {} : "skip");
   const { signIn, signOut } = useAuthActions();
   const signOutAndClearDesktopToken = useCallback<ConvexAuthActionsContext["signOut"]>(
     async (...args) => {
@@ -145,25 +176,25 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
 
     if (
       isAuthenticated &&
-      (mobileAppEnabledFlag === undefined ||
-        browserUseEnabledFlag === undefined ||
-        computerUseEnabledFlag === undefined ||
-        goalsEnabledFlag === undefined)
+      ((mobileAppEnabledOverride === undefined && mobileAppEnabledFlag === undefined) ||
+        (browserUseEnabledOverride === undefined && browserUseEnabledFlag === undefined) ||
+        (computerUseEnabledOverride === undefined && computerUseEnabledFlag === undefined) ||
+        (goalsEnabledOverride === undefined && goalsEnabledFlag === undefined))
     ) {
       return;
     }
 
-    const computerUseAvailable = isAuthenticated && computerUseEnabledFlag === true;
+    const computerUseAvailable = computerUseEnabled;
 
     void api.server.updateSettings({
       browserUse: {
-        enabled: isAuthenticated && browserUseEnabledFlag === true,
+        enabled: browserUseEnabled,
       },
       mobileApp: {
-        enabled: isAuthenticated && mobileAppEnabledFlag === true,
+        enabled: mobileAppEnabled,
       },
       goals: {
-        enabled: isAuthenticated && goalsEnabledFlag === true,
+        enabled: goalsEnabled,
       },
       ...(computerUseAvailable
         ? {}
@@ -174,11 +205,19 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
           }),
     });
   }, [
+    browserUseEnabled,
     browserUseEnabledFlag,
+    browserUseEnabledOverride,
+    computerUseEnabled,
     computerUseEnabledFlag,
+    computerUseEnabledOverride,
+    goalsEnabled,
     isAuthenticated,
     goalsEnabledFlag,
+    goalsEnabledOverride,
+    mobileAppEnabled,
     mobileAppEnabledFlag,
+    mobileAppEnabledOverride,
   ]);
 
   useEffect(() => {
@@ -214,10 +253,10 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       subscriptionPlanLabel,
       authToken: normalizedAuthToken,
       viewer,
-      mobileAppEnabled: mobileAppEnabledFlag === true,
-      browserUseEnabled: isAuthenticated && browserUseEnabledFlag === true,
-      computerUseEnabled: isAuthenticated && computerUseEnabledFlag === true,
-      goalsEnabled: isAuthenticated && goalsEnabledFlag === true,
+      mobileAppEnabled,
+      browserUseEnabled,
+      computerUseEnabled,
+      goalsEnabled,
       catalogProviders,
       signIn,
       signOut: signOutAndClearDesktopToken,
@@ -229,10 +268,10 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       isPaidSubscriber,
       isSubscriptionLoading,
       normalizedAuthToken,
-      browserUseEnabledFlag,
-      computerUseEnabledFlag,
-      goalsEnabledFlag,
-      mobileAppEnabledFlag,
+      browserUseEnabled,
+      computerUseEnabled,
+      goalsEnabled,
+      mobileAppEnabled,
       signIn,
       signOutAndClearDesktopToken,
       subscriptionPlanId,

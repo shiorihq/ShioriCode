@@ -19,6 +19,22 @@ The ShioriCode CLI accepts the following configuration options, available either
 
 > TIP: Use the `--help` flag to see all available options and their descriptions.
 
+## Hosted Feature Flag Overrides
+
+Hosted Shiori feature flags normally come from Convex. For local development or emergency
+rollouts, set `SHIORICODE_FEATURE_FLAG_<FLAG_KEY>` on the server process, using the Convex flag
+key uppercased with underscores. Browser-visible flags can also use the `VITE_` prefix.
+
+Examples:
+
+```bash
+SHIORICODE_FEATURE_FLAG_CODE_ENABLED=true
+VITE_SHIORICODE_FEATURE_FLAG_SHIORICODE_BROWSER_USE_ENABLED=false
+```
+
+Supported boolean values are `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`, and
+`enabled`/`disabled`.
+
 ## Security First
 
 - Always set `--auth-token` before exposing the server outside localhost.

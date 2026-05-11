@@ -101,10 +101,6 @@ function resolveHostedAuthLabel(viewer: HostedViewer | null | undefined): string
   return viewer.email ?? viewer.name ?? "Shiori";
 }
 
-function hasHostedPaidPlan(isPaidSubscriber: boolean): boolean {
-  return isPaidSubscriber;
-}
-
 export function mergeHostedShioriProvider(
   baseProvider: ServerProvider | undefined,
   input: {
@@ -157,11 +153,11 @@ export function mergeHostedShioriProvider(
     return {
       ...baseProvider,
       auth: {
-        status: "unauthenticated",
-        label: "Sign in required",
+        status: "unknown",
+        label: "Sign in optional",
       },
-      status: "warning",
-      message: "Sign in to Shiori to load models and enable the provider.",
+      status: "ready",
+      message: undefined,
       models: baseProvider.models,
     };
   }
@@ -173,22 +169,8 @@ export function mergeHostedShioriProvider(
         status: "authenticated",
         label: resolveHostedAuthLabel(input.viewer),
       },
-      status: "warning",
-      message: "Checking your Shiori subscription…",
-      models: baseProvider.models,
-    };
-  }
-
-  if (!hasHostedPaidPlan(input.isPaidSubscriber)) {
-    return {
-      ...baseProvider,
-      auth: {
-        status: "authenticated",
-        label: resolveHostedAuthLabel(input.viewer),
-        type: "convex",
-      },
-      status: "warning",
-      message: "ShioriCode requires an active paid Shiori subscription.",
+      status: "ready",
+      message: undefined,
       models: baseProvider.models,
     };
   }
@@ -200,8 +182,8 @@ export function mergeHostedShioriProvider(
         status: "authenticated",
         label: resolveHostedAuthLabel(input.viewer),
       },
-      status: "warning",
-      message: "Loading Shiori models…",
+      status: "ready",
+      message: undefined,
       models: baseProvider.models,
     };
   }

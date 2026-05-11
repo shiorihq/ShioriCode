@@ -21,7 +21,10 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider";
 import { ShioriProvider } from "../Services/ShioriProvider";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
 import { ServerSettingsService } from "../../serverSettings";
-import { fetchShioriCodeEntitlements } from "../shioriCodeEntitlements";
+import {
+  fetchShioriCodeEntitlements,
+  type ShioriCodeEntitlementsProbe,
+} from "../shioriCodeEntitlements";
 
 const PROVIDER = "shiori" as const;
 const JWT_LIKE_TOKEN_PATTERN = /^[^.]+\.[^.]+\.[^.]+$/;
@@ -106,6 +109,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+function hasConfiguredShioriApiBaseUrl(apiBaseUrl: string): boolean {
+  return apiBaseUrl.trim().length > 0;
+}
+
 function hasHostedShioriAuthToken(token: string | null): token is string {
   return (
     typeof token === "string" &&
@@ -132,10 +139,20 @@ function buildShioriAuth(settings: {
       }
     : {
         status: "unknown",
-        label: settings.apiBaseUrl
-          ? "Sign in through the Shiori auth screen"
+        label: hasConfiguredShioriApiBaseUrl(settings.apiBaseUrl)
+          ? "Shiori sign-in optional"
           : "Configure Shiori API base URL",
       };
+}
+
+function shouldWarnForEntitlements(entitlements: ShioriCodeEntitlementsProbe["entitlements"]) {
+  if (!entitlements || entitlements.allowed !== false) {
+    return false;
+  }
+
+  const hasPaidPlan = entitlements.plan !== null && entitlements.plan !== "free";
+  const isActive = entitlements.status === "active" || entitlements.status === "grace";
+  return hasPaidPlan && isActive;
 }
 
 function buildShioriProviderStatus(
@@ -161,22 +178,20 @@ function buildShioriProviderStatus(
     ...settings,
     entitlementPlan: entitlementProbe.entitlements?.plan ?? null,
   });
-  const accessRequiresPaidPlan = entitlementProbe.entitlements?.allowed === false;
   const accessWarningMessage =
-    accessRequiresPaidPlan || entitlementProbe.authFailure
-      ? (entitlementProbe.message ??
-        "ShioriCode requires an active paid Shiori subscription for hosted access.")
+    shouldWarnForEntitlements(entitlementProbe.entitlements) || entitlementProbe.authFailure
+      ? (entitlementProbe.message ?? "ShioriCode is disabled for this Shiori deployment.")
       : null;
+  const hasApiBaseUrl = hasConfiguredShioriApiBaseUrl(settings.apiBaseUrl);
   const probe = {
     installed: true,
     version: null,
-    status: (settings.apiBaseUrl
-      ? accessWarningMessage
-        ? "warning"
-        : "ready"
-      : "warning") as Exclude<ServerProviderState, "disabled">,
+    status: (hasApiBaseUrl ? (accessWarningMessage ? "warning" : "ready") : "warning") as Exclude<
+      ServerProviderState,
+      "disabled"
+    >,
     auth,
-    ...(settings.apiBaseUrl
+    ...(hasApiBaseUrl
       ? accessWarningMessage
         ? { message: accessWarningMessage }
         : {}
@@ -215,7 +230,7 @@ function buildPendingShioriProviderStatus(settings: {
     });
   }
 
-  if (!settings.apiBaseUrl) {
+  if (!hasConfiguredShioriApiBaseUrl(settings.apiBaseUrl)) {
     return buildPendingServerProvider({
       provider: PROVIDER,
       enabled: true,

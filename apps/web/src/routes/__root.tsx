@@ -28,12 +28,6 @@ import { APP_DISPLAY_NAME } from "../branding";
 import { isElectron } from "../env";
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { ShioriWordmark } from "../components/ShioriWordmark";
-import {
-  HostedShioriAuthPanel,
-  type PasswordStage,
-} from "../components/auth/HostedShioriAuthPanel";
-import { HostedBillingPanel } from "../components/billing/HostedBillingPanel";
 import { OnboardingScreen } from "../components/onboarding/OnboardingScreen";
 import { TelemetryBridge } from "../components/TelemetryBridge";
 import { Button } from "../components/ui/button";
@@ -100,15 +94,13 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <TelemetryBridge />
         <SettingsReturnPathTracker />
-        <AuthGate>
-          <ServerStateBootstrap />
-          <EventRouter />
-          <OnboardingGate>
-            <AppRouteShell>
-              <Outlet />
-            </AppRouteShell>
-          </OnboardingGate>
-        </AuthGate>
+        <ServerStateBootstrap />
+        <EventRouter />
+        <OnboardingGate>
+          <AppRouteShell>
+            <Outlet />
+          </AppRouteShell>
+        </OnboardingGate>
       </AnchoredToastProvider>
     </ToastProvider>
   );
@@ -143,116 +135,13 @@ function SettingsReturnPathTracker() {
   return null;
 }
 
-const AUTH_STAGE_COPY: Record<PasswordStage, { heading: string; description: string }> = {
-  signIn: {
-    heading: "Sign in required",
-    description: "Sign in with your Shiori account to unlock the app and load your model catalog.",
-  },
-  signUp: {
-    heading: "Create your Shiori account",
-    description: "Set up a Shiori account to unlock ShioriCode and your model catalog.",
-  },
-  forgot: {
-    heading: "Reset your password",
-    description: "Enter your email and we'll send a code to reset your Shiori password.",
-  },
-  verifyEmail: {
-    heading: "Verify your email",
-    description: "Enter the code we sent to your email to finish signing in.",
-  },
-  reset: {
-    heading: "Choose a new password",
-    description: "Enter the reset code we sent you and pick a new password.",
-  },
-};
-
-export function AuthGateScreenContent() {
-  const { isAuthenticated, isSubscriptionLoading, isPaidSubscriber } = useHostedShioriState();
-  const requiresPaidPlan = isAuthenticated && !isSubscriptionLoading && isPaidSubscriber === false;
-  const [authStage, setAuthStage] = useState<PasswordStage>("signIn");
-  const stageCopy = AUTH_STAGE_COPY[authStage] ?? AUTH_STAGE_COPY.signIn;
-  const heading = requiresPaidPlan ? "Paid subscription required" : stageCopy.heading;
-  const description = requiresPaidPlan
-    ? "ShioriCode is available to active paid Shiori subscribers. Upgrade your Shiori plan to continue."
-    : stageCopy.description;
-
-  return (
-    <div className="relative flex min-h-screen flex-col bg-background px-6 py-8 text-foreground sm:px-10">
-      <div className="flex flex-1 items-center justify-center">
-        <div
-          className={`auth-form-enter w-full ${requiresPaidPlan ? "max-w-[960px]" : "max-w-[380px]"}`}
-        >
-          <div className="mb-5 flex justify-start">
-            <ShioriWordmark showLogo={false} />
-          </div>
-          <h1 className="text-[1.75rem] font-bold leading-tight tracking-tight sm:text-[2rem]">
-            {heading}
-          </h1>
-          <p className="mt-3 mb-10 text-[15px] leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-
-          <HostedShioriAuthPanel
-            heading=""
-            description=""
-            syncStageWithUrl={!requiresPaidPlan}
-            onStageChange={setAuthStage}
-          />
-          {requiresPaidPlan ? (
-            <div className="mt-6">
-              <HostedBillingPanel mode="gate" />
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AuthGate({ children }: { children: ReactNode }) {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const { isAuthenticated, isAuthLoading, isSubscriptionLoading, isPaidSubscriber } =
-    useHostedShioriState();
-  const lastGateReasonRef = useRef<string | null>(null);
-  const allowWelcomeRoute = pathname === "/welcome" && isAuthenticated;
-
-  const gateReason =
-    isAuthLoading || (isAuthenticated && isSubscriptionLoading)
-      ? null
-      : !isAuthenticated
-        ? "sign_in_required"
-        : !isPaidSubscriber
-          ? "paid_subscription_required"
-          : null;
-
-  useEffect(() => {
-    if (gateReason === null || lastGateReasonRef.current === gateReason) {
-      return;
-    }
-    lastGateReasonRef.current = gateReason;
-    recordTelemetry("web.auth_gate.viewed", {
-      reason: gateReason,
-    });
-  }, [gateReason]);
-
-  if (isAuthLoading || (isAuthenticated && isSubscriptionLoading) || !isAuthenticated) {
-    return <AuthGateScreenContent />;
-  }
-
-  if (!isPaidSubscriber && !allowWelcomeRoute) {
-    return <AuthGateScreenContent />;
-  }
-
-  return <>{children}</>;
-}
-
 function OnboardingGate({ children }: { children: ReactNode }) {
   const pathname = useLocation({ select: (location) => location.pathname });
-  const { isAuthenticated, isSubscriptionLoading, isPaidSubscriber } = useHostedShioriState();
+  const { isAuthLoading, isSubscriptionLoading } = useHostedShioriState();
   const serverConfig = useServerConfig();
   const { defaultProjectId, handleNewThread } = useHandleNewThread();
-  const canRunOnboarding = isAuthenticated && !isSubscriptionLoading && isPaidSubscriber;
-  const allowWelcomeRoute = pathname === "/welcome" && isAuthenticated;
+  const canRunOnboarding = !isAuthLoading && !isSubscriptionLoading;
+  const allowWelcomeRoute = pathname === "/welcome";
   const [bootstrappedOnboardingState, setBootstrappedOnboardingState] =
     useState<OnboardingState | null>(null);
   const [onboardingOverrideState, setOnboardingOverrideState] = useState<OnboardingState | null>(

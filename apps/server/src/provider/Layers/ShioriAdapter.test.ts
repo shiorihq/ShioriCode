@@ -5154,7 +5154,7 @@ describe("ShioriAdapterLive fetch reliability", () => {
             assert.equal(completed.value.payload.state, "failed");
             assert.match(
               String(completed.value.payload.errorMessage ?? ""),
-              /Sign out and sign back in/i,
+              /sign in again|may require sign-in/i,
             );
           }
           assert.equal(tokens.current, null);
@@ -5164,7 +5164,7 @@ describe("ShioriAdapterLive fetch reliability", () => {
     );
   });
 
-  it("rejects a JWT from the wrong Convex deployment before fetching and does not clear it", async () => {
+  it("omits a JWT from the wrong Convex deployment and does not clear it", async () => {
     const tokens = { current: wrongDeploymentHostedAuthToken as string | null };
     const setToken = vi.fn(async (value: string | null) => {
       tokens.current = value;
@@ -5215,8 +5215,10 @@ describe("ShioriAdapterLive fetch reliability", () => {
             }),
           );
 
-          assert.equal(result._tag, "Failure");
-          assert.equal(fetchMock.mock.calls.length, 0);
+          assert.equal(result._tag, "Success");
+          assert.equal(fetchMock.mock.calls.length, 1);
+          const requestInit = fetchMock.mock.calls[0]?.[1];
+          assert.equal(requestInit?.headers?.["X-Convex-Auth-Token"], undefined);
           assert.equal(tokens.current, wrongDeploymentHostedAuthToken);
           assert.equal(setToken.mock.calls.length, 0);
         }).pipe(Effect.provide(customLayer)),

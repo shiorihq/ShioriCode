@@ -1,118 +1,179 @@
 # ShioriCode
 
-A minimal web GUI for coding agents — currently supporting **Shiori**, **Codex**, **Claude**, and **Kimi**.
+ShioriCode is a desktop and web interface for running coding agents in real projects.
 
-> [!WARNING]
-> ShioriCode is in early development. APIs and features may change without notice.
+It is built for long-running agent sessions, visible work history, predictable reconnects, project-aware threads, and reviewable changes. The goal is simple: keep powerful coding agents usable when the work takes more than one prompt.
 
----
+ShioriCode is early, changing quickly, and currently best suited for people who are comfortable running a Bun monorepo locally.
 
-## Prerequisites
+## Screenshots
 
-Before running ShioriCode, install and authenticate at least one provider:
+<table>
+  <tr>
+    <td width="50%">
+      <img alt="ShioriCode new thread composer" src="./docs/screenshots/shioricode-new-thread.png">
+    </td>
+    <td width="50%">
+      <img alt="ShioriCode agent thread summary and diff" src="./docs/screenshots/shioricode-agent-thread.png">
+    </td>
+  </tr>
+</table>
 
-| Provider   | Installation                                                                            | Authentication      |
-| ---------- | --------------------------------------------------------------------------------------- | ------------------- |
-| **Codex**  | [Codex CLI](https://github.com/openai/codex)                                            | `codex login`       |
-| **Claude** | [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) | `claude auth login` |
-| **Kimi**   | [Kimi Code CLI](https://www.moonshot.cn/) (`kimi`)                                      | `kimi login`        |
+## What It Does
 
-> The hosted **Shiori** provider requires Convex setup (see below). It will remain in a warning state until you sign in through the **Settings** panel.
+- Runs coding-agent sessions from a local desktop or browser UI.
+- Keeps chats tied to projects, branches, and local workspaces.
+- Streams agent activity into a readable timeline.
+- Shows generated diffs and changed files without leaving the app.
+- Supports local provider CLIs and a hosted Shiori provider.
+- Includes desktop, web, CLI, terminal-agent, and marketing surfaces in one repo.
 
----
+## Project Status
 
-## Quick Start
+ShioriCode is not a polished public platform yet. It is source-available, actively evolving, and maintainer-directed.
 
-```bash
-# Install dependencies
-bun install
+Expect sharp edges around setup, provider support, release packaging, and hosted Shiori configuration. Bug fixes, reliability improvements, documentation fixes, and focused polish are welcome.
 
-# Set up environment
-cp apps/web/.env.example apps/web/.env.local
-# Edit apps/web/.env.local and set VITE_CONVEX_URL
+## Providers
 
-# Start Convex (required for Shiori hosted provider)
-bun run convex:dev
+You only need one working provider to use the app.
 
-# Start the app
-bun run dev
-```
-
----
-
-## Convex Setup (Hosted Shiori Provider)
-
-Shiori's hosted provider uses [Convex](https://convex.dev/) for authentication and the model catalog.
-
-1. Copy `apps/web/.env.example` to `apps/web/.env.local` and set `VITE_CONVEX_URL`.
-2. Start Convex locally:
-   ```bash
-   bun run convex:dev
-   ```
-3. Configure GitHub OAuth in your Convex deployment:
-   ```bash
-   npx convex env set AUTH_GITHUB_ID     <github-client-id>
-   npx convex env set AUTH_GITHUB_SECRET <github-client-secret>
-   ```
-4. Start the app:
-   ```bash
-   bun run dev
-   ```
-
----
-
-## Project Structure
-
-This is a Bun monorepo managed with Turborepo.
-
-```
-├── apps/
-│   ├── server/          # Node.js WebSocket server (brokers agent sessions)
-│   ├── web/             # React + Vite frontend
-│   ├── desktop/         # Electron desktop app
-│   ├── cli/             # CLI tooling
-│   ├── agent/           # Agent runtime
-│   └── marketing/       # Marketing site
-├── packages/
-│   ├── contracts/       # Shared Effect schemas & TypeScript contracts
-│   └── shared/          # Shared runtime utilities (subpath exports)
-└── scripts/             # Build & development scripts
-```
-
-### Key Packages
-
-| Package              | Role                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------- |
-| `apps/server`        | Wraps Codex app-server (JSON-RPC over stdio), serves the React app, manages provider sessions |
-| `apps/web`           | Session UX, conversation/event rendering, client-side state                                   |
-| `packages/contracts` | Schema-only — provider events, WebSocket protocol, model/session types                        |
-| `packages/shared`    | Runtime utilities consumed by both server and web                                             |
-
----
-
-## Development
-
-| Command              | Description                     |
-| -------------------- | ------------------------------- |
-| `bun run dev`        | Start server + web concurrently |
-| `bun run dev:server` | Start server only               |
-| `bun run dev:web`    | Start web only                  |
-| `bun run convex:dev` | Start Convex dev server         |
-| `bun run typecheck`  | Type-check all packages         |
-| `bun run lint`       | Run Oxlint across the repo      |
-| `bun run fmt`        | Format with oxfmt               |
-| `bun run test`       | Run all tests (Vitest)          |
-| `bun run build`      | Production build                |
-
----
+| Provider | Requirement                                                                             | Authentication        |
+| -------- | --------------------------------------------------------------------------------------- | --------------------- |
+| Codex    | [Codex CLI](https://github.com/openai/codex)                                            | `codex login`         |
+| Claude   | [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) | `claude auth login`   |
+| Kimi     | [Kimi Code CLI](https://www.moonshot.cn/) (`kimi`)                                      | `kimi login`          |
+| Shiori   | Convex-backed hosted provider setup                                                     | Sign in from Settings |
 
 ## Requirements
 
 - [Bun](https://bun.sh/) `^1.3.9`
 - [Node.js](https://nodejs.org/) `^24.13.1`
+- Optional: a `NUCLEO_LICENSE_KEY` from [nucleoapp.com](https://nucleoapp.com/) for the full Nucleo icon set
+- At least one authenticated provider CLI, unless you are only working on non-provider surfaces
 
----
+If no Nucleo license key is available, ShioriCode falls back to Lucide icons so local development still works.
+
+## Quick Start
+
+Create a local environment file first:
+
+```bash
+cp .env.example .env
+```
+
+If you have a Nucleo license key, set it before starting the app:
+
+```bash
+NUCLEO_LICENSE_KEY=your-license-key
+```
+
+Install dependencies and start the app:
+
+```bash
+bun install
+bun run dev
+```
+
+The default dev command starts the server and web app together.
+
+## Running The App
+
+Use these commands for the common local workflows:
+
+| Command               | Description                            |
+| --------------------- | -------------------------------------- |
+| `bun run dev`         | Start server and web app together      |
+| `bun run dev:web`     | Start only the web app                 |
+| `bun run dev:server`  | Start only the server                  |
+| `bun run dev:desktop` | Start the desktop development workflow |
+
+For remote access from another device, see [REMOTE.md](./REMOTE.md).
+
+## Development
+
+| Command                 | Description                     |
+| ----------------------- | ------------------------------- |
+| `bun run fmt`           | Format the repo                 |
+| `bun run lint`          | Run Oxlint                      |
+| `bun run typecheck`     | Type-check all packages         |
+| `bun run test`          | Run Vitest and browser tests    |
+| `bun run build`         | Build all packages              |
+| `bun run build:desktop` | Build the desktop pipeline      |
+| `bun run convex:dev`    | Start Convex development server |
+
+Do not use `bun test` in this repo. Use `bun run test`.
+
+Before considering a change complete, run:
+
+```bash
+bun run fmt
+bun run lint
+bun run typecheck
+```
+
+For tests, always run:
+
+```bash
+bun run test
+```
+
+## Repository Layout
+
+This is a Bun monorepo managed with Turborepo.
+
+```text
+apps/
+  agent/       Terminal agent UI
+  cli/         CLI tooling
+  desktop/     Electron desktop shell
+  marketing/   Astro marketing site
+  server/      Node.js WebSocket server and provider broker
+  web/         React/Vite app
+convex/        Hosted Shiori backend schema and functions
+packages/
+  contracts/   Effect schemas and TypeScript contracts
+  effect-acp/  ACP protocol helpers
+  shared/      Runtime utilities with explicit subpath exports
+scripts/       Build, release, and development tooling
+```
+
+## Architecture Notes
+
+ShioriCode is currently Codex-first. The server starts `codex app-server` for provider sessions, speaks JSON-RPC over stdio, and projects provider runtime activity into orchestration events consumed by the web client.
+
+Good starting points:
+
+- `apps/server/src/codexAppServerManager.ts`
+- `apps/server/src/providerManager.ts`
+- `apps/server/src/wsServer.ts`
+- `apps/web/src/store.ts`
+- `packages/contracts/src`
+- `packages/shared/src`
+
+Reference docs:
+
+- [Codex App Server docs](https://developers.openai.com/codex/sdk/#app-server)
+- [Release process](./docs/release.md)
+- [Remote server notes](./REMOTE.md)
+- [Keybindings](./KEYBINDINGS.md)
+
+## Contributing
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Small, focused PRs are much more likely to be reviewed and merged than broad rewrites or speculative features.
+
+## Security
+
+ShioriCode launches local tools, brokers coding-agent sessions, and handles provider credentials. Please read [SECURITY.md](./SECURITY.md) before reporting security issues or publishing details.
+
+## Acknowledgements
+
+ShioriCode is a fork of [t3code](https://github.com/pingdotgg/t3code). We are grateful to the t3code project for serving as an excellent base for ShioriCode.
 
 ## License
 
-MIT
+ShioriCode is source-available under the [Elastic License 2.0](./LICENSE).
+
+You may use ShioriCode for personal, internal, professional, and commercial work. You may not sell, resell, white-label, rebrand, or offer ShioriCode as a hosted or managed service without a separate commercial license from the maintainers.
+
+Because this license restricts some commercial redistribution and hosted-service use, ShioriCode should be described as source-available rather than OSI open source.

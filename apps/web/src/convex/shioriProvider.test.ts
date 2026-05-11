@@ -382,7 +382,7 @@ describe("flattenHostedShioriSettingsModels", () => {
 });
 
 describe("mergeHostedShioriProvider", () => {
-  it("marks the hosted provider unauthenticated when the user is signed out", () => {
+  it("keeps the hosted provider ready when the user is signed out", () => {
     expect(
       mergeHostedShioriProvider(baseProvider, {
         isAuthLoading: false,
@@ -393,8 +393,8 @@ describe("mergeHostedShioriProvider", () => {
         catalogProviders: undefined,
       }),
     ).toMatchObject({
-      status: "warning",
-      auth: { status: "unauthenticated" },
+      status: "ready",
+      auth: { status: "unknown", label: "Sign in optional" },
     });
   });
 
@@ -450,7 +450,7 @@ describe("mergeHostedShioriProvider", () => {
     });
   });
 
-  it("keeps the hosted provider blocked until the account has a paid Shiori plan", () => {
+  it("keeps the hosted provider ready without a paid Shiori plan", () => {
     expect(
       mergeHostedShioriProvider(baseProvider, {
         isAuthLoading: false,
@@ -466,12 +466,12 @@ describe("mergeHostedShioriProvider", () => {
         catalogProviders: undefined,
       }),
     ).toMatchObject({
-      status: "warning",
+      status: "ready",
       auth: {
         status: "authenticated",
         label: "octocat@example.com",
       },
-      message: "ShioriCode requires an active paid Shiori subscription.",
+      message: undefined,
     });
   });
 });

@@ -6,6 +6,7 @@ import { fetchShioriCodeEntitlements } from "./shioriCodeEntitlements.ts";
 describe("fetchShioriCodeEntitlements", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("reports a deployment flag error when paid access is active but disabled", async () => {
@@ -70,6 +71,77 @@ describe("fetchShioriCodeEntitlements", () => {
       entitlements: null,
       message: "Shiori account token is unavailable or expired. Sign out and sign back in.",
       authFailure: true,
+    });
+  });
+
+  it("allows an env override to enable the Convex code flag", async () => {
+    vi.stubEnv("SHIORICODE_FEATURE_FLAG_CODE_ENABLED", "true");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              allowed: false,
+              plan: "max",
+              status: "active",
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      fetchShioriCodeEntitlements({
+        apiBaseUrl: "http://127.0.0.1:3000",
+        authToken: "header.payload.signature",
+      }),
+    );
+
+    expect(result).toEqual({
+      entitlements: {
+        allowed: true,
+        plan: "max",
+        status: "active",
+      },
+      message: null,
+      authFailure: false,
+    });
+  });
+
+  it("allows an env override to disable the Convex code flag", async () => {
+    vi.stubEnv("SHIORICODE_FEATURE_FLAG_CODE_ENABLED", "false");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              allowed: true,
+              plan: "max",
+              status: "active",
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      fetchShioriCodeEntitlements({
+        apiBaseUrl: "http://127.0.0.1:3000",
+        authToken: "header.payload.signature",
+      }),
+    );
+
+    expect(result).toEqual({
+      entitlements: {
+        allowed: false,
+        plan: "max",
+        status: "active",
+      },
+      message:
+        "ShioriCode is disabled for this Shiori deployment. Enable the `code_enabled` feature flag in Convex.",
+      authFailure: false,
     });
   });
 });

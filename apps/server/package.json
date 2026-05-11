@@ -1,7 +1,7 @@
 {
   "name": "shioricode",
   "version": "0.2.3",
-  "license": "MIT",
+  "license": "Elastic-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/shiorihq/shioricode",

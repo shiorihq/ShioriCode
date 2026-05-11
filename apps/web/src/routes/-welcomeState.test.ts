@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveWelcomeViewModel } from "./-welcomeState";
 
 describe("resolveWelcomeViewModel", () => {
-  it("shows a confirmed success state only for active paid subscribers", () => {
+  it("shows a confirmed success state for active paid subscribers", () => {
     expect(
       resolveWelcomeViewModel({
         requestedStatus: "success",
@@ -19,7 +19,7 @@ describe("resolveWelcomeViewModel", () => {
     });
   });
 
-  it("does not trust the success query state before the paid plan is active", () => {
+  it("allows the success query state without a paid plan", () => {
     expect(
       resolveWelcomeViewModel({
         requestedStatus: "success",
@@ -28,9 +28,10 @@ describe("resolveWelcomeViewModel", () => {
         subscriptionPlanLabel: null,
       }),
     ).toMatchObject({
-      displayStatus: "pending",
-      headline: "Finish setting up ShioriCode",
+      displayStatus: "success",
+      headline: "Welcome to ShioriCode",
       planLabel: null,
+      accessStatusLabel: "ShioriCode is ready without a paid plan.",
     });
   });
 
@@ -50,7 +51,7 @@ describe("resolveWelcomeViewModel", () => {
     });
   });
 
-  it("shows a neutral syncing state while subscription access is still loading", () => {
+  it("does not block the success state while subscription access is still loading", () => {
     expect(
       resolveWelcomeViewModel({
         requestedStatus: "success",
@@ -59,9 +60,9 @@ describe("resolveWelcomeViewModel", () => {
         subscriptionPlanLabel: null,
       }),
     ).toMatchObject({
-      displayStatus: "pending",
-      headline: "Finishing your ShioriCode access",
-      accessStatusLabel: "Syncing your subscription access",
+      displayStatus: "success",
+      headline: "Welcome to ShioriCode",
+      accessStatusLabel: "ShioriCode is ready without a paid plan.",
     });
   });
 });

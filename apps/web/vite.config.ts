@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { fileURLToPath } from "node:url";
 import type { PluginOption, UserConfig } from "vite";
 import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
@@ -16,6 +17,12 @@ const buildSourcemap =
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
+const hasNucleoLicenseKey = Boolean(
+  (process.env.NUCLEO_LICENSE_KEY ?? process.env.VITE_NUCLEO_LICENSE_KEY)?.trim(),
+);
+const lucideNucleoFallbackPath = fileURLToPath(
+  new URL("./src/icons/lucideNucleoFallback.ts", import.meta.url),
+);
 
 type WebViteConfigOptions = {
   includeRouterPlugin?: boolean;
@@ -64,6 +71,13 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
     },
     resolve: {
       tsconfigPaths: true,
+      ...(hasNucleoLicenseKey
+        ? {}
+        : {
+            alias: {
+              "nucleo-core-outline-24": lucideNucleoFallbackPath,
+            },
+          }),
     },
     server: {
       host,
@@ -116,6 +130,7 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
             if (
               nodeModulesPath.startsWith("@base-ui/") ||
               nodeModulesPath.startsWith("nucleo-core-outline-24") ||
+              nodeModulesPath.startsWith("lucide-react") ||
               nodeModulesPath.startsWith("framer-motion") ||
               nodeModulesPath.startsWith("@dnd-kit/")
             ) {
