@@ -1,20 +1,20 @@
 import "../../index.css";
 
-import type { ProjectId } from "contracts";
+import { type ProjectId } from "contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { useStore } from "~/store";
 
-import { PrKanbanBoard } from "./PrKanbanBoard";
+import { PrGoalsBoard } from "./PrGoalsBoard";
 
-describe("PrKanbanBoard", () => {
+describe("PrGoalsBoard", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     useStore.setState({
       projects: [],
-      kanbanItems: [],
+      goalItems: [],
       threads: [],
       threadIndexById: {},
       sidebarThreadsById: {},
@@ -37,13 +37,13 @@ describe("PrKanbanBoard", () => {
           updatedAt: "2026-04-30T00:00:00.000Z",
         },
       ],
-      kanbanItems: [],
+      goalItems: [],
       bootstrapComplete: false,
     });
 
     const host = document.createElement("div");
     document.body.append(host);
-    const screen = await render(<PrKanbanBoard projectId={null} pullRequest={null} />, {
+    const screen = await render(<PrGoalsBoard projectId={null} pullRequest={null} />, {
       container: host,
     });
 

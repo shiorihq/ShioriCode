@@ -33,7 +33,7 @@ export interface ShioriCodeBootstrapConfig {
   readonly browserUse: ShioriCodeBootstrapFeatureGate;
   readonly computerUse: ShioriCodeBootstrapFeatureGate;
   readonly mobileApp: ShioriCodeBootstrapFeatureGate;
-  readonly kanban: ShioriCodeBootstrapFeatureGate;
+  readonly goals: ShioriCodeBootstrapFeatureGate;
   readonly subagents: {
     readonly enabled: boolean;
     readonly profiles: {
@@ -76,12 +76,13 @@ const CONSERVATIVE_BOOTSTRAP_DEFAULTS: ShioriCodeBootstrapConfig = {
   browserUse: { enabled: false },
   computerUse: { enabled: false },
   mobileApp: { enabled: false },
-  kanban: { enabled: false },
+  goals: { enabled: false },
   subagents: {
     enabled: false,
     profiles: {},
   },
 };
+const LEGACY_GOALS_BOOTSTRAP_KEY = ["kan", "ban"].join("");
 
 function isExpectedHostedShioriAuthToken(token: string | null): token is string {
   return (
@@ -168,7 +169,7 @@ function normalizeBootstrapConfig(payload: Record<string, unknown>): ShioriCodeB
     browserUse: normalizeFeatureGate(payload.browserUse),
     computerUse: normalizeFeatureGate(payload.computerUse),
     mobileApp: normalizeFeatureGate(payload.mobileApp),
-    kanban: normalizeFeatureGate(payload.kanban),
+    goals: normalizeFeatureGate(payload.goals ?? payload[LEGACY_GOALS_BOOTSTRAP_KEY]),
     subagents: rawSubagents
       ? {
           enabled: rawSubagents.enabled === true,

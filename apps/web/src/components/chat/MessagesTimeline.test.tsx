@@ -110,7 +110,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Terminal 1 lines 1-5");
-    expect(markup).toContain("lucide-terminal");
+    expect(markup).toContain('data-icon="terminal-context"');
     expect(markup).toContain("yoo what&#x27;s ");
   });
 
@@ -1032,7 +1032,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Used MCP");
     expect(markup).toContain("browser navigate");
     expect(markup).not.toContain("MCP tool call: {&quot;url&quot;");
-    expect(markup).toContain("lucide-toolbox");
+    expect(markup).toContain('data-icon="mcp-toolbox"');
   });
 
   it("does not repeat the MCP toolbox icon on MCP calls inside workgroups", async () => {
@@ -1076,7 +1076,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup.match(/lucide-toolbox/g)?.length).toBe(1);
+    expect(markup.match(/data-icon="mcp-toolbox"/g)?.length).toBe(1);
     expect(markup).toContain("Used MCP");
     expect(markup).toContain("browser navigate");
   });
@@ -1623,7 +1623,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("work-group-items-work-sticky-read");
   });
 
-  it("keeps expanded in-progress groups in a capped scroll viewport instead of hiding later entries", async () => {
+  it("renders expanded in-progress groups in normal page flow without hiding later entries", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1742,11 +1742,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("file-1.ts");
     expect(markup).toContain("file-5.ts");
     expect(markup).toContain("file-6.ts");
-    expect(markup).toContain("max-h-48");
-    expect(markup).toContain("overflow-y-auto");
-    expect(markup).toContain("mask-image:linear-gradient(to bottom");
-    expect(markup).toContain("[scrollbar-width:none]");
-    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
+    expect(markup).not.toContain("max-h-48");
+    expect(markup).not.toContain("overflow-y-auto");
+    expect(markup).not.toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).not.toContain("[scrollbar-width:none]");
+    expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
     expect(markup).not.toContain("Show 1 more");
   });
 
@@ -1805,7 +1805,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("command-100");
   });
 
-  it("caps completed groups with internal scrolling instead of a show-more affordance", async () => {
+  it("renders completed groups in normal page flow until the item-count cap", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1920,12 +1920,12 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Explored 6 files");
     expect(markup).toContain("file-6.ts");
-    expect(markup).toContain("max-h-48");
-    expect(markup).toContain("overflow-y-auto");
+    expect(markup).not.toContain("max-h-48");
+    expect(markup).not.toContain("overflow-y-auto");
     expect(markup).not.toContain("Show 1 more");
   });
 
-  it("caps expanded nested subagent activity lists inside the chat timeline", async () => {
+  it("renders expanded nested subagent activity lists in normal page flow", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1987,11 +1987,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Find message action row implementation (explore)");
     expect(markup).toContain("apps/web/src/components/chat/file-1.tsx");
     expect(markup).toContain("apps/web/src/components/chat/file-8.tsx");
-    expect(markup).toContain("max-h-48");
-    expect(markup).toContain("overflow-y-auto");
-    expect(markup).toContain("mask-image:linear-gradient(to bottom");
-    expect(markup).toContain("[scrollbar-width:none]");
-    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
+    expect(markup).not.toContain("max-h-48");
+    expect(markup).not.toContain("overflow-y-auto");
+    expect(markup).not.toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).not.toContain("[scrollbar-width:none]");
+    expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
   });
 
   it("keeps completed exploration groups collapsed by default", async () => {

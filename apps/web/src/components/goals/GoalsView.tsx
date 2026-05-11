@@ -3,8 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { IconChequeredFlagOutline24 as GoalsIcon } from "nucleo-core-outline-24";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { KanbanHeaderControls } from "~/components/kanban/KanbanHeaderControls";
-import { PrKanbanBoard, type KanbanAgentFilter } from "~/components/kanban/PrKanbanBoard";
+import { GoalHeaderControls } from "~/components/goals/GoalHeaderControls";
+import { PrGoalsBoard, type GoalAgentFilter } from "~/components/goals/PrGoalsBoard";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -23,13 +23,13 @@ import { useServerKeybindings } from "~/rpc/serverState";
 import { useStore } from "~/store";
 import { useUiStateStore } from "~/uiStateStore";
 
-interface KanbanViewProps {
+interface GoalsViewProps {
   projectId: string | null;
 }
 
 const ALL_PROJECTS_VALUE = "__all__";
 
-export function KanbanView({ projectId }: KanbanViewProps) {
+export function GoalsView({ projectId }: GoalsViewProps) {
   const projects = useStore((store) => store.projects);
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const navigate = useNavigate();
@@ -38,7 +38,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const activeProjectId: ProjectId | null = projectId ? (projectId as ProjectId) : null;
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [agentFilter, setAgentFilter] = useState<KanbanAgentFilter>("any");
+  const [agentFilter, setAgentFilter] = useState<GoalAgentFilter>("any");
   const [blockedOnly, setBlockedOnly] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -48,15 +48,15 @@ export function KanbanView({ projectId }: KanbanViewProps) {
     if (projects.length === 0) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
-        context: { kanbanView: true, inputFocus: isInputFocused() },
+        context: { goalsView: true, inputFocus: isInputFocused() },
       });
-      if (command === "kanban.newTask") {
+      if (command === "goals.newTask") {
         event.preventDefault();
         event.stopPropagation();
         setComposerOpen(true);
         return;
       }
-      if (command === "kanban.search") {
+      if (command === "goals.search") {
         event.preventDefault();
         event.stopPropagation();
         setFiltersOpen(true);
@@ -118,7 +118,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
       {projectSelect}
       <div className="ml-auto flex items-center">
         {projects.length > 0 ? (
-          <KanbanHeaderControls
+          <GoalHeaderControls
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             agentFilter={agentFilter}
@@ -168,7 +168,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
               </Empty>
             </div>
           ) : (
-            <PrKanbanBoard
+            <PrGoalsBoard
               projectId={activeProjectId}
               pullRequest={null}
               searchQuery={searchQuery}

@@ -1,18 +1,22 @@
-import { CommandId, type KanbanItem, type OrchestrationEvent } from "contracts";
+import {
+  CommandId,
+  GOAL_ITEMS_READ_MODEL_KEY,
+  GoalItemCommandType,
+  GoalItemEventType,
+  type GoalItem,
+  type OrchestrationEvent,
+} from "contracts";
 import { Cause, Effect, Layer, Stream } from "effect";
 import { makeDrainableWorker } from "shared/DrainableWorker";
 
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import {
-  KanbanPromptReactor,
-  type KanbanPromptReactorShape,
-} from "../Services/KanbanPromptReactor.ts";
+import { GoalPromptReactor, type GoalPromptReactorShape } from "../Services/GoalPromptReactor.ts";
 
-type KanbanPromptEvent = Extract<
+type GoalPromptEvent = Extract<
   OrchestrationEvent,
-  { type: "kanbanItem.created" | "kanbanItem.updated" }
+  { type: (typeof GoalItemEventType)["created" | "updated"] }
 >;
 
 const serverCommandId = (tag: string): CommandId =>
@@ -25,7 +29,7 @@ function toErrorMessage(cause: unknown): string {
   return String(cause);
 }
 
-function fallbackPrompt(item: KanbanItem): string {
+function fallbackPrompt(item: GoalItem): string {
   if (item.prompt.trim().length > 0) {
     return item.prompt.trim();
   }
@@ -38,15 +42,15 @@ function fallbackPrompt(item: KanbanItem): string {
   ].join("\n");
 }
 
-const makeKanbanPromptReactor = Effect.gen(function* () {
+const makeGoalPromptReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const serverSettings = yield* ServerSettingsService;
   const textGeneration = yield* TextGeneration;
 
-  const dispatchUpdate = (item: KanbanItem, patch: Partial<KanbanItem>, updatedAt: string) =>
+  const dispatchUpdate = (item: GoalItem, patch: Partial<GoalItem>, updatedAt: string) =>
     orchestrationEngine.dispatch({
-      type: "kanbanItem.update",
-      commandId: serverCommandId("kanban-prompt"),
+      type: GoalItemCommandType.update,
+      commandId: serverCommandId("goal-prompt"),
       itemId: item.id,
       ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
       ...(patch.generatedPrompt !== undefined ? { generatedPrompt: patch.generatedPrompt } : {}),
@@ -55,10 +59,10 @@ const makeKanbanPromptReactor = Effect.gen(function* () {
       updatedAt,
     });
 
-  const processEvent = Effect.fn("processKanbanPromptEvent")(function* (event: KanbanPromptEvent) {
-    if (event.type === "kanbanItem.created") {
+  const processEvent = Effect.fn("processGoalPromptEvent")(function* (event: GoalPromptEvent) {
+    if (event.type === GoalItemEventType.created) {
       const settings = yield* serverSettings.getSettings;
-      if (!settings.autoGenerateKanbanTaskPrompts) {
+      if (!settings.autoGenerateGoalTaskPrompts) {
         return;
       }
       const item = event.payload.item;
@@ -79,7 +83,9 @@ const makeKanbanPromptReactor = Effect.gen(function* () {
 
     const settings = yield* serverSettings.getSettings;
     const readModel = yield* orchestrationEngine.getReadModel();
-    const item = (readModel.kanbanItems ?? []).find((entry) => entry.id === event.payload.itemId);
+    const item = (readModel[GOAL_ITEMS_READ_MODEL_KEY] ?? []).find(
+      (entry) => entry.id === event.payload.itemId,
+    );
     if (!item || item.deletedAt !== null || item.promptStatus !== "generating") {
       return;
     }
@@ -92,7 +98,7 @@ const makeKanbanPromptReactor = Effect.gen(function* () {
     }
 
     const generated = yield* textGeneration
-      .generateKanbanTaskPrompt({
+      .generateGoalPlan({
         cwd: project.workspaceRoot,
         title: item.title,
         description: item.description,
@@ -127,13 +133,13 @@ const makeKanbanPromptReactor = Effect.gen(function* () {
     );
   });
 
-  const processEventSafely = (event: KanbanPromptEvent) =>
+  const processEventSafely = (event: GoalPromptEvent) =>
     processEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
         }
-        return Effect.logWarning("kanban prompt reactor failed to process event", {
+        return Effect.logWarning("goal prompt reactor failed to process event", {
           eventType: event.type,
           cause: Cause.pretty(cause),
         });
@@ -142,23 +148,21 @@ const makeKanbanPromptReactor = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processEventSafely);
 
-  const start: KanbanPromptReactorShape["start"] = Effect.fn("startKanbanPromptReactor")(
-    function* () {
-      yield* Effect.forkScoped(
-        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-          if (event.type !== "kanbanItem.created" && event.type !== "kanbanItem.updated") {
-            return Effect.void;
-          }
-          return worker.enqueue(event);
-        }),
-      );
-    },
-  );
+  const start: GoalPromptReactorShape["start"] = Effect.fn("startGoalPromptReactor")(function* () {
+    yield* Effect.forkScoped(
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+        if (event.type !== GoalItemEventType.created && event.type !== GoalItemEventType.updated) {
+          return Effect.void;
+        }
+        return worker.enqueue(event);
+      }),
+    );
+  });
 
   return {
     start,
     drain: worker.drain,
-  } satisfies KanbanPromptReactorShape;
+  } satisfies GoalPromptReactorShape;
 });
 
-export const KanbanPromptReactorLive = Layer.effect(KanbanPromptReactor, makeKanbanPromptReactor);
+export const GoalPromptReactorLive = Layer.effect(GoalPromptReactor, makeGoalPromptReactor);

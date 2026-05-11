@@ -18,14 +18,14 @@ import {
 } from "~/components/ui/select";
 import { cn } from "~/lib/utils";
 
-import { type KanbanAgentFilter } from "./PrKanbanBoard";
+import { type GoalAgentFilter } from "./PrGoalsBoard";
 import { PROVIDERS } from "./goalShared";
 
-interface KanbanHeaderControlsProps {
+interface GoalHeaderControlsProps {
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
-  agentFilter: KanbanAgentFilter;
-  onAgentFilterChange: (value: KanbanAgentFilter) => void;
+  agentFilter: GoalAgentFilter;
+  onAgentFilterChange: (value: GoalAgentFilter) => void;
   blockedOnly: boolean;
   onBlockedOnlyChange: (value: boolean) => void;
   onClearFilters: () => void;
@@ -36,7 +36,7 @@ interface KanbanHeaderControlsProps {
   searchInputRef: RefObject<HTMLInputElement | null>;
 }
 
-export function KanbanHeaderControls({
+export function GoalHeaderControls({
   searchQuery,
   onSearchQueryChange,
   agentFilter,
@@ -49,7 +49,7 @@ export function KanbanHeaderControls({
   filtersOpen,
   onFiltersOpenChange,
   searchInputRef,
-}: KanbanHeaderControlsProps) {
+}: GoalHeaderControlsProps) {
   const filtersActive = searchQuery.trim().length > 0 || agentFilter !== "any" || blockedOnly;
 
   return (
@@ -89,7 +89,7 @@ export function KanbanHeaderControls({
                 value={agentFilter}
                 onValueChange={(next) => {
                   if (typeof next === "string" && next.length > 0) {
-                    onAgentFilterChange(next as KanbanAgentFilter);
+                    onAgentFilterChange(next as GoalAgentFilter);
                   }
                 }}
               >
@@ -148,7 +148,7 @@ export function KanbanHeaderControls({
   );
 }
 
-function agentLabel(value: KanbanAgentFilter): string {
+function agentLabel(value: GoalAgentFilter): string {
   if (value === "any") return "All agents";
   if (value === "unassigned") return "Unassigned";
   return PROVIDERS.find((entry) => entry.provider === value)?.label ?? (value as ProviderKind);

@@ -1029,17 +1029,20 @@ describe("MessagesTimeline virtualization harness", () => {
         () => document.getElementById("work-group-items-running-scroll-work-1"),
         "Unable to find streaming workgroup items.",
       );
-      const entriesViewport = await waitForElement(
-        () => groupItems.querySelector<HTMLDivElement>("div.max-h-48"),
-        "Unable to find streaming workgroup scroll viewport.",
+      const scrollContainer = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLDivElement>(
+            '[data-testid="messages-timeline-scroll-container"]',
+          ),
+        "Unable to find MessagesTimeline scroll container.",
       );
 
-      await vi.waitFor(() => {
-        expect(entriesViewport.scrollHeight).toBeGreaterThan(entriesViewport.clientHeight);
-      });
       await waitForLayout();
 
-      expect(entriesViewport.scrollTop).toBe(0);
+      expect(groupItems.querySelector<HTMLDivElement>("div.max-h-48")).toBeNull();
+      expect(groupItems.textContent).toContain("printf 1");
+      expect(groupItems.textContent).toContain("printf 24");
+      expect(scrollContainer.scrollTop).toBe(0);
     } finally {
       await mounted.cleanup();
     }

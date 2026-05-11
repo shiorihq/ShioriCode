@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { KanbanView } from "~/components/kanban/KanbanView";
-import { useSettings } from "~/hooks/useSettings";
+import { GoalsView } from "~/components/goals/GoalsView";
+import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 import { useServerConfig } from "~/rpc/serverState";
 
 export interface GoalsSearch {
@@ -25,17 +25,17 @@ function GoalsRouteView() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const serverConfig = useServerConfig();
-  const kanbanEnabled = useSettings().kanban.enabled;
+  const goalsEnabled = useGoalsFeatureEnabled();
 
   useEffect(() => {
-    if (serverConfig && !kanbanEnabled) {
+    if (serverConfig && !goalsEnabled) {
       void navigate({ to: "/", replace: true });
     }
-  }, [kanbanEnabled, navigate, serverConfig]);
+  }, [goalsEnabled, navigate, serverConfig]);
 
-  if (!serverConfig || !kanbanEnabled) {
+  if (!serverConfig || !goalsEnabled) {
     return null;
   }
 
-  return <KanbanView projectId={search.projectId ?? null} />;
+  return <GoalsView projectId={search.projectId ?? null} />;
 }

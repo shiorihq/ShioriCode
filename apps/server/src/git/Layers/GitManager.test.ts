@@ -75,7 +75,7 @@ interface FakeGitTextGeneration {
     message: string;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ title: string }, TextGenerationError>;
-  generateKanbanTaskPrompt: (input: {
+  generateGoalPlan: (input: {
     cwd: string;
     title: string;
     description: string;
@@ -275,7 +275,7 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
       Effect.succeed({
         title: "Update workflow",
       }),
-    generateKanbanTaskPrompt: (input) =>
+    generateGoalPlan: (input) =>
       Effect.succeed({
         prompt: input.prompt || input.description || input.title,
       }),
@@ -327,12 +327,12 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
             }),
         ),
       ),
-    generateKanbanTaskPrompt: (input) =>
-      implementation.generateKanbanTaskPrompt(input).pipe(
+    generateGoalPlan: (input) =>
+      implementation.generateGoalPlan(input).pipe(
         Effect.mapError(
           (cause) =>
             new TextGenerationError({
-              operation: "generateKanbanTaskPrompt",
+              operation: "generateGoalPlan",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

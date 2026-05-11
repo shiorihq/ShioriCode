@@ -81,7 +81,7 @@ function createBaseServerConfig(): ServerConfig {
     settings: {
       enableAssistantStreaming: false,
       generateMemories: true,
-      autoGenerateKanbanTaskPrompts: true,
+      autoGenerateGoalTaskPrompts: true,
       quitWithoutConfirmation: false,
       assistantPersonality: "default",
       defaultThreadEnvMode: "local" as const,
@@ -94,7 +94,7 @@ function createBaseServerConfig(): ServerConfig {
       computerUse: { enabled: false, requireApproval: true },
       browserUse: { enabled: false },
       mobileApp: { enabled: false },
-      kanban: { enabled: false },
+      goals: { enabled: false },
       mcpServers: { servers: [] },
       providers: {
         shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },

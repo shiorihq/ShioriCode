@@ -34,6 +34,7 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
                 "size-3.5",
                 expired && "opacity-100",
               )}
+              data-icon="terminal-context"
             />
             <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
           </span>

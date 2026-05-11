@@ -1,11 +1,12 @@
+import { GOAL_ITEMS_READ_MODEL_KEY, GoalItemCommandType } from "contracts";
 import type {
   CommandId,
-  KanbanItem,
-  KanbanItemAssigneeId,
-  KanbanItemAssigneeRole,
-  KanbanItemId,
-  KanbanItemNoteId,
-  KanbanItemStatus,
+  GoalItem,
+  GoalItemAssigneeId,
+  GoalItemAssigneeRole,
+  GoalItemId,
+  GoalItemNoteId,
+  GoalItemStatus,
   OrchestrationCommand,
   ProviderKind,
   ThreadId,
@@ -16,15 +17,15 @@ import type { ProviderMcpToolRuntime } from "../provider/mcpServers.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 
 function newCommandId(): CommandId {
-  return `provider:kanban:${crypto.randomUUID()}` as CommandId;
+  return `provider:goal:${crypto.randomUUID()}` as CommandId;
 }
 
-function newAssigneeId(): KanbanItemAssigneeId {
-  return `kanban_assignee_${crypto.randomUUID()}` as KanbanItemAssigneeId;
+function newAssigneeId(): GoalItemAssigneeId {
+  return `goal_assignee_${crypto.randomUUID()}` as GoalItemAssigneeId;
 }
 
-function newNoteId(): KanbanItemNoteId {
-  return `kanban_note_${crypto.randomUUID()}` as KanbanItemNoteId;
+function newNoteId(): GoalItemNoteId {
+  return `goal_note_${crypto.randomUUID()}` as GoalItemNoteId;
 }
 
 function newSortKey(): string {
@@ -39,17 +40,17 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function asStatus(value: unknown): KanbanItemStatus | null {
+function asStatus(value: unknown): GoalItemStatus | null {
   return value === "backlog" || value === "todo" || value === "in_progress" || value === "done"
     ? value
     : null;
 }
 
-function asRole(value: unknown): KanbanItemAssigneeRole {
+function asRole(value: unknown): GoalItemAssigneeRole {
   return value === "reviewer" || value === "researcher" || value === "tester" ? value : "owner";
 }
 
-function itemSummary(item: KanbanItem) {
+function itemSummary(item: GoalItem) {
   return {
     id: item.id,
     projectId: item.projectId,
@@ -72,16 +73,16 @@ async function dispatch(engine: OrchestrationEngineShape, command: Orchestration
   await Effect.runPromise(engine.dispatch(command));
 }
 
-export function makeKanbanProviderToolRuntime(input: {
+export function makeGoalProviderToolRuntime(input: {
   readonly orchestrationEngine: OrchestrationEngineShape;
   readonly provider: ProviderKind;
   readonly threadId?: ThreadId | undefined;
 }): ProviderMcpToolRuntime {
   const descriptors: ProviderMcpToolRuntime["descriptors"] = [
     {
-      name: "kanban_list",
-      title: "Kanban · List tasks",
-      description: "List ShioriCode Kanban tasks, optionally filtered by project or pull request.",
+      name: "goal_list",
+      title: "Goals · List goals",
+      description: "List ShioriCode goals, optionally filtered by project or pull request.",
       inputSchema: {
         type: "object",
         properties: {
@@ -92,9 +93,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_get",
-      title: "Kanban · Get task",
-      description: "Get one ShioriCode Kanban task by id.",
+      name: "goal_get",
+      title: "Goals · Get goal",
+      description: "Get one ShioriCode goal by id.",
       inputSchema: {
         type: "object",
         properties: { itemId: { type: "string" } },
@@ -103,9 +104,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_claim",
-      title: "Kanban · Claim task",
-      description: "Assign the current provider thread to a ShioriCode Kanban task.",
+      name: "goal_claim",
+      title: "Goals · Claim goal",
+      description: "Assign the current provider thread to a ShioriCode goal.",
       inputSchema: {
         type: "object",
         properties: {
@@ -117,9 +118,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_update_status",
-      title: "Kanban · Update status",
-      description: "Move a ShioriCode Kanban task to another board status.",
+      name: "goal_update_status",
+      title: "Goals · Update status",
+      description: "Move a ShioriCode goal to another status.",
       inputSchema: {
         type: "object",
         properties: {
@@ -131,9 +132,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_add_note",
-      title: "Kanban · Add note",
-      description: "Add an activity note to a ShioriCode Kanban task.",
+      name: "goal_add_note",
+      title: "Goals · Add note",
+      description: "Add an activity note to a ShioriCode goal.",
       inputSchema: {
         type: "object",
         properties: { itemId: { type: "string" }, body: { type: "string" } },
@@ -142,9 +143,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_block",
-      title: "Kanban · Block task",
-      description: "Mark a ShioriCode Kanban task as blocked with a reason.",
+      name: "goal_block",
+      title: "Goals · Block goal",
+      description: "Mark a ShioriCode goal as blocked with a reason.",
       inputSchema: {
         type: "object",
         properties: { itemId: { type: "string" }, reason: { type: "string" } },
@@ -153,9 +154,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_unblock",
-      title: "Kanban · Unblock task",
-      description: "Clear the blocked state from a ShioriCode Kanban task.",
+      name: "goal_unblock",
+      title: "Goals · Unblock goal",
+      description: "Clear the blocked state from a ShioriCode goal.",
       inputSchema: {
         type: "object",
         properties: { itemId: { type: "string" } },
@@ -164,9 +165,9 @@ export function makeKanbanProviderToolRuntime(input: {
       },
     },
     {
-      name: "kanban_complete",
-      title: "Kanban · Complete task",
-      description: "Move a ShioriCode Kanban task to Done.",
+      name: "goal_complete",
+      title: "Goals · Complete goal",
+      description: "Move a ShioriCode goal to Done.",
       inputSchema: {
         type: "object",
         properties: { itemId: { type: "string" } },
@@ -183,11 +184,11 @@ export function makeKanbanProviderToolRuntime(input: {
         title: descriptor.title ?? descriptor.name,
         execute: async (toolInput: Record<string, unknown>) => {
           const readModel = await Effect.runPromise(input.orchestrationEngine.getReadModel());
-          const activeItems = (readModel.kanbanItems ?? []).filter(
+          const activeItems = (readModel[GOAL_ITEMS_READ_MODEL_KEY] ?? []).filter(
             (item) => item.deletedAt === null,
           );
 
-          if (descriptor.name === "kanban_list") {
+          if (descriptor.name === "goal_list") {
             const projectId = asString(toolInput.projectId);
             const pullRequestNumber = asNumber(toolInput.pullRequestNumber);
             return activeItems
@@ -198,19 +199,19 @@ export function makeKanbanProviderToolRuntime(input: {
               .map(itemSummary);
           }
 
-          const itemId = asString(toolInput.itemId) as KanbanItemId | null;
+          const itemId = asString(toolInput.itemId) as GoalItemId | null;
           const item = itemId ? activeItems.find((entry) => entry.id === itemId) : undefined;
           if (!itemId || !item) {
-            return { error: "Kanban task not found." };
+            return { error: "Goal not found." };
           }
 
           const now = new Date().toISOString();
           switch (descriptor.name) {
-            case "kanban_get":
+            case "goal_get":
               return itemSummary(item);
-            case "kanban_claim":
+            case "goal_claim":
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.assign",
+                type: GoalItemCommandType.assign,
                 commandId: newCommandId(),
                 itemId,
                 assignee: {
@@ -225,11 +226,11 @@ export function makeKanbanProviderToolRuntime(input: {
                 createdAt: now,
               });
               return { ok: true };
-            case "kanban_update_status": {
+            case "goal_update_status": {
               const status = asStatus(toolInput.status);
-              if (!status) return { error: "Invalid Kanban status." };
+              if (!status) return { error: "Invalid goal status." };
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.move",
+                type: GoalItemCommandType.move,
                 commandId: newCommandId(),
                 itemId,
                 status,
@@ -238,11 +239,11 @@ export function makeKanbanProviderToolRuntime(input: {
               });
               return { ok: true };
             }
-            case "kanban_add_note": {
+            case "goal_add_note": {
               const body = asString(toolInput.body);
               if (!body) return { error: "Note body is required." };
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.note.add",
+                type: GoalItemCommandType.addNote,
                 commandId: newCommandId(),
                 itemId,
                 note: {
@@ -256,11 +257,11 @@ export function makeKanbanProviderToolRuntime(input: {
               });
               return { ok: true };
             }
-            case "kanban_block": {
+            case "goal_block": {
               const reason = asString(toolInput.reason);
               if (!reason) return { error: "Blocked reason is required." };
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.block",
+                type: GoalItemCommandType.block,
                 commandId: newCommandId(),
                 itemId,
                 reason,
@@ -268,17 +269,17 @@ export function makeKanbanProviderToolRuntime(input: {
               });
               return { ok: true };
             }
-            case "kanban_unblock":
+            case "goal_unblock":
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.unblock",
+                type: GoalItemCommandType.unblock,
                 commandId: newCommandId(),
                 itemId,
                 unblockedAt: now,
               });
               return { ok: true };
-            case "kanban_complete":
+            case "goal_complete":
               await dispatch(input.orchestrationEngine, {
-                type: "kanbanItem.complete",
+                type: GoalItemCommandType.complete,
                 commandId: newCommandId(),
                 itemId,
                 sortKey: newSortKey(),
@@ -286,7 +287,7 @@ export function makeKanbanProviderToolRuntime(input: {
               });
               return { ok: true };
             default:
-              return { error: "Unknown Kanban tool." };
+              return { error: "Unknown goal tool." };
           }
         },
       },

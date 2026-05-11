@@ -24,7 +24,7 @@ import {
 } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 
-interface NewTaskDialogProps {
+interface NewGoalDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -41,7 +41,7 @@ interface NewTaskDialogProps {
   isCreating: boolean;
 }
 
-export function NewTaskDialog({
+export function NewGoalDialog({
   open,
   onOpenChange,
   title,
@@ -56,7 +56,7 @@ export function NewTaskDialog({
   onProjectIdChange,
   onSubmit,
   isCreating,
-}: NewTaskDialogProps) {
+}: NewGoalDialogProps) {
   const submitDisabled = projectId === null || title.trim().length === 0 || isCreating;
   const submit = () => {
     if (submitDisabled) return;
@@ -75,7 +75,7 @@ export function NewTaskDialog({
         <DialogPanel className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <label
-              htmlFor="kanban-new-task-project"
+              htmlFor="goal-new-task-project"
               className="text-[11px] font-medium text-muted-foreground/75"
             >
               Project
@@ -89,7 +89,7 @@ export function NewTaskDialog({
               }}
               disabled={projectLocked || projects.length === 0}
             >
-              <SelectTrigger id="kanban-new-task-project" size="sm" className="w-full">
+              <SelectTrigger id="goal-new-task-project" size="sm" className="w-full">
                 <SelectValue>
                   {selectedProjectName ?? (
                     <span className="text-muted-foreground/65">Select a project</span>

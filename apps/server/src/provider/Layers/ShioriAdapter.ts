@@ -49,7 +49,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { ServerConfig } from "../../config.ts";
 import { HostedShioriAuthTokenStore } from "../../hostedShioriAuthTokenStore.ts";
-import { makeKanbanProviderToolRuntime } from "../../kanban/providerTools.ts";
+import { makeGoalProviderToolRuntime } from "../../goals/providerTools.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
@@ -280,7 +280,7 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "agent",
   "send_message",
 ]);
-const KANBAN_TOOL_PREFIX = "kanban_";
+const GOAL_TOOL_PREFIX = "goal_";
 export const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   approvalPolicies: {
     fileWrite: "ask",
@@ -302,7 +302,7 @@ export const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   browserUse: { enabled: false },
   computerUse: { enabled: false },
   mobileApp: { enabled: false },
-  kanban: { enabled: false },
+  goals: { enabled: false },
   subagents: {
     enabled: false,
     profiles: {},
@@ -1123,8 +1123,8 @@ function canUseHostedSubagentTool(
   );
 }
 
-function canUseHostedKanbanTools(bootstrap: ShioriCodeBootstrapConfig | null | undefined): boolean {
-  return effectiveShioriBootstrap(bootstrap).kanban.enabled;
+function canUseHostedGoalTools(bootstrap: ShioriCodeBootstrapConfig | null | undefined): boolean {
+  return effectiveShioriBootstrap(bootstrap).goals.enabled;
 }
 
 function runtimePromptFeatureGates(
@@ -1605,8 +1605,8 @@ export function buildHostedToolDescriptors(input: HostedToolContext): HostedTool
       ...input.mcpToolDescriptors
         .filter(
           (descriptor) =>
-            canUseHostedKanbanTools(input.hostedBootstrap) ||
-            !descriptor.name.startsWith(KANBAN_TOOL_PREFIX),
+            canUseHostedGoalTools(input.hostedBootstrap) ||
+            !descriptor.name.startsWith(GOAL_TOOL_PREFIX),
         )
         .map((descriptor) => withHostedToolApproval(descriptor, input.hostedBootstrap)),
     );
@@ -3468,9 +3468,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }),
           ),
         );
-        const kanbanRuntime = Option.match(orchestrationEngineOption, {
+        const goalRuntime = Option.match(orchestrationEngineOption, {
           onSome: (orchestrationEngine) =>
-            makeKanbanProviderToolRuntime({
+            makeGoalProviderToolRuntime({
               orchestrationEngine,
               provider: PROVIDER,
               threadId: input.threadId,
@@ -3478,11 +3478,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           onNone: () => emptyToolRuntime satisfies ProviderMcpToolRuntime,
         });
         const mergedMcpRuntime: ProviderMcpToolRuntime = {
-          descriptors: [...mcpRuntime.descriptors, ...kanbanRuntime.descriptors],
-          executors: new Map([...mcpRuntime.executors, ...kanbanRuntime.executors]),
-          warnings: [...mcpRuntime.warnings, ...kanbanRuntime.warnings],
+          descriptors: [...mcpRuntime.descriptors, ...goalRuntime.descriptors],
+          executors: new Map([...mcpRuntime.executors, ...goalRuntime.executors]),
+          warnings: [...mcpRuntime.warnings, ...goalRuntime.warnings],
           close: async () => {
-            await Promise.allSettled([mcpRuntime.close(), kanbanRuntime.close()]);
+            await Promise.allSettled([mcpRuntime.close(), goalRuntime.close()]);
           },
         };
 
@@ -5962,11 +5962,11 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
 
             const execution =
               mcpTool &&
-              toolName.startsWith(KANBAN_TOOL_PREFIX) &&
-              !canUseHostedKanbanTools(input.context.activeTurn?.hostedBootstrap)
+              toolName.startsWith(GOAL_TOOL_PREFIX) &&
+              !canUseHostedGoalTools(input.context.activeTurn?.hostedBootstrap)
                 ? {
                     state: "output-error" as const,
-                    errorText: "Kanban tools are disabled for this ShioriCode deployment.",
+                    errorText: "Goal tools are disabled for this ShioriCode deployment.",
                   }
                 : mcpTool
                   ? yield* Effect.promise(async () => {

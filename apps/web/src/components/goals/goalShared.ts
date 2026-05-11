@@ -1,9 +1,10 @@
 import {
   DEFAULT_RUNTIME_MODE,
   type ClientOrchestrationCommand,
-  type KanbanItem,
-  type KanbanItemAssigneeRole,
-  type KanbanItemId,
+  GoalItemCommandType,
+  type GoalItem,
+  type GoalItemAssigneeRole,
+  type GoalItemId,
   type ModelSelection,
   type ProviderKind,
   type ThreadId,
@@ -13,8 +14,8 @@ import { DEFAULT_INTERACTION_MODE, type Project, type Thread } from "~/types";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 
-export type Goal = KanbanItem;
-export type GoalId = KanbanItemId;
+export type Goal = GoalItem;
+export type GoalId = GoalItemId;
 export type GoalAgentFilter = "any" | "unassigned" | ProviderKind;
 export type GoalStatus = "draft" | "ready" | "running" | "needs_approval" | "blocked" | "completed";
 
@@ -92,7 +93,7 @@ export const PROVIDERS: ReadonlyArray<{ provider: ProviderKind; label: string }>
   { provider: "shiori", label: "Shiori" },
 ];
 
-const ASSIGNEE_ROLE: KanbanItemAssigneeRole = "owner";
+const ASSIGNEE_ROLE: GoalItemAssigneeRole = "owner";
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
@@ -256,11 +257,11 @@ export async function runGoal(input: {
     });
 
     await api.orchestration.dispatchCommand({
-      type: "kanbanItem.assign",
+      type: GoalItemCommandType.assign,
       commandId: newCommandId(),
       itemId: input.goal.id,
       assignee: {
-        id: newId("kanban_assignee") as never,
+        id: newId("goal_assignee") as never,
         provider: modelSelection.provider,
         model: modelSelection.model,
         role: ASSIGNEE_ROLE,
@@ -274,7 +275,7 @@ export async function runGoal(input: {
   }
 
   await api.orchestration.dispatchCommand({
-    type: "kanbanItem.move",
+    type: GoalItemCommandType.move,
     commandId: newCommandId(),
     itemId: input.goal.id,
     status: "in_progress",

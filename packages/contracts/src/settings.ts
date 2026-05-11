@@ -232,10 +232,10 @@ export const MobileAppSettings = Schema.Struct({
 });
 export type MobileAppSettings = typeof MobileAppSettings.Type;
 
-export const KanbanSettings = Schema.Struct({
+export const GoalsSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
 });
-export type KanbanSettings = typeof KanbanSettings.Type;
+export type GoalsSettings = typeof GoalsSettings.Type;
 
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
@@ -407,7 +407,7 @@ export type EffectiveSkillsResult = typeof EffectiveSkillsResult.Type;
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   generateMemories: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  autoGenerateKanbanTaskPrompts: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  autoGenerateGoalTaskPrompts: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   quitWithoutConfirmation: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   assistantPersonality: AssistantPersonality.pipe(
     Schema.withDecodingDefault(() => DEFAULT_ASSISTANT_PERSONALITY),
@@ -431,7 +431,7 @@ export const ServerSettings = Schema.Struct({
   computerUse: ComputerUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   browserUse: BrowserUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   mobileApp: MobileAppSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-  kanban: KanbanSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  goals: GoalsSettings.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -588,14 +588,14 @@ const MobileAppSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
-const KanbanSettingsPatch = Schema.Struct({
+const GoalsSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   generateMemories: Schema.optionalKey(Schema.Boolean),
-  autoGenerateKanbanTaskPrompts: Schema.optionalKey(Schema.Boolean),
+  autoGenerateGoalTaskPrompts: Schema.optionalKey(Schema.Boolean),
   quitWithoutConfirmation: Schema.optionalKey(Schema.Boolean),
   assistantPersonality: Schema.optionalKey(AssistantPersonality),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -605,7 +605,7 @@ export const ServerSettingsPatch = Schema.Struct({
   computerUse: Schema.optionalKey(ComputerUseSettingsPatch),
   browserUse: Schema.optionalKey(BrowserUseSettingsPatch),
   mobileApp: Schema.optionalKey(MobileAppSettingsPatch),
-  kanban: Schema.optionalKey(KanbanSettingsPatch),
+  goals: Schema.optionalKey(GoalsSettingsPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

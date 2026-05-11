@@ -10,7 +10,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
-  type UIEvent as ReactUIEvent,
 } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 import {
@@ -20,7 +19,7 @@ import {
 } from "@tanstack/react-virtual";
 import { CHAT_THREAD_BODY_CLASS } from "../../chatTypography";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
-import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../../chat-scroll";
+import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
@@ -58,8 +57,6 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 import { InlineEditDiff, extractBasename, parseEditDiff } from "./InlineEditDiff";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
-import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
-import { useScrollFadeOverlays } from "../ui/useScrollFadeOverlays";
 import { useTheme } from "../../hooks/useTheme";
 import type { WorkGroupIconKind, WorkGroupSummaryParts } from "./MessagesTimeline.logic";
 import {
@@ -496,6 +493,8 @@ function MessagesTimelineView({
       const summaryRest = formattedEntry.detail ?? "";
       const summaryLabel = summaryRest.length > 0 ? `${leadingVerb} ${summaryRest}` : leadingVerb;
       const iconKind = deriveWorkGroupIconKind(entries);
+      const iconName =
+        iconKind === "tool" && entries.some(isMcpToolWorkEntry) ? "mcp-toolbox" : undefined;
       const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
       const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
       const groupItemsId = `work-group-items-${groupId}`;
@@ -521,6 +520,7 @@ function MessagesTimelineView({
               >
                 <WorkGroupIcon
                   kind={iconKind}
+                  iconName={iconName}
                   className={cn(
                     "text-muted-foreground/75 transition-colors duration-150",
                     "group-hover:text-foreground",
@@ -561,17 +561,13 @@ function MessagesTimelineView({
               </button>
             </div>
             <AnimatedExpandPanel open={isExpanded}>
-              <MaskedScrollViewport
-                dependencyKey={row.childRows.length}
-                id={groupItemsId}
-                className="mt-0.5 max-h-48 space-y-0.5 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent"
-              >
+              <div id={groupItemsId} className="mt-0.5 space-y-0.5 pr-1">
                 {row.childRows.map((childRow) => (
                   <div key={`nested-work-row:${childRow.id}`}>
                     {renderWorkRow(childRow, depth + 1)}
                   </div>
                 ))}
-              </MaskedScrollViewport>
+              </div>
             </AnimatedExpandPanel>
           </div>
         </div>
@@ -707,7 +703,7 @@ function MessagesTimelineView({
             const terminalContexts = displayedUserMessage.contexts;
             const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
             return (
-              <div className="glass-user-message group w-full">
+              <div className="glass-user-message group ml-auto w-fit max-w-full">
                 <div className="flex w-full items-start gap-3">
                   <div className="min-w-0 flex-1">
                     {userImages.length > 0 && (
@@ -1312,15 +1308,23 @@ const WORK_GROUP_ICON_BY_KIND: Record<WorkGroupIconKind, IconLike> = {
 const WorkGroupIcon = memo(function WorkGroupIcon(props: {
   kind: WorkGroupIconKind;
   className?: string | undefined;
+  iconName?: string | undefined;
 }) {
   const Icon = WORK_GROUP_ICON_BY_KIND[props.kind] ?? BoxIcon;
-  return <Icon aria-hidden="true" className={cn("size-3.5 shrink-0", props.className)} />;
+  return (
+    <Icon
+      aria-hidden="true"
+      className={cn("size-3.5 shrink-0", props.className)}
+      data-icon={props.iconName}
+    />
+  );
 });
 
 const McpToolboxIcon = memo(function McpToolboxIcon() {
   return (
     <WorkGroupIcon
       kind="tool"
+      iconName="mcp-toolbox"
       className="mr-2 inline-block align-[-0.16em] text-muted-foreground/75"
     />
   );
@@ -2671,85 +2675,15 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
     onToggleWorkGroup,
     summary,
   } = props;
-  const entriesViewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickWorkEntriesToBottomRef = useRef(true);
   const [showAllRenderedItems, setShowAllRenderedItems] = useState(false);
   const displayedEntries = useMemo(() => getDisplayedWorkEntries(entries), [entries]);
   const iconKind = useMemo(() => deriveWorkGroupIconKind(entries), [entries]);
+  const iconName = useMemo(
+    () => (iconKind === "tool" && entries.some(isMcpToolWorkEntry) ? "mcp-toolbox" : undefined),
+    [entries, iconKind],
+  );
   const shouldHoverWholeHeader = !isInProgress || iconKind === "agent";
   const shouldShimmerSummaryRest = isInProgress && iconKind !== "agent";
-  const shouldUseScrollViewport = isExpanded;
-  const shouldAutoStickScrollViewport = shouldUseScrollViewport && nested;
-  const {
-    bottomFadeStrength: entriesBottomFadeStrength,
-    onScroll: onEntriesFadeScroll,
-    ref: entriesFadeRef,
-    topFadeStrength: entriesTopFadeStrength,
-    update: updateEntriesFade,
-  } = useScrollFadeOverlays();
-  const showEntriesTopFade = entriesTopFadeStrength > 0.01;
-  const showEntriesBottomFade = entriesBottomFadeStrength > 0.01;
-  const entriesViewportMaskImage = shouldUseScrollViewport
-    ? `linear-gradient(to bottom, ${
-        showEntriesTopFade ? "transparent 0%, black 3rem" : "black 0%"
-      }, ${showEntriesBottomFade ? "black calc(100% - 3rem), transparent 100%" : "black 100%"})`
-    : undefined;
-
-  const handleEntriesViewportRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      entriesViewportRef.current = node;
-      entriesFadeRef(node);
-    },
-    [entriesFadeRef],
-  );
-
-  const handleEntriesViewportScroll = useCallback(
-    (event: ReactUIEvent<HTMLDivElement>) => {
-      onEntriesFadeScroll(event);
-      if (!shouldAutoStickScrollViewport) {
-        return;
-      }
-
-      shouldStickWorkEntriesToBottomRef.current = isScrollContainerNearBottom(event.currentTarget);
-    },
-    [onEntriesFadeScroll, shouldAutoStickScrollViewport],
-  );
-
-  useEffect(() => {
-    if (!shouldAutoStickScrollViewport) {
-      shouldStickWorkEntriesToBottomRef.current = true;
-      return;
-    }
-
-    const entriesViewport = entriesViewportRef.current;
-    if (!entriesViewport) {
-      return;
-    }
-
-    shouldStickWorkEntriesToBottomRef.current = isScrollContainerNearBottom(entriesViewport);
-    updateEntriesFade(entriesViewport);
-  }, [shouldAutoStickScrollViewport, updateEntriesFade]);
-
-  useEffect(() => {
-    if (!shouldUseScrollViewport || !isExpanded) {
-      return;
-    }
-
-    const entriesViewport = entriesViewportRef.current;
-    if (!entriesViewport) {
-      return;
-    }
-
-    updateEntriesFade(entriesViewport);
-
-    const resizeObserver = new ResizeObserver(() => {
-      updateEntriesFade(entriesViewport);
-    });
-    resizeObserver.observe(entriesViewport);
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [isExpanded, shouldUseScrollViewport, updateEntriesFade]);
 
   const renderedItems = useMemo<ReadonlyArray<WorkGroupInlineEntry>>(
     () =>
@@ -2774,59 +2708,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
 
   useLayoutEffect(() => {
     onHeightChange?.();
-  }, [
-    hiddenRenderedItemCount,
-    isExpanded,
-    onHeightChange,
-    shouldUseScrollViewport,
-    visibleRenderedItems.length,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!shouldUseScrollViewport || !isExpanded) {
-      return;
-    }
-
-    const entriesViewport = entriesViewportRef.current;
-    if (!entriesViewport) {
-      return;
-    }
-
-    updateEntriesFade(entriesViewport);
-
-    const frame = window.requestAnimationFrame(() => {
-      updateEntriesFade(entriesViewport);
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [
-    hiddenRenderedItemCount,
-    isExpanded,
-    shouldUseScrollViewport,
-    updateEntriesFade,
-    visibleRenderedItems.length,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!shouldAutoStickScrollViewport || !isExpanded) {
-      return;
-    }
-
-    const entriesViewport = entriesViewportRef.current;
-    if (!entriesViewport || !shouldStickWorkEntriesToBottomRef.current) {
-      return;
-    }
-
-    entriesViewport.scrollTop = entriesViewport.scrollHeight;
-    updateEntriesFade(entriesViewport);
-  }, [
-    hiddenRenderedItemCount,
-    isExpanded,
-    shouldAutoStickScrollViewport,
-    updateEntriesFade,
-    visibleRenderedItems.length,
-  ]);
+  }, [hiddenRenderedItemCount, isExpanded, onHeightChange, visibleRenderedItems.length]);
 
   return (
     <div>
@@ -2849,6 +2731,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
       >
         <WorkGroupIcon
           kind={iconKind}
+          iconName={iconName}
           className={cn(
             "text-muted-foreground/75 transition-colors duration-150",
             "group-hover:text-foreground",
@@ -2879,22 +2762,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
       </button>
       <AnimatedExpandPanel open={isExpanded}>
         <div id={groupItemsId} className="mt-0.5">
-          <div
-            ref={handleEntriesViewportRef}
-            className={cn(
-              shouldUseScrollViewport &&
-                "max-h-48 overflow-y-auto overscroll-contain pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            )}
-            style={
-              entriesViewportMaskImage
-                ? {
-                    WebkitMaskImage: entriesViewportMaskImage,
-                    maskImage: entriesViewportMaskImage,
-                  }
-                : undefined
-            }
-            onScroll={handleEntriesViewportScroll}
-          >
+          <div className={nested ? "pr-1" : undefined}>
             <ul>
               {hiddenRenderedItemCount > 0 && (
                 <li className="list-none py-0.5">

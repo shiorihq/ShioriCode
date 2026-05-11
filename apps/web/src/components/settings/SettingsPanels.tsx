@@ -42,6 +42,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
+import { useGoalsFeatureEnabled } from "../../hooks/useGoalsFeatureEnabled";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/personalDetails";
@@ -840,6 +841,7 @@ function CompanionCliSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
+  const goalsEnabled = useGoalsFeatureEnabled();
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -881,9 +883,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.generateMemories !== DEFAULT_UNIFIED_SETTINGS.generateMemories
         ? ["Memories"]
         : []),
-      ...(settings.kanban.enabled &&
-      settings.autoGenerateKanbanTaskPrompts !==
-        DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts
+      ...(goalsEnabled &&
+      settings.autoGenerateGoalTaskPrompts !== DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts
         ? ["Goal planning"]
         : []),
       ...(settings.assistantPersonality !== DEFAULT_ASSISTANT_PERSONALITY
@@ -917,8 +918,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
-      settings.kanban.enabled,
-      settings.autoGenerateKanbanTaskPrompts,
+      goalsEnabled,
+      settings.autoGenerateGoalTaskPrompts,
       settings.generateMemories,
       settings.importedThemes.length,
       settings.lightThemeId,
@@ -954,6 +955,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const goalsEnabled = useGoalsFeatureEnabled();
   const { viewer, catalogProviders } = useHostedShioriState();
   const canTriggerOnboarding = import.meta.env.DEV && Boolean(viewer?.isAdmin);
   const onboardingState = useMemo(
@@ -1339,19 +1341,19 @@ export function GeneralSettingsPanel() {
           </p>
         </SettingsRow>
 
-        {settings.kanban.enabled ? (
+        {goalsEnabled ? (
           <SettingsRow
             title="Goal planning"
             description="Generate a concise editable plan in the background when a goal is created."
             resetAction={
-              settings.autoGenerateKanbanTaskPrompts !==
-              DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts ? (
+              settings.autoGenerateGoalTaskPrompts !==
+              DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts ? (
                 <SettingResetButton
                   label="Goal planning"
                   onClick={() =>
                     updateSettings({
-                      autoGenerateKanbanTaskPrompts:
-                        DEFAULT_UNIFIED_SETTINGS.autoGenerateKanbanTaskPrompts,
+                      autoGenerateGoalTaskPrompts:
+                        DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts,
                     })
                   }
                 />
@@ -1359,9 +1361,9 @@ export function GeneralSettingsPanel() {
             }
             control={
               <Switch
-                checked={settings.autoGenerateKanbanTaskPrompts}
+                checked={settings.autoGenerateGoalTaskPrompts}
                 onCheckedChange={(checked) =>
-                  updateSettings({ autoGenerateKanbanTaskPrompts: Boolean(checked) })
+                  updateSettings({ autoGenerateGoalTaskPrompts: Boolean(checked) })
                 }
                 aria-label="Generate goal plans"
               />

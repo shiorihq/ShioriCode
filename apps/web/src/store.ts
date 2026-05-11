@@ -1,6 +1,7 @@
 import {
+  GoalItemEventType,
   type OrchestrationEvent,
-  type KanbanItem,
+  type GoalItem,
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
   type ProjectId,
@@ -42,7 +43,7 @@ import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread 
 
 export interface AppState {
   projects: Project[];
-  kanbanItems?: KanbanItem[];
+  goalItems?: GoalItem[];
   threads: Thread[];
   threadIndexById: Record<string, number>;
   sidebarThreadsById: Record<string, SidebarThreadSummary>;
@@ -53,7 +54,7 @@ export interface AppState {
 
 const initialState: AppState = {
   projects: [],
-  kanbanItems: [],
+  goalItems: [],
   threads: [],
   threadIndexById: {},
   sidebarThreadsById: {},
@@ -87,13 +88,13 @@ function updateProject(
   return changed ? next : projects;
 }
 
-function updateKanbanItem(
-  kanbanItems: KanbanItem[],
-  itemId: KanbanItem["id"],
-  updater: (item: KanbanItem) => KanbanItem,
-): KanbanItem[] {
+function updateGoalItem(
+  goalItems: GoalItem[],
+  itemId: GoalItem["id"],
+  updater: (item: GoalItem) => GoalItem,
+): GoalItem[] {
   let changed = false;
-  const next = kanbanItems.map((item) => {
+  const next = goalItems.map((item) => {
     if (item.id !== itemId) {
       return item;
     }
@@ -103,7 +104,7 @@ function updateKanbanItem(
     }
     return updated;
   });
-  return changed ? next : kanbanItems;
+  return changed ? next : goalItems;
 }
 
 function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
@@ -794,20 +795,20 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return projects.length === state.projects.length ? state : { ...state, projects };
     }
 
-    case "kanbanItem.created": {
-      const existingItems = state.kanbanItems ?? [];
+    case GoalItemEventType.created: {
+      const existingItems = state.goalItems ?? [];
       const existing = existingItems.find((item) => item.id === event.payload.item.id);
-      const kanbanItems = existing
+      const goalItems = existing
         ? existingItems.map((item) =>
             item.id === event.payload.item.id ? event.payload.item : item,
           )
         : [...existingItems, event.payload.item];
-      return { ...state, kanbanItems };
+      return { ...state, goalItems };
     }
 
-    case "kanbanItem.updated": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.updated: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
         ...(event.payload.description !== undefined
@@ -828,24 +829,24 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
           : {}),
         updatedAt: event.payload.updatedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.moved": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.moved: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         status: event.payload.status,
         sortKey: event.payload.sortKey,
         completedAt: event.payload.status === "done" ? event.payload.movedAt : null,
         updatedAt: event.payload.movedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.assigned": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.assigned: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         assignees: [
           ...item.assignees.filter((assignee) => assignee.id !== event.payload.assignee.id),
@@ -853,54 +854,54 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ],
         updatedAt: event.payload.updatedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.unassigned": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.unassigned: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         assignees: item.assignees.filter((assignee) => assignee.id !== event.payload.assigneeId),
         updatedAt: event.payload.updatedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.blocked": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.blocked: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         blockedReason: event.payload.reason,
         updatedAt: event.payload.blockedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.unblocked": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.unblocked: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         blockedReason: null,
         updatedAt: event.payload.unblockedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.completed": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.completed: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         status: "done",
         ...(event.payload.sortKey !== undefined ? { sortKey: event.payload.sortKey } : {}),
         completedAt: event.payload.completedAt,
         updatedAt: event.payload.completedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.note-added": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = updateKanbanItem(existingItems, event.payload.itemId, (item) => ({
+    case GoalItemEventType.noteAdded: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
         ...item,
         notes: [
           ...item.notes.filter((note) => note.id !== event.payload.note.id),
@@ -911,13 +912,13 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ),
         updatedAt: event.payload.updatedAt,
       }));
-      return kanbanItems === existingItems ? state : { ...state, kanbanItems };
+      return goalItems === existingItems ? state : { ...state, goalItems };
     }
 
-    case "kanbanItem.deleted": {
-      const existingItems = state.kanbanItems ?? [];
-      const kanbanItems = existingItems.filter((item) => item.id !== event.payload.itemId);
-      return kanbanItems.length === existingItems.length ? state : { ...state, kanbanItems };
+    case GoalItemEventType.deleted: {
+      const existingItems = state.goalItems ?? [];
+      const goalItems = existingItems.filter((item) => item.id !== event.payload.itemId);
+      return goalItems.length === existingItems.length ? state : { ...state, goalItems };
     }
 
     case "thread.created": {

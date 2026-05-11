@@ -216,9 +216,13 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 
 export const KanbanItemStatus = Schema.Literals(["backlog", "todo", "in_progress", "done"]);
 export type KanbanItemStatus = typeof KanbanItemStatus.Type;
+export const GoalItemStatus = KanbanItemStatus;
+export type GoalItemStatus = KanbanItemStatus;
 
 export const KanbanItemPromptStatus = Schema.Literals(["idle", "generating", "ready", "failed"]);
 export type KanbanItemPromptStatus = typeof KanbanItemPromptStatus.Type;
+export const GoalItemPromptStatus = KanbanItemPromptStatus;
+export type GoalItemPromptStatus = KanbanItemPromptStatus;
 
 export const KanbanItemAssigneeRole = Schema.Literals([
   "owner",
@@ -227,6 +231,8 @@ export const KanbanItemAssigneeRole = Schema.Literals([
   "tester",
 ]);
 export type KanbanItemAssigneeRole = typeof KanbanItemAssigneeRole.Type;
+export const GoalItemAssigneeRole = KanbanItemAssigneeRole;
+export type GoalItemAssigneeRole = KanbanItemAssigneeRole;
 
 export const KanbanItemAssigneeStatus = Schema.Literals([
   "assigned",
@@ -236,6 +242,8 @@ export const KanbanItemAssigneeStatus = Schema.Literals([
   "done",
 ]);
 export type KanbanItemAssigneeStatus = typeof KanbanItemAssigneeStatus.Type;
+export const GoalItemAssigneeStatus = KanbanItemAssigneeStatus;
+export type GoalItemAssigneeStatus = KanbanItemAssigneeStatus;
 
 export const KanbanItemPullRequestLink = Schema.Struct({
   number: NonNegativeInt,
@@ -244,6 +252,8 @@ export const KanbanItemPullRequestLink = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
 });
 export type KanbanItemPullRequestLink = typeof KanbanItemPullRequestLink.Type;
+export const GoalItemPullRequestLink = KanbanItemPullRequestLink;
+export type GoalItemPullRequestLink = KanbanItemPullRequestLink;
 
 export const KanbanItemAssignee = Schema.Struct({
   id: KanbanItemAssigneeId,
@@ -256,9 +266,13 @@ export const KanbanItemAssignee = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type KanbanItemAssignee = typeof KanbanItemAssignee.Type;
+export const GoalItemAssignee = KanbanItemAssignee;
+export type GoalItemAssignee = KanbanItemAssignee;
 
 export const KanbanItemNoteAuthorKind = Schema.Literals(["client", "server", "provider"]);
 export type KanbanItemNoteAuthorKind = typeof KanbanItemNoteAuthorKind.Type;
+export const GoalItemNoteAuthorKind = KanbanItemNoteAuthorKind;
+export type GoalItemNoteAuthorKind = KanbanItemNoteAuthorKind;
 
 export const KanbanItemNote = Schema.Struct({
   id: KanbanItemNoteId,
@@ -268,6 +282,8 @@ export const KanbanItemNote = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type KanbanItemNote = typeof KanbanItemNote.Type;
+export const GoalItemNote = KanbanItemNote;
+export type GoalItemNote = KanbanItemNote;
 
 export const KanbanItem = Schema.Struct({
   id: KanbanItemId,
@@ -290,6 +306,8 @@ export const KanbanItem = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type KanbanItem = typeof KanbanItem.Type;
+export const GoalItem = KanbanItem;
+export type GoalItem = KanbanItem;
 
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
@@ -597,6 +615,19 @@ const KanbanItemDeleteCommand = Schema.Struct({
   itemId: KanbanItemId,
   deletedAt: IsoDateTime,
 });
+
+export const GoalItemCommandType = {
+  create: "kanbanItem.create",
+  update: "kanbanItem.update",
+  move: "kanbanItem.move",
+  assign: "kanbanItem.assign",
+  unassign: "kanbanItem.unassign",
+  block: "kanbanItem.block",
+  unblock: "kanbanItem.unblock",
+  complete: "kanbanItem.complete",
+  addNote: "kanbanItem.note.add",
+  delete: "kanbanItem.delete",
+} as const;
 
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
@@ -952,6 +983,21 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-diff-completed",
   "thread.activity-appended",
 ]);
+
+export const GoalItemEventType = {
+  created: "kanbanItem.created",
+  updated: "kanbanItem.updated",
+  moved: "kanbanItem.moved",
+  assigned: "kanbanItem.assigned",
+  unassigned: "kanbanItem.unassigned",
+  blocked: "kanbanItem.blocked",
+  unblocked: "kanbanItem.unblocked",
+  completed: "kanbanItem.completed",
+  noteAdded: "kanbanItem.note-added",
+  deleted: "kanbanItem.deleted",
+} as const;
+
+export const GOAL_ITEMS_READ_MODEL_KEY = "kanbanItems" as const;
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
 export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "kanbanItem"]);

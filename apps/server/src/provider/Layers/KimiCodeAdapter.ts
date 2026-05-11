@@ -47,7 +47,7 @@ import {
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeKanbanProviderToolRuntime } from "../../kanban/providerTools.ts";
+import { makeGoalProviderToolRuntime } from "../../goals/providerTools.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -1141,10 +1141,10 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           cause,
         }),
     });
-    const kanbanRuntime = settings.kanban.enabled
+    const goalRuntime = settings.goals.enabled
       ? Option.match(orchestrationEngineOption, {
           onSome: (orchestrationEngine) =>
-            makeKanbanProviderToolRuntime({
+            makeGoalProviderToolRuntime({
               orchestrationEngine,
               provider: PROVIDER,
               threadId: input.threadId,
@@ -1164,11 +1164,11 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           close: async () => undefined,
         } satisfies ProviderMcpToolRuntime);
     const mergedMcpRuntime: ProviderMcpToolRuntime = {
-      descriptors: [...mcpRuntime.descriptors, ...kanbanRuntime.descriptors],
-      executors: new Map([...mcpRuntime.executors, ...kanbanRuntime.executors]),
-      warnings: [...mcpRuntime.warnings, ...kanbanRuntime.warnings],
+      descriptors: [...mcpRuntime.descriptors, ...goalRuntime.descriptors],
+      executors: new Map([...mcpRuntime.executors, ...goalRuntime.executors]),
+      warnings: [...mcpRuntime.warnings, ...goalRuntime.warnings],
       close: async () => {
-        await Promise.allSettled([mcpRuntime.close(), kanbanRuntime.close()]);
+        await Promise.allSettled([mcpRuntime.close(), goalRuntime.close()]);
       },
     };
 

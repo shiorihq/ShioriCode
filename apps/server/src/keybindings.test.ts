@@ -175,9 +175,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("search.open"), "meta+g");
       assert.equal(defaultsByCommand.get("project.add"), "mod+o");
       assert.equal(defaultsByCommand.get("pullRequests.open"), "meta+p");
-      assert.equal(defaultsByCommand.get("kanban.open"), "meta+k");
-      assert.equal(defaultsByCommand.get("kanban.newTask"), "n");
-      assert.equal(defaultsByCommand.get("kanban.search"), "meta+g");
+      assert.equal(defaultsByCommand.get("goals.open"), "meta+k");
+      assert.equal(defaultsByCommand.get("goals.newTask"), "n");
+      assert.equal(defaultsByCommand.get("goals.search"), "meta+g");
       assert.equal(defaultsByCommand.get("editor.openFavorite"), "mod+shift+o");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");

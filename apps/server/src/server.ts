@@ -44,7 +44,7 @@ import { KeybindingsLive } from "./keybindings";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
-import { KanbanPromptReactorLive } from "./orchestration/Layers/KanbanPromptReactor";
+import { GoalPromptReactorLive } from "./orchestration/Layers/GoalPromptReactor";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
@@ -113,7 +113,7 @@ const ReactorLayerLive = OrchestrationReactorLive.pipe(
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
-  Layer.provideMerge(KanbanPromptReactorLive),
+  Layer.provideMerge(GoalPromptReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 

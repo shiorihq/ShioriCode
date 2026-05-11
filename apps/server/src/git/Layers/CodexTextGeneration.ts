@@ -11,7 +11,7 @@ import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "contracts";
 import {
   type BranchNameGenerationInput,
-  type KanbanTaskPromptGenerationResult,
+  type GoalPlanGenerationResult,
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
   TextGeneration,
@@ -19,7 +19,7 @@ import {
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
-  buildKanbanTaskPrompt,
+  buildGoalPlanPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
@@ -94,7 +94,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateKanbanTaskPrompt",
+      | "generateGoalPlan",
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -139,7 +139,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateKanbanTaskPrompt";
+      | "generateGoalPlan";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -414,10 +414,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     } satisfies ThreadTitleGenerationResult;
   });
 
-  const generateKanbanTaskPrompt: TextGenerationShape["generateKanbanTaskPrompt"] = Effect.fn(
-    "CodexTextGeneration.generateKanbanTaskPrompt",
+  const generateGoalPlan: TextGenerationShape["generateGoalPlan"] = Effect.fn(
+    "CodexTextGeneration.generateGoalPlan",
   )(function* (input) {
-    const { prompt, outputSchema } = buildKanbanTaskPrompt({
+    const { prompt, outputSchema } = buildGoalPlanPrompt({
       title: input.title,
       description: input.description,
       prompt: input.prompt,
@@ -426,13 +426,13 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
     if (input.modelSelection.provider !== "codex") {
       return yield* new TextGenerationError({
-        operation: "generateKanbanTaskPrompt",
+        operation: "generateGoalPlan",
         detail: "Invalid model selection.",
       });
     }
 
     const generated = yield* runCodexJson({
-      operation: "generateKanbanTaskPrompt",
+      operation: "generateGoalPlan",
       cwd: input.cwd,
       prompt,
       outputSchemaJson: outputSchema,
@@ -441,7 +441,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
     return {
       prompt: generated.prompt.trim(),
-    } satisfies KanbanTaskPromptGenerationResult;
+    } satisfies GoalPlanGenerationResult;
   });
 
   return {
@@ -449,7 +449,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateKanbanTaskPrompt,
+    generateGoalPlan,
   } satisfies TextGenerationShape;
 });
 

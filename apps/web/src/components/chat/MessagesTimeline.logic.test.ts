@@ -1496,7 +1496,7 @@ describe("deriveMessagesTimelineRows", () => {
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Grep",
-          detail: 'Grep: {"pattern":"Kanban"}',
+          detail: 'Grep: {"pattern":"Goals"}',
         },
       },
       {
@@ -1510,7 +1510,7 @@ describe("deriveMessagesTimelineRows", () => {
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Grep",
-          detail: 'Grep: {"pattern":"PrKanban"}',
+          detail: 'Grep: {"pattern":"PrGoals"}',
         },
       },
       {
@@ -1526,29 +1526,29 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
-        id: "read-kanban-view",
+        id: "read-goals-view",
         kind: "work",
         createdAt: "2026-02-23T00:00:04.000Z",
         entry: {
-          id: "read-kanban-view",
+          id: "read-goals-view",
           createdAt: "2026-02-23T00:00:04.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
-          detail: "KanbanView.tsx",
+          detail: "GoalsView.tsx",
         },
       },
       {
-        id: "read-pr-kanban-board",
+        id: "read-pr-goals-board",
         kind: "work",
         createdAt: "2026-02-23T00:00:05.000Z",
         entry: {
-          id: "read-pr-kanban-board",
+          id: "read-pr-goals-board",
           createdAt: "2026-02-23T00:00:05.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
-          detail: "PrKanbanBoard.tsx",
+          detail: "PrGoalsBoard.tsx",
         },
       },
     ];
@@ -1565,8 +1565,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
       "search-1",
       "search-2",
-      "read-kanban-view",
-      "read-pr-kanban-board",
+      "read-goals-view",
+      "read-pr-goals-board",
     ]);
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
       "Explored 2 files, 2 searches",
@@ -1586,7 +1586,7 @@ describe("deriveMessagesTimelineRows", () => {
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Grep",
-          detail: 'Grep: {"pattern":"Kanban"}',
+          detail: 'Grep: {"pattern":"Goals"}',
         },
       },
       {
@@ -1603,33 +1603,33 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
-        id: "read-kanban-view",
+        id: "read-goals-view",
         kind: "work",
         createdAt: "2026-02-23T00:00:03.000Z",
         entry: {
-          id: "read-kanban-view",
+          id: "read-goals-view",
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Read",
           detail:
-            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/KanbanView.tsx",
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/goals/GoalsView.tsx",
         },
       },
       {
-        id: "read-pr-kanban-board",
+        id: "read-pr-goals-board",
         kind: "work",
         createdAt: "2026-02-23T00:00:04.000Z",
         entry: {
-          id: "read-pr-kanban-board",
+          id: "read-pr-goals-board",
           createdAt: "2026-02-23T00:00:04.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Read",
           detail:
-            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/PrKanbanBoard.tsx",
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/goals/PrGoalsBoard.tsx",
         },
       },
     ];
@@ -1648,8 +1648,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(workRows).toHaveLength(1);
     expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
       "search-1",
-      "read-kanban-view",
-      "read-pr-kanban-board",
+      "read-goals-view",
+      "read-pr-goals-board",
     ]);
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
       "Explored 2 files, 1 search",
@@ -1669,7 +1669,7 @@ describe("deriveMessagesTimelineRows", () => {
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Grep",
-          detail: 'Grep: {"pattern":"Kanban"}',
+          detail: 'Grep: {"pattern":"Goals"}',
         },
       },
       {
@@ -1686,18 +1686,18 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
-        id: "read-kanban-view",
+        id: "read-goals-view",
         kind: "work",
         createdAt: "2026-02-23T00:00:03.000Z",
         entry: {
-          id: "read-kanban-view",
+          id: "read-goals-view",
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Read file",
           tone: "tool",
           itemType: "dynamic_tool_call",
           toolTitle: "Read",
           detail:
-            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/KanbanView.tsx",
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/goals/GoalsView.tsx",
         },
       },
       {
@@ -1732,7 +1732,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(workRows).toHaveLength(1);
     expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
       "search-1",
-      "read-kanban-view",
+      "read-goals-view",
     ]);
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
       "Explored 1 file, 1 search",

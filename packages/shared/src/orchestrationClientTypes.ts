@@ -1,6 +1,6 @@
 import type {
+  GoalItem,
   ModelSelection,
-  KanbanItem,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -90,7 +90,7 @@ export interface Project {
   scripts: ProjectScript[];
 }
 
-export type ClientKanbanItem = KanbanItem;
+export type ClientGoalItem = GoalItem;
 
 export interface Thread {
   id: ThreadId;

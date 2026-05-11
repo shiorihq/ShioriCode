@@ -1,4 +1,4 @@
-import type { KanbanItemId, ProjectId, ThreadId } from "contracts";
+import type { GoalItemId, ProjectId, ThreadId } from "contracts";
 import { describe, expect, it } from "vitest";
 
 import type { Thread } from "~/types";
@@ -6,7 +6,7 @@ import type { Thread } from "~/types";
 import { deriveGoalStatus, type Goal } from "./goalShared";
 
 const baseGoal = {
-  id: "goal-1" as KanbanItemId,
+  id: "goal-1" as GoalItemId,
   projectId: "project-1" as ProjectId,
   pullRequest: null,
   title: "Add resumable streaming",

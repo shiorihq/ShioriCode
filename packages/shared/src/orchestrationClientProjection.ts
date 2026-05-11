@@ -1,6 +1,7 @@
+import { GOAL_ITEMS_READ_MODEL_KEY } from "contracts";
 import type {
+  GoalItem,
   OrchestrationCheckpointSummary,
-  KanbanItem,
   OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProposedPlan,
@@ -43,7 +44,7 @@ export interface ClientProjectionOptions {
 
 export interface ClientProjectionSnapshot {
   readonly projects: Project[];
-  readonly kanbanItems?: KanbanItem[];
+  readonly goalItems?: GoalItem[];
   readonly threads: Thread[];
   readonly threadIndexById: Record<string, number>;
   readonly sidebarThreadsById: Record<string, SidebarThreadSummary>;
@@ -467,7 +468,7 @@ export function projectReadModelToClientSnapshot(
     readModel.projects,
   );
   const projects = canonicalProjects.map(mapProjectToClientProject);
-  const kanbanItems = (readModel.kanbanItems ?? [])
+  const goalItems = (readModel[GOAL_ITEMS_READ_MODEL_KEY] ?? [])
     .filter((item) => item.deletedAt === null)
     .map((item) => {
       const canonicalProjectId =
@@ -491,7 +492,7 @@ export function projectReadModelToClientSnapshot(
 
   return {
     projects,
-    kanbanItems,
+    goalItems,
     threads,
     threadIndexById: buildThreadIndexById(threads),
     sidebarThreadsById: buildSidebarThreadsById(threads),

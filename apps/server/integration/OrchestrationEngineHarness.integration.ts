@@ -51,7 +51,7 @@ import { OrchestrationEngineLive } from "../src/orchestration/Layers/Orchestrati
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBusLive } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
-import { KanbanPromptReactorLive } from "../src/orchestration/Layers/KanbanPromptReactor.ts";
+import { GoalPromptReactorLive } from "../src/orchestration/Layers/GoalPromptReactor.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -335,9 +335,8 @@ export const makeOrchestrationIntegrationHarness = (
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New Thread" }),
-      generateKanbanTaskPrompt: (
-        input: Parameters<TextGenerationShape["generateKanbanTaskPrompt"]>[0],
-      ) => Effect.succeed({ prompt: input.prompt || input.description || input.title }),
+      generateGoalPlan: (input: Parameters<TextGenerationShape["generateGoalPlan"]>[0]) =>
+        Effect.succeed({ prompt: input.prompt || input.description || input.title }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
@@ -357,7 +356,7 @@ export const makeOrchestrationIntegrationHarness = (
       ),
       Layer.provideMerge(WorkspacePathsLive),
     );
-    const kanbanPromptReactorLayer = KanbanPromptReactorLive.pipe(
+    const goalPromptReactorLayer = GoalPromptReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
       Layer.provideMerge(textGenerationLayer),
@@ -366,7 +365,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
-      Layer.provideMerge(kanbanPromptReactorLayer),
+      Layer.provideMerge(goalPromptReactorLayer),
     );
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),

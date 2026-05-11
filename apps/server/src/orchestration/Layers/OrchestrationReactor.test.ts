@@ -2,7 +2,7 @@ import { Effect, Exit, Layer, ManagedRuntime, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
-import { KanbanPromptReactor } from "../Services/KanbanPromptReactor.ts";
+import { GoalPromptReactor } from "../Services/GoalPromptReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
@@ -51,9 +51,9 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
-          Layer.succeed(KanbanPromptReactor, {
+          Layer.succeed(GoalPromptReactor, {
             start: () => {
-              started.push("kanban-prompt-reactor");
+              started.push("goal-prompt-reactor");
               return Effect.void;
             },
             drain: Effect.void,
@@ -70,7 +70,7 @@ describe("OrchestrationReactor", () => {
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
-      "kanban-prompt-reactor",
+      "goal-prompt-reactor",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

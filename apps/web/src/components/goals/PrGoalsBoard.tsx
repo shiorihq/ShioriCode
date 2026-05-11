@@ -1,4 +1,9 @@
-import type { KanbanItemId, ModelSelection, ProjectId } from "contracts";
+import {
+  GoalItemCommandType,
+  type GoalItemId,
+  type ModelSelection,
+  type ProjectId,
+} from "contracts";
 import {
   IconArrowDownOutline24 as ArrowDownIcon,
   IconArrowUpOutline24 as ArrowUpIcon,
@@ -44,7 +49,7 @@ import { useStore } from "~/store";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import type { Project, Thread } from "~/types";
 
-import { NewTaskDialog } from "./NewTaskDialog";
+import { NewGoalDialog } from "./NewGoalDialog";
 import {
   buildGoalRunPrompt,
   deriveGoalStatus,
@@ -62,23 +67,23 @@ import {
   runGoal,
   sortGoals,
   type Goal,
-  type GoalAgentFilter,
+  type GoalAgentFilter as GoalAgentFilterType,
   type GoalStatus,
 } from "./goalShared";
 
-export type KanbanAgentFilter = GoalAgentFilter;
+export type GoalAgentFilter = GoalAgentFilterType;
 
-interface PrKanbanBoardProps {
+interface PrGoalsBoardProps {
   projectId: ProjectId | null;
   pullRequest: Goal["pullRequest"] | null;
   searchQuery?: string;
-  agentFilter?: GoalAgentFilter;
+  agentFilter?: GoalAgentFilterType;
   blockedOnly?: boolean;
   composerOpen?: boolean;
   onComposerOpenChange?: (open: boolean) => void;
 }
 
-export function PrKanbanBoard({
+export function PrGoalsBoard({
   projectId,
   pullRequest,
   searchQuery = "",
@@ -86,13 +91,13 @@ export function PrKanbanBoard({
   blockedOnly = false,
   composerOpen,
   onComposerOpenChange,
-}: PrKanbanBoardProps) {
+}: PrGoalsBoardProps) {
   const projects = useStore((state) => state.projects);
-  const goals = useStore((state) => state.kanbanItems ?? []);
+  const goals = useStore((state) => state.goalItems ?? []);
   const threads = useStore((state) => state.threads);
   const bootstrapComplete = useStore((state) => state.bootstrapComplete);
   const defaultModelSelection = useSettings().defaultModelSelection ?? null;
-  const [selectedGoalId, setSelectedGoalId] = useState<KanbanItemId | null>(null);
+  const [selectedGoalId, setSelectedGoalId] = useState<GoalItemId | null>(null);
   const [internalComposerOpen, setInternalComposerOpen] = useState(false);
   const [draftProjectId, setDraftProjectId] = useState<ProjectId | null>(projectId);
   const [draftTitle, setDraftTitle] = useState("");
@@ -169,9 +174,9 @@ export function PrKanbanBoard({
       if (!targetProjectId) return;
       const plan = input.prompt?.trim() ?? "";
       const now = new Date().toISOString();
-      const goalId = newId("kanban_item") as KanbanItemId;
+      const goalId = newId("goal_item") as GoalItemId;
       void dispatchGoalCommand({
-        type: "kanbanItem.create",
+        type: GoalItemCommandType.create,
         commandId: newCommandId(),
         itemId: goalId,
         projectId: targetProjectId,
@@ -261,7 +266,7 @@ export function PrKanbanBoard({
         </div>
       )}
 
-      <NewTaskDialog
+      <NewGoalDialog
         open={newGoalOpen}
         onOpenChange={setNewGoalOpen}
         title={draftTitle}
@@ -283,9 +288,9 @@ export function PrKanbanBoard({
 
 function GoalList(props: {
   groupedGoals: Map<GoalStatus, Goal[]>;
-  selectedGoalId: KanbanItemId | null;
+  selectedGoalId: GoalItemId | null;
   threads: readonly Thread[];
-  onSelect: (goalId: KanbanItemId) => void;
+  onSelect: (goalId: GoalItemId) => void;
   onNewGoal: () => void;
 }) {
   return (
@@ -405,7 +410,7 @@ function GoalDetail(props: {
     setError(null);
     try {
       await dispatchGoalCommand({
-        type: "kanbanItem.update",
+        type: GoalItemCommandType.update,
         commandId: newCommandId(),
         itemId: goal.id,
         title: title.trim(),
@@ -425,7 +430,7 @@ function GoalDetail(props: {
     setError(null);
     try {
       await dispatchGoalCommand({
-        type: "kanbanItem.update",
+        type: GoalItemCommandType.update,
         commandId: newCommandId(),
         itemId: goal.id,
         title: title.trim(),
@@ -454,7 +459,7 @@ function GoalDetail(props: {
       };
       if (dirty) {
         await dispatchGoalCommand({
-          type: "kanbanItem.update",
+          type: GoalItemCommandType.update,
           commandId: newCommandId(),
           itemId: goal.id,
           title: title.trim(),
@@ -485,7 +490,7 @@ function GoalDetail(props: {
 
   const markCompleted = useCallback(() => {
     void dispatchGoalCommand({
-      type: "kanbanItem.move",
+      type: GoalItemCommandType.move,
       commandId: newCommandId(),
       itemId: goal.id,
       status: "done",

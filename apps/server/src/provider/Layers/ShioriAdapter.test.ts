@@ -108,7 +108,7 @@ const defaultBootstrapProbe = () =>
       browserUse: { enabled: false },
       computerUse: { enabled: false },
       mobileApp: { enabled: false },
-      kanban: { enabled: false },
+      goals: { enabled: false },
       subagents: {
         enabled: true,
         profiles: {
@@ -2746,7 +2746,7 @@ describe("ShioriAdapterLive session state", () => {
                       browserUse: { enabled: false },
                       computerUse: { enabled: false },
                       mobileApp: { enabled: false },
-                      kanban: { enabled: false },
+                      goals: { enabled: false },
                       subagents: null,
                     },
                     message: null,
@@ -4672,7 +4672,7 @@ describe("hosted tools", () => {
       hostedBootstrap: {
         approvalPolicies: {},
         protectedPaths: [],
-        kanban: { enabled: false },
+        goals: { enabled: false },
         subagents: {
           enabled: false,
           profiles: {},
@@ -4684,7 +4684,7 @@ describe("hosted tools", () => {
     assert.ok(!tools.some((tool) => tool.name === "agent"));
   });
 
-  it("honors hosted bootstrap Kanban gating for MCP tool descriptors", () => {
+  it("honors hosted bootstrap Goals gating for MCP tool descriptors", () => {
     const baseInput = {
       allowedRequestKinds: new Set<never>(),
       session: {
@@ -4692,8 +4692,8 @@ describe("hosted tools", () => {
       } satisfies Pick<ProviderSession, "runtimeMode">,
       mcpToolDescriptors: [
         {
-          name: "kanban_list",
-          title: "Kanban · List tasks",
+          name: "goal_list",
+          title: "Goals · List goals",
           description: "List tasks.",
           inputSchema: { type: "object", additionalProperties: false },
         },
@@ -4711,12 +4711,12 @@ describe("hosted tools", () => {
       hostedBootstrap: {
         approvalPolicies: {},
         protectedPaths: [],
-        kanban: { enabled: false },
+        goals: { enabled: false },
         subagents: null,
       },
     });
 
-    assert.ok(!disabledTools.some((tool) => tool.name === "kanban_list"));
+    assert.ok(!disabledTools.some((tool) => tool.name === "goal_list"));
     assert.ok(disabledTools.some((tool) => tool.name === "project_status"));
 
     const enabledTools = buildHostedToolDescriptors({
@@ -4724,12 +4724,12 @@ describe("hosted tools", () => {
       hostedBootstrap: {
         approvalPolicies: {},
         protectedPaths: [],
-        kanban: { enabled: true },
+        goals: { enabled: true },
         subagents: null,
       },
     });
 
-    assert.ok(enabledTools.some((tool) => tool.name === "kanban_list"));
+    assert.ok(enabledTools.some((tool) => tool.name === "goal_list"));
   });
 
   it("fails closed when hosted bootstrap is unavailable", () => {
@@ -4761,7 +4761,7 @@ describe("hosted tools", () => {
           outsideWorkspace: "ask",
         },
         protectedPaths: [],
-        kanban: { enabled: false },
+        goals: { enabled: false },
         subagents: null,
       },
     });

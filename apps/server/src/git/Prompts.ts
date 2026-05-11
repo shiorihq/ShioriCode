@@ -205,14 +205,14 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 // Goal plan prompt
 // ---------------------------------------------------------------------------
 
-export interface KanbanTaskPromptInput {
+export interface GoalPlanPromptInput {
   title: string;
   description: string;
   prompt: string;
   pullRequest?: { number: number; title?: string | undefined; url?: string | undefined } | null;
 }
 
-export function buildKanbanTaskPrompt(input: KanbanTaskPromptInput) {
+export function buildGoalPlanPrompt(input: GoalPlanPromptInput) {
   const prompt = [
     "You write concise, editable plans for coding agents.",
     "Return a JSON object with key: prompt.",

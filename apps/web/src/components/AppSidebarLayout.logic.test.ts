@@ -34,7 +34,7 @@ const APP_SIDEBAR_BINDINGS = [
     },
     whenAst: {
       type: "not",
-      node: { type: "identifier", name: "kanbanView" },
+      node: { type: "identifier", name: "goalsView" },
     },
   },
   {
@@ -179,7 +179,7 @@ describe("resolveAppSidebarShortcutCommand", () => {
     ).toBe("chat.newLocal");
   });
 
-  it("resolves global search outside Kanban and leaves Command-G to Kanban inside Kanban", () => {
+  it("resolves global search outside Goals and leaves Command-G to Goals inside Goals", () => {
     expect(
       resolveAppSidebarShortcutCommand(
         createEvent({ metaKey: true, key: "g" }),
@@ -187,7 +187,7 @@ describe("resolveAppSidebarShortcutCommand", () => {
         {
           terminalFocus: false,
           terminalOpen: false,
-          kanbanView: false,
+          goalsView: false,
           platform: "MacIntel",
         },
       ),
@@ -200,7 +200,7 @@ describe("resolveAppSidebarShortcutCommand", () => {
         {
           terminalFocus: false,
           terminalOpen: false,
-          kanbanView: true,
+          goalsView: true,
           platform: "MacIntel",
         },
       ),

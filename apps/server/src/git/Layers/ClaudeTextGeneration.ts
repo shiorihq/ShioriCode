@@ -16,14 +16,14 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "shared/git";
 
 import { TextGenerationError } from "contracts";
 import {
-  type KanbanTaskPromptGenerationResult,
+  type GoalPlanGenerationResult,
   type TextGenerationShape,
   TextGeneration,
 } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
-  buildKanbanTaskPrompt,
+  buildGoalPlanPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
@@ -83,7 +83,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateKanbanTaskPrompt";
+      | "generateGoalPlan";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -334,10 +334,10 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     };
   });
 
-  const generateKanbanTaskPrompt: TextGenerationShape["generateKanbanTaskPrompt"] = Effect.fn(
-    "ClaudeTextGeneration.generateKanbanTaskPrompt",
+  const generateGoalPlan: TextGenerationShape["generateGoalPlan"] = Effect.fn(
+    "ClaudeTextGeneration.generateGoalPlan",
   )(function* (input) {
-    const { prompt, outputSchema } = buildKanbanTaskPrompt({
+    const { prompt, outputSchema } = buildGoalPlanPrompt({
       title: input.title,
       description: input.description,
       prompt: input.prompt,
@@ -346,13 +346,13 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
 
     if (input.modelSelection.provider !== "claudeAgent") {
       return yield* new TextGenerationError({
-        operation: "generateKanbanTaskPrompt",
+        operation: "generateGoalPlan",
         detail: "Invalid model selection.",
       });
     }
 
     const generated = yield* runClaudeJson({
-      operation: "generateKanbanTaskPrompt",
+      operation: "generateGoalPlan",
       cwd: input.cwd,
       prompt,
       outputSchemaJson: outputSchema,
@@ -361,7 +361,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
 
     return {
       prompt: generated.prompt.trim(),
-    } satisfies KanbanTaskPromptGenerationResult;
+    } satisfies GoalPlanGenerationResult;
   });
 
   return {
@@ -369,7 +369,7 @@ const makeClaudeTextGeneration = Effect.gen(function* () {
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateKanbanTaskPrompt,
+    generateGoalPlan,
   } satisfies TextGenerationShape;
 });
 

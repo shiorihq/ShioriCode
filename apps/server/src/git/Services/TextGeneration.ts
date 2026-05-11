@@ -73,7 +73,7 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
-export interface KanbanTaskPromptGenerationInput {
+export interface GoalPlanGenerationInput {
   cwd: string;
   title: string;
   description: string;
@@ -83,7 +83,7 @@ export interface KanbanTaskPromptGenerationInput {
   modelSelection: ModelSelection;
 }
 
-export interface KanbanTaskPromptGenerationResult {
+export interface GoalPlanGenerationResult {
   prompt: string;
 }
 
@@ -94,9 +94,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
-  generateKanbanTaskPrompt(
-    input: KanbanTaskPromptGenerationInput,
-  ): Promise<KanbanTaskPromptGenerationResult>;
+  generateGoalPlan(input: GoalPlanGenerationInput): Promise<GoalPlanGenerationResult>;
 }
 
 /**
@@ -132,11 +130,11 @@ export interface TextGenerationShape {
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
 
   /**
-   * Generate or improve an editable goal plan from the legacy Kanban item shape.
+   * Generate or improve an editable goal plan from the persisted goal item shape.
    */
-  readonly generateKanbanTaskPrompt: (
-    input: KanbanTaskPromptGenerationInput,
-  ) => Effect.Effect<KanbanTaskPromptGenerationResult, TextGenerationError>;
+  readonly generateGoalPlan: (
+    input: GoalPlanGenerationInput,
+  ) => Effect.Effect<GoalPlanGenerationResult, TextGenerationError>;
 }
 
 /**

@@ -161,6 +161,7 @@ import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useProjectAddRequest } from "./sidebar/useProjectAddRequest";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
+import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project } from "../types";
@@ -1152,6 +1153,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const appSettings = useSettings();
+  const goalsEnabled = useGoalsFeatureEnabled();
   const { updateSettings } = useUpdateSettings();
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
     useHandleNewThread();
@@ -1243,7 +1245,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
       context: {
         terminalFocus: false,
         terminalOpen: routeTerminalOpen,
-        kanbanView: pathname === "/goals" || pathname === "/kanban",
+        goalsView: pathname === "/goals",
       },
     }),
     [pathname, platform, routeTerminalOpen],
@@ -2659,7 +2661,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
   );
   const goalsShortcutLabel = shortcutLabelForCommand(
     keybindings,
-    "kanban.open",
+    "goals.open",
     sidebarShortcutLabelOptions,
   );
   const projectListTopSpacingClassName = shouldShowProjectPathEntry ? "" : "mt-2";
@@ -2807,12 +2809,12 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                 ) : null}
               </SidebarMenuButton>
             </SidebarMenuItem>
-            {appSettings.kanban.enabled ? (
+            {goalsEnabled ? (
               <SidebarMenuItem>
                 <SidebarMenuButton
                   render={<Link to="/goals" />}
                   size="sm"
-                  isActive={pathname === "/goals" || pathname === "/kanban"}
+                  isActive={pathname === "/goals"}
                   data-testid="goals-button"
                   className="h-7 gap-2 rounded-lg px-2 text-foreground"
                 >

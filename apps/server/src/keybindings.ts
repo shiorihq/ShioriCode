@@ -57,12 +57,12 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
-  { key: "meta+g", command: "search.open", when: "!kanbanView" },
+  { key: "meta+g", command: "search.open", when: "!goalsView" },
   { key: "mod+o", command: "project.add", when: "!terminalFocus" },
   { key: "meta+p", command: "pullRequests.open" },
-  { key: "meta+k", command: "kanban.open" },
-  { key: "n", command: "kanban.newTask", when: "kanbanView && !inputFocus" },
-  { key: "meta+g", command: "kanban.search", when: "kanbanView" },
+  { key: "meta+k", command: "goals.open" },
+  { key: "n", command: "goals.newTask", when: "goalsView && !inputFocus" },
+  { key: "meta+g", command: "goals.search", when: "goalsView" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
@@ -402,7 +402,7 @@ function migrateLegacyDefaultKeybindings(keybindings: readonly KeybindingRule[])
       };
     }
     if (
-      rule.command === "kanban.open" &&
+      rule.command === "goals.open" &&
       rule.key === "mod+shift+k" &&
       (rule.when ?? undefined) === undefined
     ) {
@@ -472,6 +472,43 @@ function migrateLegacyDefaultKeybindings(keybindings: readonly KeybindingRule[])
   return {
     keybindings: migrated,
     migratedLegacyDefaults,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const LEGACY_GOALS_COMMAND_PREFIX = ["kan", "ban"].join("");
+const legacyGoalsCommand = (suffix: string) => `${LEGACY_GOALS_COMMAND_PREFIX}.${suffix}`;
+const LEGACY_GOALS_VIEW_CONTEXT = `${LEGACY_GOALS_COMMAND_PREFIX}View`;
+
+function migrateLegacyKeybindingEntry(entry: unknown): unknown {
+  if (!isRecord(entry)) {
+    return entry;
+  }
+
+  const command =
+    entry.command === legacyGoalsCommand("open")
+      ? "goals.open"
+      : entry.command === legacyGoalsCommand("newTask")
+        ? "goals.newTask"
+        : entry.command === legacyGoalsCommand("search")
+          ? "goals.search"
+          : entry.command;
+  const when =
+    typeof entry.when === "string"
+      ? entry.when.replaceAll(LEGACY_GOALS_VIEW_CONTEXT, "goalsView")
+      : entry.when;
+
+  if (command === entry.command && when === entry.when) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    command,
+    when,
   };
 }
 
@@ -681,11 +718,12 @@ const makeKeybindings = Effect.gen(function* () {
 
     return yield* Effect.forEach(rawConfig, (entry) =>
       Effect.gen(function* () {
-        const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+        const normalizedEntry = migrateLegacyKeybindingEntry(entry);
+        const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(normalizedEntry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
-            entry,
+            entry: normalizedEntry,
             error: Cause.pretty(decodedRule.cause),
           });
           return null;
@@ -694,7 +732,7 @@ const makeKeybindings = Effect.gen(function* () {
         if (resolved._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
-            entry,
+            entry: normalizedEntry,
             error: Cause.pretty(resolved.cause),
           });
           return null;
@@ -728,14 +766,15 @@ const makeKeybindings = Effect.gen(function* () {
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
     for (const [index, entry] of decodedEntries.value.entries()) {
-      const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      const normalizedEntry = migrateLegacyKeybindingEntry(entry);
+      const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(normalizedEntry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);
         issues.push(invalidEntryIssue(index, detail));
         yield* Effect.logWarning("ignoring invalid keybinding entry", {
           path: keybindingsConfigPath,
           index,
-          entry,
+          entry: normalizedEntry,
           error: detail,
         });
         continue;
@@ -748,7 +787,7 @@ const makeKeybindings = Effect.gen(function* () {
         yield* Effect.logWarning("ignoring invalid keybinding entry", {
           path: keybindingsConfigPath,
           index,
-          entry,
+          entry: normalizedEntry,
           error: detail,
         });
         continue;

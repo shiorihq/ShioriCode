@@ -60,7 +60,7 @@ interface HostedShioriState {
   mobileAppEnabled: boolean;
   browserUseEnabled: boolean;
   computerUseEnabled: boolean;
-  kanbanEnabled: boolean;
+  goalsEnabled: boolean;
   catalogProviders: ReadonlyArray<HostedCatalogProvider> | undefined;
   signIn: ConvexAuthActionsContext["signIn"];
   signOut: ConvexAuthActionsContext["signOut"];
@@ -83,7 +83,7 @@ const HostedShioriContext = createContext<HostedShioriState>({
   mobileAppEnabled: false,
   browserUseEnabled: false,
   computerUseEnabled: false,
-  kanbanEnabled: false,
+  goalsEnabled: false,
   catalogProviders: undefined,
   signIn: noopSignIn,
   signOut: noopSignOut,
@@ -106,9 +106,9 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
     hostedFlagGetQuery,
     isAuthenticated ? { key: "shioricode_computer_use_enabled" } : "skip",
   );
-  const kanbanEnabledFlag = useQuery(
+  const goalsEnabledFlag = useQuery(
     hostedFlagGetQuery,
-    isAuthenticated ? { key: "shioricode_kanban_enabled" } : "skip",
+    isAuthenticated ? { key: "shioricode_goals_enabled" } : "skip",
   );
   const userWithUsage = useQuery(hostedUserWithUsageQuery, isAuthenticated ? {} : "skip");
   const subscriptionPlanId =
@@ -148,7 +148,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       (mobileAppEnabledFlag === undefined ||
         browserUseEnabledFlag === undefined ||
         computerUseEnabledFlag === undefined ||
-        kanbanEnabledFlag === undefined)
+        goalsEnabledFlag === undefined)
     ) {
       return;
     }
@@ -162,8 +162,8 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       mobileApp: {
         enabled: isAuthenticated && mobileAppEnabledFlag === true,
       },
-      kanban: {
-        enabled: isAuthenticated && kanbanEnabledFlag === true,
+      goals: {
+        enabled: isAuthenticated && goalsEnabledFlag === true,
       },
       ...(computerUseAvailable
         ? {}
@@ -177,7 +177,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
     browserUseEnabledFlag,
     computerUseEnabledFlag,
     isAuthenticated,
-    kanbanEnabledFlag,
+    goalsEnabledFlag,
     mobileAppEnabledFlag,
   ]);
 
@@ -217,7 +217,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       mobileAppEnabled: mobileAppEnabledFlag === true,
       browserUseEnabled: isAuthenticated && browserUseEnabledFlag === true,
       computerUseEnabled: isAuthenticated && computerUseEnabledFlag === true,
-      kanbanEnabled: isAuthenticated && kanbanEnabledFlag === true,
+      goalsEnabled: isAuthenticated && goalsEnabledFlag === true,
       catalogProviders,
       signIn,
       signOut: signOutAndClearDesktopToken,
@@ -231,7 +231,7 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       normalizedAuthToken,
       browserUseEnabledFlag,
       computerUseEnabledFlag,
-      kanbanEnabledFlag,
+      goalsEnabledFlag,
       mobileAppEnabledFlag,
       signIn,
       signOutAndClearDesktopToken,

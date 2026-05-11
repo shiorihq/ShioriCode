@@ -85,7 +85,7 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: { ...modShortcut("g"), modKey: false, metaKey: true },
     command: "search.open",
-    whenAst: whenNot(whenIdentifier("kanbanView")),
+    whenAst: whenNot(whenIdentifier("goalsView")),
   },
   { shortcut: modShortcut("o"), command: "project.add" },
   { shortcut: { ...modShortcut("p"), modKey: false, metaKey: true }, command: "pullRequests.open" },
@@ -281,14 +281,14 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "search.open", {
         platform: "MacIntel",
-        context: { kanbanView: false },
+        context: { goalsView: false },
       }),
       "⌘G",
     );
     assert.isNull(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "search.open", {
         platform: "MacIntel",
-        context: { kanbanView: true },
+        context: { goalsView: true },
       }),
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "project.add", "MacIntel"), "⌘O");

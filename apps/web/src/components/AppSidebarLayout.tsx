@@ -9,6 +9,7 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 import { useHandleNewThread } from "~/hooks/useHandleNewThread";
+import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 
 import ThreadSidebar from "./Sidebar";
 import {
@@ -29,6 +30,7 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const appSettings = useSettings();
+  const goalsEnabled = useGoalsFeatureEnabled();
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
     useHandleNewThread();
@@ -44,7 +46,7 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
       const command = resolveAppSidebarShortcutCommand(event, keybindings, {
         terminalFocus,
         terminalOpen,
-        kanbanView: pathname === "/goals" || pathname === "/kanban",
+        goalsView: pathname === "/goals",
       });
       if (!command) return;
 
@@ -69,8 +71,8 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
         return;
       }
 
-      if (command === "kanban.open") {
-        if (!appSettings.kanban.enabled) {
+      if (command === "goals.open") {
+        if (!goalsEnabled) {
           return;
         }
         event.preventDefault();
@@ -125,8 +127,8 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
     activeDraftThread,
     activeThread,
     appSettings.defaultThreadEnvMode,
-    appSettings.kanban.enabled,
     defaultProjectId,
+    goalsEnabled,
     handleNewThread,
     keybindings,
     navigate,
