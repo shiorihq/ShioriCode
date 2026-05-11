@@ -434,6 +434,31 @@ function validateBundledClientAssets(clientDir: string) {
   });
 }
 
+function validateLicensedNucleoBuild(clientDir: string) {
+  return Effect.gen(function* () {
+    const hasNucleoLicenseKey = Boolean(
+      (process.env.NUCLEO_LICENSE_KEY ?? process.env.VITE_NUCLEO_LICENSE_KEY)?.trim(),
+    );
+    if (!hasNucleoLicenseKey) return;
+
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const assetsDir = path.join(clientDir, "assets");
+    const entries = yield* fs.readDirectory(assetsDir);
+
+    for (const entry of entries) {
+      if (!entry.endsWith(".js")) continue;
+      const assetPath = path.join(assetsDir, entry);
+      const content = yield* fs.readFileString(assetPath);
+      if (content.includes("lucide-")) {
+        return yield* new BuildScriptError({
+          message: `Licensed Nucleo build unexpectedly contains Lucide fallback code in ${assetPath}. Check Turbo env passthrough for NUCLEO_LICENSE_KEY.`,
+        });
+      }
+    }
+  });
+}
+
 function resolveDesktopRuntimeDependencies(
   dependencies: Record<string, unknown> | undefined,
   catalog: Record<string, unknown>,
@@ -762,6 +787,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
+  yield* validateLicensedNucleoBuild(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
