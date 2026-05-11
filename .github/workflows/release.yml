@@ -15,6 +15,9 @@ permissions:
   contents: write
   id-token: write
 
+env:
+  NUCLEO_LICENSE_KEY: ${{ secrets.NUCLEO_LICENSE_KEY }}
+
 jobs:
   preflight:
     name: Preflight
