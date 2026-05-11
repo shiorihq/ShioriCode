@@ -2,7 +2,7 @@ import {
   IconArchiveOutline24 as ArchiveIcon,
   IconSortBottomToTopOutline24 as ArrowUpDownIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
-  IconCircleDottedOutline24 as CircleDotDashedIcon,
+  IconChequeredFlagOutline24 as GoalsIcon,
   IconResizeXOutline24 as Columns2Icon,
   IconFolderOutline24 as FolderClosedIcon,
   IconFolderOutline24 as FolderIcon,
@@ -2326,7 +2326,12 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
         >
           {/* Keep live row updates static. We only animate thread rows here when a
               collapsed project needs to keep the active thread pinned in place. */}
-          <SidebarMenuSub className="mx-0 my-0 mt-0.5 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 px-0 py-0">
+          <SidebarMenuSub
+            className={cn(
+              "mx-0 my-0 mt-0.5 w-full translate-x-0 overflow-hidden border-l-0 px-0 py-0",
+              project.expanded ? "gap-0.5" : "gap-0",
+            )}
+          >
             {showEmptyThreadState ? (
               <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
                 <div
@@ -2811,7 +2816,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                   data-testid="goals-button"
                   className="h-7 gap-2 rounded-lg px-2 text-foreground"
                 >
-                  <CircleDotDashedIcon className="size-4 shrink-0" aria-hidden />
+                  <GoalsIcon className="size-4 shrink-0" aria-hidden />
                   <span className={SIDEBAR_ROW_LABEL_CLASS}>Goals</span>
                   {goalsShortcutLabel ? (
                     <span className={SIDEBAR_ROW_META_CLASS}>{goalsShortcutLabel}</span>

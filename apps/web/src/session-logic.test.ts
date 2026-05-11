@@ -655,6 +655,82 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("collapses Claude subagent task lifecycle into a nested child work row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-root",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        payload: {
+          itemId: "agent-tool-claude",
+          itemType: "collab_agent_tool_call",
+          data: {
+            toolName: "Task",
+            input: {
+              description: "Review the database layer",
+              subagent_type: "code-reviewer",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "claude-task-started",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.started",
+        summary: "code-reviewer task started",
+        tone: "info",
+        payload: {
+          taskId: "task-subagent-1",
+          parentItemId: "agent-tool-claude",
+          taskType: "code-reviewer",
+          detail: "Review the database layer",
+        },
+      }),
+      makeActivity({
+        id: "claude-task-progress",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.progress",
+        summary: "Status update",
+        tone: "info",
+        payload: {
+          taskId: "task-subagent-1",
+          parentItemId: "agent-tool-claude",
+          detail: "Checking migration edge cases.",
+          lastToolName: "Read",
+        },
+      }),
+      makeActivity({
+        id: "claude-task-completed",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        payload: {
+          taskId: "task-subagent-1",
+          parentItemId: "agent-tool-claude",
+          status: "completed",
+          detail: "No issues found.",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[1]).toMatchObject({
+      id: "claude-task-started",
+      itemId: "task:task-subagent-1",
+      parentItemId: "agent-tool-claude",
+      label: "Task completed",
+      detail: "No issues found.",
+      toolTitle: "Read",
+      requestKind: "file-read",
+      running: false,
+    });
+  });
+
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),

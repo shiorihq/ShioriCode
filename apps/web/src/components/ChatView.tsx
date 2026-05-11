@@ -2389,39 +2389,47 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       },
     });
   }, [diffOpen, isProjectThread, navigate, threadId]);
-  const onToggleBrowser = useCallback(() => {
-    if (!browserUseEnabled) {
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
-        replace: true,
-        search: (previous) => stripBrowserSearchParams(previous),
-      });
-      return;
-    }
-
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => {
-        const rest = stripBrowserSearchParams(previous);
-        return browserOpen ? rest : { ...rest, browser: "1" };
-      },
-    });
-  }, [browserOpen, browserUseEnabled, navigate, threadId]);
-  useEffect(() => {
-    if (browserUseEnabled || scopedSearch.browser !== "1") {
-      return;
-    }
-
+  const closeBrowser = useCallback(() => {
     void navigate({
       to: "/$threadId",
       params: { threadId },
       replace: true,
       search: (previous) => stripBrowserSearchParams(previous),
     });
-  }, [browserUseEnabled, navigate, scopedSearch.browser, threadId]);
+  }, [navigate, threadId]);
+  const openBrowser = useCallback(() => {
+    if (!browserUseEnabled) {
+      closeBrowser();
+      return;
+    }
+
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => ({ ...stripBrowserSearchParams(previous), browser: "1" }),
+    });
+  }, [browserUseEnabled, closeBrowser, navigate, threadId]);
+  const onToggleBrowser = useCallback(() => {
+    if (!browserUseEnabled) {
+      closeBrowser();
+      return;
+    }
+
+    if (browserOpen) {
+      closeBrowser();
+      return;
+    }
+
+    openBrowser();
+  }, [browserOpen, browserUseEnabled, closeBrowser, openBrowser]);
+  useEffect(() => {
+    if (browserUseEnabled || scopedSearch.browser !== "1") {
+      return;
+    }
+
+    closeBrowser();
+  }, [browserUseEnabled, closeBrowser, scopedSearch.browser]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -5892,7 +5900,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               active
               cwd={gitCwd ?? activeProject?.cwd ?? null}
               isAgentWorking={isWorking}
-              onClose={onToggleBrowser}
+              onClose={closeBrowser}
               onStopAgent={() => void onInterrupt()}
             />
           </div>
@@ -5937,7 +5945,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           open={browserOpen}
           onOpenChange={(open) => {
             if (!open && browserOpen) {
-              onToggleBrowser();
+              closeBrowser();
             }
           }}
         >
@@ -5953,7 +5961,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                 active
                 cwd={gitCwd ?? activeProject?.cwd ?? null}
                 isAgentWorking={isWorking}
-                onClose={onToggleBrowser}
+                onClose={closeBrowser}
                 onStopAgent={() => void onInterrupt()}
               />
             ) : null}

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { MessageId } from "contracts";
+import { MessageId, TurnId } from "contracts";
 
 import {
   buildWorkGroupSummary,
   deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
   deriveWorkGroupIconKind,
+  estimateMessagesTimelineRowHeight,
   formatWorkEntry,
   getDisplayedWorkEntries,
   isWorkRowInProgress,
@@ -1479,6 +1480,262 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
       "Explored 1 file, 1 search, 1 list",
+    );
+  });
+
+  it("does not let invisible status updates split old thread workgroups", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "search-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "search-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Grep completed",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Grep",
+          detail: 'Grep: {"pattern":"Kanban"}',
+        },
+      },
+      {
+        id: "search-2",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "search-2",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Grep completed",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Grep",
+          detail: 'Grep: {"pattern":"PrKanban"}',
+        },
+      },
+      {
+        id: "empty-status",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "empty-status",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Status update",
+          tone: "info",
+          detail: "Status update",
+        },
+      },
+      {
+        id: "read-kanban-view",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "read-kanban-view",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          detail: "KanbanView.tsx",
+        },
+      },
+      {
+        id: "read-pr-kanban-board",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        entry: {
+          id: "read-pr-kanban-board",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          detail: "PrKanbanBoard.tsx",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "search-1",
+      "search-2",
+      "read-kanban-view",
+      "read-pr-kanban-board",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 2 files, 2 searches",
+    );
+  });
+
+  it("does not let whitespace Claude assistant placeholders split active workgroups", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "search-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "search-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Grep completed",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Grep",
+          detail: 'Grep: {"pattern":"Kanban"}',
+        },
+      },
+      {
+        id: "claude-placeholder",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        message: {
+          id: MessageId.makeUnsafe("claude-placeholder"),
+          role: "assistant",
+          text: " ",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          streaming: true,
+          turnId: TurnId.makeUnsafe("turn-1"),
+        },
+      },
+      {
+        id: "read-kanban-view",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "read-kanban-view",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Read",
+          detail:
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/KanbanView.tsx",
+        },
+      },
+      {
+        id: "read-pr-kanban-board",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "read-pr-kanban-board",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Read",
+          detail:
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/PrKanbanBoard.tsx",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnStartedAt: "2026-02-23T00:00:00.000Z",
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    const messageRows = rows.filter((row) => row.kind === "message");
+    expect(messageRows.map((row) => row.id)).toEqual(["claude-placeholder"]);
+    expect(estimateMessagesTimelineRowHeight(messageRows[0]!, { timelineWidthPx: 640 })).toBe(0);
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "search-1",
+      "read-kanban-view",
+      "read-pr-kanban-board",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 2 files, 1 search",
+    );
+  });
+
+  it("does not let preserved whitespace Claude messages split old thread workgroups", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "search-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "search-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Grep completed",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Grep",
+          detail: 'Grep: {"pattern":"Kanban"}',
+        },
+      },
+      {
+        id: "claude-placeholder",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        message: {
+          id: MessageId.makeUnsafe("claude-placeholder"),
+          role: "assistant",
+          text: " ",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          streaming: false,
+          turnId: TurnId.makeUnsafe("turn-1"),
+        },
+      },
+      {
+        id: "read-kanban-view",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "read-kanban-view",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Read",
+          detail:
+            "Read: /Users/choki/Developer/shiori-code/apps/web/src/components/kanban/KanbanView.tsx",
+        },
+      },
+      {
+        id: "final-assistant",
+        kind: "message",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        message: {
+          id: MessageId.makeUnsafe("final-assistant"),
+          role: "assistant",
+          text: "Done.",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          streaming: false,
+          turnId: TurnId.makeUnsafe("turn-1"),
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    const messageRows = rows.filter((row) => row.kind === "message");
+    expect(messageRows.map((row) => row.id)).toEqual(["claude-placeholder", "final-assistant"]);
+    expect(estimateMessagesTimelineRowHeight(messageRows[0]!, { timelineWidthPx: 640 })).toBe(0);
+    expect(
+      estimateMessagesTimelineRowHeight(messageRows[1]!, { timelineWidthPx: 640 }),
+    ).toBeGreaterThan(0);
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "search-1",
+      "read-kanban-view",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 1 file, 1 search",
     );
   });
 

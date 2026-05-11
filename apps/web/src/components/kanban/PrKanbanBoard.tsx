@@ -4,7 +4,7 @@ import {
   IconArrowUpOutline24 as ArrowUpIcon,
   IconAgentOutline24 as BotIcon,
   IconCheckOutline24 as CheckIcon,
-  IconCircleDottedOutline24 as CircleDotDashedIcon,
+  IconChequeredFlagOutline24 as GoalsIcon,
   IconFileDocOutline24 as FileTextIcon,
   IconBranchMergeOutline24 as GitPullRequestIcon,
   IconGripDotsVerticalOutline24 as GripVerticalIcon,
@@ -239,7 +239,7 @@ export function PrKanbanBoard({
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <CircleDotDashedIcon />
+                <GoalsIcon />
               </EmptyMedia>
               <EmptyTitle>No goals yet</EmptyTitle>
               <EmptyDescription className="text-pretty">

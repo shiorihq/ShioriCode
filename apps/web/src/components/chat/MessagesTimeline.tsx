@@ -28,12 +28,12 @@ import {
   IconAgentOutline24 as BotIcon,
   IconBoxOutline24 as BoxIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
-  IconFileDocOutline24 as FileTextIcon,
   IconFolderOutline24 as FolderIcon,
   IconGlobe2Outline24 as Globe2Icon,
   IconCheckListOutline24 as ListChecksIcon,
-  IconWindowMaximizeOutline24 as Maximize2Icon,
-  IconWindowMinimizeOutline24 as Minimize2Icon,
+  IconListMultipleChoiceOutline24 as DropdownListIcon,
+  IconArrowsAllDirectionsOutline24 as ExpandIcon,
+  IconArrowsToCenterOutline24 as UnexpandIcon,
   IconPencilOutline24 as PencilLineIcon,
   IconRefreshOutline24 as RefreshCwIcon,
   IconMagnifierOutline24 as SearchIcon,
@@ -79,6 +79,7 @@ import {
   isRuntimeDiagnosticWorkEntry,
   isSkillWorkEntry,
   isStandaloneWorkEntryExpanded,
+  isWhitespaceAssistantMessage,
   isWorkRowExpanded,
   isWorkRowInProgress,
   shouldRenderFlatWorkRowAsGroup,
@@ -247,14 +248,6 @@ function MessagesTimelineView({
     : 0;
   const virtualMeasurementScopeKey =
     timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
-  const expandedWorkGroupsCacheKey = useMemo(
-    () =>
-      Object.entries(expandedWorkGroups)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, value]) => `${key}:${value ? "1" : "0"}`)
-        .join("|"),
-    [expandedWorkGroups],
-  );
 
   useEffect(() => {
     const rowIds = new Set(rows.map((row) => row.id));
@@ -270,9 +263,9 @@ function MessagesTimelineView({
       buildTimelineRowHeightCacheKey(
         row,
         visibleTurnDiffSummaryByAssistantMessageId,
-        expandedWorkGroupsCacheKey,
+        expandedWorkGroups,
       ),
-    [expandedWorkGroupsCacheKey, visibleTurnDiffSummaryByAssistantMessageId],
+    [expandedWorkGroups, visibleTurnDiffSummaryByAssistantMessageId],
   );
 
   const recordNonVirtualizedRowHeight = useCallback(
@@ -297,11 +290,14 @@ function MessagesTimelineView({
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
     getScrollElement: () => scrollContainer,
-    // Scope cached row measurements to the current timeline width so offscreen
-    // rows do not keep stale heights after wrapping changes.
+    // Scope cached row measurements to the current timeline width and rendered
+    // row shape so offscreen rows do not keep stale heights after updates.
     getItemKey: (index: number) => {
-      const rowId = rows[index]?.id ?? String(index);
-      return `${virtualMeasurementScopeKey}:${rowId}`;
+      const row = rows[index];
+      if (!row) {
+        return `${virtualMeasurementScopeKey}:${index}`;
+      }
+      return `${virtualMeasurementScopeKey}:${getRowHeightCacheKey(row)}`;
     },
     estimateSize: (index: number) => {
       const row = rows[index];
@@ -433,6 +429,9 @@ function MessagesTimelineView({
         turnIsActive = false;
         continue;
       }
+      if (row.kind === "message" && isWhitespaceAssistantMessage(row.message)) {
+        continue;
+      }
       lastRowIdInTurn = row.id;
       if (row.kind === "message" && row.message.role === "assistant") {
         if (currentTurnStart === null) {
@@ -464,6 +463,7 @@ function MessagesTimelineView({
     type Side = "user" | "assistant-side";
     const rowSide = (row: TimelineRow): Side | null => {
       if (row.kind === "working") return null;
+      if (row.kind === "message" && isWhitespaceAssistantMessage(row.message)) return null;
       if (row.kind === "message" && row.message.role === "user") return "user";
       return "assistant-side";
     };
@@ -671,202 +671,236 @@ function MessagesTimelineView({
     );
   };
 
-  const renderRowContent = (row: TimelineRow) => (
-    <div
-      className={cn(TIMELINE_ROW_GAP_CLASS, boundaryGapRowIds.has(row.id) && "mt-4")}
-      data-timeline-row-id={row.id}
-      data-timeline-row-kind={row.kind}
-      data-message-id={row.kind === "message" ? row.message.id : undefined}
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
-    >
-      {row.kind === "work" && <AnimatedWorkGroupShell>{renderWorkRow(row)}</AnimatedWorkGroupShell>}
+  const renderRowContent = (row: TimelineRow) => {
+    const isWhitespaceAssistantPlaceholder =
+      row.kind === "message" && isWhitespaceAssistantMessage(row.message);
+    if (isWhitespaceAssistantPlaceholder) {
+      return (
+        <div
+          className="h-0 overflow-hidden"
+          data-timeline-row-id={row.id}
+          data-timeline-row-kind={row.kind}
+          data-message-id={row.message.id}
+          data-message-role={row.message.role}
+          aria-hidden="true"
+        />
+      );
+    }
 
-      {row.kind === "message" &&
-        row.message.role === "user" &&
-        (() => {
-          const userImages = row.message.attachments ?? [];
-          const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-          const terminalContexts = displayedUserMessage.contexts;
-          const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
-          return (
-            <div className="glass-user-message group">
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  {userImages.length > 0 && (
-                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                      {userImages.map(
-                        (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                          <div
-                            key={image.id}
-                            className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                          >
-                            {image.previewUrl ? (
-                              <button
-                                type="button"
-                                className="h-full w-full cursor-zoom-in"
-                                aria-label={`Preview ${image.name}`}
-                                onClick={() => {
-                                  const preview = buildExpandedImagePreview(userImages, image.id);
-                                  if (!preview) return;
-                                  onImageExpand(preview);
-                                }}
-                              >
-                                <img
-                                  src={image.previewUrl}
-                                  alt={image.name}
-                                  className="h-full max-h-[220px] w-full object-cover"
-                                  onLoad={onTimelineImageLoad}
-                                  onError={onTimelineImageLoad}
-                                />
-                              </button>
-                            ) : (
-                              <div
-                                className={cn(
-                                  CHAT_THREAD_BODY_CLASS,
-                                  "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70",
-                                )}
-                              >
-                                {image.name}
-                              </div>
-                            )}
-                          </div>
-                        ),
+    return (
+      <div
+        className={cn(TIMELINE_ROW_GAP_CLASS, boundaryGapRowIds.has(row.id) && "mt-4")}
+        data-timeline-row-id={row.id}
+        data-timeline-row-kind={row.kind}
+        data-message-id={row.kind === "message" ? row.message.id : undefined}
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+      >
+        {row.kind === "work" && (
+          <AnimatedWorkGroupShell>{renderWorkRow(row)}</AnimatedWorkGroupShell>
+        )}
+
+        {row.kind === "message" &&
+          row.message.role === "user" &&
+          (() => {
+            const userImages = row.message.attachments ?? [];
+            const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+            const terminalContexts = displayedUserMessage.contexts;
+            const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+            return (
+              <div className="glass-user-message group w-full">
+                <div className="flex w-full items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    {userImages.length > 0 && (
+                      <div
+                        className={cn(
+                          "mb-2 max-w-full gap-2",
+                          userImages.length === 1
+                            ? "inline-grid w-fit max-w-[420px] grid-cols-1"
+                            : "grid max-w-[420px] grid-cols-2",
+                        )}
+                      >
+                        {userImages.map(
+                          (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                            <div
+                              key={image.id}
+                              className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                            >
+                              {image.previewUrl ? (
+                                <button
+                                  type="button"
+                                  className="h-full w-full cursor-zoom-in"
+                                  aria-label={`Preview ${image.name}`}
+                                  onClick={() => {
+                                    const preview = buildExpandedImagePreview(userImages, image.id);
+                                    if (!preview) return;
+                                    onImageExpand(preview);
+                                  }}
+                                >
+                                  <img
+                                    src={image.previewUrl}
+                                    alt={image.name}
+                                    className={cn(
+                                      "max-h-[220px] max-w-full",
+                                      userImages.length === 1
+                                        ? "block h-auto w-auto object-contain"
+                                        : "h-full w-full object-cover",
+                                    )}
+                                    onLoad={onTimelineImageLoad}
+                                    onError={onTimelineImageLoad}
+                                  />
+                                </button>
+                              ) : (
+                                <div
+                                  className={cn(
+                                    CHAT_THREAD_BODY_CLASS,
+                                    "flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70",
+                                  )}
+                                >
+                                  {image.name}
+                                </div>
+                              )}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    )}
+                    {(displayedUserMessage.visibleText.trim().length > 0 ||
+                      terminalContexts.length > 0) && (
+                      <UserMessageBody
+                        text={displayedUserMessage.visibleText}
+                        terminalContexts={terminalContexts}
+                      />
+                    )}
+                  </div>
+                  {(displayedUserMessage.copyText || canRevertAgentWork) && (
+                    <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                      {displayedUserMessage.copyText && (
+                        <MessageCopyButton text={displayedUserMessage.copyText} />
+                      )}
+                      {canRevertAgentWork && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isRevertingCheckpoint || isWorking}
+                          onClick={() => onRevertUserMessage(row.message.id)}
+                          title="Revert to this message"
+                        >
+                          <Undo2Icon className="size-3" />
+                        </Button>
                       )}
                     </div>
                   )}
-                  {(displayedUserMessage.visibleText.trim().length > 0 ||
-                    terminalContexts.length > 0) && (
-                    <UserMessageBody
-                      text={displayedUserMessage.visibleText}
-                      terminalContexts={terminalContexts}
-                    />
-                  )}
                 </div>
-                {(displayedUserMessage.copyText || canRevertAgentWork) && (
-                  <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
+              </div>
+            );
+          })()}
+
+        {row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (() => {
+            const messageText =
+              row.message.text || (row.message.streaming ? "" : "(empty response)");
+            return (
+              <>
+                {row.showCompletionDivider && (
+                  <div className="mb-2 mt-0.5 flex items-center gap-3">
+                    <span className="block h-px flex-1 bg-border/60" />
+                    {completionSummary && (
+                      <span className="shrink-0 text-xs text-foreground/40">
+                        {completionSummary}
+                      </span>
                     )}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
+                    <span className="block h-px flex-1 bg-border/60" />
                   </div>
                 )}
-              </div>
+                <div className={TIMELINE_TOP_LEVEL_CONTENT_CLASS}>
+                  <ChatMarkdown
+                    text={messageText}
+                    cwd={markdownCwd}
+                    isStreaming={Boolean(row.message.streaming)}
+                    revealBlocks={revealingBufferedAssistantMessageIds.has(row.message.id)}
+                  />
+                  {(() => {
+                    const turnSummary = visibleTurnDiffSummaryByAssistantMessageId.get(
+                      row.message.id,
+                    );
+                    if (!turnSummary) return null;
+                    if (turnSummary.files.length === 0) return null;
+                    return (
+                      <ChangedFilesCard
+                        turnSummary={turnSummary}
+                        resolvedTheme={resolvedTheme}
+                        onOpenTurnDiff={onOpenTurnDiff}
+                        onHeightChange={scheduleTimelineMeasure}
+                      />
+                    );
+                  })()}
+                </div>
+              </>
+            );
+          })()}
+
+        {row.kind === "reasoning" && (
+          <ReasoningTimelineEntry
+            reasoning={row.reasoning}
+            markdownCwd={markdownCwd}
+            onHeightChange={scheduleTimelineMeasure}
+          />
+        )}
+
+        {row.kind === "proposed-plan" && (
+          <div className={TIMELINE_TOP_LEVEL_CONTENT_CLASS}>
+            <ProposedPlanCard
+              planMarkdown={row.proposedPlan.planMarkdown}
+              cwd={markdownCwd}
+              workspaceRoot={workspaceRoot}
+            />
+          </div>
+        )}
+
+        {row.kind === "working" && (
+          <div className="py-0.5">
+            <WorkingIndicator createdAt={row.createdAt} />
+          </div>
+        )}
+
+        {(() => {
+          const footer = turnFooterByAnchorRowId.get(row.id);
+          if (!footer) return null;
+          const { assistantMessage, turnStart } = footer;
+          const footerMessageText =
+            assistantMessage.text || (assistantMessage.streaming ? "" : "(empty response)");
+          return (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              {!assistantMessage.streaming && footerMessageText && (
+                <MessageCopyButton text={footerMessageText} />
+              )}
+              {!assistantMessage.streaming && !isWorking && (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  disabled={isRevertingCheckpoint}
+                  onClick={() => onRetryAssistantMessage(assistantMessage.id)}
+                  title="Retry response"
+                >
+                  <RefreshCwIcon className="size-3" />
+                </Button>
+              )}
+              <AssistantMessageMeta
+                createdAt={assistantMessage.createdAt}
+                durationStart={turnStart}
+                completedAt={assistantMessage.completedAt}
+                streaming={Boolean(assistantMessage.streaming)}
+                timestampFormat={timestampFormat}
+              />
             </div>
           );
         })()}
-
-      {row.kind === "message" &&
-        row.message.role === "assistant" &&
-        (() => {
-          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-          return (
-            <>
-              {row.showCompletionDivider && (
-                <div className="mb-2 mt-0.5 flex items-center gap-3">
-                  <span className="block h-px flex-1 bg-border/60" />
-                  {completionSummary && (
-                    <span className="shrink-0 text-xs text-foreground/40">{completionSummary}</span>
-                  )}
-                  <span className="block h-px flex-1 bg-border/60" />
-                </div>
-              )}
-              <div className={TIMELINE_TOP_LEVEL_CONTENT_CLASS}>
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
-                  revealBlocks={revealingBufferedAssistantMessageIds.has(row.message.id)}
-                />
-                {(() => {
-                  const turnSummary = visibleTurnDiffSummaryByAssistantMessageId.get(
-                    row.message.id,
-                  );
-                  if (!turnSummary) return null;
-                  if (turnSummary.files.length === 0) return null;
-                  return (
-                    <ChangedFilesCard
-                      turnSummary={turnSummary}
-                      resolvedTheme={resolvedTheme}
-                      onOpenTurnDiff={onOpenTurnDiff}
-                      onHeightChange={scheduleTimelineMeasure}
-                    />
-                  );
-                })()}
-              </div>
-            </>
-          );
-        })()}
-
-      {row.kind === "reasoning" && (
-        <ReasoningTimelineEntry
-          reasoning={row.reasoning}
-          markdownCwd={markdownCwd}
-          onHeightChange={scheduleTimelineMeasure}
-        />
-      )}
-
-      {row.kind === "proposed-plan" && (
-        <div className={TIMELINE_TOP_LEVEL_CONTENT_CLASS}>
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            cwd={markdownCwd}
-            workspaceRoot={workspaceRoot}
-          />
-        </div>
-      )}
-
-      {row.kind === "working" && (
-        <div className="py-0.5">
-          <WorkingIndicator createdAt={row.createdAt} />
-        </div>
-      )}
-
-      {(() => {
-        const footer = turnFooterByAnchorRowId.get(row.id);
-        if (!footer) return null;
-        const { assistantMessage, turnStart } = footer;
-        const footerMessageText =
-          assistantMessage.text || (assistantMessage.streaming ? "" : "(empty response)");
-        return (
-          <div className="mt-1.5 flex items-center gap-1.5">
-            {!assistantMessage.streaming && footerMessageText && (
-              <MessageCopyButton text={footerMessageText} />
-            )}
-            {!assistantMessage.streaming && !isWorking && (
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                disabled={isRevertingCheckpoint}
-                onClick={() => onRetryAssistantMessage(assistantMessage.id)}
-                title="Retry response"
-              >
-                <RefreshCwIcon className="size-3" />
-              </Button>
-            )}
-            <AssistantMessageMeta
-              createdAt={assistantMessage.createdAt}
-              durationStart={turnStart}
-              completedAt={assistantMessage.completedAt}
-              streaming={Boolean(assistantMessage.streaming)}
-              timestampFormat={timestampFormat}
-            />
-          </div>
-        );
-      })()}
-    </div>
-  );
+      </div>
+    );
+  };
 
   if (!hasMessages && !isWorking) {
     return (
@@ -900,7 +934,7 @@ function MessagesTimelineView({
 
               return (
                 <div
-                  key={`virtual-row:${row.id}`}
+                  key={`virtual-row:${String(virtualRow.key)}`}
                   data-index={virtualRow.index}
                   data-virtual-row-id={row.id}
                   data-virtual-row-kind={row.kind}
@@ -1001,22 +1035,59 @@ function buildWorkRowHeightCacheKey(row: WorkTimelineRow): string {
   ].join(":");
 }
 
+function buildWorkRowExpansionCacheKey(
+  row: WorkTimelineRow,
+  expandedWorkGroups: Readonly<Record<string, boolean>>,
+): string {
+  const parts: string[] = [];
+  const seenKeys = new Set<string>();
+  const recordKey = (key: string) => {
+    if (seenKeys.has(key)) {
+      return;
+    }
+    seenKeys.add(key);
+    const value = expandedWorkGroups[key];
+    if (value !== undefined) {
+      parts.push(`${key}:${value ? "1" : "0"}`);
+    }
+  };
+  const visitEntry = (entry: TimelineWorkEntry) => {
+    recordKey(getGroupedWorkEntryExpansionKey(entry.id));
+  };
+  const visitRow = (workRow: WorkTimelineRow) => {
+    recordKey(workRow.expansionId);
+    recordKey(workRow.id);
+    for (const entry of workRow.groupedEntries) {
+      visitEntry(entry);
+    }
+    for (const entry of workRow.inlineEntries ?? []) {
+      if (entry.kind === "work") {
+        visitEntry(entry.entry);
+      }
+    }
+    for (const childRow of workRow.childRows) {
+      visitRow(childRow);
+    }
+  };
+
+  visitRow(row);
+  return parts.length > 0 ? parts.join("|") : "expanded:none";
+}
+
 function buildTimelineRowHeightCacheKey(
   row: TimelineRow,
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>,
-  expandedWorkGroupsCacheKey: string,
+  expandedWorkGroups: Readonly<Record<string, boolean>>,
 ): string {
-  const stateKey = `expanded:${expandedWorkGroupsCacheKey}`;
   switch (row.kind) {
     case "work":
-      return `${stateKey}:${buildWorkRowHeightCacheKey(row)}`;
+      return `expanded:${buildWorkRowExpansionCacheKey(row, expandedWorkGroups)}:${buildWorkRowHeightCacheKey(row)}`;
     case "reasoning":
-      return `${stateKey}:reasoning:${row.id}:${row.reasoning.streaming ? "streaming" : "settled"}:${fingerprintTimelineText(
+      return `reasoning:${row.id}:${row.reasoning.streaming ? "streaming" : "settled"}:${fingerprintTimelineText(
         row.reasoning.text,
       )}`;
     case "message":
       return [
-        stateKey,
         "message",
         row.id,
         row.message.role,
@@ -1028,11 +1099,9 @@ function buildTimelineRowHeightCacheKey(
         buildTurnDiffSummaryHeightCacheKey(turnDiffSummaryByAssistantMessageId.get(row.message.id)),
       ].join(":");
     case "proposed-plan":
-      return `${stateKey}:proposed-plan:${row.id}:${fingerprintTimelineText(
-        row.proposedPlan.planMarkdown,
-      )}`;
+      return `proposed-plan:${row.id}:${fingerprintTimelineText(row.proposedPlan.planMarkdown)}`;
     case "working":
-      return `${stateKey}:working:${row.id}:${row.createdAt ?? ""}`;
+      return `working:${row.id}:${row.createdAt ?? ""}`;
   }
 }
 
@@ -1103,7 +1172,7 @@ const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   const checkpointFiles = turnSummary.files;
   const [isFileListCollapsed, setIsFileListCollapsed] = useState(false);
   const [isShowingAllFiles, setIsShowingAllFiles] = useState(false);
-  const ExpandToggleIcon = isFileListCollapsed ? Maximize2Icon : Minimize2Icon;
+  const ExpandToggleIcon = isFileListCollapsed ? ExpandIcon : UnexpandIcon;
   const expandToggleLabel = isFileListCollapsed ? "Show changed files" : "Hide changed files";
   const canPaginate = checkpointFiles.length > CHANGED_FILES_COLLAPSED_LIMIT;
   const visibleFiles =
@@ -1230,7 +1299,7 @@ const WORK_GROUP_ICON_BY_KIND: Record<WorkGroupIconKind, IconLike> = {
   agent: BotIcon,
   command: SquareTerminalIcon,
   edit: PencilLineIcon,
-  file: FileTextIcon,
+  file: DropdownListIcon,
   list: FolderIcon,
   search: SearchIcon,
   skill: SparklesIcon,

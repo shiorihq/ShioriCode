@@ -115,6 +115,10 @@ export function isStandaloneWorkEntryExpanded(
   return readExplicitWorkGroupVisibility(row, expandedWorkGroups) ?? false;
 }
 
+export function isWhitespaceAssistantMessage(message: Pick<ChatMessage, "role" | "text">): boolean {
+  return message.role === "assistant" && message.text.trim().length === 0;
+}
+
 export function shouldRenderFlatWorkRowAsGroup(
   row: Pick<WorkTimelineRow, "groupedEntries" | "inlineEntries">,
 ): boolean {
@@ -1092,6 +1096,20 @@ function isPlainStatusUpdateEntry(entry: WorkLogEntry): boolean {
   return entry.label.trim().toLowerCase() === "status update";
 }
 
+function statusUpdateDisplayText(entry: WorkLogEntry): string | null {
+  const detail = entry.detail?.trim() || entry.command?.trim() || "";
+  if (detail.length === 0) {
+    return null;
+  }
+
+  const normalized = detail.replace(/^status update[:\s-]*/iu, "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isInvisiblePlainStatusUpdateEntry(entry: WorkLogEntry): boolean {
+  return isPlainStatusUpdateEntry(entry) && !statusUpdateDisplayText(entry);
+}
+
 function isBareShellOutputHelper(detail: string | null): boolean {
   if (!detail) {
     return false;
@@ -1834,6 +1852,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
+  const consumedMixedEntryIds = new Set<string>();
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -1845,16 +1864,28 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work" || timelineEntry.kind === "reasoning") {
+      if (consumedMixedEntryIds.has(timelineEntry.id)) {
+        continue;
+      }
       let cursor = index + 1;
       const mixedEntries: Array<
         Extract<TimelineEntry, { kind: "work" }> | Extract<TimelineEntry, { kind: "reasoning" }>
       > = [timelineEntry];
+      consumedMixedEntryIds.add(timelineEntry.id);
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
-        if (!nextEntry || (nextEntry.kind !== "work" && nextEntry.kind !== "reasoning")) {
+        if (!nextEntry) {
+          break;
+        }
+        if (nextEntry.kind !== "work" && nextEntry.kind !== "reasoning") {
+          if (isTransparentAssistantPlaceholderEntry(nextEntry)) {
+            cursor += 1;
+            continue;
+          }
           break;
         }
         mixedEntries.push(nextEntry);
+        consumedMixedEntryIds.add(nextEntry.id);
         cursor += 1;
       }
       nextRows.push(
@@ -1862,7 +1893,6 @@ export function deriveMessagesTimelineRows(input: {
           stickyTailInProgress: input.isWorking && cursor >= input.timelineEntries.length,
         }),
       );
-      index = cursor - 1;
       continue;
     }
 
@@ -1903,6 +1933,10 @@ export function deriveMessagesTimelineRows(input: {
   return nextRows;
 }
 
+function isTransparentAssistantPlaceholderEntry(entry: TimelineEntry): boolean {
+  return entry.kind === "message" && isWhitespaceAssistantMessage(entry.message);
+}
+
 function deriveMixedWorkAndReasoningRows(
   entries: ReadonlyArray<
     Extract<TimelineEntry, { kind: "work" }> | Extract<TimelineEntry, { kind: "reasoning" }>
@@ -1911,7 +1945,9 @@ function deriveMixedWorkAndReasoningRows(
     stickyTailInProgress: boolean;
   },
 ): MessagesTimelineRow[] {
-  const workEntries = entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : []));
+  const workEntries = entries.flatMap((entry) =>
+    entry.kind === "work" && !isInvisiblePlainStatusUpdateEntry(entry.entry) ? [entry.entry] : [],
+  );
   const hasReasoningEntries = entries.some((entry) => entry.kind === "reasoning");
   if (workEntries.length === 0) {
     return entries.flatMap((entry) =>
@@ -1929,6 +1965,10 @@ function deriveMixedWorkAndReasoningRows(
   }
 
   const workRows = deriveNestedWorkRows(workEntries, options);
+  if (!hasReasoningEntries) {
+    return workRows;
+  }
+
   if (hasReasoningEntries && workRows.every((row) => row.childRows.length === 0)) {
     type InlineRowEntry = NonNullable<WorkTimelineRow["inlineEntries"]>[number];
     const workEntryRowIndex = new Map<string, number>();
@@ -1991,6 +2031,9 @@ function deriveMixedWorkAndReasoningRows(
     if (!entry) {
       continue;
     }
+    if (entry.kind === "work" && isInvisiblePlainStatusUpdateEntry(entry.entry)) {
+      continue;
+    }
     if (entry.kind === "reasoning") {
       fallbackRows.push({
         kind: "reasoning",
@@ -2007,6 +2050,10 @@ function deriveMixedWorkAndReasoningRows(
       const nextEntry = entries[cursor];
       if (!nextEntry || nextEntry.kind !== "work") {
         break;
+      }
+      if (isInvisiblePlainStatusUpdateEntry(nextEntry.entry)) {
+        cursor += 1;
+        continue;
       }
       contiguousWorkEntries.push(nextEntry.entry);
       cursor += 1;
@@ -2129,6 +2176,9 @@ export function estimateMessagesTimelineRowHeight(
     case "working":
       return 40;
     case "message": {
+      if (isWhitespaceAssistantMessage(row.message)) {
+        return 0;
+      }
       let estimate = estimateTimelineMessageHeight(row.message, {
         timelineWidthPx: input.timelineWidthPx,
       });

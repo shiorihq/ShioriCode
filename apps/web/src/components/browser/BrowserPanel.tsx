@@ -467,7 +467,7 @@ function BrowserPanelHeader(props: {
         <Button
           variant="outline"
           size="xs"
-          className="no-drag shrink-0"
+          className="shrink-0 [-webkit-app-region:no-drag]"
           onClick={props.onStopAgent}
         >
           Stop agent
@@ -477,7 +477,7 @@ function BrowserPanelHeader(props: {
         <Button
           variant="ghost"
           size="icon-xs"
-          className="no-drag shrink-0"
+          className="shrink-0 [-webkit-app-region:no-drag]"
           onClick={props.onClose}
           aria-label="Close browser panel"
         >

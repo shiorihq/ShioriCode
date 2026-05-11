@@ -1,6 +1,6 @@
 import type { ProjectId } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { IconCircleDottedOutline24 as CircleDotDashedIcon } from "nucleo-core-outline-24";
+import { IconChequeredFlagOutline24 as GoalsIcon } from "nucleo-core-outline-24";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { KanbanHeaderControls } from "~/components/kanban/KanbanHeaderControls";
@@ -112,7 +112,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
   const heading = (
     <div className="app-titlebar-window-controls-inset flex h-full items-center gap-3 px-4 [--app-titlebar-base-left-padding:1rem]">
       <div className="flex min-w-0 items-center gap-2">
-        <CircleDotDashedIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <GoalsIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <h1 className="truncate text-[14px] font-semibold tracking-tight text-foreground">Goals</h1>
       </div>
       {projectSelect}
@@ -155,7 +155,7 @@ export function KanbanView({ projectId }: KanbanViewProps) {
               <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
-                    <CircleDotDashedIcon />
+                    <GoalsIcon />
                   </EmptyMedia>
                   <EmptyTitle className="text-balance">No projects registered</EmptyTitle>
                   <EmptyDescription className="text-pretty">
