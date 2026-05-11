@@ -1,6 +1,9 @@
 import type { DiffsHighlighter, SupportedLanguages, ThemedToken } from "@pierre/diffs";
 import { memo, useEffect, useMemo, useState } from "react";
-import { CopyIcon, CheckIcon } from "lucide-react";
+import {
+  IconCopyOutline24 as CopyIcon,
+  IconCheckOutline24 as CheckIcon,
+} from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";

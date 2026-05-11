@@ -115,7 +115,7 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
             }
             if (
               nodeModulesPath.startsWith("@base-ui/") ||
-              nodeModulesPath.startsWith("lucide-react") ||
+              nodeModulesPath.startsWith("nucleo-core-outline-24") ||
               nodeModulesPath.startsWith("framer-motion") ||
               nodeModulesPath.startsWith("@dnd-kit/")
             ) {

@@ -1,5 +1,9 @@
 import { type ProviderKind } from "contracts";
-import { ListFilterIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  IconBarsFilterOutline24 as ListFilterIcon,
+  IconPlusOutline24 as PlusIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+} from "nucleo-core-outline-24";
 import { type RefObject } from "react";
 
 import { Button } from "~/components/ui/button";

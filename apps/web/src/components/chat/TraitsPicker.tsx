@@ -19,7 +19,7 @@ import {
 } from "shared/model";
 import { Fragment, memo, useCallback, useState, type ReactNode } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDownOutline24 as ChevronDownIcon } from "nucleo-core-outline-24";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,

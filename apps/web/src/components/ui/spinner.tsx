@@ -1,4 +1,4 @@
-import { Loader2Icon } from "lucide-react";
+import { IconSpinnerLoaderOutline24 as Loader2Icon } from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 
 function Spinner({ className, ...props }: React.ComponentProps<typeof Loader2Icon>) {

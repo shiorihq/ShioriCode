@@ -1,12 +1,12 @@
 import {
-  ArrowLeftIcon,
-  ChevronDownIcon,
-  CopyIcon,
-  DownloadIcon,
-  PaletteIcon,
-  RotateCcwIcon,
-  SaveIcon,
-} from "lucide-react";
+  IconArrowLeftOutline24 as ArrowLeftIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconCopyOutline24 as CopyIcon,
+  IconDownloadOutline24 as DownloadIcon,
+  IconPaletteOutline24 as PaletteIcon,
+  IconArrowDotRotateAnticlockwiseOutline24 as RotateCcwIcon,
+  IconFloppyDiskOutline24 as SaveIcon,
+} from "nucleo-core-outline-24";
 import { type ChangeEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   type ThemeAppearance,

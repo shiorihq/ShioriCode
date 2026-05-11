@@ -1,16 +1,16 @@
 import type { ComponentType } from "react";
 import {
-  ArchiveIcon,
-  ArrowLeftIcon,
-  BarChart3Icon,
-  BlocksIcon,
-  MonitorIcon,
-  MessageSquareIcon,
-  PaletteIcon,
-  Settings2Icon,
-  SmartphoneIcon,
-  UserIcon,
-} from "lucide-react";
+  IconArchiveOutline24 as ArchiveIcon,
+  IconArrowLeftOutline24 as ArrowLeftIcon,
+  IconChartBarTrendUpOutline24 as BarChart3Icon,
+  IconGrid3Outline24 as BlocksIcon,
+  IconMonitorOutline24 as MonitorIcon,
+  IconMessageOutline24 as MessageSquareIcon,
+  IconPaletteOutline24 as PaletteIcon,
+  IconGear2Outline24 as Settings2Icon,
+  IconMobileOutline24 as SmartphoneIcon,
+  IconUserOutline24 as UserIcon,
+} from "nucleo-core-outline-24";
 import { useNavigate } from "@tanstack/react-router";
 import {
   readSettingsReturnPath,

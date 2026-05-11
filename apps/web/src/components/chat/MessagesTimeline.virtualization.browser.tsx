@@ -1303,6 +1303,118 @@ describe("MessagesTimeline virtualization harness", () => {
     }
   });
 
+  it("preserves measured tail markdown table heights when rows transition into virtualization", async () => {
+    const beforeMessages = createFillerMessages({
+      prefix: "tail-table-before",
+      startOffsetSeconds: 0,
+      pairCount: 1,
+    });
+    const afterMessages = createFillerMessages({
+      prefix: "tail-table-after",
+      startOffsetSeconds: 40,
+      pairCount: 3,
+    });
+    const targetMessage = createMessage({
+      id: "target-tail-table-transition",
+      role: "assistant",
+      text: [
+        "| Old icon | Replacement |",
+        "| --- | --- |",
+        ...Array.from(
+          { length: 34 },
+          (_, index) =>
+            `| VeryLongProviderIconName${index} | ReplacementIcon${index} with notes that wrap in the row |`,
+        ),
+        "",
+        "Questions before I proceed:",
+        "",
+        "1. Swap style - how should the replacement be structured?",
+        "2. Imperfect matches - should I use the closest available replacement?",
+        "3. License setup - should I write both env files?",
+      ].join("\n"),
+      offsetSeconds: 12,
+    });
+    let latestSnapshot: VirtualizerSnapshot | null = null;
+    const initialProps = createBaseTimelineProps({
+      messages: [...beforeMessages, targetMessage, ...afterMessages],
+      onVirtualizerSnapshot: (snapshot) => {
+        latestSnapshot = {
+          totalSize: snapshot.totalSize,
+          measurements: snapshot.measurements,
+        };
+      },
+    });
+    const mounted = await mountMessagesTimeline({
+      props: initialProps,
+      viewport: { width: 420, height: 900 },
+    });
+
+    try {
+      const initiallyRenderedHeight = await measureRenderedRowActualHeight({
+        host: mounted.host,
+        targetRowId: targetMessage.id,
+      });
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: initialProps.timelineEntries,
+        completionDividerBeforeEntryId: initialProps.completionDividerBeforeEntryId,
+        isWorking: initialProps.isWorking,
+        activeTurnStartedAt: initialProps.activeTurnStartedAt,
+      });
+      const targetRow = rows.find((row) => row.id === targetMessage.id);
+      expect(targetRow, `Unable to derive target row ${targetMessage.id}.`).toBeTruthy();
+      const staleEstimate = estimateMessagesTimelineRowHeight(targetRow!, {
+        expandedWorkGroups: initialProps.expandedWorkGroups,
+        timelineWidthPx: 420,
+        turnDiffSummaryByAssistantMessageId: initialProps.turnDiffSummaryByAssistantMessageId,
+      });
+      expect(initiallyRenderedHeight - staleEstimate).toBeGreaterThan(160);
+
+      const appendedProps = createBaseTimelineProps({
+        messages: [
+          ...beforeMessages,
+          targetMessage,
+          ...afterMessages,
+          ...createFillerMessages({
+            prefix: "tail-table-extra",
+            startOffsetSeconds: 120,
+            pairCount: 62,
+          }),
+        ],
+        onVirtualizerSnapshot: initialProps.onVirtualizerSnapshot,
+      });
+      await mounted.rerender(appendedProps);
+
+      const scrollContainer = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLDivElement>(
+            '[data-testid="messages-timeline-scroll-container"]',
+          ),
+        "Unable to find MessagesTimeline scroll container.",
+      );
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          const measurement = latestSnapshot?.measurements.find(
+            (entry) => entry.id === targetMessage.id,
+          );
+          expect(
+            measurement,
+            "Expected target table row to transition into virtualizer cache.",
+          ).toBeTruthy();
+          expect(Math.abs((measurement?.size ?? 0) - initiallyRenderedHeight)).toBeLessThanOrEqual(
+            8,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it.skip("preserves measured tail image row heights when rows transition into virtualization", async () => {
     const beforeMessages = createFillerMessages({
       prefix: "tail-image-before",

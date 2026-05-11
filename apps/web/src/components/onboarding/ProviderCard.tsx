@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
-import { CheckIcon } from "lucide-react";
+import { IconCheckOutline24 as CheckIcon } from "nucleo-core-outline-24";
 import { PROVIDER_DISPLAY_NAMES, type ProviderKind, type ServerProvider } from "contracts";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";

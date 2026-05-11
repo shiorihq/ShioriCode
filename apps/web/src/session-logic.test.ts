@@ -630,6 +630,31 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["task-progress"]);
   });
 
+  it("preserves Claude task-progress tool hints for read/list grouping", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-task-progress-read",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Status update",
+        tone: "info",
+        payload: {
+          taskId: "task-claude-1",
+          detail: "Read package.json",
+          lastToolName: "Read",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      id: "claude-task-progress-read",
+      toolTitle: "Read",
+      requestKind: "file-read",
+      detail: "Read package.json",
+    });
+  });
+
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),
@@ -1022,7 +1047,7 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
-  it("shows runtime warning messages as work log details", () => {
+  it("hides runtime warning messages from the work log", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "runtime-warning",
@@ -1031,27 +1056,6 @@ describe("deriveWorkLogEntries", () => {
         tone: "info",
         payload: {
           message: "Provider got slow",
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities, undefined);
-    expect(entry).toMatchObject({
-      label: "Runtime warning",
-      detail: "Provider got slow",
-    });
-  });
-
-  it("hides MCP refresh-token runtime warnings from the work log", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "runtime-warning",
-        kind: "runtime.warning",
-        summary: "Runtime warning",
-        tone: "info",
-        payload: {
-          message:
-            '2026-04-10T10:02:09.111601Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Auth(TokenRefreshFailed("Server returned error response: invalid_grant: Invalid refresh token"))',
         },
       }),
     ];

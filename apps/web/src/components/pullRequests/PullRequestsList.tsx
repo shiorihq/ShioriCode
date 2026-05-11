@@ -1,5 +1,9 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+} from "nucleo-core-outline-24";
 import { useCallback, useMemo, useState } from "react";
 
 import type { GitPullRequestListFilter, GitResolvedPullRequest } from "contracts";

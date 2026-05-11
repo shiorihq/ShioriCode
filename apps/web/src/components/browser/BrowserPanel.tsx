@@ -1,14 +1,14 @@
 import type { BrowserPanelCommand, ThreadId } from "contracts";
 import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  CameraIcon,
-  ExternalLinkIcon,
-  GlobeIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  XIcon,
-} from "lucide-react";
+  IconArrowLeftOutline24 as ArrowLeftIcon,
+  IconArrowRightOutline24 as ArrowRightIcon,
+  IconCameraOutline24 as CameraIcon,
+  IconExternalLinkOutline24 as ExternalLinkIcon,
+  IconGlobeOutline24 as GlobeIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+  IconMagnifierOutline24 as SearchIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import {
   type FormEvent,
   type ReactNode,

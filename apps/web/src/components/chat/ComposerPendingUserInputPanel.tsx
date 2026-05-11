@@ -5,8 +5,10 @@ import {
   derivePendingUserInputProgress,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
-import { CheckIcon } from "lucide-react";
+import { IconCheckOutline24 as CheckIcon } from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
+import { Kbd } from "../ui/kbd";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -121,20 +123,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   return (
     <div className="px-4 py-3 sm:px-5">
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          {prompt.questions.length > 1 ? (
-            <span className="flex h-5 items-center rounded-md bg-muted/60 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground/60">
-              {questionIndex + 1}/{prompt.questions.length}
-            </span>
-          ) : null}
-          <span className="text-[11px] font-semibold tracking-widest text-muted-foreground/50 uppercase">
-            {activeQuestion.header}
-          </span>
-        </div>
+      <div className="flex items-baseline gap-2">
+        {prompt.questions.length > 1 ? (
+          <Badge variant="secondary" size="sm" className="tabular-nums">
+            {questionIndex + 1}/{prompt.questions.length}
+          </Badge>
+        ) : null}
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {activeQuestion.header}
+        </span>
       </div>
-      <p className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
-      <div className="mt-3 space-y-1">
+      <p className="mt-1 text-sm text-foreground">{activeQuestion.question}</p>
+      <div className="mt-2.5 space-y-0.5">
         {activeQuestion.options.map((option, index) => {
           const isSelected = progress.selectedOptionLabel === option.label;
           const shortcutKey = index < 9 ? index + 1 : null;
@@ -145,34 +145,21 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               disabled={isResponding}
               onClick={() => selectOptionAndAutoAdvance(activeQuestion.id, option.label)}
               className={cn(
-                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
-                isSelected
-                  ? "border-blue-500/40 bg-blue-500/8 text-foreground"
-                  : "border-transparent bg-muted/20 text-foreground/80 hover:bg-muted/40 hover:border-border/40",
-                isResponding && "opacity-50 cursor-not-allowed",
+                "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+                isSelected ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/50",
+                isResponding && "cursor-not-allowed opacity-50",
               )}
             >
               {shortcutKey !== null ? (
-                <kbd
-                  className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded text-[11px] font-medium tabular-nums transition-colors duration-150",
-                    isSelected
-                      ? "bg-blue-500/20 text-blue-400"
-                      : "bg-muted/40 text-muted-foreground/50 group-hover:bg-muted/60 group-hover:text-muted-foreground/70",
-                  )}
-                >
-                  {shortcutKey}
-                </kbd>
+                <Kbd className={cn(isSelected && "bg-primary/15 text-primary")}>{shortcutKey}</Kbd>
               ) : null}
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 truncate">
                 <span className="text-sm font-medium">{option.label}</span>
                 {option.description && option.description !== option.label ? (
-                  <span className="ml-2 text-xs text-muted-foreground/50">
-                    {option.description}
-                  </span>
+                  <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
                 ) : null}
               </div>
-              {isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
+              {isSelected ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
             </button>
           );
         })}

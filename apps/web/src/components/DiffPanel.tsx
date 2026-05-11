@@ -4,13 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "contracts";
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  Columns2Icon,
-  Rows3Icon,
-  TextWrapIcon,
-  XIcon,
-} from "lucide-react";
+  IconChevronLeftOutline24 as ChevronLeftIcon,
+  IconChevronRightOutline24 as ChevronRightIcon,
+  IconResizeXOutline24 as Columns2Icon,
+  IconResizeYOutline24 as Rows3Icon,
+  IconTextColumnsOutline24 as TextWrapIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import {
   type WheelEvent as ReactWheelEvent,
   type CSSProperties,

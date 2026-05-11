@@ -2,7 +2,11 @@ import { type TurnId } from "contracts";
 import { memo, useCallback, useLayoutEffect, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
+import {
+  IconChevronRightOutline24 as ChevronRightIcon,
+  IconFolderOutline24 as FolderIcon,
+  IconFolderOutline24 as FolderClosedIcon,
+} from "nucleo-core-outline-24";
 import { CHAT_THREAD_BODY_CLASS } from "../../chatTypography";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";

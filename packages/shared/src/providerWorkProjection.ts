@@ -366,6 +366,10 @@ function appendContentDelta(
 }
 
 function applyRuntimeEvent(state: MutableProjectionState, event: ProviderRuntimeEvent): void {
+  if (event.type === "runtime.warning") {
+    return;
+  }
+
   state.sourceEventIds.push(event.eventId);
 
   switch (event.type) {
@@ -521,18 +525,6 @@ function applyRuntimeEvent(state: MutableProjectionState, event: ProviderRuntime
         title: "Runtime error",
         detail: event.payload.message,
         error: event.payload.message,
-        completedAt: event.createdAt,
-      });
-      return;
-    }
-
-    case "runtime.warning": {
-      upsertWorkItem(state, event, {
-        id: `warning:${event.eventId}`,
-        kind: "status",
-        status: "completed",
-        title: "Runtime warning",
-        detail: event.payload.message,
         completedAt: event.createdAt,
       });
       return;

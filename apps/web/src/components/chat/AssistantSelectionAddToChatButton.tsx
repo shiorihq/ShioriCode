@@ -1,4 +1,4 @@
-import { MessageCircleIcon } from "lucide-react";
+import { IconMessageOutline24 as MessageCircleIcon } from "nucleo-core-outline-24";
 import {
   memo,
   useCallback,

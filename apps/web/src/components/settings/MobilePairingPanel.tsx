@@ -1,5 +1,11 @@
 import qrcode from "qrcode-generator";
-import { CheckCircle2Icon, CopyIcon, Loader2Icon, QrCodeIcon, RefreshCwIcon } from "lucide-react";
+import {
+  IconCircleCheckOutline24 as CheckCircle2Icon,
+  IconCopyOutline24 as CopyIcon,
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconQrcodeOutline24 as QrCodeIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+} from "nucleo-core-outline-24";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MobilePairingSession, MobilePairingSessionStatus } from "contracts";
 

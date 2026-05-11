@@ -1,5 +1,5 @@
 import { type ApprovalRequestId, type ProviderApprovalDecision } from "contracts";
-import { Loader2Icon } from "lucide-react";
+import { IconSpinnerLoaderOutline24 as Loader2Icon } from "nucleo-core-outline-24";
 import { memo } from "react";
 import { Button } from "../ui/button";
 

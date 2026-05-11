@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { XIcon } from "lucide-react";
+import { IconXmarkOutline24 as XIcon } from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { DIALOG_BACKDROP_CLASS } from "~/components/ui/dialogStyles";

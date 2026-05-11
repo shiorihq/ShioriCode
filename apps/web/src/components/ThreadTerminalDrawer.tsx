@@ -1,5 +1,11 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import {
+  IconPlusOutline24 as Plus,
+  IconSplitOutline24 as SquareSplitHorizontal,
+  IconConsoleOutline24 as TerminalSquare,
+  IconTrash2Outline24 as Trash2,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { type TerminalEvent, type TerminalSessionSnapshot, type ThreadId } from "contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {

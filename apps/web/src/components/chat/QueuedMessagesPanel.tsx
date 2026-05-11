@@ -1,11 +1,11 @@
 import {
-  ArrowUpIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  Trash2Icon,
-} from "lucide-react";
+  IconArrowUpOutline24 as ArrowUpIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronUpOutline24 as ChevronUpIcon,
+  IconDotsOutline24 as MoreHorizontalIcon,
+  IconPencilOutline24 as PencilIcon,
+  IconTrash2Outline24 as Trash2Icon,
+} from "nucleo-core-outline-24";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { stripInlineTerminalContextPlaceholders } from "../../lib/terminalContext";
 import { cn } from "../../lib/utils";

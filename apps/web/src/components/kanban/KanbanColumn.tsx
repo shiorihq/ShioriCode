@@ -1,7 +1,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { type KanbanItem, type KanbanItemId, type KanbanItemStatus } from "contracts";
-import { PlusIcon, XIcon } from "lucide-react";
+import { IconPlusOutline24 as PlusIcon, IconXmarkOutline24 as XIcon } from "nucleo-core-outline-24";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";

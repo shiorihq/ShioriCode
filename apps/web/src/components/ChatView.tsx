@@ -100,13 +100,13 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CircleAlertIcon,
-  ListTodoIcon,
-  XIcon,
-} from "lucide-react";
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronLeftOutline24 as ChevronLeftIcon,
+  IconChevronRightOutline24 as ChevronRightIcon,
+  IconCircleWarningOutline24 as CircleAlertIcon,
+  IconListTodoOutline24 as ListTodoIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { Button } from "./ui/button";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";

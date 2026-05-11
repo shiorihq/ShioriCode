@@ -1,10 +1,11 @@
 import {
-  CheckCircleIcon,
-  CircleIcon,
-  ClockIcon,
-  MessageSquareIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  IconCircleCheckOutline24 as CheckCircleIcon,
+  IconCircleDottedOutline24 as CircleIcon,
+  IconClockOutline24 as ClockIcon,
+  IconMessageOutline24 as MessageSquareIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+} from "nucleo-core-outline-24";
+import { type IconLike } from "../Icons";
 import { useCallback, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 
@@ -29,7 +30,7 @@ const TOPICS = ["Bug Report", "Feature Request", "General Question", "Other"] as
 const STATUS_CONFIG: Record<
   HostedTicket["status"],
   {
-    icon: typeof CircleIcon;
+    icon: IconLike;
     color: string;
     label: string;
     variant: "default" | "secondary" | "outline" | "info" | "success";

@@ -1,6 +1,9 @@
 import { memo, useMemo, useState } from "react";
 import { getVscodeIconUrlForEntry } from "../../vscode-icons";
-import { FileIcon, FolderIcon } from "lucide-react";
+import {
+  IconFileOutline24 as FileIcon,
+  IconFolderOutline24 as FolderIcon,
+} from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 
 export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {

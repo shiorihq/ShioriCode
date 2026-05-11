@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
 import {
-  BlocksIcon,
-  ChevronDownIcon,
-  ExternalLinkIcon,
-  TriangleAlertIcon,
-  PlusIcon,
-  SearchIcon,
-  TerminalIcon,
-  Trash2Icon,
-} from "lucide-react";
+  IconGrid3Outline24 as BlocksIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconExternalLinkOutline24 as ExternalLinkIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+  IconPlusOutline24 as PlusIcon,
+  IconMagnifierOutline24 as SearchIcon,
+  IconConsoleOutline24 as TerminalIcon,
+  IconTrash2Outline24 as Trash2Icon,
+} from "nucleo-core-outline-24";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   EffectiveMcpServerEntry,

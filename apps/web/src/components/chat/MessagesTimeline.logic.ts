@@ -108,6 +108,13 @@ export function isWorkRowExpanded(
   return isWorkRowInProgress(row);
 }
 
+export function isStandaloneWorkEntryExpanded(
+  row: WorkTimelineRow,
+  expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
+): boolean {
+  return readExplicitWorkGroupVisibility(row, expandedWorkGroups) ?? false;
+}
+
 export function shouldRenderFlatWorkRowAsGroup(
   row: Pick<WorkTimelineRow, "groupedEntries" | "inlineEntries">,
 ): boolean {
@@ -328,6 +335,7 @@ function getEntryToolName(entry: WorkLogEntry): string | null {
 function getEntryRawToolName(entry: WorkLogEntry): string | null {
   return (
     asTrimmedString(extractStructuredProviderToolData(entry.output)?.toolName) ??
+    asTrimmedString(entry.toolTitle) ??
     parseRawToolNameFromDetail(entry.detail)
   );
 }
@@ -539,6 +547,32 @@ function coalesceRedundantDetail(action: string, detail: string | null): string 
   return normalizeRedundantDetailText(action) === normalizeRedundantDetailText(detail)
     ? null
     : detail;
+}
+
+function stripStatusToolActionPrefix(
+  kind: WorkEntryDisplayKind,
+  detail: string | null,
+): string | null {
+  if (!detail) {
+    return null;
+  }
+
+  const trimmed = detail.trim();
+  const strip = (pattern: RegExp): string | null => {
+    const stripped = trimmed.replace(pattern, "").trim();
+    return stripped.length > 0 ? stripped : null;
+  };
+
+  switch (kind) {
+    case "read":
+      return strip(/^(?:read|reading)\s+/iu) ?? trimmed;
+    case "list":
+      return strip(/^(?:listed|listing|list)\s+/iu) ?? trimmed;
+    case "search":
+      return strip(/^(?:found|finding|searched(?:\s+for)?|searching(?:\s+for)?)\s+/iu) ?? trimmed;
+    default:
+      return trimmed;
+  }
 }
 
 function stripFileChangeDetailPrefix(detail: string): string | null {
@@ -894,6 +928,20 @@ const COMMAND_TOKEN_PATTERN = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`|[
 const SEARCH_COMMANDS = new Set(["ack", "ag", "fd", "find", "grep", "rg"]);
 const READ_COMMANDS = new Set(["bat", "cat", "head", "less", "more", "read", "sed", "tail"]);
 const LIST_COMMANDS = new Set(["dir", "ls", "pwd", "stat", "tree"]);
+const SHELL_OUTPUT_HELPER_COMMANDS = new Set([
+  "awk",
+  "cat",
+  "cut",
+  "grep",
+  "head",
+  "jq",
+  "sed",
+  "sort",
+  "tail",
+  "tr",
+  "uniq",
+  "wc",
+]);
 
 function unquoteCommandToken(token: string): string {
   if (token.length < 2) {
@@ -1038,6 +1086,35 @@ function parseExplorationCommand(
   }
 
   return null;
+}
+
+function isPlainStatusUpdateEntry(entry: WorkLogEntry): boolean {
+  return entry.label.trim().toLowerCase() === "status update";
+}
+
+function isBareShellOutputHelper(detail: string | null): boolean {
+  if (!detail) {
+    return false;
+  }
+
+  const tokens = tokenizeCommand(detail);
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  const firstCommand = commandName(tokens[0]);
+  if (!SHELL_OUTPUT_HELPER_COMMANDS.has(firstCommand)) {
+    return false;
+  }
+
+  return !tokens.some(
+    (token) =>
+      token === "--" ||
+      token.includes("/") ||
+      token.includes("\\") ||
+      token.startsWith(".") ||
+      token.startsWith("~"),
+  );
 }
 
 function runningActionForKind(kind: WorkEntryDisplayKind): string {
@@ -1208,34 +1285,65 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   }
 
   if (providerToolKind === "list") {
+    const statusDetail = stripStatusToolActionPrefix("list", explicitDetail);
+    if (
+      providerToolPath === null &&
+      isPlainStatusUpdateEntry(entry) &&
+      isBareShellOutputHelper(statusDetail)
+    ) {
+      return {
+        kind: "command",
+        action: running ? "Running" : "Ran",
+        detail: statusDetail,
+        monospace: true,
+        dedupeKey: null,
+      };
+    }
+
     return {
       kind: "list",
       action: running ? "Listing" : "Listed",
-      detail: providerToolPath ?? explicitDetail,
+      detail: providerToolPath ?? statusDetail,
       monospace: true,
       dedupeKey: null,
     };
   }
 
   if (providerToolKind === "read") {
+    const statusDetail = stripStatusToolActionPrefix("read", explicitDetail);
+    if (
+      providerToolPath === null &&
+      isPlainStatusUpdateEntry(entry) &&
+      isBareShellOutputHelper(statusDetail)
+    ) {
+      return {
+        kind: "command",
+        action: running ? "Running" : "Ran",
+        detail: statusDetail,
+        monospace: true,
+        dedupeKey: null,
+      };
+    }
+
     return {
       kind: "read",
       action: running ? "Reading" : "Read",
-      detail: providerToolPath ?? explicitDetail,
+      detail: providerToolPath ?? statusDetail,
       monospace: true,
       dedupeKey: providerToolPath
         ? `read:${providerToolPath}`
-        : explicitDetail
-          ? `read:${explicitDetail}`
+        : statusDetail
+          ? `read:${statusDetail}`
           : null,
     };
   }
 
   if (providerToolKind === "search") {
+    const strippedSearchDetail = stripStatusToolActionPrefix("search", explicitDetail);
     const providerSearchDetail =
       providerToolQuery && providerToolPath
         ? `${providerToolQuery} in ${providerToolPath}`
-        : (providerToolQuery ?? providerToolPath ?? explicitDetail ?? entry.command ?? null);
+        : (providerToolQuery ?? providerToolPath ?? strippedSearchDetail ?? entry.command ?? null);
     return {
       kind: "search",
       action: running ? "Searching for" : "Searched for",
@@ -1260,6 +1368,17 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     entry.itemType === "image_view" ||
     normalizedLabel === "read file"
   ) {
+    const statusDetail = stripStatusToolActionPrefix("read", explicitDetail);
+    if (isPlainStatusUpdateEntry(entry) && isBareShellOutputHelper(statusDetail)) {
+      return {
+        kind: "command",
+        action: running ? "Running" : "Ran",
+        detail: statusDetail,
+        monospace: true,
+        dedupeKey: null,
+      };
+    }
+
     return {
       kind: "read",
       action: running ? "Reading" : "Read",
@@ -1570,7 +1689,7 @@ export function buildWorkGroupSummaryParts(
     }
 
     if (
-      entry.tone === "tool" &&
+      (entry.tone === "tool" || toolName !== null) &&
       entry.itemType !== "collab_agent_tool_call" &&
       deriveWorkEntryGroupKey(entry) !== null
     ) {
@@ -1676,9 +1795,8 @@ export function buildWorkGroupSummaryParts(
 }
 
 export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
-  if (entry.label.trim().toLowerCase() === "status update") {
-    return null;
-  }
+  const isPlainStatusUpdate = entry.label.trim().toLowerCase() === "status update";
+  const toolName = getEntryToolName(entry);
   if (entry.itemType === "web_search") {
     return "web-search";
   }
@@ -1697,6 +1815,12 @@ export function deriveWorkEntryGroupKey(entry: WorkLogEntry): string | null {
   }
   if (entry.itemType === "mcp_tool_call" || entry.itemType === "dynamic_tool_call") {
     return "tool";
+  }
+  if (isPlainStatusUpdate && toolName) {
+    return "tool";
+  }
+  if (isPlainStatusUpdate) {
+    return null;
   }
 
   const normalized = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
@@ -1936,9 +2060,9 @@ function deriveNestedWorkRows(
 
   const contiguousTopLevelToolGroupKey = (entry: WorkLogEntry): "tool" | null => {
     if (
-      entry.tone !== "tool" ||
       entry.itemType === "collab_agent_tool_call" ||
-      hasNestedChildren(entry)
+      hasNestedChildren(entry) ||
+      (entry.tone !== "tool" && deriveWorkEntryGroupKey(entry) === null)
     ) {
       return null;
     }
@@ -2082,7 +2206,7 @@ function estimateWorkRowHeight(
   if (!shouldRenderFlatWorkRowAsGroup(row) && entryCount === 1) {
     const entry = displayedEntries[0]!;
     if (!entry.running) {
-      const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
+      const isExpanded = isStandaloneWorkEntryExpanded(row, input.expandedWorkGroups);
       if (isExpanded) {
         return estimateExpandedWorkEntryHeight(entry);
       }
@@ -2091,7 +2215,10 @@ function estimateWorkRowHeight(
     return 16 + 24;
   }
 
-  const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
+  const isExpanded =
+    entryCount === 1 && !row.inlineEntries
+      ? isStandaloneWorkEntryExpanded(row, input.expandedWorkGroups)
+      : isWorkRowExpanded(row, input.expandedWorkGroups);
   if (!isExpanded) {
     return 16 + 26;
   }

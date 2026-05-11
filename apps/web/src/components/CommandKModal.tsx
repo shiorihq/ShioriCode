@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  DiffIcon,
-  FolderOpenIcon,
-  MessageSquareIcon,
-  PanelBottomIcon,
-  PanelLeftIcon,
-  SettingsIcon,
-  SquarePenIcon,
-} from "lucide-react";
+  IconArrowDownOutline24 as ArrowDownIcon,
+  IconArrowUpOutline24 as ArrowUpIcon,
+  IconBranchMergeOutline24 as DiffIcon,
+  IconFolderOpenOutline24 as FolderOpenIcon,
+  IconMessageOutline24 as MessageSquareIcon,
+  IconLayoutBottomOutline24 as PanelBottomIcon,
+  IconLayoutLeftOutline24 as PanelLeftIcon,
+  IconGearOutline24 as SettingsIcon,
+  IconComposeOutline24 as NewThreadIcon,
+} from "nucleo-core-outline-24";
 import { type KeybindingCommand, type ThreadId } from "contracts";
 
 import {
@@ -142,7 +142,7 @@ export function CommandKModal({ open, onOpenChange }: CommandKModalProps) {
         {
           id: "new-thread",
           label: "New Thread",
-          icon: <SquarePenIcon className="size-4" />,
+          icon: <NewThreadIcon className="size-4" />,
           shortcutCommand: "chat.new",
           onSelect: () => {
             close();

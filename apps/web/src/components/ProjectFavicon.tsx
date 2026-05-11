@@ -1,4 +1,4 @@
-import { FolderIcon } from "lucide-react";
+import { IconFolderOutline24 as FolderIcon } from "nucleo-core-outline-24";
 import { useState } from "react";
 import { resolveServerUrl } from "~/lib/utils";
 

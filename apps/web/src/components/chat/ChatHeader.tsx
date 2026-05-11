@@ -1,6 +1,11 @@
 import { type EditorId, type ResolvedKeybindingsConfig, type ThreadId } from "contracts";
 import { memo } from "react";
-import { ChevronDownIcon, DiffIcon, GitBranchIcon, GlobeIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconBranchMergeOutline24 as DiffIcon,
+  IconBranchOutOutline24 as GitBranchIcon,
+  IconGlobeOutline24 as GlobeIcon,
+} from "nucleo-core-outline-24";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";

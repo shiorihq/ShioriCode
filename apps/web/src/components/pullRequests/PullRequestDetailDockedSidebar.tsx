@@ -10,17 +10,17 @@ import {
 } from "contracts";
 import { Schema } from "effect";
 import {
-  CheckIcon,
-  ChevronDownIcon,
-  DownloadIcon,
-  ExternalLinkIcon,
-  GitBranchIcon,
-  MessageCircleIcon,
-  OctagonXIcon,
-  SparklesIcon,
-  UserIcon,
-  XIcon,
-} from "lucide-react";
+  IconCheckOutline24 as CheckIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconDownloadOutline24 as DownloadIcon,
+  IconExternalLinkOutline24 as ExternalLinkIcon,
+  IconBranchOutOutline24 as GitBranchIcon,
+  IconMessageOutline24 as MessageCircleIcon,
+  IconOctagonOutline24 as OctagonXIcon,
+  IconSparkleOutline24 as SparklesIcon,
+  IconUserOutline24 as UserIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,

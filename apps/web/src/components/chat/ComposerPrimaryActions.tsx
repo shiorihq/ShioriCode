@@ -1,5 +1,9 @@
 import { memo } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, LoaderCircleIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronLeftOutline24 as ChevronLeftIcon,
+  IconSpinnerLoaderOutline24 as LoaderCircleIcon,
+} from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";

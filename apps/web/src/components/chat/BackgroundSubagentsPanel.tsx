@@ -1,5 +1,8 @@
 import { type OrchestrationThreadActivity, type ProviderKind } from "contracts";
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronUpOutline24 as ChevronUpIcon,
+} from "nucleo-core-outline-24";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { CHAT_THREAD_BODY_CLASS } from "../../chatTypography";

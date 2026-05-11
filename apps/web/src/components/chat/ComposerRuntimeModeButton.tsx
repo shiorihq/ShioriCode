@@ -1,6 +1,9 @@
 import { RuntimeMode } from "contracts";
 import { memo } from "react";
-import { LockIcon, LockOpenIcon } from "lucide-react";
+import {
+  IconLockOutline24 as LockIcon,
+  IconLockOpenOutline24 as LockOpenIcon,
+} from "nucleo-core-outline-24";
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 import { getRuntimeModeLabel, getRuntimeModeTitle } from "./runtimeModeLabels";

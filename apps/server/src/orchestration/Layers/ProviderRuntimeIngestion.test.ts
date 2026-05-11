@@ -2234,7 +2234,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activityPayload?.message).toBe("runtime activity exploded");
   });
 
-  it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
+  it("keeps the session running and hides runtime.warning activity during an active turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -2263,19 +2263,15 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
-      harness.engine,
-      (entry) =>
-        entry.session?.status === "running" &&
-        entry.session?.activeTurnId === "turn-warning" &&
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) =>
-            activity.id === "evt-warning-runtime" && activity.kind === "runtime.warning",
-        ),
+    await harness.drain();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("turn-warning");
+    expect(thread?.session?.lastError).toBeNull();
+    expect(thread?.activities.some((activity) => activity.id === "evt-warning-runtime")).toBe(
+      false,
     );
-    expect(thread.session?.status).toBe("running");
-    expect(thread.session?.activeTurnId).toBe("turn-warning");
-    expect(thread.session?.lastError).toBeNull();
   });
 
   it("suppresses MCP refresh-token runtime warnings from thread activities", async () => {
@@ -2478,9 +2474,6 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.updated",
         ) &&
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
-        ) &&
         entry.checkpoints.some(
           (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
         ),
@@ -2511,15 +2504,11 @@ describe("ProviderRuntimeIngestion", () => {
     expect(toolUpdatePayload?.itemType).toBe("command_execution");
     expect(toolUpdatePayload?.status).toBe("in_progress");
 
-    const warning = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning",
-    );
-    const warningPayload =
-      warning?.payload && typeof warning.payload === "object"
-        ? (warning.payload as Record<string, unknown>)
-        : undefined;
-    expect(warning?.kind).toBe("runtime.warning");
-    expect(warningPayload?.message).toBe("Provider got slow");
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning",
+      ),
+    ).toBe(false);
 
     const checkpoint = thread.checkpoints.find(
       (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",

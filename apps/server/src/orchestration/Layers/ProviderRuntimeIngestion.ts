@@ -17,7 +17,6 @@ import {
 } from "contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "shared/DrainableWorker";
-import { isMcpRefreshTokenDiagnosticMessage } from "shared/mcpDiagnostics";
 import { snapshotProviderToolData } from "shared/providerTool";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
@@ -398,24 +397,7 @@ function runtimeEventToActivities(
     }
 
     case "runtime.warning": {
-      if (isMcpRefreshTokenDiagnosticMessage(event.payload.message)) {
-        return [];
-      }
-      return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "info",
-          kind: "runtime.warning",
-          summary: "Runtime warning",
-          payload: {
-            message: truncateDetail(event.payload.message, 2_000),
-            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
-          },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        },
-      ];
+      return [];
     }
 
     case "turn.plan.updated": {

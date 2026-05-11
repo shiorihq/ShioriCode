@@ -1,14 +1,14 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "contracts";
 import type { OrchestrationThreadResumeState } from "contracts";
 import {
-  AlertTriangleIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  Loader2Icon,
-  RefreshCwIcon,
-  SettingsIcon,
-  XIcon,
-} from "lucide-react";
+  IconTriangleWarningOutline24 as AlertTriangleIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronUpOutline24 as ChevronUpIcon,
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconRefreshOutline24 as RefreshCwIcon,
+  IconGearOutline24 as SettingsIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { memo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 

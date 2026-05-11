@@ -13,7 +13,7 @@ import {
   shouldRenderFlatWorkRowAsGroup,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
-import type { TimelineEntry } from "../../session-logic";
+import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
 
 function makeMessageRow(input: {
   id: string;
@@ -1415,5 +1415,212 @@ describe("deriveMessagesTimelineRows", () => {
     expect(workRows).toHaveLength(2);
     expect(workRows[0]?.groupedEntries).toHaveLength(1);
     expect(workRows[1]?.groupedEntries).toHaveLength(1);
+  });
+
+  it("keeps Claude read/list task progress inside adjacent exploration workgroups", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "tool-search",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "tool-search",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Grep completed",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolTitle: "Grep",
+          detail: 'Grep: {"pattern":"workgroup"}',
+        },
+      },
+      {
+        id: "claude-progress-read",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "claude-progress-read",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "Read",
+          requestKind: "file-read",
+          detail: "Read package.json",
+        },
+      },
+      {
+        id: "claude-progress-list",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "claude-progress-list",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "LS",
+          requestKind: "file-read",
+          detail: "Listed src",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "tool-search",
+      "claude-progress-read",
+      "claude-progress-list",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 1 file, 1 search, 1 list",
+    );
+  });
+
+  it("does not render Claude shell helper status as file reads", () => {
+    const readHead: WorkLogEntry = {
+      id: "claude-progress-read-head",
+      createdAt: "2026-02-23T00:00:02.000Z",
+      label: "Status update",
+      tone: "info",
+      toolTitle: "Read",
+      requestKind: "file-read",
+      detail: "Read head",
+    };
+    const readWc: WorkLogEntry = {
+      id: "claude-progress-read-wc",
+      createdAt: "2026-02-23T00:00:03.000Z",
+      label: "Status update",
+      tone: "info",
+      toolTitle: "Read",
+      requestKind: "file-read",
+      detail: "Read wc",
+    };
+    const readFile: WorkLogEntry = {
+      id: "claude-progress-read-file",
+      createdAt: "2026-02-23T00:00:04.000Z",
+      label: "Status update",
+      tone: "info",
+      toolTitle: "Read",
+      requestKind: "file-read",
+      detail: "Read package.json",
+    };
+
+    expect(formatWorkEntry(readHead)).toMatchObject({
+      kind: "command",
+      action: "Ran",
+      detail: "head",
+    });
+    expect(formatWorkEntry(readWc)).toMatchObject({
+      kind: "command",
+      action: "Ran",
+      detail: "wc",
+    });
+    expect(formatWorkEntry(readFile)).toMatchObject({
+      kind: "read",
+      action: "Read",
+      detail: "package.json",
+    });
+  });
+
+  it("keeps mixed Claude status tool activity in one workgroup", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "claude-command-1",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        entry: {
+          id: "claude-command-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "Bash",
+          requestKind: "command",
+          detail: 'echo "NUCLEO_LICENSE_KEY is set"',
+          command: 'echo "NUCLEO_LICENSE_KEY is set"',
+        },
+      },
+      {
+        id: "claude-todo",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        entry: {
+          id: "claude-todo",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "TodoWrite",
+          detail: "Updated todo list (8 tasks)",
+        },
+      },
+      {
+        id: "claude-web-fetch",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        entry: {
+          id: "claude-web-fetch",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "Web Fetch",
+          detail:
+            'Web Fetch: {"url":"https://nucleoapp.com/react-packages","prompt":"Look carefully"}',
+        },
+      },
+      {
+        id: "claude-command-2",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        entry: {
+          id: "claude-command-2",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "Bash",
+          requestKind: "command",
+          detail: 'curl -sI "https://registry.npmjs.org/nucleo-core-outline-24" | head -3',
+          command: 'curl -sI "https://registry.npmjs.org/nucleo-core-outline-24" | head -3',
+        },
+      },
+      {
+        id: "claude-read",
+        kind: "work",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        entry: {
+          id: "claude-read",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          label: "Status update",
+          tone: "info",
+          toolTitle: "Read",
+          requestKind: "file-read",
+          detail: "Read package.json",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const workRows = rows.filter((row) => row.kind === "work");
+    expect(workRows).toHaveLength(1);
+    expect(workRows[0]?.groupedEntries.map((entry) => entry.id)).toEqual([
+      "claude-command-1",
+      "claude-todo",
+      "claude-web-fetch",
+      "claude-command-2",
+      "claude-read",
+    ]);
+    expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
+      "Explored 1 file, ran 2 commands, called 1 tool, updated todo list",
+    );
   });
 });

@@ -1,5 +1,8 @@
 import { memo } from "react";
-import { CopyIcon, CheckIcon } from "lucide-react";
+import {
+  IconCopyOutline24 as CopyIcon,
+  IconCheckOutline24 as CheckIcon,
+} from "nucleo-core-outline-24";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 

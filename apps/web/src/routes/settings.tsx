@@ -1,4 +1,4 @@
-import { RotateCcwIcon } from "lucide-react";
+import { IconArrowDotRotateAnticlockwiseOutline24 as RotateCcwIcon } from "nucleo-core-outline-24";
 import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 

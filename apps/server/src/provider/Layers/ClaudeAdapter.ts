@@ -89,6 +89,7 @@ import { isClaudeMissingConversationErrorMessage } from "../claudeConversationEr
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import { materializeMcpServersForRuntime } from "../mcpServers.ts";
+import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -3103,18 +3104,28 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Parse questions from the SDK's AskUserQuestion input.
         const rawQuestions = Array.isArray(toolInput.questions) ? toolInput.questions : [];
         const questions: Array<UserInputQuestion> = rawQuestions.map(
-          (q: Record<string, unknown>, idx: number) => ({
-            id: typeof q.header === "string" ? q.header : `q-${idx}`,
-            header: typeof q.header === "string" ? q.header : `Question ${idx + 1}`,
-            question: typeof q.question === "string" ? q.question : "",
-            options: Array.isArray(q.options)
-              ? q.options.map((opt: Record<string, unknown>) => ({
-                  label: typeof opt.label === "string" ? opt.label : "",
-                  description: typeof opt.description === "string" ? opt.description : "",
-                }))
-              : [],
-            multiSelect: typeof q.multiSelect === "boolean" ? q.multiSelect : false,
-          }),
+          (q: Record<string, unknown>, idx: number) => {
+            const question =
+              typeof q.question === "string" && q.question.trim().length > 0
+                ? q.question.trim()
+                : `Question ${idx + 1}`;
+            const header =
+              typeof q.header === "string" && q.header.trim().length > 0
+                ? q.header.trim()
+                : `Question ${idx + 1}`;
+            return {
+              id: question,
+              header,
+              question,
+              options: Array.isArray(q.options)
+                ? q.options.map((opt: Record<string, unknown>) => ({
+                    label: typeof opt.label === "string" ? opt.label : "",
+                    description: typeof opt.description === "string" ? opt.description : "",
+                  }))
+                : [],
+              multiSelect: typeof q.multiSelect === "boolean" ? q.multiSelect : false,
+            };
+          },
         );
 
         const answersDeferred = yield* Deferred.make<ProviderUserInputAnswers>();
@@ -3173,6 +3184,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
         );
         const answers = yield* awaitAnswers;
+        const normalizedAnswers = normalizeUserInputAnswersByQuestionText(questions, answers);
         pendingUserInputs.delete(requestId);
         // If the session was interrupted or stopped while we were waiting,
         // treat this as aborted so the SDK receives a deny instead of empty
@@ -3195,14 +3207,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             threadId: context.session.threadId,
             ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
             requestId: asRuntimeRequestId(requestId),
-            payload: { answers },
+            payload: { answers: normalizedAnswers },
             providerRefs: nativeProviderRefs(context, {
               providerItemId: callbackOptions.toolUseID,
             }),
             raw: {
               source: "claude.sdk.permission",
               method: "canUseTool/AskUserQuestion/resolved",
-              payload: { answers },
+              payload: { answers: normalizedAnswers },
             },
           });
         }
@@ -3220,7 +3232,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           behavior: "allow",
           updatedInput: {
             questions: toolInput.questions,
-            answers,
+            answers: normalizedAnswers,
           },
         } satisfies PermissionResult;
       });

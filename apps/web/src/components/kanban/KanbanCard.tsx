@@ -2,12 +2,12 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type KanbanItem, type KanbanItemId } from "contracts";
 import {
-  BotIcon,
-  GitPullRequestIcon,
-  Loader2Icon,
-  SparklesIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  IconAgentOutline24 as BotIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconSparkleOutline24 as SparklesIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+} from "nucleo-core-outline-24";
 import type { CSSProperties } from "react";
 
 import { cn } from "~/lib/utils";

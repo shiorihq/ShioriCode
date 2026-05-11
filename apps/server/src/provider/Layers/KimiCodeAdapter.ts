@@ -64,6 +64,7 @@ import {
 import { buildShioriSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
 import type { ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { KimiCodeAdapter, type KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
+import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 
 const PROVIDER = "kimiCode" as const;
 const DEFAULT_MODEL = "kimi-code/kimi-for-coding";
@@ -750,25 +751,7 @@ export function normalizeKimiQuestionAnswers(
   questions: ReadonlyArray<UserInputQuestion>,
   answers: Record<string, unknown>,
 ): Record<string, string> {
-  const normalizedAnswers: Record<string, string> = {};
-  for (const question of questions) {
-    const rawAnswer =
-      answers[question.id] !== undefined ? answers[question.id] : answers[question.question];
-    if (typeof rawAnswer === "string" && rawAnswer.trim().length > 0) {
-      normalizedAnswers[question.question] = rawAnswer.trim();
-      continue;
-    }
-    if (Array.isArray(rawAnswer)) {
-      const joined = rawAnswer
-        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-        .filter((entry) => entry.length > 0)
-        .join(", ");
-      if (joined.length > 0) {
-        normalizedAnswers[question.question] = joined;
-      }
-    }
-  }
-  return normalizedAnswers;
+  return normalizeUserInputAnswersByQuestionText(questions, answers);
 }
 
 function readExplicitKimiThinking(

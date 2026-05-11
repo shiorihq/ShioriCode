@@ -140,4 +140,18 @@ describe("projectProviderRuntimeEventsToTurnWorkSnapshot", () => {
       detail: "No issues found",
     });
   });
+
+  it("omits runtime warnings from turn work snapshots", () => {
+    const snapshot = projectProviderRuntimeEventsToTurnWorkSnapshot([
+      event("evt-1", {
+        type: "runtime.warning",
+        payload: {
+          message: "Provider got slow",
+        },
+      }),
+    ]);
+
+    expect(snapshot?.items).toEqual([]);
+    expect(snapshot?.sourceEventIds).toEqual([]);
+  });
 });

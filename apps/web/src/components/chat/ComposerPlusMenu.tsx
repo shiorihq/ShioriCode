@@ -1,6 +1,10 @@
 import type { ProviderKind, ProviderModelOptions, ServerProviderModel, ThreadId } from "contracts";
 import { memo, useCallback, useRef } from "react";
-import { PaperclipIcon, PlusIcon, ZapIcon } from "lucide-react";
+import {
+  IconPaperclipOutline24 as PaperclipIcon,
+  IconPlusOutline24 as PlusIcon,
+  IconBoltOutline24 as ZapIcon,
+} from "nucleo-core-outline-24";
 import { Button } from "../ui/button";
 import {
   Menu,

@@ -1,13 +1,13 @@
 import {
-  ArchiveIcon,
-  ArchiveX,
-  ChevronDownIcon,
-  InfoIcon,
-  RefreshCwIcon,
-  Trash2,
-  Undo2Icon,
-  XIcon,
-} from "lucide-react";
+  IconArchiveOutline24 as ArchiveIcon,
+  IconArchiveOutline24 as ArchiveX,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconInfoPointOutline24 as InfoIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+  IconTrash2Outline24 as Trash2,
+  IconUndoOutline24 as Undo2Icon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";

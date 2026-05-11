@@ -1,23 +1,23 @@
 import type { KanbanItemId, ModelSelection, ProjectId } from "contracts";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  BotIcon,
-  CheckIcon,
-  CircleDotDashedIcon,
-  FileTextIcon,
-  GitPullRequestIcon,
-  GripVerticalIcon,
-  Loader2Icon,
-  PauseIcon,
-  PlayIcon,
-  PlusIcon,
-  RotateCcwIcon,
-  SaveIcon,
-  SparklesIcon,
-  SquareIcon,
-  Trash2Icon,
-} from "lucide-react";
+  IconArrowDownOutline24 as ArrowDownIcon,
+  IconArrowUpOutline24 as ArrowUpIcon,
+  IconAgentOutline24 as BotIcon,
+  IconCheckOutline24 as CheckIcon,
+  IconCircleDottedOutline24 as CircleDotDashedIcon,
+  IconFileDocOutline24 as FileTextIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
+  IconGripDotsVerticalOutline24 as GripVerticalIcon,
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconMediaPauseOutline24 as PauseIcon,
+  IconMediaPlayOutline24 as PlayIcon,
+  IconPlusOutline24 as PlusIcon,
+  IconArrowDotRotateAnticlockwiseOutline24 as RotateCcwIcon,
+  IconFloppyDiskOutline24 as SaveIcon,
+  IconSparkleOutline24 as SparklesIcon,
+  IconCircleDottedOutline24 as SquareIcon,
+  IconTrash2Outline24 as Trash2Icon,
+} from "nucleo-core-outline-24";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";

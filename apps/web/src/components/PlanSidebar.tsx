@@ -3,7 +3,13 @@ import { type TimestampFormat } from "contracts/settings";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, EllipsisIcon, XIcon } from "lucide-react";
+import {
+  IconCheckOutline24 as CheckIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronRightOutline24 as ChevronRightIcon,
+  IconDotsOutline24 as EllipsisIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";

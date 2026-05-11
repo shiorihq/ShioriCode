@@ -1,6 +1,6 @@
 import { useQuery as useServerQuery } from "@tanstack/react-query";
 import { type HostedBillingPlan, type HostedBillingSnapshot } from "contracts";
-import { ArrowRightIcon } from "lucide-react";
+import { IconArrowRightOutline24 as ArrowRightIcon } from "nucleo-core-outline-24";
 import { useMemo, useState } from "react";
 
 import { type HostedSubscriptionPlanId } from "../../convex/api";

@@ -1,5 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRightIcon, CheckCircle2Icon, LoaderCircleIcon, XCircleIcon } from "lucide-react";
+import {
+  IconArrowRightOutline24 as ArrowRightIcon,
+  IconCircleCheckOutline24 as CheckCircle2Icon,
+  IconSpinnerLoaderOutline24 as LoaderCircleIcon,
+  IconCircleXmarkOutline24 as XCircleIcon,
+} from "nucleo-core-outline-24";
 
 import { useHostedShioriState } from "../convex/HostedShioriProvider";
 import { AppLogoMark } from "../components/AppLogoMark";

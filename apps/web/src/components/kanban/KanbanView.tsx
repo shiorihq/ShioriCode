@@ -1,6 +1,6 @@
 import type { ProjectId } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleDotDashedIcon } from "lucide-react";
+import { IconCircleDottedOutline24 as CircleDotDashedIcon } from "nucleo-core-outline-24";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { KanbanHeaderControls } from "~/components/kanban/KanbanHeaderControls";

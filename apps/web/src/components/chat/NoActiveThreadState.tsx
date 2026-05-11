@@ -1,4 +1,7 @@
-import { FolderOpenIcon, SquarePenIcon } from "lucide-react";
+import {
+  IconFolderOpenOutline24 as FolderOpenIcon,
+  IconComposeOutline24 as NewThreadIcon,
+} from "nucleo-core-outline-24";
 import { Link } from "@tanstack/react-router";
 
 import { useSettings } from "../../hooks/useSettings";
@@ -79,7 +82,7 @@ export function NoActiveThreadState() {
                       })
                     }
                   >
-                    <SquarePenIcon className="size-4" />
+                    <NewThreadIcon className="size-4" />
                     New Thread
                   </Button>
                   <Button variant="outline" onClick={requestProjectAdd}>
@@ -106,7 +109,7 @@ export function NoActiveThreadState() {
                       })
                     }
                   >
-                    <SquarePenIcon className="size-4" />
+                    <NewThreadIcon className="size-4" />
                     New Thread
                   </Button>
                   <Button variant="outline" onClick={requestProjectAdd}>

@@ -1,6 +1,10 @@
 import type { ProjectId, ThreadId } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { FolderGit2, GitForkIcon, Laptop } from "lucide-react";
+import {
+  IconFolderOutline24 as FolderGit2,
+  IconBranchOutOutline24 as GitForkIcon,
+  IconLaptopOutline24 as Laptop,
+} from "nucleo-core-outline-24";
 import { useCallback } from "react";
 
 import { openProjectDraftThread } from "../hooks/useHandleNewThread";

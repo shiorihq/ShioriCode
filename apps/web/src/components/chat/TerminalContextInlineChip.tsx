@@ -1,4 +1,4 @@
-import { TerminalIcon } from "lucide-react";
+import { IconConsoleOutline24 as TerminalIcon } from "nucleo-core-outline-24";
 
 import { cn } from "~/lib/utils";
 import {

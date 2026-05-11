@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ComputerUsePermissionKind, ComputerUsePermissionSnapshot } from "contracts";
 import {
-  CheckCircle2Icon,
-  EyeIcon,
-  KeyboardIcon,
-  MonitorIcon,
-  MousePointerClickIcon,
-  RefreshCwIcon,
-  ShieldAlertIcon,
-  ShieldCheckIcon,
-} from "lucide-react";
+  IconCircleCheckOutline24 as CheckCircle2Icon,
+  IconEyeOutline24 as EyeIcon,
+  IconKeyboardOutline24 as KeyboardIcon,
+  IconMonitorOutline24 as MonitorIcon,
+  IconCursorPointerOutline24 as MousePointerClickIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+  IconShieldOutline24 as ShieldAlertIcon,
+  IconShieldCheckOutline24 as ShieldCheckIcon,
+} from "nucleo-core-outline-24";
 import { useMemo, useState } from "react";
 
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";

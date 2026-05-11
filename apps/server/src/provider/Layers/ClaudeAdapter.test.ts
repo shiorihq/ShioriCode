@@ -3656,16 +3656,17 @@ describe("ClaudeAdapterLive", () => {
       const requestId = requestedEvent.value.requestId;
       assert.equal(typeof requestId, "string");
       assert.equal(requestedEvent.value.payload.questions.length, 1);
+      assert.equal(requestedEvent.value.payload.questions[0]?.id, "Which framework?");
       assert.equal(requestedEvent.value.payload.questions[0]?.question, "Which framework?");
       assert.deepEqual(requestedEvent.value.providerRefs, {
         providerItemId: ProviderItemId.makeUnsafe("tool-ask-1"),
       });
 
-      // Respond with the user's answers.
+      // Header-keyed responses are normalized to Claude's expected question-text keys.
       yield* adapter.respondToUserInput(
         session.threadId,
         ApprovalRequestId.makeUnsafe(requestId!),
-        { "Which framework?": "React" },
+        { Framework: "React" },
       );
 
       // The adapter should emit a user-input.resolved event.

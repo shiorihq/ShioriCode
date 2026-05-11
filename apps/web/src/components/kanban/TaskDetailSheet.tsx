@@ -1,5 +1,11 @@
 import { type KanbanItem, type ThreadId } from "contracts";
-import { BotIcon, GitPullRequestIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import {
+  IconAgentOutline24 as BotIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
+  IconPlusOutline24 as PlusIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { useCallback, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";

@@ -5,14 +5,14 @@ import { useEffect, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
 import { ThreadId } from "contracts";
 import {
-  CheckIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CopyIcon,
-  InfoIcon,
-  LoaderCircleIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  IconCheckOutline24 as CheckIcon,
+  IconCircleWarningOutline24 as CircleAlertIcon,
+  IconCircleCheckOutline24 as CircleCheckIcon,
+  IconCopyOutline24 as CopyIcon,
+  IconInfoPointOutline24 as InfoIcon,
+  IconSpinnerLoaderOutline24 as LoaderCircleIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+} from "nucleo-core-outline-24";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";

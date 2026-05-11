@@ -1,19 +1,20 @@
 import {
-  ArrowUpIcon,
-  BotIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CircleIcon,
-  CircleSlashIcon,
-  ClockIcon,
-  ListChecksIcon,
-  LoaderCircleIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  Trash2Icon,
-} from "lucide-react";
-import { memo, type ComponentType, type ReactNode, type SVGProps, useMemo, useState } from "react";
+  IconArrowUpOutline24 as ArrowUpIcon,
+  IconAgentOutline24 as BotIcon,
+  IconCheckOutline24 as CheckIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronUpOutline24 as ChevronUpIcon,
+  IconCircleDottedOutline24 as CircleIcon,
+  IconCircleXmarkOutline24 as CircleSlashIcon,
+  IconClockOutline24 as ClockIcon,
+  IconCheckListOutline24 as ListChecksIcon,
+  IconSpinnerLoaderOutline24 as LoaderCircleIcon,
+  IconDotsOutline24 as MoreHorizontalIcon,
+  IconPencilOutline24 as PencilIcon,
+  IconTrash2Outline24 as Trash2Icon,
+} from "nucleo-core-outline-24";
+import { memo, type ReactNode, useMemo, useState } from "react";
+import { type IconLike } from "../Icons";
 
 import { stripInlineTerminalContextPlaceholders } from "../../lib/terminalContext";
 import type {
@@ -341,7 +342,7 @@ const BackgroundSubagentRow = memo(function BackgroundSubagentRow(props: {
   );
 });
 
-type SectionIcon = ComponentType<SVGProps<SVGSVGElement>>;
+type SectionIcon = IconLike;
 
 const ComposerContextSection = memo(function ComposerContextSection(props: {
   title: string;

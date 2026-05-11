@@ -1,4 +1,4 @@
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDownOutline24 as ChevronDownIcon } from "nucleo-core-outline-24";
 import { useState } from "react";
 
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";

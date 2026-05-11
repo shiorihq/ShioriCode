@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { XIcon } from "lucide-react";
+import { IconXmarkOutline24 as XIcon } from "nucleo-core-outline-24";
 
 interface PlanModeIndicatorProps {
   onDisable: () => void;

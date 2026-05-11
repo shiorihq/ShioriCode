@@ -25,24 +25,24 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
-  BotIcon,
-  BoxIcon,
-  ChevronDownIcon,
-  FileTextIcon,
-  FolderIcon,
-  Globe2Icon,
-  ListChecksIcon,
-  Maximize2Icon,
-  Minimize2Icon,
-  PencilLineIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  SparklesIcon,
-  SquareTerminalIcon,
-  ToolboxIcon,
-  Undo2Icon,
-  type LucideIcon,
-} from "lucide-react";
+  IconAgentOutline24 as BotIcon,
+  IconBoxOutline24 as BoxIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconFileDocOutline24 as FileTextIcon,
+  IconFolderOutline24 as FolderIcon,
+  IconGlobe2Outline24 as Globe2Icon,
+  IconCheckListOutline24 as ListChecksIcon,
+  IconWindowMaximizeOutline24 as Maximize2Icon,
+  IconWindowMinimizeOutline24 as Minimize2Icon,
+  IconPencilOutline24 as PencilLineIcon,
+  IconRefreshOutline24 as RefreshCwIcon,
+  IconMagnifierOutline24 as SearchIcon,
+  IconSparkleOutline24 as SparklesIcon,
+  IconConsoleOutline24 as SquareTerminalIcon,
+  IconWrenchOutline24 as ToolboxIcon,
+  IconUndoOutline24 as Undo2Icon,
+} from "nucleo-core-outline-24";
+import { type IconLike } from "../Icons";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clamp } from "effect/Number";
@@ -78,6 +78,7 @@ import {
   isMcpToolWorkEntry,
   isRuntimeDiagnosticWorkEntry,
   isSkillWorkEntry,
+  isStandaloneWorkEntryExpanded,
   isWorkRowExpanded,
   isWorkRowInProgress,
   shouldRenderFlatWorkRowAsGroup,
@@ -109,6 +110,8 @@ const COLLAPSED_WORK_OUTPUT_LINE_THRESHOLD = 10;
 const MIN_ROWS_FOR_VIRTUALIZATION = 120;
 const TIMELINE_ROW_GAP_CLASS = "pb-2";
 const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
+const TIMELINE_ROW_HEIGHT_CACHE_DELTA_PX = 0.5;
+const TIMELINE_ROW_HEIGHT_TEXT_FINGERPRINT_CHARS = 96;
 const EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID = new Map<MessageId, TurnDiffSummary>();
 const EMPTY_REVEALING_BUFFERED_ASSISTANT_MESSAGE_IDS = new Set<MessageId>();
 
@@ -182,6 +185,9 @@ function MessagesTimelineView({
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
+  const measuredNonVirtualizedRowHeightsRef = useRef(
+    new Map<string, TimelineRowHeightCacheEntry>(),
+  );
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
   const visibleTurnDiffSummaryByAssistantMessageId = showTurnDiffActions
     ? turnDiffSummaryByAssistantMessageId
@@ -241,6 +247,52 @@ function MessagesTimelineView({
     : 0;
   const virtualMeasurementScopeKey =
     timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
+  const expandedWorkGroupsCacheKey = useMemo(
+    () =>
+      Object.entries(expandedWorkGroups)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}:${value ? "1" : "0"}`)
+        .join("|"),
+    [expandedWorkGroups],
+  );
+
+  useEffect(() => {
+    const rowIds = new Set(rows.map((row) => row.id));
+    for (const rowId of measuredNonVirtualizedRowHeightsRef.current.keys()) {
+      if (!rowIds.has(rowId)) {
+        measuredNonVirtualizedRowHeightsRef.current.delete(rowId);
+      }
+    }
+  }, [rows]);
+
+  const getRowHeightCacheKey = useCallback(
+    (row: TimelineRow) =>
+      buildTimelineRowHeightCacheKey(
+        row,
+        visibleTurnDiffSummaryByAssistantMessageId,
+        expandedWorkGroupsCacheKey,
+      ),
+    [expandedWorkGroupsCacheKey, visibleTurnDiffSummaryByAssistantMessageId],
+  );
+
+  const recordNonVirtualizedRowHeight = useCallback(
+    (rowId: string, cacheKey: string, height: number) => {
+      if (!Number.isFinite(height) || height <= 0) {
+        return;
+      }
+
+      const previous = measuredNonVirtualizedRowHeightsRef.current.get(rowId);
+      if (
+        previous?.cacheKey === cacheKey &&
+        Math.abs(previous.height - height) <= TIMELINE_ROW_HEIGHT_CACHE_DELTA_PX
+      ) {
+        return;
+      }
+
+      measuredNonVirtualizedRowHeightsRef.current.set(rowId, { cacheKey, height });
+    },
+    [],
+  );
 
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
@@ -254,6 +306,10 @@ function MessagesTimelineView({
     estimateSize: (index: number) => {
       const row = rows[index];
       if (!row) return 96;
+      const cachedHeight = measuredNonVirtualizedRowHeightsRef.current.get(row.id);
+      if (cachedHeight?.cacheKey === getRowHeightCacheKey(row)) {
+        return cachedHeight.height;
+      }
       return estimateMessagesTimelineRowHeight(row, {
         expandedWorkGroups,
         timelineWidthPx,
@@ -533,7 +589,9 @@ function MessagesTimelineView({
         );
       }
       if (shouldRenderFlatWorkRowAsGroup(row)) {
-        const isExpanded = isWorkRowExpanded(row, expandedWorkGroups);
+        const isExpanded = row.inlineEntries
+          ? isWorkRowExpanded(row, expandedWorkGroups)
+          : isStandaloneWorkEntryExpanded(row, expandedWorkGroups);
         const summary = buildWorkGroupSummaryParts(entries, row.stickyInProgress);
         return (
           <div className={wrapperClassName}>
@@ -565,7 +623,7 @@ function MessagesTimelineView({
             </div>
           );
         }
-        const isExpanded = depth > 0 || isWorkRowExpanded(row, expandedWorkGroups);
+        const isExpanded = isStandaloneWorkEntryExpanded(row, expandedWorkGroups);
         return (
           <div className={wrapperClassName}>
             <ExpandableWorkEntry
@@ -860,7 +918,14 @@ function MessagesTimelineView({
         )}
 
         {nonVirtualizedRows.map((row) => (
-          <div key={`non-virtual-row:${row.id}`}>{renderRowContent(row)}</div>
+          <MeasuredNonVirtualizedTimelineRow
+            key={`non-virtual-row:${row.id}`}
+            cacheKey={getRowHeightCacheKey(row)}
+            rowId={row.id}
+            onMeasured={recordNonVirtualizedRowHeight}
+          >
+            {renderRowContent(row)}
+          </MeasuredNonVirtualizedTimelineRow>
         ))}
       </div>
     </LazyMotion>
@@ -868,6 +933,163 @@ function MessagesTimelineView({
 }
 
 export const MessagesTimeline = memo(MessagesTimelineView) as typeof MessagesTimelineView;
+
+interface TimelineRowHeightCacheEntry {
+  cacheKey: string;
+  height: number;
+}
+
+function fingerprintTimelineText(text: string): string {
+  if (text.length <= TIMELINE_ROW_HEIGHT_TEXT_FINGERPRINT_CHARS * 2) {
+    return `${text.length}:${text}`;
+  }
+
+  return [
+    text.length,
+    text.slice(0, TIMELINE_ROW_HEIGHT_TEXT_FINGERPRINT_CHARS),
+    text.slice(-TIMELINE_ROW_HEIGHT_TEXT_FINGERPRINT_CHARS),
+  ].join(":");
+}
+
+function buildTurnDiffSummaryHeightCacheKey(summary: TurnDiffSummary | undefined): string {
+  if (!summary || summary.files.length === 0) {
+    return "diff:none";
+  }
+
+  return `diff:${summary.files.length}:${fingerprintTimelineText(
+    summary.files
+      .map((file) => `${file.path}:${file.additions ?? 0}:${file.deletions ?? 0}`)
+      .join("\n"),
+  )}`;
+}
+
+function buildWorkEntryHeightCacheKey(entry: TimelineWorkEntry): string {
+  const outputSummary = summarizeToolOutput(entry.output);
+  return [
+    entry.id,
+    entry.itemId ?? "",
+    entry.parentItemId ?? "",
+    entry.running ? "running" : "settled",
+    entry.itemType ?? "",
+    entry.tone,
+    fingerprintTimelineText(entry.label),
+    fingerprintTimelineText(entry.detail ?? ""),
+    fingerprintTimelineText(entry.command ?? ""),
+    outputSummary.lineCount,
+    outputSummary.format,
+    fingerprintTimelineText(outputSummary.text ?? ""),
+  ].join(":");
+}
+
+function buildWorkRowHeightCacheKey(row: WorkTimelineRow): string {
+  return [
+    "work",
+    row.id,
+    row.expansionId,
+    row.stickyInProgress ? "sticky" : "settled",
+    row.groupedEntries.map(buildWorkEntryHeightCacheKey).join("|"),
+    (row.inlineEntries ?? [])
+      .map((entry) =>
+        entry.kind === "work"
+          ? `inline-work:${entry.id}:${buildWorkEntryHeightCacheKey(entry.entry)}`
+          : `inline-reasoning:${entry.id}:${entry.reasoning.streaming ? "streaming" : "settled"}:${fingerprintTimelineText(
+              entry.reasoning.text,
+            )}`,
+      )
+      .join("|"),
+    row.childRows.map(buildWorkRowHeightCacheKey).join("|"),
+  ].join(":");
+}
+
+function buildTimelineRowHeightCacheKey(
+  row: TimelineRow,
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>,
+  expandedWorkGroupsCacheKey: string,
+): string {
+  const stateKey = `expanded:${expandedWorkGroupsCacheKey}`;
+  switch (row.kind) {
+    case "work":
+      return `${stateKey}:${buildWorkRowHeightCacheKey(row)}`;
+    case "reasoning":
+      return `${stateKey}:reasoning:${row.id}:${row.reasoning.streaming ? "streaming" : "settled"}:${fingerprintTimelineText(
+        row.reasoning.text,
+      )}`;
+    case "message":
+      return [
+        stateKey,
+        "message",
+        row.id,
+        row.message.role,
+        row.message.streaming ? "streaming" : "settled",
+        row.message.completedAt ?? "",
+        row.showCompletionDivider ? "divider" : "no-divider",
+        row.message.attachments?.length ?? 0,
+        fingerprintTimelineText(row.message.text),
+        buildTurnDiffSummaryHeightCacheKey(turnDiffSummaryByAssistantMessageId.get(row.message.id)),
+      ].join(":");
+    case "proposed-plan":
+      return `${stateKey}:proposed-plan:${row.id}:${fingerprintTimelineText(
+        row.proposedPlan.planMarkdown,
+      )}`;
+    case "working":
+      return `${stateKey}:working:${row.id}:${row.createdAt ?? ""}`;
+  }
+}
+
+const MeasuredNonVirtualizedTimelineRow = memo(function MeasuredNonVirtualizedTimelineRow(props: {
+  cacheKey: string;
+  children: ReactNode;
+  onMeasured: (rowId: string, cacheKey: string, height: number) => void;
+  rowId: string;
+}) {
+  const { cacheKey, children, onMeasured, rowId } = props;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const rowElement = rowRef.current;
+    if (!rowElement) {
+      return;
+    }
+
+    let frame: number | null = null;
+    const measure = () => {
+      frame = null;
+      onMeasured(rowId, cacheKey, rowElement.getBoundingClientRect().height);
+    };
+    const scheduleMeasure = () => {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(measure);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        if (frame !== null) {
+          window.cancelAnimationFrame(frame);
+        }
+      };
+    }
+
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(rowElement);
+
+    return () => {
+      observer.disconnect();
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [cacheKey, onMeasured, rowId]);
+
+  return (
+    <div ref={rowRef} data-non-virtual-row-id={rowId}>
+      {children}
+    </div>
+  );
+});
 
 const CHANGED_FILES_COLLAPSED_LIMIT = 5;
 
@@ -1004,7 +1226,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 type WorkGroupInlineEntry = NonNullable<WorkTimelineRow["inlineEntries"]>[number];
 
-const WORK_GROUP_ICON_BY_KIND: Record<WorkGroupIconKind, LucideIcon> = {
+const WORK_GROUP_ICON_BY_KIND: Record<WorkGroupIconKind, IconLike> = {
   agent: BotIcon,
   command: SquareTerminalIcon,
   edit: PencilLineIcon,

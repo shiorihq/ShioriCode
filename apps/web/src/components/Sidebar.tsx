@@ -1,23 +1,23 @@
 import {
-  ArchiveIcon,
-  ArrowUpDownIcon,
-  ChevronDownIcon,
-  CircleDotDashedIcon,
-  Columns2Icon,
-  FolderClosedIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  GitBranchIcon,
-  GitPullRequestIcon,
-  CopyIcon,
-  PencilIcon,
-  PinIcon,
-  PinOffIcon,
-  SearchIcon,
-  SquarePenIcon,
-  TerminalIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  IconArchiveOutline24 as ArchiveIcon,
+  IconSortBottomToTopOutline24 as ArrowUpDownIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconCircleDottedOutline24 as CircleDotDashedIcon,
+  IconResizeXOutline24 as Columns2Icon,
+  IconFolderOutline24 as FolderClosedIcon,
+  IconFolderOutline24 as FolderIcon,
+  IconFolderOpenOutline24 as FolderOpenIcon,
+  IconBranchOutOutline24 as GitBranchIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
+  IconCopyOutline24 as CopyIcon,
+  IconPencilOutline24 as PencilIcon,
+  IconPinTackOutline24 as PinIcon,
+  IconPinXmarkOutline24 as PinOffIcon,
+  IconMagnifierOutline24 as SearchIcon,
+  IconComposeOutline24 as NewThreadIcon,
+  IconConsoleOutline24 as TerminalIcon,
+  IconTriangleWarningOutline24 as TriangleAlertIcon,
+} from "nucleo-core-outline-24";
 import {
   useCallback,
   useEffect,
@@ -824,7 +824,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             props.onMarkThreadUnread(thread.id);
                           }}
                         >
-                          <SquarePenIcon className="size-4" />
+                          <NewThreadIcon className="size-4" />
                           Mark unread
                         </MenuItem>
                         <MenuItem
@@ -2308,7 +2308,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                     });
                   }}
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  <NewThreadIcon className="size-3.5" />
                 </SidebarMenuAction>
               }
             />
@@ -2348,7 +2348,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                         });
                       }}
                     >
-                      <SquarePenIcon className="size-3" />
+                      <NewThreadIcon className="size-3" />
                       New
                     </button>
                   )}
@@ -2491,7 +2491,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                     void createProjectlessChat();
                   }}
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  <NewThreadIcon className="size-3.5" />
                 </button>
               }
             />
@@ -2763,7 +2763,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                   });
                 }}
               >
-                <SquarePenIcon className="size-4 shrink-0" aria-hidden />
+                <NewThreadIcon className="size-4 shrink-0" aria-hidden />
                 <span className={SIDEBAR_ROW_LABEL_CLASS}>New Thread</span>
                 {newThreadShortcutLabel ? (
                   <span className={SIDEBAR_ROW_META_CLASS}>{newThreadShortcutLabel}</span>

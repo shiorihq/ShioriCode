@@ -3,7 +3,10 @@ import { resolveSelectableModel } from "shared/model";
 import { memo, useMemo, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
-import { ChevronDownIcon, SearchIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconMagnifierOutline24 as SearchIcon,
+} from "nucleo-core-outline-24";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,

@@ -1,5 +1,8 @@
 import type { DiffsHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import {
+  IconCheckOutline24 as CheckIcon,
+  IconCopyOutline24 as CopyIcon,
+} from "nucleo-core-outline-24";
 import React, {
   Children,
   Suspense,

@@ -1,7 +1,10 @@
 import type { GitBranch } from "contracts";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
+import {
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconBranchOutOutline24 as GitBranchIcon,
+} from "nucleo-core-outline-24";
 import {
   type CSSProperties,
   useCallback,

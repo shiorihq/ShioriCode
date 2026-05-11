@@ -1,6 +1,10 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { PaintbrushIcon, Undo2Icon, XIcon } from "lucide-react";
+import {
+  IconPaintbrushOutline24 as PaintbrushIcon,
+  IconUndoOutline24 as Undo2Icon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import {
   DEFAULT_DARK_THEME_ID,
   DEFAULT_LIGHT_THEME_ID,

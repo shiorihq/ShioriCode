@@ -1,7 +1,7 @@
 "use client";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ChevronRightIcon } from "lucide-react";
+import { IconChevronRightOutline24 as ChevronRightIcon } from "nucleo-core-outline-24";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";

@@ -1,7 +1,10 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { SidebarCloseIcon, SidebarIcon } from "lucide-react";
+import {
+  IconSidebarRightOutline24 as SidebarCloseIcon,
+  IconSidebarRightOutline24 as SidebarIcon,
+} from "nucleo-core-outline-24";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";

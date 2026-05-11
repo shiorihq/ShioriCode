@@ -1,5 +1,8 @@
 import { type ProjectId } from "contracts";
-import { Loader2Icon, PlusIcon } from "lucide-react";
+import {
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconPlusOutline24 as PlusIcon,
+} from "nucleo-core-outline-24";
 
 import { Button } from "~/components/ui/button";
 import {

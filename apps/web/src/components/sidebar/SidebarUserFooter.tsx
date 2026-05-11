@@ -1,4 +1,4 @@
-import { SettingsIcon } from "lucide-react";
+import { IconGearOutline24 as SettingsIcon } from "nucleo-core-outline-24";
 import type { ReactNode } from "react";
 
 import { useHostedShioriState } from "../../convex/HostedShioriProvider";

@@ -1,6 +1,9 @@
 import { type RuntimeMode } from "contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import {
+  IconDotsOutline24 as EllipsisIcon,
+  IconListTodoOutline24 as ListTodoIcon,
+} from "nucleo-core-outline-24";
 import { Button } from "../ui/button";
 import {
   Menu,

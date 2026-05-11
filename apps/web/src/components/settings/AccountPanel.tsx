@@ -1,4 +1,8 @@
-import { CameraIcon, Loader2Icon, XIcon } from "lucide-react";
+import {
+  IconCameraOutline24 as CameraIcon,
+  IconSpinnerLoaderOutline24 as Loader2Icon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 
