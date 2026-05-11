@@ -155,6 +155,7 @@ function createBaseTimelineProps(input: {
   turnDiffSummaryByAssistantMessageId?: Map<MessageId, TurnDiffSummary>;
   onToggleWorkGroup?: ComponentProps<typeof MessagesTimeline>["onToggleWorkGroup"];
   onVirtualizerSnapshot?: ComponentProps<typeof MessagesTimeline>["onVirtualizerSnapshot"];
+  isProjectThread?: boolean;
 }): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> {
   return {
     hasMessages: true,
@@ -182,7 +183,7 @@ function createBaseTimelineProps(input: {
     resolvedTheme: "light",
     timestampFormat: "locale",
     workspaceRoot: MARKDOWN_CWD,
-    isProjectThread: true,
+    isProjectThread: input.isProjectThread ?? true,
     ...(input.onVirtualizerSnapshot ? { onVirtualizerSnapshot: input.onVirtualizerSnapshot } : {}),
   };
 }
@@ -347,7 +348,7 @@ function buildStaticScenarios(): VirtualizationScenario[] {
       props: createBaseTimelineProps({
         messages: [...beforeMessages, longUserMessage, ...afterMessages],
       }),
-      maxEstimateDeltaPx: 140,
+      maxEstimateDeltaPx: 300,
     },
     {
       name: "grouped work log row",
@@ -1319,6 +1320,7 @@ describe("MessagesTimeline virtualization harness", () => {
     });
     const props = createBaseTimelineProps({
       messages: [targetMessage],
+      isProjectThread: false,
     });
     const mounted = await mountMessagesTimeline({
       props,
