@@ -4,6 +4,7 @@ import {
   isHostedShioriAuthToken,
   normalizeHostedShioriApiBaseUrl,
 } from "../hostedShioriApi";
+import { readHostedShioriFeatureFlagOverride } from "shared/hostedShioriFeatureFlags";
 
 export interface ShioriCodeEntitlements {
   readonly allowed: boolean;
@@ -139,7 +140,9 @@ export const fetchShioriCodeEntitlements = Effect.fn("fetchShioriCodeEntitlement
     );
 
     const entitlements = {
-      allowed: payload.allowed === true,
+      allowed:
+        readHostedShioriFeatureFlagOverride("code_enabled", process.env) ??
+        payload.allowed === true,
       plan: typeof payload.plan === "string" ? payload.plan : null,
       status: typeof payload.status === "string" ? payload.status : null,
     } satisfies ShioriCodeEntitlements;

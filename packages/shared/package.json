@@ -60,6 +60,10 @@
       "types": "./src/hostedShioriConvex.ts",
       "import": "./src/hostedShioriConvex.ts"
     },
+    "./hostedShioriFeatureFlags": {
+      "types": "./src/hostedShioriFeatureFlags.ts",
+      "import": "./src/hostedShioriFeatureFlags.ts"
+    },
     "./fontFamily": {
       "types": "./src/fontFamily.ts",
       "import": "./src/fontFamily.ts"

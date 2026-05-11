@@ -1,7 +1,7 @@
 {
   "name": "shiori-agent",
   "version": "0.0.1",
-  "license": "MIT",
+  "license": "Elastic-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shiorihq/shioricode.git",

@@ -1,6 +1,7 @@
 {
   "name": "monorepo",
   "private": true,
+  "license": "Elastic-2.0",
   "workspaces": {
     "packages": [
       "apps/*",
@@ -57,7 +58,7 @@
     "release:smoke": "node scripts/release-smoke.ts",
     "convex:dev": "bunx convex dev",
     "convex:codegen": "bunx convex codegen",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
+    "clean": "trash node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "prepare": "effect-language-service patch"
   },

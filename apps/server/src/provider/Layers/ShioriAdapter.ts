@@ -680,7 +680,7 @@ function isHostedFetchResponseTimeoutError(error: unknown): boolean {
 function fetchHostedStreamResponse(input: {
   readonly url: string;
   readonly requestBody: Buffer;
-  readonly authToken: string;
+  readonly authToken: string | null;
   readonly signal: AbortSignal;
   readonly responseTimeout: Duration.Input;
 }): Promise<Response> {
@@ -726,13 +726,15 @@ function fetchHostedStreamResponse(input: {
 }
 
 function buildShioriRequestHeaders(input: {
-  authToken: string;
+  authToken: string | null;
   contentLength: number;
 }): Record<string, string> {
   return {
     "Content-Type": "application/json",
     "Content-Length": String(input.contentLength),
-    "X-Convex-Auth-Token": input.authToken,
+    ...(isExpectedHostedShioriAuthToken(input.authToken)
+      ? { "X-Convex-Auth-Token": input.authToken }
+      : {}),
     "X-Shiori-Client": "electron",
     "X-ShioriCode-Api-Version": SHIORI_API_VERSION,
     "User-Agent": "ShioriCode-macOS/1.0",
@@ -3242,7 +3244,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const attemptHostedStreamFetch = Effect.fn("attemptHostedStreamFetch")(function* (input: {
         method: string;
         apiBaseUrl: string;
-        authToken: string;
+        authToken: string | null;
         requestBody: Buffer;
         signal: AbortSignal;
         responseTimeout: Duration.Input;
@@ -3303,7 +3305,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       const performHostedStreamFetch = Effect.fn("performHostedStreamFetch")(function* (input: {
         method: string;
         apiBaseUrl: string;
-        authToken: string;
+        authToken: string | null;
         requestBody: Buffer;
         signal: AbortSignal;
         logLabel: string;
@@ -3364,7 +3366,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           return yield* Effect.fail(
             requestError(
               input.logLabel,
-              "Shiori rejected the hosted session (401). Sign out and sign back in to continue.",
+              "Shiori rejected the hosted session (401). This deployment may require sign-in; sign in again or use a deployment that allows anonymous access.",
             ),
           );
         }
@@ -3373,7 +3375,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
           return yield* Effect.fail(
             requestError(
               input.logLabel,
-              "Shiori rejected the hosted session (403). Verify your subscription and plan access.",
+              "Shiori rejected the hosted session (403). Verify this deployment allows your account or anonymous ShioriCode access.",
             ),
           );
         }
@@ -3614,10 +3616,10 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       );
 
       const fetchHostedBootstrapForToken = Effect.fn("fetchHostedBootstrapForToken")(function* (
-        authToken: string,
+        authToken: string | null,
       ) {
         if (!isExpectedHostedShioriAuthToken(authToken)) {
-          yield* Effect.logWarning("shiori hosted bootstrap skipped for invalid deployment token", {
+          yield* Effect.logInfo("shiori hosted bootstrap skipped without hosted auth token", {
             token: describeToken(authToken),
           });
           return CONSERVATIVE_SHIORI_BOOTSTRAP;
@@ -3644,7 +3646,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
       });
 
       const resolveHostedBootstrapForContext = Effect.fn("resolveHostedBootstrapForContext")(
-        function* (input: { threadId: ThreadId; authToken: string }) {
+        function* (input: { threadId: ThreadId; authToken: string | null }) {
           const context = yield* getContext(input.threadId);
           const existing = context.hostedBootstrap ?? context.activeTurn?.hostedBootstrap;
           const fetchedAt = context.hostedBootstrapFetchedAt ?? 0;
@@ -4271,7 +4273,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         threadId: ThreadId;
         modelId: string;
         requestMessages: ReadonlyArray<HostedShioriMessage>;
-        authToken: string;
+        authToken: string | null;
         signal: AbortSignal;
       }) {
         const settings = yield* serverSettings.getSettings;
@@ -4462,14 +4464,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         }
 
         const authToken = yield* hostedAuthTokenStore.getToken;
-        if (!isExpectedHostedShioriAuthToken(authToken)) {
-          return yield* Effect.fail(
-            requestError(
-              "shiori.subagent.run",
-              "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
-            ),
-          );
-        }
 
         const startUserMessage: HostedShioriMessage = {
           id: `subagent-user-${crypto.randomUUID()}`,
@@ -5432,7 +5426,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         turnId: TurnId;
         requestMessages: HostedShioriMessage[];
         selectedModel: string;
-        authToken: string;
+        authToken: string | null;
         controller: AbortController;
         assistantItemId: RuntimeItemId;
         resumeExistingTurn?: boolean;
@@ -6764,14 +6758,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }
 
             const authToken = yield* hostedAuthTokenStore.getToken;
-            if (!isExpectedHostedShioriAuthToken(authToken)) {
-              return yield* Effect.fail(
-                requestError(
-                  `shiori.turn.start:${String(input.threadId)}`,
-                  "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
-                ),
-              );
-            }
 
             const selectedModel = resolveModelSlugForProvider(
               PROVIDER,
@@ -6929,14 +6915,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             }
             const activeTurn = context.activeTurn;
             const bootstrapAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isExpectedHostedShioriAuthToken(bootstrapAuthToken)) {
-              return yield* Effect.fail(
-                requestError(
-                  "shiori.respondToRequest",
-                  "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
-                ),
-              );
-            }
             const hostedBootstrap = yield* resolveHostedBootstrapForContext({
               threadId,
               authToken: bootstrapAuthToken,
@@ -7090,15 +7068,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isExpectedHostedShioriAuthToken(continuedAuthToken)) {
-              const detail =
-                "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.";
-              yield* failTurn({
-                context: continuedContext,
-                detail,
-              });
-              return yield* Effect.fail(requestError("shiori.respondToRequest", detail));
-            }
             const continuedTurnId = context.activeTurn.turnId;
             void Effect.runFork(
               runHostedTurn({
@@ -7202,15 +7171,6 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               return;
             }
             const continuedAuthToken = yield* hostedAuthTokenStore.getToken;
-            if (!isExpectedHostedShioriAuthToken(continuedAuthToken)) {
-              const detail =
-                "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.";
-              yield* failTurn({
-                context: continuedContext,
-                detail,
-              });
-              return yield* Effect.fail(requestError("shiori.respondToUserInput", detail));
-            }
             const continuedUserTurnId = context.activeTurn.turnId;
             void Effect.runFork(
               runHostedTurn({

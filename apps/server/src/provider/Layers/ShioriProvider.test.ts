@@ -151,7 +151,7 @@ it.layer(shioriProviderTestLayer)("ShioriProviderLive", (it) => {
         }),
     );
 
-    it.effect("blocks Shiori when entitlement verification confirms access is denied", () =>
+    it.effect("keeps Shiori ready when entitlement verification reports a free plan", () =>
       Effect.gen(function* () {
         vi.stubGlobal(
           "fetch",
@@ -173,11 +173,8 @@ it.layer(shioriProviderTestLayer)("ShioriProviderLive", (it) => {
         yield* authTokenStore.setToken(jwtToken);
 
         const refreshed = yield* provider.refresh;
-        assert.strictEqual(refreshed.status, "warning");
-        assert.strictEqual(
-          refreshed.message,
-          "ShioriCode requires an active paid Shiori subscription for hosted access.",
-        );
+        assert.strictEqual(refreshed.status, "ready");
+        assert.strictEqual(refreshed.message, undefined);
       }),
     );
 

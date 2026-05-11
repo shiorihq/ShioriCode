@@ -34,11 +34,11 @@ export function resolveWelcomeViewModel(input: {
       eyebrowLabel: "Back in the app",
       accessStatusLabel: input.isPaidSubscriber
         ? "Your paid plan is active in ShioriCode."
-        : "Your Shiori plan is not active in ShioriCode yet.",
+        : "ShioriCode is ready without a paid plan.",
     };
   }
 
-  if (input.isPaidSubscriber) {
+  if (input.requestedStatus === "success" || input.isPaidSubscriber) {
     return {
       displayStatus: "success",
       headline: `Welcome to ShioriCode${planLabel ? ` ${planLabel}` : ""}`,
@@ -46,7 +46,9 @@ export function resolveWelcomeViewModel(input: {
       planLabel,
       primaryActionLabel: "Start coding",
       eyebrowLabel: "Desktop handoff complete",
-      accessStatusLabel: "Your paid plan is active in ShioriCode.",
+      accessStatusLabel: input.isPaidSubscriber
+        ? "Your paid plan is active in ShioriCode."
+        : "ShioriCode is ready without a paid plan.",
     };
   }
 
