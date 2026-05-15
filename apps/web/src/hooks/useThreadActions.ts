@@ -1,4 +1,4 @@
-import { ThreadId } from "contracts";
+import { ThreadId, type OrchestrationEvent } from "contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
@@ -20,6 +20,33 @@ import { useSettings } from "./useSettings";
 
 function buildTemporaryWorktreeBranchName(): string {
   return `shioricode/${randomUUID().replaceAll("-", "").slice(0, 8).toLowerCase()}`;
+}
+
+type OptimisticThreadEvent = Extract<
+  OrchestrationEvent,
+  { type: "thread.archived" | "thread.deleted" | "thread.unarchived" }
+>;
+
+function createOptimisticThreadEvent(
+  input: Pick<OptimisticThreadEvent, "type" | "payload"> & {
+    commandId: OrchestrationEvent["commandId"];
+    threadId: ThreadId;
+    occurredAt: string;
+  },
+): OptimisticThreadEvent {
+  return {
+    sequence: 0,
+    eventId: randomUUID() as OrchestrationEvent["eventId"],
+    aggregateKind: "thread",
+    aggregateId: input.threadId,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+    causationEventId: null,
+    correlationId: input.commandId,
+    metadata: { optimistic: true },
+    type: input.type,
+    payload: input.payload,
+  } as OptimisticThreadEvent;
 }
 
 export function useThreadActions() {
@@ -49,11 +76,32 @@ export function useThreadActions() {
         throw new Error("Cannot archive a running thread.");
       }
 
-      await api.orchestration.dispatchCommand({
-        type: "thread.archive",
-        commandId: newCommandId(),
-        threadId,
-      });
+      const commandId = newCommandId();
+      const archivedAt = new Date().toISOString();
+      useStore.getState().applyOrchestrationEvent(
+        createOptimisticThreadEvent({
+          type: "thread.archived",
+          commandId,
+          threadId,
+          occurredAt: archivedAt,
+          payload: {
+            threadId,
+            archivedAt,
+            updatedAt: archivedAt,
+          },
+        }),
+      );
+
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.archive",
+          commandId,
+          threadId,
+        });
+      } catch (error) {
+        useStore.getState().restoreThread(thread);
+        throw error;
+      }
 
       if (routeThreadId === threadId) {
         if (thread.projectId === null) {
@@ -200,6 +248,49 @@ export function useThreadActions() {
           ].join("\n"),
         ));
 
+      const deleteCommandId = newCommandId();
+      const deletedAt = new Date().toISOString();
+      const deletedThreadIds = opts.deletedThreadIds ?? new Set<ThreadId>();
+      const shouldNavigateToFallback = routeThreadId === threadId;
+      const fallbackThreadId = getFallbackThreadIdAfterDelete({
+        threads,
+        deletedThreadId: threadId,
+        deletedThreadIds,
+        sortOrder: appSettings.sidebarThreadSortOrder,
+      });
+
+      useStore.getState().applyOrchestrationEvent(
+        createOptimisticThreadEvent({
+          type: "thread.deleted",
+          commandId: deleteCommandId,
+          threadId,
+          occurredAt: deletedAt,
+          payload: {
+            threadId,
+            deletedAt,
+          },
+        }),
+      );
+      clearComposerDraftForThread(threadId);
+      if (thread.projectId !== null) {
+        clearProjectDraftThreadById(thread.projectId, thread.id);
+      }
+      clearTerminalState(threadId);
+
+      const navigationPromise = (
+        shouldNavigateToFallback
+          ? fallbackThreadId
+            ? navigate({
+                to: "/$threadId",
+                params: { threadId: fallbackThreadId },
+                replace: true,
+              })
+            : navigate({ to: "/", replace: true })
+          : Promise.resolve()
+      ).catch((error) => {
+        console.error("Failed to navigate after optimistic thread deletion", { threadId, error });
+      });
+
       if (thread.session && thread.session.status !== "closed") {
         await api.orchestration
           .dispatchCommand({
@@ -217,35 +308,16 @@ export function useThreadActions() {
         // Terminal may already be closed.
       }
 
-      const deletedThreadIds = opts.deletedThreadIds ?? new Set<ThreadId>();
-      const shouldNavigateToFallback = routeThreadId === threadId;
-      const fallbackThreadId = getFallbackThreadIdAfterDelete({
-        threads,
-        deletedThreadId: threadId,
-        deletedThreadIds,
-        sortOrder: appSettings.sidebarThreadSortOrder,
-      });
-      await api.orchestration.dispatchCommand({
-        type: "thread.delete",
-        commandId: newCommandId(),
-        threadId,
-      });
-      clearComposerDraftForThread(threadId);
-      if (thread.projectId !== null) {
-        clearProjectDraftThreadById(thread.projectId, thread.id);
-      }
-      clearTerminalState(threadId);
-
-      if (shouldNavigateToFallback) {
-        if (fallbackThreadId) {
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: fallbackThreadId },
-            replace: true,
-          });
-        } else {
-          await navigate({ to: "/", replace: true });
-        }
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.delete",
+          commandId: deleteCommandId,
+          threadId,
+        });
+        await navigationPromise;
+      } catch (error) {
+        useStore.getState().restoreThread(thread);
+        throw error;
       }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {

@@ -1454,6 +1454,7 @@ interface AppStore extends AppState {
   syncServerReadModel: (readModel: OrchestrationReadModel) => void;
   applyOrchestrationEvent: (event: OrchestrationEvent) => void;
   applyOrchestrationEvents: (events: ReadonlyArray<OrchestrationEvent>) => void;
+  restoreThread: (thread: Thread) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
   beginPendingThreadDispatch: (threadId: ThreadId, pendingDispatch: LocalDispatchSnapshot) => void;
@@ -1465,6 +1466,30 @@ export const useStore = create<AppStore>((set) => ({
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
   applyOrchestrationEvent: (event) => set((state) => applyOrchestrationEvent(state, event)),
   applyOrchestrationEvents: (events) => set((state) => applyOrchestrationEvents(state, events)),
+  restoreThread: (thread) =>
+    set((state) => {
+      const existingIndex = state.threadIndexById[thread.id];
+      const threads =
+        existingIndex === undefined
+          ? [...state.threads, thread]
+          : state.threads.map((entry) => (entry.id === thread.id ? thread : entry));
+      const nextSummary = buildSidebarThreadSummary(thread);
+      const sidebarThreadsById = {
+        ...state.sidebarThreadsById,
+        [thread.id]: nextSummary,
+      };
+      return {
+        ...state,
+        threads,
+        threadIndexById: buildThreadIndexById(threads),
+        sidebarThreadsById,
+        threadIdsByProjectId: appendThreadIdByProjectId(
+          state.threadIdsByProjectId,
+          thread.projectId,
+          thread.id,
+        ),
+      };
+    }),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
