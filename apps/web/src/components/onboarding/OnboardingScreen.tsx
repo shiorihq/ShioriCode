@@ -29,7 +29,7 @@ export function OnboardingScreen({
 
   return (
     <LazyMotion features={domAnimation}>
-      <div className="fixed inset-0 flex flex-col overflow-hidden bg-background text-foreground">
+      <div className="fixed inset-0 flex flex-col overflow-x-hidden overflow-y-auto bg-background text-foreground">
         {/* ── Background layers ── */}
         {/* Fine grid overlay */}
         <div
@@ -49,66 +49,68 @@ export function OnboardingScreen({
         <div className="absolute right-8 bottom-8 size-5 border-r border-b border-foreground/[0.04]" />
 
         {/* ── Content ── */}
-        <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-10">
-          {/* Step indicator */}
-          <OnboardingStepIndicator onboardingState={onboardingState} />
+        <div className="relative z-10 flex min-h-full flex-col px-6 py-10">
+          <div className="mx-auto my-auto flex w-full max-w-[560px] flex-col items-center">
+            {/* Step indicator */}
+            <OnboardingStepIndicator onboardingState={onboardingState} />
 
-          {/* Step content */}
-          <div className="mt-8 w-full max-w-[560px]">
-            <AnimatePresence mode="wait">
-              {currentStepId === "connect-provider" ? (
-                <m.div
-                  key="connect-provider"
-                  initial={skip ? false : { opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.35, ease: EASE }}
-                >
-                  <ConnectProviderStep
-                    pendingStepId={pendingStepId}
-                    onCompleteStep={onCompleteStep}
-                  />
-                </m.div>
-              ) : currentStepId === "start-first-thread" ? (
-                <m.div
-                  key="start-first-thread"
-                  initial={skip ? false : { opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                  transition={{ duration: 0.35, ease: EASE }}
-                >
-                  <LaunchStep pendingStepId={pendingStepId} onStartCoding={onStartCoding} />
-                </m.div>
-              ) : (
-                /* sign-in step auto-completes — show a brief loading state */
-                <m.div
-                  key="sign-in"
-                  initial={skip ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2, ease: EASE }}
-                  className="text-center"
-                >
-                  <p className="text-sm text-muted-foreground">
-                    <LoadingText>Setting up your account...</LoadingText>
-                  </p>
-                </m.div>
-              )}
-            </AnimatePresence>
+            {/* Step content */}
+            <div className="mt-8 w-full">
+              <AnimatePresence mode="wait">
+                {currentStepId === "connect-provider" ? (
+                  <m.div
+                    key="connect-provider"
+                    initial={skip ? false : { opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.35, ease: EASE }}
+                  >
+                    <ConnectProviderStep
+                      pendingStepId={pendingStepId}
+                      onCompleteStep={onCompleteStep}
+                    />
+                  </m.div>
+                ) : currentStepId === "start-first-thread" ? (
+                  <m.div
+                    key="start-first-thread"
+                    initial={skip ? false : { opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.35, ease: EASE }}
+                  >
+                    <LaunchStep pendingStepId={pendingStepId} onStartCoding={onStartCoding} />
+                  </m.div>
+                ) : (
+                  /* sign-in step auto-completes — show a brief loading state */
+                  <m.div
+                    key="sign-in"
+                    initial={skip ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2, ease: EASE }}
+                    className="text-center"
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      <LoadingText>Setting up your account...</LoadingText>
+                    </p>
+                  </m.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Error display */}
+            {onboardingError ? (
+              <m.p
+                className="mt-4 text-xs text-destructive"
+                role="alert"
+                initial={skip ? false : { opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: EASE }}
+              >
+                {onboardingError}
+              </m.p>
+            ) : null}
           </div>
-
-          {/* Error display */}
-          {onboardingError ? (
-            <m.p
-              className="mt-4 text-xs text-destructive"
-              role="alert"
-              initial={skip ? false : { opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: EASE }}
-            >
-              {onboardingError}
-            </m.p>
-          ) : null}
         </div>
       </div>
     </LazyMotion>

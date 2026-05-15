@@ -5,6 +5,23 @@ import { __resetWsNativeApiForTests, createWsNativeApi } from "./wsNativeApi";
 let cachedApi: NativeApi | undefined;
 let webConnectGateOpen = false;
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function hasLoopbackWebSocketUrl(): boolean {
+  const rawUrl = (import.meta.env.VITE_WS_URL as string | undefined)?.trim();
+  if (!rawUrl) {
+    return false;
+  }
+
+  try {
+    return isLoopbackHostname(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function hasDesktopNativeBridge(): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -40,7 +57,7 @@ export function readNativeApi(): NativeApi | undefined {
     return cachedApi;
   }
 
-  if (!webConnectGateOpen) return undefined;
+  if (!webConnectGateOpen && !hasLoopbackWebSocketUrl()) return undefined;
 
   cachedApi = createWsNativeApi();
   return cachedApi;
