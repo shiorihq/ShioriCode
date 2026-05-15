@@ -11,10 +11,6 @@ export default Effect.gen(function* () {
       pull_request_json TEXT,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
-      prompt TEXT NOT NULL DEFAULT '',
-      generated_prompt TEXT,
-      prompt_status TEXT NOT NULL DEFAULT 'idle',
-      prompt_error TEXT,
       status TEXT NOT NULL,
       sort_key TEXT NOT NULL,
       blocked_reason TEXT,
@@ -26,19 +22,6 @@ export default Effect.gen(function* () {
       deleted_at TEXT
     )
   `;
-
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN generated_prompt TEXT`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt_status TEXT NOT NULL DEFAULT 'idle'`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt_error TEXT`.pipe(
-    Effect.catch(() => Effect.void),
-  );
 
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_projection_kanban_items_project_pr

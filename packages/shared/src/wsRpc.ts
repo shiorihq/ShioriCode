@@ -1,4 +1,8 @@
 import {
+  type AutomationCreateInput,
+  type AutomationIdInput,
+  type AutomationListResult,
+  type AutomationUpdateInput,
   type OnboardingCompleteStepInput,
   type NativeApi,
   ORCHESTRATION_WS_METHODS,
@@ -156,6 +160,7 @@ export interface WsRpcClient {
   };
   readonly projects: {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
+    readonly readFile: RpcUnaryMethod<typeof WS_METHODS.projectsReadFile>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
   readonly shell: {
@@ -219,6 +224,13 @@ export interface WsRpcClient {
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.onboardingCompleteStep>>;
     readonly reset: RpcUnaryNoArgMethod<typeof WS_METHODS.onboardingReset>;
   };
+  readonly automations: {
+    readonly list: RpcUnaryNoArgMethod<typeof WS_METHODS.automationsList>;
+    readonly create: (input: AutomationCreateInput) => Promise<AutomationListResult>;
+    readonly update: (input: AutomationUpdateInput) => Promise<AutomationListResult>;
+    readonly delete: (input: AutomationIdInput) => Promise<AutomationListResult>;
+    readonly runNow: (input: AutomationIdInput) => Promise<AutomationListResult>;
+  };
   readonly telemetry: {
     readonly capture: (input: TelemetryCaptureInput) => Promise<void>;
     readonly log: (input: TelemetryLogInput) => Promise<void>;
@@ -260,6 +272,8 @@ export function createWsRpcClient(options: {
     projects: {
       searchEntries: (input) =>
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
+      readFile: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsReadFile](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
     },
@@ -336,6 +350,13 @@ export function createWsRpcClient(options: {
       completeStep: (input) =>
         transport.request((client) => client[WS_METHODS.onboardingCompleteStep](input)),
       reset: () => transport.request((client) => client[WS_METHODS.onboardingReset]({})),
+    },
+    automations: {
+      list: () => transport.request((client) => client[WS_METHODS.automationsList]({})),
+      create: (input) => transport.request((client) => client[WS_METHODS.automationsCreate](input)),
+      update: (input) => transport.request((client) => client[WS_METHODS.automationsUpdate](input)),
+      delete: (input) => transport.request((client) => client[WS_METHODS.automationsDelete](input)),
+      runNow: (input) => transport.request((client) => client[WS_METHODS.automationsRunNow](input)),
     },
     telemetry: {
       capture: (input) =>

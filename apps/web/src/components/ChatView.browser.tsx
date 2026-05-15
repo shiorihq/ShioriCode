@@ -2844,7 +2844,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it.skip("archives a thread immediately after clicking the archive button", async () => {
+  it("keeps archive confirmation two-step but hides the row optimistically after confirm", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -2861,6 +2861,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const archiveButton = page.getByTestId(`thread-archive-${THREAD_ID}`);
       await expect.element(archiveButton).toBeInTheDocument();
+      await archiveButton.click();
+      await expect.element(archiveButton).toHaveTextContent("Confirm");
+      await expect.element(threadRow).toBeInTheDocument();
+
       await archiveButton.click();
 
       await vi.waitFor(

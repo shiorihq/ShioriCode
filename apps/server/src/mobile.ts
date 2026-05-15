@@ -9,6 +9,7 @@ import {
   MobileCommand,
   type MobileCommand as MobileCommandShape,
   type MobileCommandResult,
+  type MobileConnectionInfo,
   type MobileProvider,
   MobilePairRequest,
   type MobilePairRequest as MobilePairRequestShape,
@@ -247,6 +248,14 @@ function addCandidate(
   candidates.push({ apiBaseUrl, label });
 }
 
+function normalizeLocalHostname(hostname: string): string | null {
+  const trimmed = hostname.trim().replace(/\.$/, "");
+  if (!trimmed || isLoopbackHost(trimmed)) {
+    return null;
+  }
+  return trimmed.endsWith(".local") ? trimmed : `${trimmed}.local`;
+}
+
 function isLoopbackHost(host: string | undefined): boolean {
   return host === undefined || host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
@@ -255,7 +264,10 @@ function isWildcardHost(host: string | undefined): boolean {
   return host === "0.0.0.0" || host === "::" || host === "[::]";
 }
 
-function mobilePairingCandidates(config: ServerConfigShape, url: URL): MobilePairingCandidate[] {
+export function mobilePairingCandidates(
+  config: ServerConfigShape,
+  url: URL,
+): MobilePairingCandidate[] {
   const candidates: MobilePairingCandidate[] = [];
   const seen = new Set<string>();
   const port = config.port;
@@ -274,6 +286,11 @@ function mobilePairingCandidates(config: ServerConfigShape, url: URL): MobilePai
   }
 
   if (acceptsLanConnections) {
+    const localHostname = normalizeLocalHostname(os.hostname());
+    if (localHostname) {
+      addCandidate(candidates, seen, `http://${localHostname}:${port}`, "Mac local hostname");
+    }
+
     for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
       for (const address of addresses ?? []) {
         if (address.family !== "IPv4" || address.internal) {
@@ -346,6 +363,7 @@ function findValidPairingSession(pairingId: string, pairingSecret: string): Pair
 
 async function pairDevice(
   config: ServerConfigShape,
+  url: URL,
   input: MobilePairRequestShape,
 ): Promise<MobilePairResult> {
   const session = findValidPairingSession(input.pairingId, input.pairingSecret);
@@ -375,6 +393,24 @@ async function pairDevice(
     token,
     deviceName,
     pairedAt: now,
+    apiBaseUrls: mobilePairingCandidates(config, url).map((candidate) => candidate.apiBaseUrl),
+  };
+}
+
+function mobileConnectionInfo(
+  config: ServerConfigShape,
+  url: URL,
+  device: StoredMobileDevice,
+): MobileConnectionInfo {
+  const candidates = mobilePairingCandidates(config, url);
+  return {
+    version: 1,
+    deviceId: device.deviceId,
+    deviceName: device.deviceName,
+    pairedAt: device.pairedAt,
+    lastSeenAt: device.lastSeenAt,
+    apiBaseUrls: candidates.map((candidate) => candidate.apiBaseUrl),
+    candidates,
   };
 }
 
@@ -798,9 +834,13 @@ const mobilePairRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     yield* requireMobileEnabled;
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = requestUrl(request);
+    if (!url) {
+      return yield* Effect.fail(new Error("Invalid request URL."));
+    }
     const config = yield* ServerConfig;
     const input = yield* decodeJson(request, MobilePairRequest, "Invalid mobile pairing request.");
-    const result = yield* Effect.promise(() => pairDevice(config, input));
+    const result = yield* Effect.promise(() => pairDevice(config, url, input));
     return successResponse(result);
   }).pipe(
     Effect.catch((error) =>
@@ -809,6 +849,19 @@ const mobilePairRouteLayer = HttpRouter.add(
           ? errorResponse(error.message, routeErrorStatus(error, 400))
           : errorResponse("Pairing failed.", 400),
       ),
+    ),
+  ),
+);
+
+const mobileConnectionRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/mobile/connection",
+  requireMobileAuth.pipe(
+    Effect.map(({ config, url, device }) =>
+      successResponse(mobileConnectionInfo(config, url, device)),
+    ),
+    Effect.catch((error) =>
+      Effect.succeed(errorResponse(error.message, routeErrorStatus(error, 401))),
     ),
   ),
 );
@@ -889,6 +942,7 @@ export const mobileRoutesLayer = Layer.mergeAll(
   mobilePairingSessionStatusRouteLayer,
   mobileDeletePairingSessionRouteLayer,
   mobilePairRouteLayer,
+  mobileConnectionRouteLayer,
   mobileSnapshotRouteLayer,
   mobileEventsRouteLayer,
   mobileCommandRouteLayer,

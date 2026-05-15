@@ -44,6 +44,15 @@ import { Switch } from "../ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsSection, SettingsRow } from "./SettingsPanels";
+import {
+  MARKETPLACE_CONNECTORS,
+  getInstalledMarketplaceServer,
+  getMarketplaceConnector,
+  installMarketplaceConnector,
+  isMarketplaceServer,
+  setMarketplaceConnectorEnabled,
+  uninstallMarketplaceConnector,
+} from "./connectorMarketplace";
 
 // ── MCP Server Card ──────────────────────────────────────────────
 
@@ -160,7 +169,11 @@ function serverIdentity(server: McpServerEntry): string {
 }
 
 function displayServerName(server: EffectiveMcpServerEntry): string {
-  return server.source === "shiori" ? server.name : server.name.replace(/^(codex|claude):/, "");
+  if (server.source !== "shiori") return server.name.replace(/^(codex|claude):/, "");
+  if (!isMarketplaceServer(server)) return server.name;
+
+  const connector = getMarketplaceConnector(server.name.replace(/^marketplace-/, ""));
+  return connector?.name ?? server.name;
 }
 
 function effectiveServerIdentity(server: EffectiveMcpServerEntry): string {
@@ -637,6 +650,109 @@ function SkillsSection({
   );
 }
 
+// ── Plugin Marketplace Section ──────────────────────────────────
+
+function ConnectorMarketplaceSection({
+  servers,
+  onInstall,
+  onToggle,
+  onUninstall,
+}: {
+  servers: readonly McpServerEntry[];
+  onInstall: (connectorId: string) => void;
+  onToggle: (connectorId: string, enabled: boolean) => void;
+  onUninstall: (connectorId: string) => void;
+}) {
+  const openDocs = useCallback((url: string) => {
+    void ensureNativeApi()
+      .shell.openExternal(url)
+      .catch(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+  }, []);
+
+  return (
+    <SettingsSection title="Plugin Marketplace" icon={<BlocksIcon className="size-3.5" />}>
+      <div className="divide-y divide-border">
+        {MARKETPLACE_CONNECTORS.map((connector) => {
+          const installed = getInstalledMarketplaceServer(servers, connector.id);
+          const enabled = installed?.enabled ?? false;
+          return (
+            <div
+              key={connector.id}
+              className="grid gap-3 px-4 py-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5"
+            >
+              <div className="min-w-0 space-y-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h3 className="min-w-0 text-sm font-medium text-foreground">{connector.name}</h3>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {connector.category}
+                  </Badge>
+                  {installed ? (
+                    <Badge variant={enabled ? "default" : "outline"} className="text-[10px]">
+                      {enabled ? "Enabled" : "Installed"}
+                    </Badge>
+                  ) : null}
+                </div>
+                <p className="max-w-[42rem] text-xs leading-5 text-muted-foreground">
+                  {connector.summary}
+                </p>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                  <span className="min-w-0 truncate font-mono">{connector.commandPreview}</span>
+                  {connector.requiredEnvironment?.length ? (
+                    <span className="shrink-0">
+                      Requires {connector.requiredEnvironment.join(", ")}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex min-w-0 items-center gap-2 sm:justify-end">
+                {connector.docsUrl ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`Open ${connector.name} connector documentation`}
+                    onClick={() => openDocs(connector.docsUrl)}
+                  >
+                    <ExternalLinkIcon className="size-3.5 text-muted-foreground" />
+                  </Button>
+                ) : null}
+                {installed ? (
+                  <>
+                    <Switch
+                      checked={enabled}
+                      onCheckedChange={(checked) => onToggle(connector.id, checked)}
+                    />
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={`Uninstall ${connector.name} connector`}
+                      onClick={() => onUninstall(connector.id)}
+                    >
+                      <Trash2Icon className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => onInstall(connector.id)}
+                  >
+                    <PlusIcon className="size-3.5" />
+                    Install
+                  </Button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </SettingsSection>
+  );
+}
+
 // ── Grouped MCP Servers Section ─────────────────────────────────
 
 function McpServersSection({
@@ -835,6 +951,32 @@ export function SkillsPanel() {
     [persistServers, servers],
   );
 
+  const handleInstallConnector = useCallback(
+    (connectorId: string) => {
+      persistServers(installMarketplaceConnector(servers, connectorId));
+      const connector = MARKETPLACE_CONNECTORS.find((item) => item.id === connectorId);
+      toastManager.add({
+        type: "success",
+        title: connector ? `Installed ${connector.name}` : "Installed connector",
+      });
+    },
+    [persistServers, servers],
+  );
+
+  const handleToggleConnector = useCallback(
+    (connectorId: string, enabled: boolean) => {
+      persistServers(setMarketplaceConnectorEnabled(servers, connectorId, enabled));
+    },
+    [persistServers, servers],
+  );
+
+  const handleUninstallConnector = useCallback(
+    (connectorId: string) => {
+      persistServers(uninstallMarketplaceConnector(servers, connectorId));
+    },
+    [persistServers, servers],
+  );
+
   const handleDeleteExternalServer = useCallback(
     (server: EffectiveMcpServerEntry) => {
       void ensureNativeApi()
@@ -909,6 +1051,13 @@ export function SkillsPanel() {
       ) : (
         <SkillsSection skills={skillsQuery.data?.skills ?? []} onDelete={handleDeleteSkill} />
       )}
+
+      <ConnectorMarketplaceSection
+        servers={servers}
+        onInstall={handleInstallConnector}
+        onToggle={handleToggleConnector}
+        onUninstall={handleUninstallConnector}
+      />
 
       <McpServersSection
         servers={servers}

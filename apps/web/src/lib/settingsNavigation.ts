@@ -29,7 +29,12 @@ function resolveThreadIdFromPath(pathname: string): ThreadId | null {
   }
 
   const [segment] = segments;
-  if (!segment || segment === "pull-requests" || segment === "settings") {
+  if (
+    !segment ||
+    segment === "pull-requests" ||
+    segment === "automations" ||
+    segment === "settings"
+  ) {
     return null;
   }
 
@@ -38,13 +43,21 @@ function resolveThreadIdFromPath(pathname: string): ThreadId | null {
 
 export function resolveSettingsBackNavigation(
   pathname: string | null,
-): { to: "/" } | { to: "/pull-requests" } | { to: "/$threadId"; params: { threadId: ThreadId } } {
+):
+  | { to: "/" }
+  | { to: "/pull-requests" }
+  | { to: "/automations" }
+  | { to: "/$threadId"; params: { threadId: ThreadId } } {
   if (!pathname || pathname === "/" || pathname.startsWith("/settings")) {
     return { to: "/" };
   }
 
   if (pathname.startsWith("/pull-requests")) {
     return { to: "/pull-requests" };
+  }
+
+  if (pathname.startsWith("/automations")) {
+    return { to: "/automations" };
   }
 
   const threadId = resolveThreadIdFromPath(pathname);

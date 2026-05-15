@@ -47,6 +47,7 @@ const rpcClientMock = {
   },
   projects: {
     searchEntries: vi.fn(),
+    readFile: vi.fn(),
     writeFile: vi.fn(),
   },
   shell: {
@@ -87,6 +88,13 @@ const rpcClientMock = {
     getState: vi.fn(),
     completeStep: vi.fn(),
     reset: vi.fn(),
+  },
+  automations: {
+    list: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    runNow: vi.fn(),
   },
   telemetry: {
     capture: vi.fn(),
@@ -326,6 +334,28 @@ describe("wsNativeApi", () => {
       cwd: "/tmp/project",
       relativePath: "plan.md",
       contents: "# Plan\n",
+    });
+  });
+
+  it("forwards workspace file reads to the project RPC", async () => {
+    rpcClientMock.projects.readFile.mockResolvedValue({
+      relativePath: "plan.md",
+      kind: "text",
+      mimeType: "text/markdown",
+      sizeBytes: 7,
+      contents: "# Plan\n",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.readFile({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+    });
+
+    expect(rpcClientMock.projects.readFile).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
     });
   });
 

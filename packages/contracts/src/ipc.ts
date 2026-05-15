@@ -45,7 +45,15 @@ import type {
   GitSummarizePullRequestInput,
   GitSummarizePullRequestResult,
 } from "./git";
+import {
+  AutomationCreateInput,
+  AutomationListResult,
+  AutomationUpdateInput,
+  AutomationIdInput,
+} from "./automation";
 import type {
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -220,6 +228,7 @@ export interface NativeApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {
@@ -296,6 +305,13 @@ export interface NativeApi {
     getState: () => Promise<OnboardingState>;
     completeStep: (input: OnboardingCompleteStepInput) => Promise<OnboardingState>;
     reset: () => Promise<OnboardingState>;
+  };
+  automations: {
+    list: () => Promise<AutomationListResult>;
+    create: (input: AutomationCreateInput) => Promise<AutomationListResult>;
+    update: (input: AutomationUpdateInput) => Promise<AutomationListResult>;
+    delete: (input: AutomationIdInput) => Promise<AutomationListResult>;
+    runNow: (input: AutomationIdInput) => Promise<AutomationListResult>;
   };
   telemetry: {
     capture: (input: TelemetryCaptureInput) => Promise<void>;

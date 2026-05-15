@@ -11,6 +11,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -63,6 +64,7 @@ import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
 import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore";
 import { HostedBillingService } from "./hostedBilling";
+import { AutomationService } from "./automations/Services/AutomationService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { BrowserPanelRequests } from "./browserPanelRequests.ts";
 import { ComputerUseManager } from "./computer/Services/ComputerUseManager";
@@ -262,6 +264,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const analytics = yield* AnalyticsService;
     const browserPanelRequests = yield* BrowserPanelRequests;
     const computer = yield* ComputerUseManager;
+    const automations = yield* AutomationService;
     const latestProvidersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
 
     const readProvidersForConfig = Effect.gen(function* () {
@@ -729,6 +732,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                 }),
             ),
           ),
+      [WS_METHODS.automationsList]: (_input) => automations.list,
+      [WS_METHODS.automationsCreate]: (input) => automations.create(input),
+      [WS_METHODS.automationsUpdate]: (input) => automations.update(input),
+      [WS_METHODS.automationsDelete]: (input) => automations.delete(input),
+      [WS_METHODS.automationsRunNow]: (input) => automations.runNow(input),
       [WS_METHODS.telemetryCapture]: (input) =>
         analytics
           .record(input.event, withTelemetrySource("web-client", input.properties))
@@ -759,6 +767,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                 cause,
               }),
           ),
+        ),
+      [WS_METHODS.projectsReadFile]: (input) =>
+        workspaceFileSystem.readFile(input).pipe(
+          Effect.mapError((cause) => {
+            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+              ? "Workspace file path must stay within the project root."
+              : `Failed to read workspace file: ${cause.detail}`;
+            return new ProjectReadFileError({
+              message,
+              cause,
+            });
+          }),
         ),
       [WS_METHODS.projectsWriteFile]: (input) =>
         workspaceFileSystem.writeFile(input).pipe(

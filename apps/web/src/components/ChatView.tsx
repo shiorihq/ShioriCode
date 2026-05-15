@@ -31,6 +31,7 @@ import { isElectron } from "../env";
 import {
   parseDiffRouteSearch,
   stripBrowserSearchParams,
+  stripArtifactSearchParams,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
 import {
@@ -104,6 +105,7 @@ import {
   IconChevronLeftOutline24 as ChevronLeftIcon,
   IconChevronRightOutline24 as ChevronRightIcon,
   IconCircleWarningOutline24 as CircleAlertIcon,
+  IconHourglassOutline24 as HourglassIcon,
   IconListTodoOutline24 as ListTodoIcon,
   IconXmarkOutline24 as XIcon,
 } from "nucleo-core-outline-24";
@@ -598,10 +600,16 @@ function PersistentThreadTerminalDrawer({
       setMounted(true);
       // Render once with animState="closed", then flip to "open" on the next
       // frame so the browser has a starting keyframe to transition from.
+      let raf2: number | null = null;
       const raf1 = requestAnimationFrame(() => {
-        requestAnimationFrame(() => setAnimState("open"));
+        raf2 = requestAnimationFrame(() => setAnimState("open"));
       });
-      return () => cancelAnimationFrame(raf1);
+      return () => {
+        cancelAnimationFrame(raf1);
+        if (raf2 !== null) {
+          cancelAnimationFrame(raf2);
+        }
+      };
     }
     setAnimState("closed");
     closeTimerRef.current = setTimeout(() => {
@@ -4006,6 +4014,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         type: "info",
         title: "Message queued",
         description: "It will send automatically when the current turn finishes.",
+        data: { icon: HourglassIcon },
       });
       sendInFlightRef.current = false;
       resetLocalDispatch();
@@ -5241,6 +5250,24 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     },
     [isProjectThread, navigate, threadId],
   );
+  const onOpenArtifact = useCallback(
+    (filePath: string) => {
+      if (!isProjectThread) {
+        return;
+      }
+
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => ({
+          ...stripDiffSearchParams(stripArtifactSearchParams(previous)),
+          artifact: "1",
+          artifactPath: filePath,
+        }),
+      });
+    },
+    [isProjectThread, navigate, threadId],
+  );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
     if (typeof targetTurnCount !== "number") {
@@ -5396,6 +5423,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   expandedWorkGroups={expandedWorkGroups}
                   onToggleWorkGroup={onToggleWorkGroup}
                   onOpenTurnDiff={onOpenTurnDiff}
+                  onOpenArtifact={onOpenArtifact}
                   revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                   onRevertUserMessage={onRevertUserMessage}
                   onRetryAssistantMessage={onRetryAssistantMessage}

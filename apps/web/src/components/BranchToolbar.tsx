@@ -12,6 +12,7 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
+import { AnimatedFolderIcon } from "./AnimatedFolderIcon";
 import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
@@ -147,7 +148,7 @@ export default function BranchToolbar({
         size="xs"
         className="h-auto gap-1.5 rounded-full py-1.5 font-medium transition-none sm:h-auto sm:py-1.5"
       >
-        <FolderGit2 className="size-3.5" />
+        <AnimatedFolderIcon />
         <SelectValue className="max-w-[10rem] truncate" />
       </SelectTrigger>
       <SelectPopup>

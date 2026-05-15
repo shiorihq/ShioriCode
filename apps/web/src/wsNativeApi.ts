@@ -82,6 +82,7 @@ export function createWsNativeApi(): NativeApi {
     },
     projects: {
       searchEntries: rpcClient.projects.searchEntries,
+      readFile: rpcClient.projects.readFile,
       writeFile: rpcClient.projects.writeFile,
     },
     shell: {
@@ -164,6 +165,13 @@ export function createWsNativeApi(): NativeApi {
       getState: rpcClient.onboarding.getState,
       completeStep: (input) => rpcClient.onboarding.completeStep(input),
       reset: rpcClient.onboarding.reset,
+    },
+    automations: {
+      list: rpcClient.automations.list,
+      create: rpcClient.automations.create,
+      update: rpcClient.automations.update,
+      delete: rpcClient.automations.delete,
+      runNow: rpcClient.automations.runNow,
     },
     telemetry: {
       capture: (input) => rpcClient.telemetry.capture(input),

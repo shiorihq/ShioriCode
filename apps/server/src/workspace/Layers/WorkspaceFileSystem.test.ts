@@ -50,6 +50,102 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads text artifacts relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "plans/effect-rpc.md", "# Plan\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "plans/effect-rpc.md",
+        });
+
+        expect(result).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          kind: "text",
+          mimeType: "text/markdown",
+          sizeBytes: 7,
+          contents: "# Plan\n",
+        });
+      }),
+    );
+
+    it.effect("reads image artifacts as data URLs", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const absolutePath = path.join(cwd, "images/pixel.png");
+        yield* fileSystem
+          .makeDirectory(path.dirname(absolutePath), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* fileSystem
+          .writeFile(absolutePath, Uint8Array.from([137, 80, 78, 71]))
+          .pipe(Effect.orDie);
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "images/pixel.png",
+        });
+
+        expect(result).toEqual({
+          relativePath: "images/pixel.png",
+          kind: "image",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          dataUrl: "data:image/png;base64,iVBORw==",
+        });
+      }),
+    );
+
+    it.effect("does not read oversized artifacts into memory", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const absolutePath = path.join(cwd, "large-output.md");
+        yield* fileSystem
+          .writeFile(absolutePath, new Uint8Array(2 * 1024 * 1024 + 1))
+          .pipe(Effect.orDie);
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large-output.md",
+        });
+
+        expect(result).toEqual({
+          relativePath: "large-output.md",
+          kind: "unsupported",
+          mimeType: null,
+          sizeBytes: 2 * 1024 * 1024 + 1,
+          reason: "File is too large to preview in ShioriCode.",
+        });
+      }),
+    );
+
+    it.effect("rejects reads outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "../escape.md",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {

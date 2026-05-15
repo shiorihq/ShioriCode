@@ -67,6 +67,10 @@ import {
   ComputerUseManager,
   type ComputerUseManagerShape,
 } from "./computer/Services/ComputerUseManager.ts";
+import {
+  AutomationService,
+  type AutomationServiceShape,
+} from "./automations/Services/AutomationService.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -148,6 +152,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     hostedBilling?: Partial<HostedBillingShape>;
     computerUseManager?: Partial<ComputerUseManagerShape>;
+    automationService?: Partial<AutomationServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -188,7 +193,7 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.computerUseManager,
     });
 
-    const appLayer = HttpRouter.serve(makeRoutesLayer, {
+    const appLayerBase = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
@@ -317,6 +322,20 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         HostedBillingService.layerTest({
           ...options?.layers?.hostedBilling,
+        }),
+      ),
+    );
+
+    const appLayer = appLayerBase.pipe(
+      Layer.provide(
+        Layer.mock(AutomationService)({
+          list: Effect.succeed({ automations: [] }),
+          create: () => Effect.succeed({ automations: [] }),
+          update: () => Effect.succeed({ automations: [] }),
+          delete: () => Effect.succeed({ automations: [] }),
+          runNow: () => Effect.succeed({ automations: [] }),
+          start: Effect.void,
+          ...options?.layers?.automationService,
         }),
       ),
       Layer.provide(Layer.mergeAll(BrowserPanelRequestsLive, computerUseManagerLayer)),

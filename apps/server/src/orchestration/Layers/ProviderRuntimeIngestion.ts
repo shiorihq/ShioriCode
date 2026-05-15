@@ -21,6 +21,7 @@ import { snapshotProviderToolData } from "shared/providerTool";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { isAutomationThread } from "../../automations/threadIdentity.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -37,15 +38,15 @@ const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId 
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 const newKanbanSortKey = () => `${Date.now().toString().padStart(13, "0")}_${crypto.randomUUID()}`;
 
-const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
-const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
-const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
-const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
-const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
-const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
-const COMMENTARY_ASSISTANT_ITEMS_BY_ID_CACHE_CAPACITY = 20_000;
-const COMMENTARY_ASSISTANT_ITEMS_BY_ID_TTL = Duration.minutes(120);
-const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 2_000;
+const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(30);
+const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 2_000;
+const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(30);
+const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 1_000;
+const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(30);
+const COMMENTARY_ASSISTANT_ITEMS_BY_ID_CACHE_CAPACITY = 2_000;
+const COMMENTARY_ASSISTANT_ITEMS_BY_ID_TTL = Duration.minutes(30);
+const MAX_BUFFERED_ASSISTANT_CHARS = 12_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD =
   process.env.SHIORICODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
@@ -305,7 +306,7 @@ function isReasoningStreamKind(
 function truncateTaskProgressDetail(
   event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
 ) {
-  return truncateDetail(event.payload.summary ?? event.payload.description);
+  return event.payload.summary ?? event.payload.description;
 }
 
 function isReasoningTaskProgress(
@@ -518,10 +519,8 @@ function runtimeEventToActivities(
             ...(parentItemId ? { parentItemId } : {}),
             ...(detail ? { detail } : {}),
             displayAs: reasoningProgress ? "reasoning" : "status",
-            ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
-            ...(event.payload.description
-              ? { description: truncateDetail(event.payload.description) }
-              : {}),
+            ...(event.payload.summary ? { summary: event.payload.summary } : {}),
+            ...(event.payload.description ? { description: event.payload.description } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
@@ -1028,6 +1027,40 @@ const make = Effect.fn("make")(function* () {
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
 
+  const clearTurnStateForTurn = Effect.fn("clearTurnStateForTurn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly threadMessages?: ReadonlyArray<{ readonly id: MessageId }>;
+    readonly terminalEvent?: ProviderRuntimeEvent;
+    readonly completedAt?: string;
+  }) {
+    const { threadId, turnId } = input;
+    const existingMessageIds = new Set(input.threadMessages?.map((message) => message.id) ?? []);
+    const key = providerTurnKey(threadId, turnId);
+    const messageIds = yield* Cache.getOption(turnMessageIdsByTurnKey, key);
+    if (Option.isSome(messageIds)) {
+      yield* Effect.forEach(
+        messageIds.value,
+        Effect.fn(function* (messageId) {
+          yield* clearAssistantMessageState(messageId);
+          if (input.terminalEvent && existingMessageIds.has(messageId)) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.complete",
+              commandId: providerCommandId(input.terminalEvent, "assistant-terminal-cleanup"),
+              threadId,
+              messageId,
+              turnId,
+              createdAt: input.completedAt ?? input.terminalEvent.createdAt,
+            });
+          }
+        }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+    }
+    yield* Cache.invalidate(turnMessageIdsByTurnKey, key);
+    yield* Cache.invalidate(bufferedProposedPlanById, proposedPlanIdForTurn(threadId, turnId));
+  });
+
   const finalizeAssistantMessage = Effect.fn("finalizeAssistantMessage")(function* (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
@@ -1295,7 +1328,8 @@ const make = Effect.fn("make")(function* () {
       event.type === "session.exited" ||
       event.type === "thread.started" ||
       event.type === "turn.started" ||
-      event.type === "turn.completed";
+      event.type === "turn.completed" ||
+      event.type === "turn.aborted";
 
     if (!isSessionLifecycleEvent) {
       const sessionProvider = thread.session?.providerName ?? null;
@@ -1332,6 +1366,7 @@ const make = Effect.fn("make")(function* () {
         case "turn.started":
           return !conflictsWithActiveTurn;
         case "turn.completed":
+        case "turn.aborted":
           if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
             return false;
           }
@@ -1356,12 +1391,15 @@ const make = Effect.fn("make")(function* () {
       event.type === "session.exited" ||
       event.type === "thread.started" ||
       event.type === "turn.started" ||
-      event.type === "turn.completed"
+      event.type === "turn.completed" ||
+      event.type === "turn.aborted"
     ) {
       const nextActiveTurnId =
         event.type === "turn.started"
           ? (eventTurnId ?? null)
-          : event.type === "turn.completed" || event.type === "session.exited"
+          : event.type === "turn.completed" ||
+              event.type === "turn.aborted" ||
+              event.type === "session.exited"
             ? null
             : activeTurnId;
       const status = (() => {
@@ -1372,6 +1410,8 @@ const make = Effect.fn("make")(function* () {
             return "running";
           case "session.exited":
             return "stopped";
+          case "turn.aborted":
+            return "ready";
           case "turn.completed":
             return normalizeRuntimeTurnState(event.payload.state) === "failed" ? "error" : "ready";
           case "session.started":
@@ -1387,9 +1427,11 @@ const make = Effect.fn("make")(function* () {
           : event.type === "turn.completed" &&
               normalizeRuntimeTurnState(event.payload.state) === "failed"
             ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-            : status === "ready"
+            : event.type === "turn.aborted"
               ? null
-              : (thread.session?.lastError ?? null);
+              : status === "ready"
+                ? null
+                : (thread.session?.lastError ?? null);
       const nextResumeState = (() => {
         switch (event.type) {
           case "session.exited":
@@ -1402,6 +1444,7 @@ const make = Effect.fn("make")(function* () {
           case "thread.started":
           case "turn.started":
           case "turn.completed":
+          case "turn.aborted":
             return "resumed";
         }
       })();
@@ -1688,11 +1731,57 @@ const make = Effect.fn("make")(function* () {
       }
     }
 
+    if (event.type === "turn.aborted") {
+      const turnId = toTurnId(event.turnId);
+      if (turnId) {
+        yield* clearTurnStateForTurn({
+          threadId: thread.id,
+          turnId,
+          threadMessages: thread.messages,
+          terminalEvent: event,
+          completedAt: now,
+        });
+      }
+    }
+
+    if (
+      shouldApplyThreadLifecycle &&
+      isAutomationThread(thread) &&
+      (event.type === "turn.completed" || event.type === "turn.aborted")
+    ) {
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.session.stop",
+          commandId: providerCommandId(event, "automation-session-stop"),
+          threadId: thread.id,
+          createdAt: now,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider runtime ingestion failed to stop automation session", {
+              eventId: event.eventId,
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+    }
+
     if (event.type === "session.exited") {
       yield* clearTurnStateForSession(thread.id);
     }
 
     if (event.type === "runtime.error") {
+      if (eventTurnId) {
+        yield* clearTurnStateForTurn({
+          threadId: thread.id,
+          turnId: eventTurnId,
+          threadMessages: thread.messages,
+          terminalEvent: event,
+          completedAt: now,
+        });
+      }
+
       const runtimeErrorMessage = event.payload.message;
 
       const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD

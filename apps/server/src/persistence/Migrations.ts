@@ -40,6 +40,8 @@ import Migration0024 from "./Migrations/024_ProjectionThreadsPinnedAt.ts";
 import Migration0025 from "./Migrations/025_CanonicalizeClaudeEffort.ts";
 import Migration0026 from "./Migrations/026_ProjectionKanbanItems.ts";
 import Migration0027 from "./Migrations/027_ProjectionKanbanItemPromptColumns.ts";
+import Migration0028 from "./Migrations/028_Automations.ts";
+import Migration0029 from "./Migrations/029_StandaloneAutomations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -79,6 +81,8 @@ export const migrationEntries = [
   [25, "CanonicalizeClaudeEffort", Migration0025],
   [26, "ProjectionKanbanItems", Migration0026],
   [27, "ProjectionKanbanItemPromptColumns", Migration0027],
+  [28, "Automations", Migration0028],
+  [29, "StandaloneAutomations", Migration0029],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

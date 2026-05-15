@@ -1196,6 +1196,29 @@ function resolveResourcePath(fileName: string): string | null {
   return null;
 }
 
+function isAsarPath(filePath: string): boolean {
+  return filePath
+    .split(/[\\/]/)
+    .some((segment) => segment === "app.asar" || segment.endsWith(".asar"));
+}
+
+function resolveExecutableResourcePath(fileName: string): string | null {
+  const candidates = [
+    Path.join(process.resourcesPath, fileName),
+    Path.join(process.resourcesPath, "resources", fileName),
+    Path.join(__dirname, "../resources", fileName),
+    Path.join(__dirname, "../prod-resources", fileName),
+  ];
+
+  for (const candidate of candidates) {
+    if (!isAsarPath(candidate) && FS.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function unsupportedComputerUsePermissions(message: string): ComputerUsePermissionsSnapshot {
   return {
     platform: process.platform,
@@ -1231,7 +1254,7 @@ function resolveComputerUseHelperPath(): string | null {
   }
 
   const configured = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY?.trim();
-  const resourcePath = resolveResourcePath(
+  const resourcePath = resolveExecutableResourcePath(
     Path.join("native", "macos", COMPUTER_USE_HELPER_BINARY_NAME),
   );
   const candidates = [

@@ -4,6 +4,8 @@ export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
+  artifact?: "1" | undefined;
+  artifactPath?: string | undefined;
   browser?: "1" | undefined;
   panes?: string | undefined;
 }
@@ -28,6 +30,13 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
 ): Omit<T, "diff" | "diffTurnId" | "diffFilePath"> {
   const { diff: _diff, diffTurnId: _diffTurnId, diffFilePath: _diffFilePath, ...rest } = params;
   return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath">;
+}
+
+export function stripArtifactSearchParams<T extends Record<string, unknown>>(
+  params: T,
+): Omit<T, "artifact" | "artifactPath"> {
+  const { artifact: _artifact, artifactPath: _artifactPath, ...rest } = params;
+  return rest as Omit<T, "artifact" | "artifactPath">;
 }
 
 export function stripBrowserSearchParams<T extends Record<string, unknown>>(
@@ -181,6 +190,8 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId = diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
+  const artifact = isPanelOpenValue(search.artifact) ? "1" : undefined;
+  const artifactPath = artifact ? normalizeSearchString(search.artifactPath) : undefined;
   const browser = isPanelOpenValue(search.browser) ? "1" : undefined;
   const panes = encodeThreadPaneSearchValue(parseThreadPaneSearchValue(search.panes));
 
@@ -188,6 +199,7 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
+    ...(artifact && artifactPath ? { artifact, artifactPath } : {}),
     ...(browser ? { browser } : {}),
     ...(panes ? { panes } : {}),
   };
