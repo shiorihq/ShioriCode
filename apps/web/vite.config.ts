@@ -23,6 +23,7 @@ const hasNucleoLicenseKey = Boolean(
 const lucideNucleoFallbackPath = fileURLToPath(
   new URL("./src/icons/lucideNucleoFallback.ts", import.meta.url),
 );
+const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 type WebViteConfigOptions = {
   includeRouterPlugin?: boolean;
@@ -70,14 +71,10 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
       "import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
     },
     resolve: {
-      tsconfigPaths: true,
-      ...(hasNucleoLicenseKey
-        ? {}
-        : {
-            alias: {
-              "nucleo-core-outline-24": lucideNucleoFallbackPath,
-            },
-          }),
+      alias: {
+        "~": srcDir,
+        ...(hasNucleoLicenseKey ? {} : { "nucleo-core-outline-24": lucideNucleoFallbackPath }),
+      },
     },
     server: {
       host,
