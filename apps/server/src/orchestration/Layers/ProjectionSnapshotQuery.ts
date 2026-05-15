@@ -136,6 +136,11 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
 
+const SNAPSHOT_THREAD_MESSAGE_LIMIT = 2_000;
+const SNAPSHOT_THREAD_PROPOSED_PLAN_LIMIT = 200;
+const SNAPSHOT_THREAD_ACTIVITY_LIMIT = 500;
+const SNAPSHOT_THREAD_CHECKPOINT_LIMIT = 500;
+
 function maxIso(left: string | null, right: string): string {
   if (left === null) {
     return right;
@@ -271,7 +276,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
-        FROM projection_thread_messages
+        FROM (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY created_at DESC, message_id DESC
+            ) AS row_rank
+          FROM projection_thread_messages
+        )
+        WHERE row_rank <= ${SNAPSHOT_THREAD_MESSAGE_LIMIT}
         ORDER BY thread_id ASC, created_at ASC, message_id ASC
       `,
   });
@@ -290,7 +304,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           implementation_thread_id AS "implementationThreadId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
-        FROM projection_thread_proposed_plans
+        FROM (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY created_at DESC, plan_id DESC
+            ) AS row_rank
+          FROM projection_thread_proposed_plans
+        )
+        WHERE row_rank <= ${SNAPSHOT_THREAD_PROPOSED_PLAN_LIMIT}
         ORDER BY thread_id ASC, created_at ASC, plan_id ASC
       `,
   });
@@ -310,7 +333,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           payload_json AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM projection_thread_activities
+        FROM (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                CASE WHEN sequence IS NULL THEN 0 ELSE 1 END DESC,
+                sequence DESC,
+                created_at DESC,
+                activity_id DESC
+            ) AS row_rank
+          FROM projection_thread_activities
+        )
+        WHERE row_rank <= ${SNAPSHOT_THREAD_ACTIVITY_LIMIT}
         ORDER BY
           thread_id ASC,
           CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
@@ -354,8 +390,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
-        FROM projection_turns
+        FROM (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY checkpoint_turn_count DESC
+            ) AS row_rank
+          FROM projection_turns
+          WHERE checkpoint_turn_count IS NOT NULL
+        )
         WHERE checkpoint_turn_count IS NOT NULL
+          AND row_rank <= ${SNAPSHOT_THREAD_CHECKPOINT_LIMIT}
         ORDER BY thread_id ASC, checkpoint_turn_count ASC
       `,
   });
@@ -375,8 +421,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           assistant_message_id AS "assistantMessageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId"
-        FROM projection_turns
+        FROM (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY requested_at DESC, turn_id DESC
+            ) AS row_rank
+          FROM projection_turns
+          WHERE turn_id IS NOT NULL
+        )
         WHERE turn_id IS NOT NULL
+          AND row_rank = 1
         ORDER BY thread_id ASC, requested_at DESC, turn_id DESC
       `,
   });

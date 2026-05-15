@@ -41,6 +41,7 @@ import {
 } from "../Services/PTY";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
+const DEFAULT_HISTORY_CHAR_LIMIT = 512 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_SUBPROCESS_POLL_CONCURRENCY = 4;
@@ -394,16 +395,21 @@ const defaultSubprocessChecker = Effect.fn("terminal.defaultSubprocessChecker")(
   return yield* checkPosixSubprocessActivity(terminalPid);
 });
 
-function capHistory(history: string, maxLines: number): string {
+function capHistory(history: string, maxLines: number, maxChars: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
   const lines = history.split("\n");
   if (hasTrailingNewline) {
     lines.pop();
   }
-  if (lines.length <= maxLines) return history;
-  const capped = lines.slice(lines.length - maxLines).join("\n");
-  return hasTrailingNewline ? `${capped}\n` : capped;
+  const lineCapped =
+    lines.length <= maxLines ? history : lines.slice(lines.length - maxLines).join("\n");
+  const cappedWithNewline =
+    lines.length <= maxLines || !hasTrailingNewline ? lineCapped : `${lineCapped}\n`;
+  if (cappedWithNewline.length <= maxChars) {
+    return cappedWithNewline;
+  }
+  return cappedWithNewline.slice(cappedWithNewline.length - maxChars);
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
@@ -637,6 +643,7 @@ function normalizedRuntimeEnv(
 interface TerminalManagerOptions {
   logsDir: string;
   historyLineLimit?: number;
+  historyCharLimit?: number;
   ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
   subprocessChecker?: TerminalSubprocessChecker;
@@ -662,6 +669,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
     const logsDir = options.logsDir;
     const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
+    const historyCharLimit = options.historyCharLimit ?? DEFAULT_HISTORY_CHAR_LIMIT;
     const shellResolver = options.shellResolver ?? defaultShellResolver;
     const subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
     const subprocessPollIntervalMs =
@@ -922,7 +930,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         const raw = yield* fileSystem
           .readFileString(nextPath)
           .pipe(Effect.mapError(toTerminalHistoryError("read", threadId, terminalId)));
-        const capped = capHistory(raw, historyLineLimit);
+        const capped = capHistory(raw, historyLineLimit, historyCharLimit);
         if (capped !== raw) {
           yield* fileSystem
             .writeFileString(nextPath, capped)
@@ -947,7 +955,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       const raw = yield* fileSystem
         .readFileString(legacyPath)
         .pipe(Effect.mapError(toTerminalHistoryError("migrate", threadId, terminalId)));
-      const capped = capHistory(raw, historyLineLimit);
+      const capped = capHistory(raw, historyLineLimit, historyCharLimit);
       yield* fileSystem
         .writeFileString(nextPath, capped)
         .pipe(Effect.mapError(toTerminalHistoryError("migrate", threadId, terminalId)));
@@ -1136,6 +1144,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               session.history = capHistory(
                 `${session.history}${sanitized.visibleText}`,
                 historyLineLimit,
+                historyCharLimit,
               );
             }
             session.updatedAt = new Date().toISOString();

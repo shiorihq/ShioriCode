@@ -691,4 +691,116 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }
     }),
   );
+
+  it.effect("caps hydrated timeline rows per thread", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          workspace_kind,
+          project_id,
+          projectless_cwd,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-capped',
+          'projectless',
+          NULL,
+          '/tmp/thread-capped',
+          'Thread Capped',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          '2026-03-03T00:00:00.000Z',
+          '2026-03-03T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      for (let index = 0; index < 2_005; index += 1) {
+        const suffix = String(index).padStart(4, "0");
+        const timestamp = `2026-03-03T00:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`;
+        yield* sql`
+          INSERT INTO projection_thread_messages (
+            message_id,
+            thread_id,
+            turn_id,
+            role,
+            text,
+            is_streaming,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            ${`message-${suffix}`},
+            'thread-capped',
+            ${`turn-${suffix}`},
+            'assistant',
+            ${`message ${suffix}`},
+            0,
+            ${timestamp},
+            ${timestamp}
+          )
+        `;
+      }
+
+      for (let index = 0; index < 505; index += 1) {
+        const suffix = String(index).padStart(4, "0");
+        const timestamp = `2026-03-03T01:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`;
+        yield* sql`
+          INSERT INTO projection_thread_activities (
+            activity_id,
+            thread_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          )
+          VALUES (
+            ${`activity-${suffix}`},
+            'thread-capped',
+            ${`turn-${suffix}`},
+            'info',
+            'runtime.note',
+            ${`activity ${suffix}`},
+            '{}',
+            ${index},
+            ${timestamp}
+          )
+        `;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const thread = snapshot.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-capped"),
+      );
+
+      assert.equal(thread?.messages.length, 2_000);
+      assert.equal(thread?.messages[0]?.id, asMessageId("message-0005"));
+      assert.equal(thread?.activities.length, 500);
+      assert.equal(thread?.activities[0]?.id, asEventId("activity-0005"));
+    }),
+  );
 });

@@ -28,6 +28,7 @@ import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
+import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
@@ -43,6 +44,8 @@ import { GitManagerLive } from "./git/Layers/GitManager";
 import { KeybindingsLive } from "./keybindings";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup";
+import { AutomationRepositoryLive } from "./automations/Layers/AutomationRepository";
+import { AutomationServiceLive } from "./automations/Layers/AutomationService";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
 import { GoalPromptReactorLive } from "./orchestration/Layers/GoalPromptReactor";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus";
@@ -201,12 +204,14 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
-const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
+const RuntimeServicesBaseLive = ServerRuntimeStartupLive.pipe(
+  Layer.provideMerge(AutomationServiceLive.pipe(Layer.provide(AutomationRepositoryLive))),
   Layer.provideMerge(ReactorLayerLive),
   Layer.provideMerge(SubagentDetailQueryLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provideMerge(ProviderLayerLive),
+  Layer.provideMerge(ProviderSessionReaperLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
@@ -216,6 +221,9 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(HostedShioriAuthTokenStoreLive),
   Layer.provideMerge(HostedBillingLive),
+);
+
+const RuntimeServicesLive = RuntimeServicesBaseLive.pipe(
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(AnalyticsServiceLayerLive),
