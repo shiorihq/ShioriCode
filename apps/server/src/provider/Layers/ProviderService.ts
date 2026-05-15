@@ -950,26 +950,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             });
           }
 
-          try {
-            const recovered = yield* recoverSessionForThread({
-              binding,
-              operation: "ProviderService.reconcileSessions",
-            });
-            return {
-              threadId,
-              provider: recovered.session.provider,
-              session: recovered.session,
-              resumeState: "resumed",
-              runtimeMode: recovered.session.runtimeMode,
-              lastError: recovered.session.lastError ?? null,
-            };
-          } catch (cause) {
-            return yield* projectInactiveReconciliation({
-              binding,
-              capabilities,
-              cause,
-            });
-          }
+          return {
+            threadId,
+            provider: binding.provider,
+            session: null,
+            resumeState: defaultResumeStateForBinding(binding),
+            runtimeMode: binding.runtimeMode ?? "full-access",
+            lastError,
+          };
         }),
       { concurrency: 1 },
     );

@@ -634,7 +634,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
 );
 
 it.effect(
-  "ProviderServiceLive marks persisted sessions without resume state unrecoverable on startup",
+  "ProviderServiceLive marks persisted sessions without resume state unrecoverable without starting them",
   () =>
     Effect.gen(function* () {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-no-resume-"));
@@ -728,6 +728,70 @@ it.effect(
       }
 
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive does not eagerly resume persisted resumable sessions during reconciliation",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-lazy-resume-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+
+      const codex = makeFakeCodexAdapter();
+      const registry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "codex"
+            ? Effect.succeed(codex.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["codex"]),
+      };
+
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        yield* directory.upsert({
+          provider: "codex",
+          threadId: ThreadId.makeUnsafe("thread-resumable"),
+          runtimeMode: "full-access",
+          status: "running",
+          resumeCursor: { threadId: "provider-thread-resumable" },
+          runtimePayload: {
+            cwd: "/tmp/project-resumable",
+          },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      const reconciled = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.reconcileSessions();
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.equal(codex.startSession.mock.calls.length, 0);
+      assert.deepEqual(reconciled, [
+        {
+          threadId: asThreadId("thread-resumable"),
+          provider: "codex",
+          session: null,
+          resumeState: "needs_resume",
+          runtimeMode: "full-access",
+          lastError: null,
+        },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 

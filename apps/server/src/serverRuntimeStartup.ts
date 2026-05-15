@@ -30,6 +30,8 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { AutomationService } from "./automations/Services/AutomationService";
+import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper";
 
 function resolveProjectTitle(cwd: string, pathService: Pick<Path.Path, "basename">): string {
   return normalizeProjectTitle(pathService.basename(cwd));
@@ -74,6 +76,8 @@ interface CommandGate {
   ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
 }
 
+const STARTUP_COMMAND_QUEUE_CAPACITY = 1_000;
+
 const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit.Exit<A, E>) =>
   Exit.isSuccess(exit)
     ? Deferred.succeed(deferred, exit.value)
@@ -81,7 +85,7 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
 
 export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
-  const commandQueue = yield* Queue.unbounded<QueuedCommand>();
+  const commandQueue = yield* Queue.bounded<QueuedCommand>(STARTUP_COMMAND_QUEUE_CAPACITY);
   const commandReadinessState = yield* Ref.make<CommandReadinessState>("pending");
 
   const commandWorker = Effect.forever(
@@ -264,6 +268,8 @@ const maybeOpenBrowser = Effect.gen(function* () {
 const makeServerRuntimeStartup = Effect.gen(function* () {
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const automations = yield* AutomationService;
+  const providerSessionReaper = yield* ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
 
@@ -300,6 +306,12 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
 
     yield* Effect.logDebug("startup phase: starting orchestration reactors");
     yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+
+    yield* Effect.logDebug("startup phase: starting automation scheduler");
+    yield* automations.start.pipe(Scope.provide(reactorScope));
+
+    yield* Effect.logDebug("startup phase: starting provider session reaper");
+    yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
 
     yield* Effect.logDebug("startup phase: preparing welcome payload");
     const welcome = yield* autoBootstrapWelcome;
