@@ -1,6 +1,7 @@
 import {
   IconArchiveOutline24 as ArchiveIcon,
   IconSortBottomToTopOutline24 as ArrowUpDownIcon,
+  IconClockOutline24 as AutomationsIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
   IconChequeredFlagOutline24 as GoalsIcon,
   IconResizeXOutline24 as Columns2Icon,
@@ -18,7 +19,6 @@ import {
   IconConsoleOutline24 as TerminalIcon,
   IconTriangleWarningOutline24 as TriangleAlertIcon,
 } from "nucleo-core-outline-24";
-import { Clock3 as AutomationsIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,

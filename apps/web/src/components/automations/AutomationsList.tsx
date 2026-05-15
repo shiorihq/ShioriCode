@@ -1,5 +1,11 @@
 import { useMemo } from "react";
-import { Clock3, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
+import {
+  IconClockOutline24 as Clock3,
+  IconMediaPauseOutline24 as Pause,
+  IconMediaPlayOutline24 as Play,
+  IconRefreshOutline24 as RefreshCw,
+  IconTrash2Outline24 as Trash2,
+} from "nucleo-core-outline-24";
 
 import { PROVIDER_DISPLAY_NAMES, type Automation } from "contracts";
 

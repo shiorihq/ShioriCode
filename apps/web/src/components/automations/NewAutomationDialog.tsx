@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import {
+  IconSpinnerLoaderOutline24 as Loader2,
+  IconPlusOutline24 as Plus,
+} from "nucleo-core-outline-24";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
