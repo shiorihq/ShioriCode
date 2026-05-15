@@ -11,10 +11,6 @@ export default Effect.gen(function* () {
       pull_request_json TEXT,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
-      prompt TEXT NOT NULL DEFAULT '',
-      generated_prompt TEXT,
-      prompt_status TEXT NOT NULL DEFAULT 'idle',
-      prompt_error TEXT,
       status TEXT NOT NULL,
       sort_key TEXT NOT NULL,
       blocked_reason TEXT,
@@ -27,16 +23,24 @@ export default Effect.gen(function* () {
     )
   `;
 
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN generated_prompt TEXT`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt_status TEXT NOT NULL DEFAULT 'idle'`.pipe(
-    Effect.catch(() => Effect.void),
-  );
-  yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt_error TEXT`.pipe(
-    Effect.catch(() => Effect.void),
-  );
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_kanban_items)
+  `;
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("prompt")) {
+    yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`;
+  }
+  if (!columnNames.has("generated_prompt")) {
+    yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN generated_prompt TEXT`;
+  }
+  if (!columnNames.has("prompt_status")) {
+    yield* sql`
+      ALTER TABLE projection_kanban_items
+      ADD COLUMN prompt_status TEXT NOT NULL DEFAULT 'idle'
+    `;
+  }
+  if (!columnNames.has("prompt_error")) {
+    yield* sql`ALTER TABLE projection_kanban_items ADD COLUMN prompt_error TEXT`;
+  }
 });
