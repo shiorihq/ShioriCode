@@ -18,6 +18,7 @@ import {
   IconConsoleOutline24 as TerminalIcon,
   IconTriangleWarningOutline24 as TriangleAlertIcon,
 } from "nucleo-core-outline-24";
+import { Clock3 as AutomationsIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -2807,6 +2808,18 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                 {pullRequestsShortcutLabel ? (
                   <span className={SIDEBAR_ROW_META_CLASS}>{pullRequestsShortcutLabel}</span>
                 ) : null}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link to="/automations" />}
+                size="sm"
+                isActive={pathname === "/automations"}
+                data-testid="automations-button"
+                className="h-7 gap-2 rounded-lg px-2 text-foreground"
+              >
+                <AutomationsIcon className="size-4 shrink-0" aria-hidden />
+                <span className={SIDEBAR_ROW_LABEL_CLASS}>Automations</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {goalsEnabled ? (

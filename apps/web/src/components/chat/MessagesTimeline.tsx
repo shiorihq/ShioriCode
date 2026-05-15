@@ -129,6 +129,7 @@ interface MessagesTimelineProps {
   showTurnDiffActions?: boolean;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string, currentlyExpanded: boolean) => void;
+  onOpenArtifact?: (filePath: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -170,6 +171,7 @@ function MessagesTimelineView({
   showTurnDiffActions = true,
   expandedWorkGroups,
   onToggleWorkGroup,
+  onOpenArtifact = () => undefined,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
@@ -852,6 +854,7 @@ function MessagesTimelineView({
                       <ChangedFilesCard
                         turnSummary={turnSummary}
                         resolvedTheme={resolvedTheme}
+                        onOpenArtifact={onOpenArtifact}
                         onOpenTurnDiff={onOpenTurnDiff}
                         onHeightChange={scheduleTimelineMeasure}
                       />
@@ -1186,10 +1189,11 @@ const CHANGED_FILES_COLLAPSED_LIMIT = 5;
 const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   turnSummary: TurnDiffSummary;
   resolvedTheme: "light" | "dark";
+  onOpenArtifact: (filePath: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onHeightChange: () => void;
 }) {
-  const { turnSummary, resolvedTheme, onOpenTurnDiff, onHeightChange } = props;
+  const { turnSummary, resolvedTheme, onOpenArtifact, onOpenTurnDiff, onHeightChange } = props;
   const checkpointFiles = turnSummary.files;
   const [isFileListCollapsed, setIsFileListCollapsed] = useState(false);
   const [isShowingAllFiles, setIsShowingAllFiles] = useState(false);
@@ -1238,6 +1242,21 @@ const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           >
             View diff
           </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className={cn(
+              CHAT_THREAD_BODY_CLASS,
+              "h-auto min-h-0 px-2 py-1 text-muted-foreground/80 hover:bg-foreground/5 hover:text-foreground",
+            )}
+            onClick={() => {
+              const firstPath = checkpointFiles[0]?.path;
+              if (firstPath) onOpenArtifact(firstPath);
+            }}
+          >
+            Preview
+          </Button>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1265,30 +1284,43 @@ const ChangedFilesCard = memo(function ChangedFilesCard(props: {
             const additions = file.additions ?? 0;
             const deletions = file.deletions ?? 0;
             return (
-              <button
+              <div
                 key={`changed-file:${turnSummary.turnId}:${file.path}`}
-                type="button"
-                onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
                 className={cn(
                   CHAT_THREAD_BODY_CLASS,
-                  "group flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-foreground/5",
+                  "group flex w-full items-center gap-2 px-3 py-1 hover:bg-foreground/5",
                 )}
               >
-                <VscodeEntryIcon
-                  pathValue={file.path}
-                  kind="file"
-                  theme={resolvedTheme}
-                  className="size-3.5 shrink-0 text-muted-foreground/70"
-                />
-                <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted-foreground/85 group-hover:text-foreground">
-                  {file.path}
-                </span>
-                {(additions > 0 || deletions > 0) && (
-                  <span className="shrink-0 font-mono text-[12px] tabular-nums">
-                    <DiffStatLabel additions={additions} deletions={deletions} />
+                <button
+                  type="button"
+                  onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <VscodeEntryIcon
+                    pathValue={file.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3.5 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-muted-foreground/85 group-hover:text-foreground">
+                    {file.path}
                   </span>
-                )}
-              </button>
+                  {(additions > 0 || deletions > 0) && (
+                    <span className="shrink-0 font-mono text-[12px] tabular-nums">
+                      <DiffStatLabel additions={additions} deletions={deletions} />
+                    </span>
+                  )}
+                </button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="h-5 shrink-0 px-1.5 text-[11px] text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                  onClick={() => onOpenArtifact(file.path)}
+                >
+                  Preview
+                </Button>
+              </div>
             );
           })}
           {canPaginate && (

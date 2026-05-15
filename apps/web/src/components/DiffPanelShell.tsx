@@ -114,6 +114,28 @@ export function DiffPanelLoadingState(props: { label: string }) {
   );
 }
 
+export function DiffPanelEmptyState(props: { title: string; description: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+      <div className="max-w-sm space-y-1.5">
+        <p className="text-sm font-medium text-foreground">{props.title}</p>
+        <p className="text-sm text-muted-foreground">{props.description}</p>
+      </div>
+    </div>
+  );
+}
+
+export function DiffPanelErrorState(props: { title: string; description: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+      <div className="max-w-sm space-y-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+        <p className="text-sm font-medium text-destructive">{props.title}</p>
+        <p className="break-words text-sm text-muted-foreground">{props.description}</p>
+      </div>
+    </div>
+  );
+}
+
 function DiffPanelLoadingPreviewBlock(props: {
   accentClassName: string;
   rows: ReadonlyArray<{

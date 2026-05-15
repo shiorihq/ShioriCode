@@ -10,6 +10,7 @@ import {
   resolveDroppedThreadPaneIds,
   resolveVisibleThreadPaneIds,
   stripBrowserSearchParams,
+  stripArtifactSearchParams,
 } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
@@ -59,6 +60,27 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
+  it("parses artifact panel search values", () => {
+    expect(
+      parseDiffRouteSearch({
+        artifact: true,
+        artifactPath: "docs/plan.md",
+      }),
+    ).toEqual({
+      artifact: "1",
+      artifactPath: "docs/plan.md",
+    });
+  });
+
+  it("drops artifact panel values without a path", () => {
+    expect(
+      parseDiffRouteSearch({
+        artifact: true,
+        artifactPath: "  ",
+      }),
+    ).toEqual({});
+  });
+
   it("parses and normalizes thread pane search values", () => {
     expect(
       parseDiffRouteSearch({
@@ -99,6 +121,20 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+});
+
+describe("stripArtifactSearchParams", () => {
+  it("removes artifact panel search state", () => {
+    expect(
+      stripArtifactSearchParams({
+        artifact: "1",
+        artifactPath: "docs/plan.md",
+        panes: "thread-a,thread-b",
+      }),
+    ).toEqual({
+      panes: "thread-a,thread-b",
     });
   });
 });

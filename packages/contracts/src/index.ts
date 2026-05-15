@@ -12,6 +12,7 @@ export * from "./settings";
 export * from "./git";
 export * from "./browser";
 export * from "./computer";
+export * from "./automation";
 export * from "./orchestration";
 export * from "./editor";
 export * from "./project";

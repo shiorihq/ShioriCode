@@ -4,6 +4,13 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { BrowserPanelCommand, BrowserPanelCommandResult } from "./browser";
 import {
+  AutomationCreateInput,
+  AutomationError,
+  AutomationIdInput,
+  AutomationListResult,
+  AutomationUpdateInput,
+} from "./automation";
+import {
   ComputerUseActionResult,
   ComputerUseClickInput,
   ComputerUseCloseSessionInput,
@@ -66,6 +73,9 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration";
 import {
+  ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -123,6 +133,7 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
+  projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
 
   // Shell methods
@@ -174,6 +185,13 @@ export const WS_METHODS = {
   onboardingGetState: "onboarding.getState",
   onboardingCompleteStep: "onboarding.completeStep",
   onboardingReset: "onboarding.reset",
+
+  // Automations
+  automationsList: "automations.list",
+  automationsCreate: "automations.create",
+  automationsUpdate: "automations.update",
+  automationsDelete: "automations.delete",
+  automationsRunNow: "automations.runNow",
 
   // Telemetry
   telemetryCapture: "telemetry.capture",
@@ -329,6 +347,36 @@ export const WsOnboardingResetRpc = Rpc.make(WS_METHODS.onboardingReset, {
   error: OnboardingError,
 });
 
+export const WsAutomationsListRpc = Rpc.make(WS_METHODS.automationsList, {
+  payload: Schema.Struct({}),
+  success: AutomationListResult,
+  error: AutomationError,
+});
+
+export const WsAutomationsCreateRpc = Rpc.make(WS_METHODS.automationsCreate, {
+  payload: AutomationCreateInput,
+  success: AutomationListResult,
+  error: AutomationError,
+});
+
+export const WsAutomationsUpdateRpc = Rpc.make(WS_METHODS.automationsUpdate, {
+  payload: AutomationUpdateInput,
+  success: AutomationListResult,
+  error: AutomationError,
+});
+
+export const WsAutomationsDeleteRpc = Rpc.make(WS_METHODS.automationsDelete, {
+  payload: AutomationIdInput,
+  success: AutomationListResult,
+  error: AutomationError,
+});
+
+export const WsAutomationsRunNowRpc = Rpc.make(WS_METHODS.automationsRunNow, {
+  payload: AutomationIdInput,
+  success: AutomationListResult,
+  error: AutomationError,
+});
+
 export const WsTelemetryCaptureRpc = Rpc.make(WS_METHODS.telemetryCapture, {
   payload: TelemetryCaptureInput,
   success: Schema.Struct({}),
@@ -343,6 +391,12 @@ export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntr
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
   error: ProjectSearchEntriesError,
+});
+
+export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
+  payload: ProjectReadFileInput,
+  success: ProjectReadFileResult,
+  error: ProjectReadFileError,
 });
 
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
@@ -639,9 +693,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsOnboardingGetStateRpc,
   WsOnboardingCompleteStepRpc,
   WsOnboardingResetRpc,
+  WsAutomationsListRpc,
+  WsAutomationsCreateRpc,
+  WsAutomationsUpdateRpc,
+  WsAutomationsDeleteRpc,
+  WsAutomationsRunNowRpc,
   WsTelemetryCaptureRpc,
   WsTelemetryLogRpc,
   WsProjectsSearchEntriesRpc,
+  WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,

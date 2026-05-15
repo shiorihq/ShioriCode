@@ -545,6 +545,13 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "mac") {
+    buildConfig.extraResources = [
+      {
+        from: "apps/desktop/prod-resources/native",
+        to: "native",
+        filter: ["**/*"],
+      },
+    ];
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",

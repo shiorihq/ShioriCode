@@ -64,8 +64,20 @@ export const MobilePairResult = Schema.Struct({
   token: Schema.String,
   deviceName: Schema.String,
   pairedAt: IsoDateTime,
+  apiBaseUrls: Schema.Array(Schema.String),
 });
 export type MobilePairResult = typeof MobilePairResult.Type;
+
+export const MobileConnectionInfo = Schema.Struct({
+  version: Schema.Literal(1),
+  deviceId: Schema.String,
+  deviceName: Schema.String,
+  pairedAt: IsoDateTime,
+  lastSeenAt: IsoDateTime,
+  apiBaseUrls: Schema.Array(Schema.String),
+  candidates: Schema.Array(MobilePairingCandidate),
+});
+export type MobileConnectionInfo = typeof MobileConnectionInfo.Type;
 
 export const MobileProject = Schema.Struct({
   id: ProjectId,

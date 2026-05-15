@@ -1,7 +1,7 @@
 "use client";
 
 import { Toast } from "@base-ui/react/toast";
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { useParams } from "@tanstack/react-router";
 import { ThreadId } from "contracts";
 import {
@@ -23,6 +23,7 @@ export type ThreadToastData = {
   threadId?: ThreadId | null;
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
+  icon?: ComponentType<{ className?: string }>;
 };
 
 const toastManager = Toast.createToastManager<ThreadToastData>();
@@ -213,7 +214,9 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
         }
       >
         {visibleToastLayout.items.map(({ toast, visibleIndex, offsetY }) => {
-          const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
+          const Icon =
+            toast.data?.icon ??
+            (toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null);
           const hideCollapsedContent = shouldHideCollapsedToastContent(
             visibleIndex,
             visibleToastLayout.items.length,
@@ -357,7 +360,9 @@ function AnchoredToasts() {
         {toasts
           .filter((toast) => shouldRenderForActiveThread(toast.data, activeThreadId))
           .map((toast) => {
-            const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
+            const Icon =
+              toast.data?.icon ??
+              (toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null);
             const tooltipStyle = toast.data?.tooltipStyle ?? false;
             const positionerProps = toast.positionerProps;
 

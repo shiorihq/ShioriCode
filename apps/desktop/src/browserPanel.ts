@@ -13,8 +13,8 @@ import type { DesktopBrowserCaptureResult } from "contracts";
 export const BROWSER_CAPTURE_VISIBLE_PAGE_CHANNEL = "desktop:browser-capture-visible-page";
 
 const BROWSER_PARTITION_PREFIX = "persist:shioricode-browser-";
-const configuredBrowserPartitions = new Set<string>();
-const browserSessionPartitions = new Map<Electron.Session, string>();
+const configuredBrowserSessions = new WeakSet<Electron.Session>();
+const browserSessionPartitions = new WeakMap<Electron.Session, string>();
 const attachedBrowserWebviews = new Map<
   number,
   {
@@ -68,7 +68,7 @@ function isExternalOpenUrl(rawUrl: string): boolean {
 function configureBrowserSession(partition: string): Electron.Session {
   const browserSession = session.fromPartition(partition);
   browserSessionPartitions.set(browserSession, partition);
-  if (configuredBrowserPartitions.has(partition)) {
+  if (configuredBrowserSessions.has(browserSession)) {
     return browserSession;
   }
 
@@ -86,7 +86,7 @@ function configureBrowserSession(partition: string): Electron.Session {
     callback({ cancel: isUnsafeTopLevelNavigation });
   });
 
-  configuredBrowserPartitions.add(partition);
+  configuredBrowserSessions.add(browserSession);
   return browserSession;
 }
 
