@@ -2,7 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { OrchestrationReadModel, ProviderRuntimeEvent, ProviderSession } from "contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ProviderRuntimeEvent,
+  ProviderSession,
+} from "contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -356,6 +361,55 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("requests provider session stop after an automation turn completes", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-automation-thread-tag"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        tag: "automation",
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-automation-turn-started"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-automation"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-automation-turn-completed"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-automation"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await harness.drain();
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread.session-stop-requested" &&
+          event.payload.threadId === ThreadId.makeUnsafe("thread-1"),
+      ),
+    ).toBe(true);
   });
 
   it("moves assigned Kanban items to Done when the provider turn completes successfully", async () => {
@@ -1912,6 +1966,84 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("closes assistant state when a turn is aborted", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-aborted-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-aborted-buffer"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-aborted-buffer",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-aborted-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-aborted-buffer"),
+      itemId: asItemId("item-aborted-buffer"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "partial text that should not be retained",
+      },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-aborted-buffer"),
+      payload: {
+        reason: "interrupted",
+      },
+    });
+    await harness.drain();
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.session?.activeTurnId === null &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-aborted-buffer" && !message.streaming,
+        ),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-after-aborted-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-aborted-buffer"),
+      payload: {
+        state: "completed",
+      },
+    });
+    await harness.drain();
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    const message = thread?.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-aborted-buffer",
+    );
+    expect(message?.text).toBe("partial text that should not be retained");
+    expect(message?.streaming).toBe(false);
+  });
+
   it("does not duplicate assistant completion when item.completed is followed by turn.completed", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -2741,6 +2873,9 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
+    const longCodexProgress =
+      "Code reviewer is validating the desktop rollout chunks, checking provider ingestion boundaries, and making sure the entire assistant status update survives projection without being shortened.";
+
     harness.emit({
       type: "task.progress",
       eventId: asEventId("evt-task-progress"),
@@ -2751,7 +2886,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         taskId: "turn-task-1",
         description: "Comparing the desktop rollout chunks to the app-server stream.",
-        summary: "Code reviewer is validating the desktop rollout chunks.",
+        summary: longCodexProgress,
       },
     });
 
@@ -2814,10 +2949,9 @@ describe("ProviderRuntimeIngestion", () => {
     expect(started?.kind).toBe("task.started");
     expect(started?.summary).toBe("Plan task started");
     expect(progress?.kind).toBe("task.progress");
-    expect(progressPayload?.detail).toBe("Code reviewer is validating the desktop rollout chunks.");
-    expect(progressPayload?.summary).toBe(
-      "Code reviewer is validating the desktop rollout chunks.",
-    );
+    expect(progressPayload?.detail).toBe(longCodexProgress);
+    expect(progressPayload?.summary).toBe(longCodexProgress);
+    expect(progressPayload?.detail).not.toContain("...");
     expect(completed?.kind).toBe("task.completed");
     expect(completedPayload?.detail).toBe("<proposed_plan>\n# Plan title\n</proposed_plan>");
     expect(
@@ -2850,6 +2984,9 @@ describe("ProviderRuntimeIngestion", () => {
       }),
     );
 
+    const longClaudeStatus =
+      "Code reviewer checked the migration edge cases, compared persisted thread activities, and verified that Claude's full assistant status update remains visible instead of being clipped mid-sentence.";
+
     harness.emit({
       type: "task.progress",
       eventId: asEventId("evt-claude-task-progress"),
@@ -2860,7 +2997,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         taskId: "task-subagent-1",
         description: "Running background teammate",
-        summary: "Code reviewer checked the migration edge cases.",
+        summary: longClaudeStatus,
       },
     });
 
@@ -2881,7 +3018,9 @@ describe("ProviderRuntimeIngestion", () => {
     expect(progress?.kind).toBe("task.progress");
     expect(progress?.summary).toBe("Status update");
     expect(progressPayload?.displayAs).toBe("status");
-    expect(progressPayload?.detail).toBe("Code reviewer checked the migration edge cases.");
+    expect(progressPayload?.detail).toBe(longClaudeStatus);
+    expect(progressPayload?.summary).toBe(longClaudeStatus);
+    expect(progressPayload?.detail).not.toContain("...");
   });
 
   it("projects Claude subagent parent ids onto child task updates", async () => {
