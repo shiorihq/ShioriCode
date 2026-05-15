@@ -21,6 +21,7 @@ describe("hasDesktopNativeBridge", () => {
     __resetNativeApiForTests();
     Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
     Reflect.deleteProperty(getWindowForTest(), "nativeApi");
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
@@ -46,6 +47,12 @@ describe("hasDesktopNativeBridge", () => {
     getWindowForTest().desktopBridge = {
       getWsUrl: () => "ws://127.0.0.1:3000",
     } as unknown as DesktopBridge;
+
+    expect(ensureNativeApi()).toEqual({ mocked: true });
+  });
+
+  it("creates the ws native api before hosted auth when bun dev provides a loopback ws url", () => {
+    vi.stubEnv("VITE_WS_URL", "ws://localhost:3773");
 
     expect(ensureNativeApi()).toEqual({ mocked: true });
   });

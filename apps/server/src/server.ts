@@ -44,8 +44,6 @@ import { GitManagerLive } from "./git/Layers/GitManager";
 import { KeybindingsLive } from "./keybindings";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup";
-import { AutomationRepositoryLive } from "./automations/Layers/AutomationRepository";
-import { AutomationServiceLive } from "./automations/Layers/AutomationService";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
 import { GoalPromptReactorLive } from "./orchestration/Layers/GoalPromptReactor";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus";
@@ -66,7 +64,7 @@ import { ComputerUseManagerLive } from "./computer/Layers/MacOSComputerUseManage
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
+    if (typeof Bun !== "undefined" && process.platform !== "win32") {
       const BunPTY = yield* Effect.promise(() => import("./terminal/Layers/BunPTY"));
       return BunPTY.layer;
     } else {
@@ -144,6 +142,10 @@ const CheckpointingLayerLive = CheckpointDiffQueryLive.pipe(
   Layer.provideMerge(CheckpointStoreLive),
 );
 
+const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
+  Layer.provide(ProviderSessionRuntimeRepositoryLive),
+);
+
 const ProviderLayerLive = Layer.unwrap(
   Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
@@ -153,10 +155,9 @@ const ProviderLayerLive = Layer.unwrap(
     const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
     });
-    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    const shioriAdapterLayer = ShioriAdapterLive.pipe(
+      Layer.provide(ProviderSessionDirectoryLayerLive),
     );
-    const shioriAdapterLayer = ShioriAdapterLive.pipe(Layer.provide(providerSessionDirectoryLayer));
     const kimiCodeAdapterLayer = KimiCodeAdapterLive;
     const geminiAdapterLayer = makeGeminiAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
@@ -177,12 +178,18 @@ const ProviderLayerLive = Layer.unwrap(
       Layer.provide(cursorAdapterLayer),
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
-      Layer.provideMerge(providerSessionDirectoryLayer),
+      Layer.provideMerge(ProviderSessionDirectoryLayerLive),
     );
     return makeProviderServiceLive(
       canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
+    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(ProviderSessionDirectoryLayerLive));
   }),
+);
+
+const ProviderSessionReaperLayerLive = ProviderSessionReaperLive.pipe(
+  Layer.provideMerge(ProviderLayerLive),
+  Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+  Layer.provideMerge(OrchestrationLayerLive),
 );
 
 const PersistenceLayerLive = SqlitePersistenceLayerLive;
@@ -205,13 +212,12 @@ const WorkspaceLayerLive = Layer.mergeAll(
 );
 
 const RuntimeServicesBaseLive = ServerRuntimeStartupLive.pipe(
-  Layer.provideMerge(AutomationServiceLive.pipe(Layer.provide(AutomationRepositoryLive))),
   Layer.provideMerge(ReactorLayerLive),
   Layer.provideMerge(SubagentDetailQueryLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(ProviderSessionReaperLive),
+  Layer.provideMerge(ProviderSessionReaperLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
