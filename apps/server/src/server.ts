@@ -61,6 +61,8 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore";
 import { HostedBillingLive } from "./hostedBilling";
 import { ComputerUseManagerLive } from "./computer/Layers/MacOSComputerUseManager";
+import { AutomationRepositoryLive } from "./automations/Layers/AutomationRepository";
+import { AutomationServiceLive } from "./automations/Layers/AutomationService";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -202,6 +204,11 @@ const GitLayerLive = GitManagerLive.pipe(
 
 const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
 
+const AutomationLayerLive = AutomationServiceLive.pipe(
+  Layer.provideMerge(AutomationRepositoryLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+);
+
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePathsLive,
   WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
@@ -220,6 +227,7 @@ const RuntimeServicesBaseLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(ProviderSessionReaperLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
+  Layer.provideMerge(AutomationLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ShioriProviderLive),

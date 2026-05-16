@@ -31,6 +31,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper";
+import { AutomationService } from "./automations/Services/AutomationService";
 
 function resolveProjectTitle(cwd: string, pathService: Pick<Path.Path, "basename">): string {
   return normalizeProjectTitle(pathService.basename(cwd));
@@ -270,6 +271,7 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
   const providerSessionReaper = yield* ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
+  const automations = yield* AutomationService;
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
@@ -347,6 +349,8 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         payload: { at: new Date().toISOString() },
       });
 
+      yield* Effect.logDebug("startup phase: starting automation scheduler");
+      yield* automations.start.pipe(Scope.provide(reactorScope));
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
       yield* Effect.logDebug("startup phase: browser open check");

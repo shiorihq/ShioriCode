@@ -692,6 +692,22 @@ function writeDesktopStreamChunk(
   }
 }
 
+function getStreamErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return null;
+  }
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+function logStdIoCaptureFailure(streamName: "stdout" | "stderr", error: unknown): void {
+  const code = getStreamErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  writeDesktopLogHeader(
+    `${streamName} passthrough write unavailable${code ? ` code=${code}` : ""} detail=${sanitizeLogValue(message)}`,
+  );
+}
+
 function installStdIoCapture(): void {
   if (!app.isPackaged || desktopLogSink === null || restoreStdIoCapture !== null) {
     return;
@@ -699,34 +715,62 @@ function installStdIoCapture(): void {
 
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  const handleStdoutError = (error: unknown): void => {
+    logStdIoCaptureFailure("stdout", error);
+  };
+  const handleStderrError = (error: unknown): void => {
+    logStdIoCaptureFailure("stderr", error);
+  };
 
   const patchWrite =
-    (streamName: "stdout" | "stderr", originalWrite: typeof process.stdout.write) =>
+    (
+      streamName: "stdout" | "stderr",
+      stream: { readonly destroyed: boolean; readonly writableEnded: boolean },
+      originalWrite: typeof process.stdout.write,
+    ) =>
     (
       chunk: string | Uint8Array,
       encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
       callback?: (error?: Error | null) => void,
     ): boolean => {
       const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+      const writeCallback =
+        typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
       writeDesktopStreamChunk(streamName, chunk, encoding);
-      if (typeof encodingOrCallback === "function") {
-        return originalWrite(chunk, encodingOrCallback);
+
+      if (stream.destroyed || stream.writableEnded) {
+        writeCallback?.();
+        return false;
       }
-      if (callback !== undefined) {
-        return originalWrite(chunk, encoding, callback);
+
+      try {
+        if (typeof encodingOrCallback === "function") {
+          return originalWrite(chunk, encodingOrCallback);
+        }
+        if (callback !== undefined) {
+          return originalWrite(chunk, encoding, callback);
+        }
+        if (encoding !== undefined) {
+          return originalWrite(chunk, encoding);
+        }
+        return originalWrite(chunk);
+      } catch (error) {
+        logStdIoCaptureFailure(streamName, error);
+        writeCallback?.(error instanceof Error ? error : new Error(String(error)));
+        return false;
       }
-      if (encoding !== undefined) {
-        return originalWrite(chunk, encoding);
-      }
-      return originalWrite(chunk);
     };
 
-  process.stdout.write = patchWrite("stdout", originalStdoutWrite);
-  process.stderr.write = patchWrite("stderr", originalStderrWrite);
+  process.stdout.on("error", handleStdoutError);
+  process.stderr.on("error", handleStderrError);
+  process.stdout.write = patchWrite("stdout", process.stdout, originalStdoutWrite);
+  process.stderr.write = patchWrite("stderr", process.stderr, originalStderrWrite);
 
   restoreStdIoCapture = () => {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
+    process.stdout.off("error", handleStdoutError);
+    process.stderr.off("error", handleStderrError);
     restoreStdIoCapture = null;
   };
 }

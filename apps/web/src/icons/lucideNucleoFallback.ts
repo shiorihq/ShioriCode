@@ -70,6 +70,7 @@ export {
   Palette as IconPaletteOutline24,
   Paperclip as IconPaperclipOutline24,
   Pencil as IconPencilOutline24,
+  PinOff as IconPinTackSlashOutline24,
   Pin as IconPinTackOutline24,
   PinOff as IconPinXmarkOutline24,
   Plus as IconPlusOutline24,
