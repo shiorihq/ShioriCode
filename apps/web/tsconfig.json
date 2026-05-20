@@ -7,6 +7,7 @@
     "types": ["vite/client"],
     "paths": {
       "nucleo-core-outline-24": ["./src/icons/lucideNucleoFallback.ts"],
+      "nucleo-ui-outline-18": ["./src/icons/nucleoUiOutline18Fallback.ts"],
       "~/*": ["./src/*"]
     },
     "plugins": [

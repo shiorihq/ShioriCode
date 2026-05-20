@@ -184,6 +184,7 @@
       },
       "optionalDependencies": {
         "nucleo-core-outline-24": "^1.1.3",
+        "nucleo-ui-outline-18": "^1.4.1",
       },
     },
     "packages/contracts": {
@@ -251,6 +252,7 @@
   "trustedDependencies": [
     "electron",
     "node-pty",
+    "nucleo-ui-outline-18",
     "nucleo-core-outline-24",
   ],
   "overrides": {
@@ -1593,6 +1595,8 @@
     "nth-check": ["nth-check@2.1.1", "", { "dependencies": { "boolbase": "^1.0.0" } }, "sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w=="],
 
     "nucleo-core-outline-24": ["nucleo-core-outline-24@1.1.3", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-67xFTvzCERBapZRbVygQHIhVyZm7fVmtsigzbDFBjL8Qp48H4AYO0ApUd08VVsk1tRC8fuJ/3tqngUqPBemzDw=="],
+
+    "nucleo-ui-outline-18": ["nucleo-ui-outline-18@1.4.1", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-ir2trm9LJyOvAt7/8yoP2iuLyb4Ru5Senqjoq2KfPdR8uOnW40txLH0dRM+mQIXBYaylbs3YjTTncPGjyf7Ohw=="],
 
     "oauth4webapi": ["oauth4webapi@3.8.5", "", {}, "sha512-A8jmyUckVhRJj5lspguklcl90Ydqk61H3dcU0oLhH3Yv13KpAliKTt5hknpGGPZSSfOwGyraNEFmofDYH+1kSg=="],
 

@@ -23,6 +23,9 @@ const hasNucleoLicenseKey = Boolean(
 const lucideNucleoFallbackPath = fileURLToPath(
   new URL("./src/icons/lucideNucleoFallback.ts", import.meta.url),
 );
+const nucleoUiOutline18FallbackPath = fileURLToPath(
+  new URL("./src/icons/nucleoUiOutline18Fallback.ts", import.meta.url),
+);
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 type WebViteConfigOptions = {
@@ -73,7 +76,12 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
     resolve: {
       alias: {
         "~": srcDir,
-        ...(hasNucleoLicenseKey ? {} : { "nucleo-core-outline-24": lucideNucleoFallbackPath }),
+        ...(hasNucleoLicenseKey
+          ? {}
+          : {
+              "nucleo-core-outline-24": lucideNucleoFallbackPath,
+              "nucleo-ui-outline-18": nucleoUiOutline18FallbackPath,
+            }),
       },
     },
     server: {
@@ -127,6 +135,7 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
             if (
               nodeModulesPath.startsWith("@base-ui/") ||
               nodeModulesPath.startsWith("nucleo-core-outline-24") ||
+              nodeModulesPath.startsWith("nucleo-ui-outline-18") ||
               nodeModulesPath.startsWith("lucide-react") ||
               nodeModulesPath.startsWith("framer-motion") ||
               nodeModulesPath.startsWith("@dnd-kit/")

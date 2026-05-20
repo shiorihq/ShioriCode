@@ -12,13 +12,14 @@ import {
   IconBranchMergeOutline24 as GitPullRequestIcon,
   IconCopyOutline24 as CopyIcon,
   IconPencilOutline24 as PencilIcon,
-  IconPinXmarkOutline24 as PinOffIcon,
   IconPinTackOutline24 as PinIcon,
   IconMagnifierOutline24 as SearchIcon,
   IconComposeOutline24 as NewThreadIcon,
   IconConsoleOutline24 as TerminalIcon,
   IconTriangleWarningOutline24 as TriangleAlertIcon,
 } from "nucleo-core-outline-24";
+// `pin-tack-slash` lives in the Nucleo UI library, not Nucleo Core.
+import { IconPinTackSlashOutline18 as PinOffIcon } from "nucleo-ui-outline-18";
 import {
   useCallback,
   useEffect,
