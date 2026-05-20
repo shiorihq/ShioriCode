@@ -191,6 +191,12 @@ function MessagesTimelineView({
     new Map<string, TimelineRowHeightCacheEntry>(),
   );
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+  // After the latest turn settles, its intermediate work collapses behind the
+  // "Worked for …" divider. Reset to collapsed whenever a new turn completes.
+  const [latestTurnWorkExpanded, setLatestTurnWorkExpanded] = useState(false);
+  useEffect(() => {
+    setLatestTurnWorkExpanded(false);
+  }, [completionDividerBeforeEntryId]);
   const visibleTurnDiffSummaryByAssistantMessageId = showTurnDiffActions
     ? turnDiffSummaryByAssistantMessageId
     : EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID;
@@ -240,12 +246,51 @@ function MessagesTimelineView({
     });
   }, [activeTurnInProgress, activeTurnStartedAt, rows]);
 
+  // The latest turn's intermediate work — every row between the last user
+  // message and the "Worked for …" completion divider. It collapses as a
+  // single block behind the divider once the turn settles.
+  const { collapsibleRowIds, hasCollapsibleWork, firstCollapsibleRowIndex } = useMemo(() => {
+    let lastUserRowIndex = -1;
+    let dividerRowIndex = -1;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (!row || row.kind !== "message") continue;
+      if (dividerRowIndex === -1 && row.showCompletionDivider) {
+        dividerRowIndex = index;
+      }
+      if (row.message.role === "user") {
+        lastUserRowIndex = index;
+        break;
+      }
+    }
+    const endIndex = dividerRowIndex >= 0 ? dividerRowIndex : rows.length;
+    const ids = new Set<string>();
+    let firstIndex = -1;
+    for (let index = lastUserRowIndex + 1; index < endIndex; index += 1) {
+      const row = rows[index];
+      if (!row || row.kind === "working") continue;
+      if (firstIndex === -1) firstIndex = index;
+      ids.add(row.id);
+    }
+    return {
+      collapsibleRowIds: ids,
+      hasCollapsibleWork: dividerRowIndex >= 0 && ids.size > 0,
+      firstCollapsibleRowIndex: firstIndex,
+    };
+  }, [rows]);
+  const latestTurnWorkCollapsed = hasCollapsibleWork && !latestTurnWorkExpanded;
+
   const shouldVirtualizeRows = rows.length >= MIN_ROWS_FOR_VIRTUALIZATION;
+  // Keep the whole collapsible block out of the virtualizer so it can collapse
+  // as one element rather than row-by-row.
   const virtualizedRowCount = shouldVirtualizeRows
-    ? clamp(firstUnvirtualizedRowIndex, {
-        minimum: 0,
-        maximum: rows.length,
-      })
+    ? Math.min(
+        clamp(firstUnvirtualizedRowIndex, {
+          minimum: 0,
+          maximum: rows.length,
+        }),
+        firstCollapsibleRowIndex >= 0 ? firstCollapsibleRowIndex : rows.length,
+      )
     : 0;
   const virtualMeasurementScopeKey =
     timelineWidthPx === null ? "width:unknown" : `width:${Math.round(timelineWidthPx)}`;
@@ -481,7 +526,6 @@ function MessagesTimelineView({
 
     return result;
   }, [rows]);
-
   const renderWorkRow = (row: WorkTimelineRow, depth = 0): ReactNode => {
     const groupId = row.expansionId;
     const entries = row.groupedEntries;
@@ -827,13 +871,42 @@ function MessagesTimelineView({
             return (
               <>
                 {row.showCompletionDivider && (
-                  <div className="mb-2 mt-0.5 flex items-center gap-3">
-                    <span className="block h-px flex-1 bg-border/60" />
-                    {completionSummary && (
-                      <span className="shrink-0 text-xs text-foreground/40">
-                        {completionSummary}
-                      </span>
+                  <div
+                    className={cn(
+                      "mb-2 flex items-center gap-3",
+                      latestTurnWorkCollapsed ? "mt-4" : "mt-0.5",
                     )}
+                  >
+                    <span className="block h-px flex-1 bg-border/60" />
+                    {completionSummary &&
+                      (hasCollapsibleWork ? (
+                        <button
+                          type="button"
+                          aria-expanded={latestTurnWorkExpanded}
+                          aria-label={
+                            latestTurnWorkExpanded
+                              ? "Hide work for this turn"
+                              : "Show work for this turn"
+                          }
+                          className="group flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent px-1 py-0.5 text-xs text-foreground/40 transition-colors duration-150 hover:text-foreground/70 focus-visible:text-foreground/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+                          onClick={() => {
+                            setLatestTurnWorkExpanded((previous) => !previous);
+                            scheduleTimelineMeasure();
+                          }}
+                        >
+                          <ChevronDownIcon
+                            className={cn(
+                              "size-3 transition-transform duration-[240ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]",
+                              latestTurnWorkExpanded ? "rotate-0" : "-rotate-90",
+                            )}
+                          />
+                          {completionSummary}
+                        </button>
+                      ) : (
+                        <span className="shrink-0 text-xs text-foreground/40">
+                          {completionSummary}
+                        </span>
+                      ))}
                     <span className="block h-px flex-1 bg-border/60" />
                   </div>
                 )}
@@ -975,16 +1048,55 @@ function MessagesTimelineView({
           </div>
         )}
 
-        {nonVirtualizedRows.map((row) => (
-          <MeasuredNonVirtualizedTimelineRow
-            key={`non-virtual-row:${row.id}`}
-            cacheKey={getRowHeightCacheKey(row)}
-            rowId={row.id}
-            onMeasured={recordNonVirtualizedRowHeight}
-          >
-            {renderRowContent(row)}
-          </MeasuredNonVirtualizedTimelineRow>
-        ))}
+        {(() => {
+          const renderMeasuredRow = (row: TimelineRow) => (
+            <MeasuredNonVirtualizedTimelineRow
+              key={`non-virtual-row:${row.id}`}
+              cacheKey={getRowHeightCacheKey(row)}
+              rowId={row.id}
+              onMeasured={recordNonVirtualizedRowHeight}
+            >
+              {renderRowContent(row)}
+            </MeasuredNonVirtualizedTimelineRow>
+          );
+
+          const output: ReactNode[] = [];
+          let index = 0;
+          while (index < nonVirtualizedRows.length) {
+            const row = nonVirtualizedRows[index];
+            if (!row) {
+              index += 1;
+              continue;
+            }
+            if (!collapsibleRowIds.has(row.id)) {
+              output.push(renderMeasuredRow(row));
+              index += 1;
+              continue;
+            }
+            // The latest turn's work rows are contiguous — wrap the whole run in
+            // a single panel so they collapse/expand as one block.
+            const groupedRows: TimelineRow[] = [];
+            while (index < nonVirtualizedRows.length) {
+              const groupedRow = nonVirtualizedRows[index];
+              if (!groupedRow || !collapsibleRowIds.has(groupedRow.id)) break;
+              groupedRows.push(groupedRow);
+              index += 1;
+            }
+            output.push(
+              <AnimatedExpandPanel
+                key="latest-turn-work-collapse"
+                open={!latestTurnWorkCollapsed}
+                animateOnMount={false}
+                unmountOnExit={false}
+                fade
+                className="shiori-expand-panel--smooth"
+              >
+                {groupedRows.map(renderMeasuredRow)}
+              </AnimatedExpandPanel>,
+            );
+          }
+          return output;
+        })()}
       </div>
     </LazyMotion>
   );

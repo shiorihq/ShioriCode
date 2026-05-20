@@ -202,6 +202,13 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   }
 }
 
+/* Smooth easing for larger collapses (e.g. the turn work log). */
+.shiori-expand-panel--smooth,
+.shiori-expand-panel--smooth .shiori-expand-panel-fade {
+  transition-duration: 240ms;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shiori-expand-panel,
   .shiori-expand-panel-fade {
