@@ -213,7 +213,7 @@ export function ComputerUseSettingsPanel() {
         ? { ok: await guide(kind), message: null }
         : await computer?.showPermissionGuide({ kind });
       if (!result?.ok) {
-        throw new Error("The macOS permission guide could not be opened.");
+        throw new Error(result?.message ?? "The macOS permission guide could not be opened.");
       }
       setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: COMPUTER_PERMISSIONS_QUERY_KEY });

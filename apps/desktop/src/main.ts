@@ -24,7 +24,6 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
-  ComputerUsePermissionActionResult,
   ComputerUsePermissionKind,
   ComputerUsePermissionsSnapshot,
 } from "contracts";
@@ -1425,6 +1424,55 @@ function runComputerUseHelper<T>(command: string, input: Record<string, unknown>
   });
 }
 
+function resolveMacAppBundlePath(): string | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const segments = process.execPath.split(Path.sep);
+  const appSegmentIndex = segments.findIndex((segment) => segment.endsWith(".app"));
+  if (appSegmentIndex < 0) {
+    return null;
+  }
+
+  return segments.slice(0, appSegmentIndex + 1).join(Path.sep) || null;
+}
+
+function showComputerUsePermissionGuide(kind: ComputerUsePermissionKind): Promise<boolean> {
+  const helperPath = resolveComputerUseHelperPath();
+  if (!helperPath) {
+    return Promise.resolve(false);
+  }
+
+  const input = {
+    kind,
+    hostAppBundlePath: resolveMacAppBundlePath(),
+    hostAppDisplayName: APP_DISPLAY_NAME,
+  };
+
+  return new Promise<boolean>((resolve) => {
+    const child = ChildProcess.spawn(helperPath, ["permission-guide"], {
+      stdio: ["pipe", "ignore", "ignore"],
+      detached: true,
+      windowsHide: true,
+    });
+    let settled = false;
+
+    function settle(opened: boolean): void {
+      if (settled) return;
+      settled = true;
+      resolve(opened);
+    }
+
+    child.once("error", () => settle(false));
+    child.once("spawn", () => {
+      child.stdin.end(JSON.stringify(input));
+      child.unref();
+      settle(true);
+    });
+  });
+}
+
 async function getComputerUsePermissions(): Promise<ComputerUsePermissionsSnapshot> {
   if (process.platform !== "darwin") {
     return unsupportedComputerUsePermissions("Computer Use is currently only supported on macOS.");
@@ -1920,11 +1968,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, async (_event, rawKind: unknown) => {
     const kind = normalizeComputerUsePermissionKind(rawKind);
     try {
-      const result = await runComputerUseHelper<ComputerUsePermissionActionResult>(
-        "permission-guide",
-        { kind },
-      );
-      return result.ok;
+      return await showComputerUsePermissionGuide(kind);
     } catch (error) {
       console.warn("[desktop] failed to open Computer Use permission guide", error);
       return false;

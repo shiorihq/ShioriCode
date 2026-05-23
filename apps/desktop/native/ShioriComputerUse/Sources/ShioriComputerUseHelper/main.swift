@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import Permiso
 
 enum HelperExitCode: Int32 {
     case ok = 0
@@ -11,6 +12,13 @@ enum HelperExitCode: Int32 {
 struct HelperFailure: Error {
     let code: String
     let message: String
+}
+
+struct PermissionGuideRequest: Sendable {
+    let kind: String
+    let hostAppBundlePath: String?
+    let hostAppDisplayName: String?
+    let durationSeconds: Double
 }
 
 func readInputObject() throws -> [String: Any] {
@@ -380,20 +388,73 @@ func permissionKind(_ input: [String: Any]) -> String {
     (input["kind"] as? String) == "screen-recording" ? "screen-recording" : "accessibility"
 }
 
-func permissionSettingsURL(kind: String) -> URL {
-    let pane = kind == "screen-recording" ? "Privacy_ScreenCapture" : "Privacy_Accessibility"
-    return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!
+func permissionPanel(kind: String) -> PermisoPanel {
+    kind == "screen-recording" ? .screenRecording : .accessibility
 }
 
-func openPermissionGuide(input: [String: Any]) -> [String: Any] {
-    let kind = permissionKind(input)
-    let opened = NSWorkspace.shared.open(permissionSettingsURL(kind: kind))
+func permissionGuideRequest(input: [String: Any]) -> PermissionGuideRequest {
+    PermissionGuideRequest(
+        kind: permissionKind(input),
+        hostAppBundlePath: input["hostAppBundlePath"] as? String,
+        hostAppDisplayName: input["hostAppDisplayName"] as? String,
+        durationSeconds: min(max((input["durationSeconds"] as? Double) ?? 24, 1), 28)
+    )
+}
+
+func permissionGuideHostApp(request: PermissionGuideRequest) -> PermisoHostApp {
+    let configuredDisplayName = request.hostAppDisplayName?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+        let rawBundlePath = request.hostAppBundlePath,
+        !rawBundlePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+        return .current()
+    }
+
+    let bundleURL = URL(fileURLWithPath: rawBundlePath)
+    let displayName = configuredDisplayName?.isEmpty == false
+        ? configuredDisplayName!
+        : bundleURL.deletingPathExtension().lastPathComponent
+    let icon = NSWorkspace.shared.icon(forFile: bundleURL.path)
+    icon.size = NSSize(width: 48, height: 48)
+    return PermisoHostApp(displayName: displayName, bundleURL: bundleURL, icon: icon)
+}
+
+@MainActor
+func stopPermissionGuideRunLoop() {
+    PermisoAssistant.shared.dismiss()
+    NSApp.stop(nil)
+    if let event = NSEvent.otherEvent(
+        with: .applicationDefined,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: 0,
+        context: nil,
+        subtype: 0,
+        data1: 0,
+        data2: 0
+    ) {
+        NSApp.postEvent(event, atStart: false)
+    }
+}
+
+@MainActor
+func openPermissionGuide(request: PermissionGuideRequest) -> [String: Any] {
+    let panel = permissionPanel(kind: request.kind)
+    let hostApp = permissionGuideHostApp(request: request)
+
+    NSApplication.shared.setActivationPolicy(.accessory)
+    PermisoAssistant.shared.present(panel: panel, hostApp: hostApp)
+    DispatchQueue.main.asyncAfter(deadline: .now() + request.durationSeconds) {
+        stopPermissionGuideRunLoop()
+    }
+    NSApp.run()
+
     return [
-        "ok": opened,
-        "kind": kind,
-        "message": opened
-            ? "Opened macOS Privacy & Security settings."
-            : "Could not open macOS Privacy & Security settings."
+        "ok": true,
+        "kind": request.kind,
+        "message": "Opened macOS Privacy & Security settings."
     ]
 }
 
@@ -442,7 +503,11 @@ do {
     case "request-permission":
         writeJSON(requestPermission(input: input))
     case "permission-guide":
-        writeJSON(openPermissionGuide(input: input))
+        let request = permissionGuideRequest(input: input)
+        Task { @MainActor in
+            writeJSON(openPermissionGuide(request: request))
+        }
+        dispatchMain()
     default:
         fail("actionFailed", "Unsupported command '\(command)'.")
     }
