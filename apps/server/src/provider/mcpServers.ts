@@ -515,8 +515,18 @@ export async function loadEffectiveMcpServersForProvider(input: {
   readonly cwd?: string;
   readonly exposeComputerWhenApprovalRequired?: boolean;
 }): Promise<EffectiveMcpServersResult> {
+  const servers = mergeMcpServers([
+    ...input.settings.mcpServers.servers,
+    ...builtInShioriMcpServers({
+      provider: input.provider,
+      settings: input.settings,
+      ...(input.exposeComputerWhenApprovalRequired !== undefined
+        ? { exposeComputerWhenApprovalRequired: input.exposeComputerWhenApprovalRequired }
+        : {}),
+    }),
+  ]);
   return {
-    servers: filterMcpServersForProvider(input.provider, input.settings.mcpServers.servers),
+    servers: filterMcpServersForProvider(input.provider, servers),
     warnings: [],
   };
 }
@@ -975,7 +985,7 @@ export function toAcpMcpServers(
   ) {
     acpServers.push(
       makeBuiltInStdioMcpServer(
-        "shioricode-computer",
+        "shiori-computer-use",
         "computer-use-mcp",
         computerUseMcpEnv(settings.computerUse),
       ),
@@ -1020,15 +1030,18 @@ export function builtInShioriMcpServers(input: {
   ) {
     servers.push(
       makeBuiltInStdioMcpServerEntry(
-        "shioricode-computer",
+        "shiori-computer-use",
         "computer-use-mcp",
         computerUseMcpEnv(computerUse),
       ),
     );
   }
 
-  const provider = input.provider ?? "codex";
-  return servers.map((server) => ({ ...server, providers: [provider] }));
+  const provider = input.provider;
+  if (!provider) {
+    return servers;
+  }
+  return servers.map((server) => Object.assign({}, server, { providers: [provider] }));
 }
 
 function makeBuiltInStdioMcpServer(

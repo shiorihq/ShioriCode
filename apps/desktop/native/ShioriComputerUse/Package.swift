@@ -1,13 +1,19 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "ShioriComputerUse",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v14)
     ],
     products: [
         .executable(name: "ShioriComputerUseHelper", targets: ["ShioriComputerUseHelper"])
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/actuallyepic/background-computer-use",
+            revision: "52116acfe0f2f57174f5e0166881abe944cb6eeb"
+        )
     ],
     targets: [
         .target(
@@ -17,7 +23,8 @@ let package = Package(
         .executableTarget(
             name: "ShioriComputerUseHelper",
             dependencies: [
-                "Permiso"
+                "Permiso",
+                .product(name: "BackgroundComputerUseKit", package: "background-computer-use")
             ],
             exclude: ["Info.plist"],
             linkerSettings: [

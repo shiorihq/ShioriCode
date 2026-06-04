@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computerUseAgentVisibilityStatus,
+  computerUseProviderToolSurfaceChanged,
   computerUseWindowLabel,
 } from "./ComputerUseSettingsPanel";
 
@@ -65,5 +66,60 @@ describe("computerUseAgentVisibilityStatus", () => {
       title: "Computer Use is visible to supported agents",
       variant: "success",
     });
+  });
+});
+
+describe("computerUseProviderToolSurfaceChanged", () => {
+  const baseComputerUse = {
+    enabled: true,
+    requireApproval: true,
+    shareWithProviders: false,
+    approvedApps: [
+      {
+        bundleIdentifier: "com.apple.finder",
+        name: "Finder",
+        approvedAt: "2026-06-04T00:00:00.000Z",
+      },
+    ],
+  };
+
+  it("detects provider-facing Computer Use toggle changes", () => {
+    expect(
+      computerUseProviderToolSurfaceChanged(baseComputerUse, {
+        ...baseComputerUse,
+        shareWithProviders: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("detects approved app allowlist changes", () => {
+    expect(
+      computerUseProviderToolSurfaceChanged(baseComputerUse, {
+        ...baseComputerUse,
+        approvedApps: [
+          ...baseComputerUse.approvedApps,
+          {
+            bundleIdentifier: "com.apple.Safari",
+            name: "Safari",
+            approvedAt: "2026-06-04T00:01:00.000Z",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores approved app metadata changes that do not affect bundle IDs", () => {
+    expect(
+      computerUseProviderToolSurfaceChanged(baseComputerUse, {
+        ...baseComputerUse,
+        approvedApps: [
+          {
+            bundleIdentifier: "com.apple.finder",
+            name: "Finder",
+            approvedAt: "2026-06-05T00:00:00.000Z",
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 });

@@ -70,6 +70,15 @@ const TODO_LIST_TOOL_NAMES = new Set([
 ]);
 const COMPUTER_USE_TOOL_ALIASES = new Map<string, string>([
   ["computer", "computer"],
+  ["list apps", "computer list apps"],
+  ["get app state", "computer app state"],
+  ["app state", "computer app state"],
+  ["perform secondary action", "computer secondary action"],
+  ["secondary action", "computer secondary action"],
+  ["set value", "computer set value"],
+  ["select text", "computer select text"],
+  ["press key", "computer key"],
+  ["type text", "computer type"],
   ["computer permissions", "computer permissions"],
   ["computer request permission", "computer request permission"],
   ["computer open permission guide", "computer open permission guide"],
@@ -514,6 +523,8 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Run command";
     case "computer list apps":
       return "Computer app list";
+    case "computer app state":
+      return "Computer app state";
     case "computer focus app":
       return "Computer focus app";
     case "computer request permission":
@@ -524,6 +535,12 @@ export function providerToolTitle(toolName: string | null | undefined): string {
       return "Computer screenshot";
     case "computer click":
       return "Computer click";
+    case "computer secondary action":
+      return "Computer secondary action";
+    case "computer set value":
+      return "Computer set value";
+    case "computer select text":
+      return "Computer select text";
     case "computer double click":
       return "Computer double click";
     case "computer right click":

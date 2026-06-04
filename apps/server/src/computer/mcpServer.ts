@@ -22,6 +22,12 @@ interface ToolSchema {
   readonly inputSchema: Record<string, unknown>;
 }
 
+interface JsonSchemaProperty {
+  readonly type?: string | ReadonlyArray<string>;
+  readonly enum?: ReadonlyArray<unknown>;
+  readonly [key: string]: unknown;
+}
+
 const SESSION_ID_PROPERTY = {
   sessionId: {
     type: "string",
@@ -37,7 +43,7 @@ function withSessionProperties(properties: Record<string, unknown>): Record<stri
   };
 }
 
-const TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
+export const LEGACY_COMPUTER_TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
   {
     name: "computer_create_session",
     description:
@@ -386,32 +392,225 @@ const TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
   },
 ] as const;
 
+const APP_PROPERTY = {
+  app: {
+    type: "string",
+    description: "App name, full app path, or unambiguous bundle identifier.",
+  },
+} as const;
+
+const ELEMENT_INDEX_PROPERTY = {
+  element_index: {
+    type: "string",
+    description: "Accessibility element identifier from the latest get_app_state result.",
+  },
+} as const;
+
+const SHIORI_COMPUTER_USE_TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
+  {
+    name: "list_apps",
+    description:
+      "List apps on this computer. Returns currently running visible apps and their window metadata when Accessibility is available.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_app_state",
+    description:
+      "Start a Shiori Computer Use app session if needed, then get the state of the app's key window and return a screenshot plus available app/window context. This must be called once per assistant turn before interacting with the app.",
+    inputSchema: {
+      type: "object",
+      properties: APP_PROPERTY,
+      required: ["app"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "click",
+    description: "Click an element by index or pixel coordinates from the latest screenshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        ...ELEMENT_INDEX_PROPERTY,
+        x: { type: "number", description: "X coordinate in screenshot pixel coordinates." },
+        y: { type: "number", description: "Y coordinate in screenshot pixel coordinates." },
+        mouse_button: {
+          type: "string",
+          enum: ["left", "right", "middle"],
+          description: "Mouse button to click. Defaults to left.",
+        },
+        click_count: { type: "integer", description: "Number of clicks. Defaults to 1." },
+      },
+      required: ["app"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "perform_secondary_action",
+    description: "Invoke a secondary accessibility action exposed by an element.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        ...ELEMENT_INDEX_PROPERTY,
+        action: { type: "string", description: "Secondary accessibility action name." },
+      },
+      required: ["app", "element_index", "action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_value",
+    description: "Set the value of a settable accessibility element.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        ...ELEMENT_INDEX_PROPERTY,
+        value: { type: "string", description: "Value to assign." },
+      },
+      required: ["app", "element_index", "value"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "select_text",
+    description:
+      "Select text inside a text element, or place the text cursor before or after it using text from the latest accessibility tree.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        ...ELEMENT_INDEX_PROPERTY,
+        text: { type: "string", description: "Target text as shown in the accessibility tree." },
+        prefix: {
+          type: "string",
+          description: "Optional text immediately before the target, used to disambiguate matches.",
+        },
+        suffix: {
+          type: "string",
+          description: "Optional text immediately after the target, used to disambiguate matches.",
+        },
+        selection: {
+          type: "string",
+          enum: ["text", "cursor_before", "cursor_after"],
+          description: "Whether to select the text or place the cursor before or after it.",
+        },
+      },
+      required: ["app", "element_index", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "scroll",
+    description: "Scroll an element in a direction by a number of pages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        ...ELEMENT_INDEX_PROPERTY,
+        direction: { type: "string", enum: ["up", "down", "left", "right"] },
+        pages: { type: "number", description: "Number of pages to scroll. Defaults to 1." },
+      },
+      required: ["app", "element_index", "direction"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "drag",
+    description: "Drag from one point to another using pixel coordinates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        from_x: { type: "number", description: "Start X coordinate." },
+        from_y: { type: "number", description: "Start Y coordinate." },
+        to_x: { type: "number", description: "End X coordinate." },
+        to_y: { type: "number", description: "End Y coordinate." },
+      },
+      required: ["app", "from_x", "from_y", "to_x", "to_y"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "press_key",
+    description:
+      "Press a key or key-combination on the keyboard. Supports xdotool-style key syntax such as Return, Tab, super+c, and Up.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        key: { type: "string", description: "Key or key combination to press." },
+      },
+      required: ["app", "key"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "type_text",
+    description: "Type literal text using keyboard input.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...APP_PROPERTY,
+        text: { type: "string", description: "Literal text to type." },
+      },
+      required: ["app", "text"],
+      additionalProperties: false,
+    },
+  },
+] as const;
+
+const SHIORI_COMPUTER_USE_TOOL_NAMES = new Set(
+  SHIORI_COMPUTER_USE_TOOL_SCHEMAS.map((tool) => tool.name),
+);
+
+function nullableToolProperty(property: unknown): unknown {
+  if (!property || typeof property !== "object" || Array.isArray(property)) {
+    return property;
+  }
+  const schema = property as JsonSchemaProperty;
+  const rawTypes = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
+  const types = rawTypes.includes("null") ? rawTypes : [...rawTypes, "null"];
+  return {
+    ...schema,
+    ...(types.length > 0 ? { type: types } : {}),
+    ...(schema.enum && !schema.enum.includes(null) ? { enum: [...schema.enum, null] } : {}),
+  };
+}
+
+function strictProviderToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const { anyOf: _anyOf, oneOf: _oneOf, allOf: _allOf, ...baseSchema } = schema;
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  const originallyRequired = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const strictProperties = Object.fromEntries(
+    Object.entries(properties).map(([name, property]) => [
+      name,
+      originallyRequired.has(name) ? property : nullableToolProperty(property),
+    ]),
+  );
+
+  return {
+    ...baseSchema,
+    properties: strictProperties,
+    required: Object.keys(strictProperties),
+    additionalProperties: false,
+  };
+}
+
 export function toolSchemas() {
-  if (readBooleanEnv("SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL") !== true) {
-    return TOOL_SCHEMAS;
-  }
-  const schemas: ToolSchema[] = [];
-  for (const tool of TOOL_SCHEMAS) {
-    if (
-      tool.name === "computer_permissions" ||
-      tool.name === "computer_create_session" ||
-      tool.name === "computer_close_session" ||
-      tool.name === "computer_request_permission" ||
-      tool.name === "computer_open_permission_guide"
-    ) {
-      schemas.push(tool);
-      continue;
-    }
-    schemas.push({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: Object.assign({}, tool.inputSchema, {
-        "x-shioricode-request-kind": "computer-use",
-        "x-shioricode-needs-approval": true,
-      }),
-    });
-  }
-  return schemas;
+  return SHIORI_COMPUTER_USE_TOOL_SCHEMAS.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: strictProviderToolSchema(tool.inputSchema),
+  }));
 }
 
 const HELPER_TIMEOUT_MS = 30_000;
@@ -420,6 +619,14 @@ const HELPER_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024;
 const appRoot = resolveAppRootFromModule(import.meta.url);
 
 const latestScreenshotSizes = new Map<string, ScreenshotSize>();
+const latestBcuAppStates = new Map<
+  string,
+  {
+    readonly app: string;
+    readonly window: string;
+    readonly stateToken: string;
+  }
+>();
 
 const mcpSessions = new Map<
   string,
@@ -451,6 +658,30 @@ function resolveHelperPath(): string {
 
 export function helperCommandForTool(toolName: string): string {
   switch (toolName) {
+    case "list_apps":
+      return "bcu-list-apps";
+    case "get_app_state":
+      return "bcu-get-window-state";
+    case "click":
+      return "bcu-click";
+    case "perform_secondary_action":
+      return "bcu-perform-secondary-action";
+    case "set_value":
+      return "bcu-set-value";
+    case "select_text":
+      throw new Error(
+        "Shiori Computer Use does not expose a native select_text helper command yet.",
+      );
+    case "drag":
+      throw new Error(
+        "Shiori Computer Use does not expose a native point-to-point drag helper command yet.",
+      );
+    case "scroll":
+      return "bcu-scroll";
+    case "press_key":
+      return "bcu-press-key";
+    case "type_text":
+      return "bcu-type-text";
     case "computer_permissions":
       return "permissions";
     case "computer_request_permission":
@@ -522,6 +753,15 @@ function approvedAppBundleIdsFromEnv(): ReadonlySet<string> | null {
 }
 
 const APPROVED_APP_SCOPED_TOOL_NAMES = new Set([
+  "get_app_state",
+  "click",
+  "perform_secondary_action",
+  "set_value",
+  "select_text",
+  "scroll",
+  "drag",
+  "press_key",
+  "type_text",
   "computer_screenshot",
   "computer_focus_app",
   "computer_focus_window",
@@ -536,6 +776,19 @@ const APPROVED_APP_SCOPED_TOOL_NAMES = new Set([
   "computer_wait",
 ]);
 
+function computerToolTargetBundleIdentifier(args: Record<string, unknown>): string {
+  const explicitBundleIdentifier =
+    typeof args.bundleIdentifier === "string" ? args.bundleIdentifier.trim() : "";
+  if (explicitBundleIdentifier) {
+    return explicitBundleIdentifier;
+  }
+  const app = typeof args.app === "string" ? args.app.trim() : "";
+  if (app && app.includes(".") && !app.includes("/")) {
+    return app;
+  }
+  return "";
+}
+
 export function assertComputerToolAllowed(toolName: string, args: Record<string, unknown>): void {
   const approvedBundleIds = approvedAppBundleIdsFromEnv();
   if (approvedBundleIds === null || !APPROVED_APP_SCOPED_TOOL_NAMES.has(toolName)) {
@@ -546,15 +799,18 @@ export function assertComputerToolAllowed(toolName: string, args: Record<string,
       "No apps are approved for provider-facing Computer Use. Approve at least one app in Settings > Computer Use before using desktop screenshots or actions.",
     );
   }
-  if (toolName !== "computer_focus_app" && toolName !== "computer_focus_window") {
+  if (
+    toolName !== "computer_focus_app" &&
+    toolName !== "computer_focus_window" &&
+    toolName !== "get_app_state"
+  ) {
     return;
   }
 
-  const bundleIdentifier =
-    typeof args.bundleIdentifier === "string" ? args.bundleIdentifier.trim() : "";
+  const bundleIdentifier = computerToolTargetBundleIdentifier(args);
   if (!bundleIdentifier) {
     throw new Error(
-      `${toolName} requires an approved bundleIdentifier. Call computer_list_apps and use an approved app bundle identifier.`,
+      `${toolName} requires an approved app bundle identifier. Call list_apps and use an approved app bundle identifier when app approval is enabled.`,
     );
   }
   if (!approvedBundleIds.has(bundleIdentifier)) {
@@ -562,6 +818,49 @@ export function assertComputerToolAllowed(toolName: string, args: Record<string,
       `App '${bundleIdentifier}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing it.`,
     );
   }
+}
+
+function assertComputerToolInput(toolName: string, args: Record<string, unknown>): void {
+  if (toolName === "get_app_state") {
+    const app = typeof args.app === "string" ? args.app.trim() : "";
+    if (!app) {
+      throw new Error("get_app_state requires app.");
+    }
+    return;
+  }
+  if (toolName === "click") {
+    const hasElementIndex = typeof args.element_index === "string" && args.element_index.trim();
+    const hasCoordinates =
+      typeof args.x === "number" &&
+      Number.isFinite(args.x) &&
+      typeof args.y === "number" &&
+      Number.isFinite(args.y);
+    if (!hasElementIndex && !hasCoordinates) {
+      throw new Error("click requires element_index or x/y screenshot coordinates.");
+    }
+    return;
+  }
+  if (toolName !== "computer_focus_app" && toolName !== "computer_focus_window") {
+    return;
+  }
+  const bundleIdentifier =
+    typeof args.bundleIdentifier === "string" ? args.bundleIdentifier.trim() : "";
+  const processIdentifier =
+    typeof args.processIdentifier === "number" && Number.isFinite(args.processIdentifier)
+      ? args.processIdentifier
+      : null;
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  if (!bundleIdentifier && processIdentifier === null && !name) {
+    throw new Error(
+      `${toolName} requires bundleIdentifier, processIdentifier, or name from computer_list_apps.`,
+    );
+  }
+}
+
+function stripNullishToolInput(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== null && value !== undefined),
+  );
 }
 
 function assertRuntimeAllowsComputerUse(): void {
@@ -612,6 +911,161 @@ async function runHelper(command: string, input: unknown): Promise<unknown> {
   }
   const text = result.stdout.trim();
   return text ? JSON.parse(text) : {};
+}
+
+function bcuKeySyntax(input: Record<string, unknown>): string {
+  const rawKey = typeof input.key === "string" ? input.key.trim() : "";
+  if (!rawKey) {
+    throw new Error("press_key requires key.");
+  }
+  return rawKey
+    .split("+")
+    .map((part) => {
+      const trimmed = part.trim();
+      switch (trimmed.toLowerCase()) {
+        case "super":
+        case "cmd":
+          return "command";
+        case "ctrl":
+          return "control";
+        case "alt":
+          return "option";
+        default:
+          return trimmed;
+      }
+    })
+    .filter((part) => part.length > 0)
+    .join("+");
+}
+
+function bcuAppKey(app: unknown): string {
+  const value = typeof app === "string" ? app.trim() : "";
+  if (!value) {
+    throw new Error("Computer Use app must be a non-empty string.");
+  }
+  return value.toLocaleLowerCase();
+}
+
+function rememberBcuAppState(app: unknown, result: unknown): void {
+  if (!isRecord(result)) return;
+  const window = isRecord(result.window) ? stringValue(result.window.windowID) : null;
+  const stateToken = stringValue(result.stateToken);
+  if (!window || !stateToken) return;
+  latestBcuAppStates.set(bcuAppKey(app), {
+    app: typeof app === "string" ? app.trim() : "",
+    window,
+    stateToken,
+  });
+}
+
+function bcuAppStateFor(input: Record<string, unknown>) {
+  const state = latestBcuAppStates.get(bcuAppKey(input.app));
+  if (!state) {
+    throw new Error(
+      "Call get_app_state for this app once in the current assistant turn before using Shiori Computer Use actions.",
+    );
+  }
+  return state;
+}
+
+function bcuTargetInput(input: Record<string, unknown>): Record<string, unknown> {
+  const raw = typeof input.element_index === "string" ? input.element_index.trim() : "";
+  if (!raw) {
+    throw new Error("This Shiori Computer Use action requires element_index from get_app_state.");
+  }
+  const index = Number.parseInt(raw, 10);
+  if (/^\d+$/.test(raw) && Number.isSafeInteger(index)) {
+    return { target: { kind: "display_index", value: index } };
+  }
+  return { target: { kind: "node_id", value: raw } };
+}
+
+async function runShioriComputerUseTool(
+  toolName: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  if (toolName === "list_apps") {
+    return runHelper("bcu-list-apps", {});
+  }
+
+  if (toolName === "get_app_state") {
+    const result = await runHelper("bcu-get-window-state", {
+      app: input.app,
+      imageMode: "base64",
+      maxNodes: 6500,
+    });
+    rememberBcuAppState(input.app, result);
+    return result;
+  }
+
+  if (toolName === "drag") {
+    throw new Error(
+      "Shiori Computer Use is backed by BackgroundComputerUse, which does not expose arbitrary point-to-point UI drag yet. Use click, scroll, type_text, press_key, set_value, or perform_secondary_action.",
+    );
+  }
+  if (toolName === "select_text") {
+    throw new Error(
+      "Shiori Computer Use is backed by BackgroundComputerUse, which does not expose Codex-style select_text yet. Use set_value or type_text for editable controls.",
+    );
+  }
+
+  const state = bcuAppStateFor(input);
+  const base = {
+    app: state.app,
+    window: state.window,
+    stateToken: state.stateToken,
+    imageMode: "base64",
+    maxNodes: 6500,
+  };
+  switch (toolName) {
+    case "click": {
+      const hasCoordinates =
+        typeof input.x === "number" &&
+        Number.isFinite(input.x) &&
+        typeof input.y === "number" &&
+        Number.isFinite(input.y);
+      return runHelper("bcu-click", {
+        ...base,
+        ...(hasCoordinates ? { x: input.x, y: input.y } : bcuTargetInput(input)),
+        ...(input.mouse_button ? { mouse_button: input.mouse_button } : {}),
+        ...(input.click_count ? { click_count: input.click_count } : {}),
+      });
+    }
+    case "perform_secondary_action":
+      return runHelper("bcu-perform-secondary-action", {
+        ...base,
+        ...bcuTargetInput(input),
+        action: input.action,
+      });
+    case "set_value":
+      return runHelper("bcu-set-value", {
+        ...base,
+        ...bcuTargetInput(input),
+        value: input.value,
+      });
+    case "scroll":
+      return runHelper("bcu-scroll", {
+        ...base,
+        ...bcuTargetInput(input),
+        direction: input.direction,
+        ...(input.pages ? { pages: input.pages } : {}),
+      });
+    case "press_key":
+      return runHelper("bcu-press-key", {
+        ...base,
+        key: bcuKeySyntax(input),
+      });
+    case "type_text":
+      return runHelper("bcu-type-text", {
+        ...base,
+        ...(typeof input.element_index === "string" && input.element_index.trim()
+          ? bcuTargetInput(input)
+          : {}),
+        text: input.text,
+      });
+    default:
+      return runHelper(helperCommandForTool(toolName), input);
+  }
 }
 
 export function filterAppStateForApprovedApps(
@@ -675,6 +1129,7 @@ function boundsText(value: unknown): string | null {
 
 export function clearLatestScreenshotSizesForTests(): void {
   latestScreenshotSizes.clear();
+  latestBcuAppStates.clear();
   mcpSessions.clear();
 }
 
@@ -743,9 +1198,10 @@ export function helperInputForComputerTool(
   const approvedAppBundleIdentifiers = approvedBundleIds
     ? Array.from(approvedBundleIds)
     : undefined;
+  const cleanInput = stripNullishToolInput(input);
   const baseInput = approvedAppBundleIdentifiers
-    ? { ...input, approvedAppBundleIdentifiers }
-    : input;
+    ? { ...cleanInput, approvedAppBundleIdentifiers }
+    : cleanInput;
   if (toolName === "computer_double_click") {
     return { ...baseInput, clickCount: 2 };
   }
@@ -1001,7 +1457,194 @@ function screenshotContextText(record: Record<string, unknown>): string {
     .join("\n");
 }
 
+function bcuRunningAppLine(app: unknown, index: number): string | null {
+  if (!isRecord(app)) return null;
+  const name = stringValue(app.name);
+  if (!name) return null;
+  const bundleID = stringValue(app.bundleID);
+  const pid = numberValue(app.pid);
+  const states = [
+    app.isFrontmost === true ? "frontmost" : null,
+    app.isActive === true ? "active" : null,
+    app.isHidden === true ? "hidden" : null,
+    bundleID,
+    pid !== null ? `pid ${Math.trunc(pid)}` : null,
+    numberValue(app.onscreenWindowCount) !== null
+      ? `${Math.trunc(numberValue(app.onscreenWindowCount) ?? 0)} windows`
+      : null,
+  ].filter((part): part is string => Boolean(part));
+  return `${index + 1}. ${name}${states.length > 0 ? ` (${states.join(", ")})` : ""}`;
+}
+
+function bcuAppListText(result: Record<string, unknown>): string | null {
+  if (!Array.isArray(result.runningApps)) return null;
+  const appLines = result.runningApps
+    .flatMap((app, index) => {
+      const line = bcuRunningAppLine(app, index);
+      return line ? [line] : [];
+    })
+    .slice(0, 40);
+  const hiddenAppCount = result.runningApps.length - appLines.length;
+  const frontmost = isRecord(result.frontmostApp)
+    ? bcuRunningAppLine(result.frontmostApp, 0)
+    : null;
+  const notes = Array.isArray(result.notes)
+    ? result.notes.flatMap((note) => (typeof note === "string" && note.trim() ? [note.trim()] : []))
+    : [];
+  return [
+    "Running apps available to Shiori Computer Use:",
+    frontmost ? `Frontmost: ${frontmost.replace(/^1\. /, "")}` : null,
+    appLines.length > 0 ? appLines.join("\n") : "No running apps were reported.",
+    hiddenAppCount > 0 ? `${hiddenAppCount} more apps hidden.` : null,
+    notes.length > 0 ? `Notes:\n${notes.map((note) => `- ${note}`).join("\n")}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function bcuWindowHeadline(window: unknown): string | null {
+  if (!isRecord(window)) return null;
+  const title = stringValue(window.title);
+  const bundleID = stringValue(window.bundleID);
+  const windowID = stringValue(window.windowID);
+  const pid = numberValue(window.pid);
+  const frame = boundsText(window.frameAppKit);
+  const parts = [
+    title ?? "Untitled window",
+    bundleID,
+    pid !== null ? `pid ${Math.trunc(pid)}` : null,
+    windowID ? `window ${windowID}` : null,
+    frame,
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(" | ");
+}
+
+function bcuScreenshotImage(
+  result: Record<string, unknown>,
+): { data: string; mimeType: string } | null {
+  const screenshot = isRecord(result.screenshot) ? result.screenshot : null;
+  const image = screenshot && isRecord(screenshot.image) ? screenshot.image : null;
+  const data = image ? stringValue(image.imageBase64) : null;
+  if (!data) return null;
+  return {
+    data,
+    mimeType: (image ? stringValue(image.mimeType) : null) ?? "image/png",
+  };
+}
+
+function bcuWindowStateText(result: Record<string, unknown>): string | null {
+  const stateToken = stringValue(result.stateToken);
+  const tree = isRecord(result.tree) ? result.tree : null;
+  const renderedText = tree ? stringValue(tree.renderedText) : null;
+  if (!stateToken || !tree || renderedText === null) return null;
+
+  const window = bcuWindowHeadline(result.window);
+  const nodeCount = numberValue(tree.nodeCount);
+  const screenshot = isRecord(result.screenshot) ? result.screenshot : null;
+  const screenshotImage = screenshot && isRecord(screenshot.image) ? screenshot.image : null;
+  const pixelWidth = screenshotImage ? numberValue(screenshotImage.pixelWidth) : null;
+  const pixelHeight = screenshotImage ? numberValue(screenshotImage.pixelHeight) : null;
+  const focused = isRecord(result.focusedElement) ? result.focusedElement : null;
+  const focusedIndex = focused ? numberValue(focused.index) : null;
+  const focusedRole = focused ? stringValue(focused.displayRole) : null;
+  const focusedTitle = focused ? stringValue(focused.title) : null;
+  const notes = Array.isArray(result.notes)
+    ? result.notes.flatMap((note) => (typeof note === "string" && note.trim() ? [note.trim()] : []))
+    : [];
+
+  return [
+    "Shiori Computer Use app state.",
+    window ? `Window: ${window}.` : null,
+    `State token: ${stateToken}.`,
+    pixelWidth !== null && pixelHeight !== null
+      ? `Screenshot: ${Math.trunc(pixelWidth)}x${Math.trunc(pixelHeight)} window pixels.`
+      : null,
+    nodeCount !== null
+      ? `Accessibility tree: ${Math.trunc(nodeCount)} nodes${tree.truncated === true ? " (truncated)" : ""}.`
+      : null,
+    focusedIndex !== null || focusedRole || focusedTitle
+      ? `Focused element: ${[
+          focusedIndex !== null ? `index ${Math.trunc(focusedIndex)}` : null,
+          focusedRole,
+          focusedTitle,
+        ]
+          .filter((part): part is string => Boolean(part))
+          .join(" | ")}.`
+      : null,
+    "Use element_index values from the rendered tree for click, scroll, set_value, type_text, and perform_secondary_action. Call get_app_state again after meaningful UI changes.",
+    notes.length > 0 ? `Notes:\n${notes.map((note) => `- ${note}`).join("\n")}` : null,
+    "Rendered accessibility tree:",
+    renderedText,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function bcuActionResultText(result: Record<string, unknown>): string | null {
+  if (typeof result.ok !== "boolean" || !("classification" in result)) return null;
+  const summary = stringValue(result.summary);
+  const classification = stringValue(result.classification);
+  const failureDomain = stringValue(result.failureDomain);
+  const preStateToken = stringValue(result.preStateToken);
+  const postStateToken = stringValue(result.postStateToken);
+  const window = bcuWindowHeadline(result.window);
+  const warnings = Array.isArray(result.warnings)
+    ? result.warnings.flatMap((warning) =>
+        typeof warning === "string" && warning.trim() ? [warning.trim()] : [],
+      )
+    : [];
+  const notes = Array.isArray(result.notes)
+    ? result.notes.flatMap((note) => (typeof note === "string" && note.trim() ? [note.trim()] : []))
+    : [];
+  return [
+    `Computer Use action ${result.ok ? "completed" : "did not complete"}.`,
+    summary,
+    classification ? `Classification: ${classification}.` : null,
+    failureDomain ? `Failure domain: ${failureDomain}.` : null,
+    window ? `Window: ${window}.` : null,
+    preStateToken ? `Pre-state token: ${preStateToken}.` : null,
+    postStateToken ? `Post-state token: ${postStateToken}.` : null,
+    warnings.length > 0
+      ? `Warnings:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`
+      : null,
+    notes.length > 0 ? `Notes:\n${notes.map((note) => `- ${note}`).join("\n")}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
 export function toolResultContent(result: unknown) {
+  if (isRecord(result) && "stateToken" in result && "tree" in result && "screenshot" in result) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: bcuWindowStateText(result) ?? JSON.stringify(result, null, 2),
+        },
+        ...(bcuScreenshotImage(result) ? [{ type: "image", ...bcuScreenshotImage(result) }] : []),
+      ],
+    };
+  }
+  if (isRecord(result) && "runningApps" in result) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: bcuAppListText(result) ?? JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
+  if (isRecord(result) && "ok" in result && "classification" in result) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: bcuActionResultText(result) ?? JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
   if (result && typeof result === "object" && "imageDataUrl" in result) {
     const record = result as { imageDataUrl?: unknown; width?: unknown; height?: unknown };
     const imageDataUrl = typeof record.imageDataUrl === "string" ? record.imageDataUrl : "";
@@ -1110,7 +1753,7 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
         success(id, {
           protocolVersion: "2025-11-25",
           capabilities: { tools: {} },
-          serverInfo: { name: "shioricode-computer-use", version: "0.1.0" },
+          serverInfo: { name: "Shiori Computer Use", version: "0.1.0" },
         });
         return;
       case "tools/list":
@@ -1134,7 +1777,12 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
           success(id, toolResultContent(closeComputerUseMcpSession(args)));
           return;
         }
+        assertComputerToolInput(name, args);
         assertComputerToolAllowed(name, args);
+        if (SHIORI_COMPUTER_USE_TOOL_NAMES.has(name)) {
+          success(id, toolResultContent(await runShioriComputerUseTool(name, args)));
+          return;
+        }
         const helperInput = helperInputForComputerTool(
           name,
           enrichComputerPermissionInput(

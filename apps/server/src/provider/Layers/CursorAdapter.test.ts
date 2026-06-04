@@ -190,7 +190,7 @@ describe("CursorAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const computerServer = createCalls[0]?.mcpServers?.["shioricode-computer"];
+      const computerServer = createCalls[0]?.mcpServers?.["shiori-computer-use"];
       assert.ok(computerServer);
       assert.equal(computerServer.type, "stdio");
       if (computerServer.type !== "stdio") {
@@ -231,7 +231,7 @@ describe("CursorAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      const computerServer = createCalls[0]?.mcpServers?.["shioricode-computer"];
+      const computerServer = createCalls[0]?.mcpServers?.["shiori-computer-use"];
       assert.ok(computerServer);
       assert.equal(computerServer.type, "stdio");
       if (computerServer.type !== "stdio") {

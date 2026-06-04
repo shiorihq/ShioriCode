@@ -200,7 +200,7 @@ describe("GeminiAdapterLive", () => {
     const harness = makeHarness({
       settings: {
         browserUse: { enabled: false },
-        computerUse: { enabled: true, requireApproval: true },
+        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
         mcpServers: { servers: [] },
       },
     });
@@ -214,13 +214,13 @@ describe("GeminiAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      const computerServer = mcpServerByName(harness.configs[0], "shioricode-computer");
+      const computerServer = mcpServerByName(harness.configs[0], "shiori-computer-use");
       assert.ok(computerServer);
       if (
         typeof (computerServer as { readonly command?: unknown }).command !== "string" ||
         !Array.isArray((computerServer as { readonly args?: unknown }).args)
       ) {
-        assert.fail("Expected shioricode-computer to be a stdio MCP server.");
+        assert.fail("Expected shiori-computer-use to be a stdio MCP server.");
       }
       const stdioServer = computerServer as {
         readonly command: string;
@@ -256,7 +256,7 @@ describe("GeminiAdapterLive", () => {
           runtimeMode: "full-access",
         });
 
-        assert.strictEqual(mcpServerByName(harness.configs[0], "shioricode-computer"), undefined);
+        assert.strictEqual(mcpServerByName(harness.configs[0], "shiori-computer-use"), undefined);
         assert.strictEqual(policyNames(harness.configs[0]).includes("allow_all"), true);
       }).pipe(Effect.provide(harness.layer));
     },

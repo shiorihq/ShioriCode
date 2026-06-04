@@ -705,9 +705,9 @@ describe("ClaudeAdapterLive", () => {
 
         const createInput = harness.getLastCreateQueryInput();
         assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), [
-          "shioricode-computer",
+          "shiori-computer-use",
         ]);
-        const computerServer = createInput?.options.mcpServers?.["shioricode-computer"];
+        const computerServer = createInput?.options.mcpServers?.["shiori-computer-use"];
         if (!computerServer || computerServer.type !== "stdio") {
           assert.fail("Expected the built-in Computer Use server to use stdio transport.");
         }
@@ -762,7 +762,7 @@ describe("ClaudeAdapterLive", () => {
       yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
       const createInput = harness.getLastCreateQueryInput();
-      const computerServer = createInput?.options.mcpServers?.["shioricode-computer"];
+      const computerServer = createInput?.options.mcpServers?.["shiori-computer-use"];
       if (!computerServer || computerServer.type !== "stdio") {
         assert.fail("Expected the built-in Computer Use server to use stdio transport.");
       }
@@ -779,7 +779,7 @@ describe("ClaudeAdapterLive", () => {
       }
 
       const permissionPromise = canUseTool(
-        "mcp__shioricode-computer__computer_click",
+        "mcp__shiori-computer-use__computer_click",
         { x: 12, y: 34 },
         {
           signal: new AbortController().signal,
@@ -795,7 +795,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(requested.value.payload.requestType, "computer_use_approval");
       assert.equal(requested.value.payload.detail, 'Computer click: {"x":12,"y":34}');
       assert.deepEqual(requested.value.payload.args, {
-        toolName: "mcp__shioricode-computer__computer_click",
+        toolName: "mcp__shiori-computer-use__computer_click",
         input: { x: 12, y: 34 },
         toolUseId: "computer-tool-use-1",
       });

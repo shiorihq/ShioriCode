@@ -82,6 +82,13 @@ const DEFAULT_KIMI_MAX_SHELL_CALLS_PER_TURN = 24;
 const DEFAULT_KIMI_EXTERNAL_TOOL_TIMEOUT_MS = 60_000;
 const DEFAULT_KIMI_TURN_WATCHDOG_TIMEOUT_MS = 10 * 60_000;
 const KIMI_LOOP_GUARD_HOOK_ID = "shioricode-kimi-tool-loop-guard";
+const KIMI_COMPUTER_USE_APPROVAL_EXEMPT_TOOL_NAMES = new Set([
+  "computer_permissions",
+  "computer_create_session",
+  "computer_close_session",
+  "computer_request_permission",
+  "computer_open_permission_guide",
+]);
 
 type KimiResumeCursor = {
   readonly sessionId: string;
@@ -473,7 +480,12 @@ function normalizeExternalToolResult(result: unknown): string {
 }
 
 export function kimiMcpToolNeedsShioriApproval(descriptor: ProviderMcpDescriptor): boolean {
-  return descriptor.inputSchema["x-shioricode-needs-approval"] === true;
+  if (classifyProviderToolRequestKind(descriptor.name) !== "computer-use") {
+    return false;
+  }
+  return !Array.from(KIMI_COMPUTER_USE_APPROVAL_EXEMPT_TOOL_NAMES).some((toolName) =>
+    descriptor.name.endsWith(toolName),
+  );
 }
 
 export function shouldRequestKimiShioriApproval(input: {

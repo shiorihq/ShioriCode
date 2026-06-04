@@ -63,41 +63,41 @@ describe("providerTool", () => {
   });
 
   it("classifies prefixed MCP Computer Use tools as computer-use requests", () => {
-    expect(classifyProviderToolRequestKind("mcp__shioricode-computer__computer_click")).toBe(
+    expect(classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_click")).toBe(
       "computer-use",
     );
-    expect(classifyProviderToolRequestKind("mcp_shioricode-computer_computer_click")).toBe(
+    expect(classifyProviderToolRequestKind("mcp_shiori-computer-use_computer_click")).toBe(
       "computer-use",
     );
-    expect(classifyProviderToolRequestKind("mcp_shioricode-computer_computer_permissions")).toBe(
+    expect(classifyProviderToolRequestKind("mcp_shiori-computer-use_computer_permissions")).toBe(
       "computer-use",
     );
-    expect(classifyProviderToolRequestKind("mcp__shioricode-computer__computer_drag")).toBe(
+    expect(classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_drag")).toBe(
       "computer-use",
     );
     expect(
-      classifyProviderToolRequestKind("mcp__shioricode-computer__computer_open_permission_guide"),
+      classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_open_permission_guide"),
     ).toBe("computer-use");
-    expect(classifyProviderToolRequestKind("mcp__shioricode-computer__computer_wait")).toBe(
+    expect(classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_wait")).toBe(
       "computer-use",
     );
-    expect(classifyProviderToolRequestKind("mcp__shioricode-computer__computer_double_click")).toBe(
+    expect(classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_double_click")).toBe(
       "computer-use",
     );
-    expect(classifyProviderToolRequestKind("mcp__shioricode-computer__computer_right_click")).toBe(
+    expect(classifyProviderToolRequestKind("mcp__shiori-computer-use__computer_right_click")).toBe(
       "computer-use",
     );
-    expect(providerToolTitle("mcp__shioricode-computer__computer_click")).toBe("Computer click");
-    expect(providerToolTitle("mcp__shioricode-computer__computer_double_click")).toBe(
+    expect(providerToolTitle("mcp__shiori-computer-use__computer_click")).toBe("Computer click");
+    expect(providerToolTitle("mcp__shiori-computer-use__computer_double_click")).toBe(
       "Computer double click",
     );
-    expect(providerToolTitle("mcp__shioricode-computer__computer_right_click")).toBe(
+    expect(providerToolTitle("mcp__shiori-computer-use__computer_right_click")).toBe(
       "Computer right click",
     );
-    expect(providerToolTitle("mcp_shioricode-computer_computer_click")).toBe("Computer click");
-    expect(providerToolTitle("mcp__shioricode-computer__computer_drag")).toBe("Computer drag");
+    expect(providerToolTitle("mcp_shiori-computer-use_computer_click")).toBe("Computer click");
+    expect(providerToolTitle("mcp__shiori-computer-use__computer_drag")).toBe("Computer drag");
     expect(
-      summarizeProviderToolInvocation("mcp__shioricode-computer__computer_click", {
+      summarizeProviderToolInvocation("mcp__shiori-computer-use__computer_click", {
         x: 12,
         y: 34,
       }),

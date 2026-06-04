@@ -6,7 +6,7 @@ import type {
   ComputerUsePermissionSnapshot,
   ComputerUsePermissionsSnapshot,
 } from "contracts";
-import type { ComputerUseApprovedApp } from "contracts/settings";
+import type { ComputerUseApprovedApp, ComputerUseSettings } from "contracts/settings";
 import {
   IconCircleCheckOutline24 as CheckCircle2Icon,
   IconEyeOutline24 as EyeIcon,
@@ -19,7 +19,6 @@ import {
 } from "nucleo-core-outline-24";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useComputerUseFeatureEnabled } from "../../featureFlags";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -249,6 +248,26 @@ export function computerUseAgentVisibilityStatus(input: {
   };
 }
 
+function approvedBundleSignature(apps: readonly ComputerUseApprovedApp[]): string {
+  return apps
+    .map((app) => app.bundleIdentifier.trim())
+    .filter(Boolean)
+    .toSorted()
+    .join("\n");
+}
+
+export function computerUseProviderToolSurfaceChanged(
+  previous: ComputerUseSettings,
+  next: ComputerUseSettings,
+): boolean {
+  return (
+    previous.enabled !== next.enabled ||
+    previous.shareWithProviders !== next.shareWithProviders ||
+    previous.requireApproval !== next.requireApproval ||
+    approvedBundleSignature(previous.approvedApps) !== approvedBundleSignature(next.approvedApps)
+  );
+}
+
 function ApprovedAppRow({
   app,
   onRevoke,
@@ -404,7 +423,6 @@ function ScreenshotPreview() {
 export function ComputerUseSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const computerUseEnabled = useComputerUseFeatureEnabled();
   const queryClient = useQueryClient();
   const cancelPermissionRecheckRef = useRef<(() => void) | null>(null);
   const [permissionFlowKind, setPermissionFlowKind] = useState<ComputerUsePermissionKind | null>(
@@ -473,12 +491,27 @@ export function ComputerUseSettingsPanel() {
     [appsQuery.data?.apps],
   );
 
-  function updateApprovedApps(nextApprovedApps: readonly ComputerUseApprovedApp[]) {
+  function updateComputerUseSettings(nextComputerUse: ComputerUseSettings) {
+    const shouldRefreshProviders = computerUseProviderToolSurfaceChanged(
+      settings.computerUse,
+      nextComputerUse,
+    );
     updateSettings({
-      computerUse: {
-        ...settings.computerUse,
-        approvedApps: [...nextApprovedApps],
-      },
+      computerUse: nextComputerUse,
+    });
+    if (shouldRefreshProviders) {
+      void readNativeApi()
+        ?.server.refreshProviders()
+        .catch((error) => {
+          console.warn("[computer-use] failed to refresh providers after settings change", error);
+        });
+    }
+  }
+
+  function updateApprovedApps(nextApprovedApps: readonly ComputerUseApprovedApp[]) {
+    updateComputerUseSettings({
+      ...settings.computerUse,
+      approvedApps: [...nextApprovedApps],
     });
   }
 
@@ -582,11 +615,9 @@ export function ComputerUseSettingsPanel() {
             <Switch
               checked={settings.computerUse.enabled}
               onCheckedChange={(checked) =>
-                updateSettings({
-                  computerUse: {
-                    ...settings.computerUse,
-                    enabled: Boolean(checked),
-                  },
+                updateComputerUseSettings({
+                  ...settings.computerUse,
+                  enabled: Boolean(checked),
                 })
               }
               aria-label="Enable Computer Use"
@@ -600,11 +631,9 @@ export function ComputerUseSettingsPanel() {
             <Switch
               checked={settings.computerUse.requireApproval}
               onCheckedChange={(checked) =>
-                updateSettings({
-                  computerUse: {
-                    ...settings.computerUse,
-                    requireApproval: Boolean(checked),
-                  },
+                updateComputerUseSettings({
+                  ...settings.computerUse,
+                  requireApproval: Boolean(checked),
                 })
               }
               aria-label="Gate direct Computer Use tools"
@@ -618,11 +647,9 @@ export function ComputerUseSettingsPanel() {
             <Switch
               checked={settings.computerUse.shareWithProviders}
               onCheckedChange={(checked) =>
-                updateSettings({
-                  computerUse: {
-                    ...settings.computerUse,
-                    shareWithProviders: Boolean(checked),
-                  },
+                updateComputerUseSettings({
+                  ...settings.computerUse,
+                  shareWithProviders: Boolean(checked),
                 })
               }
               aria-label="Share Computer Use results with providers"

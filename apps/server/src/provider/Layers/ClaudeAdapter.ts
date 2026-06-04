@@ -316,7 +316,7 @@ function isClaudeMcpServerReservedName(name: string): boolean {
     normalized.length === 0 ||
     normalized.startsWith("mcp__") ||
     normalized === "shioricode-browser" ||
-    normalized === "shioricode-computer"
+    normalized === "shiori-computer-use"
   );
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import BackgroundComputerUse
 import CoreGraphics
 import Foundation
 import Permiso
@@ -36,6 +37,15 @@ func readInputObject() throws -> [String: Any] {
 
 func writeJSON(_ object: [String: Any], exitCode: HelperExitCode = .ok) -> Never {
     let data = (try? JSONSerialization.data(withJSONObject: object, options: [])) ?? Data("{}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+    exit(exitCode.rawValue)
+}
+
+func writeEncodableJSON<T: Encodable>(_ value: T, exitCode: HelperExitCode = .ok) -> Never {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    let data = (try? encoder.encode(value)) ?? Data("{}".utf8)
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data("\n".utf8))
     exit(exitCode.rawValue)
@@ -1197,6 +1207,93 @@ func requestPermission(input: [String: Any]) throws -> [String: Any] {
     ]
 }
 
+func bcuRuntime() -> BackgroundComputerUseRuntime {
+    BackgroundComputerUseRuntime(options: BackgroundComputerUseRuntimeOptions(visualCursor: .disabled))
+}
+
+func bcuImageMode(input: [String: Any], fallback: ImageMode = .base64) throws -> ImageMode {
+    let raw = (try optionalString(input, "imageMode", fallback: fallback.rawValue) ?? fallback.rawValue)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    switch raw {
+    case "base64":
+        return .base64
+    case "path":
+        return .path
+    case "omit":
+        return .omit
+    default:
+        throw HelperFailure(code: "actionFailed", message: "Unsupported imageMode '\(raw)'.")
+    }
+}
+
+func bcuWindowID(runtime: BackgroundComputerUseRuntime, input: [String: Any]) throws -> String {
+    if let window = try optionalString(input, "window")?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !window.isEmpty {
+        return window
+    }
+    let app = try string(input, "app").trimmingCharacters(in: .whitespacesAndNewlines)
+    let windows = try runtime.listWindows(ListWindowsRequest(app: app)).windows
+    guard let window = windows.first(where: { $0.isFocused }) ??
+        windows.first(where: { $0.isMain }) ??
+        windows.first else {
+        throw HelperFailure(code: "actionFailed", message: "No targetable window found for app '\(app)'.")
+    }
+    return window.windowID
+}
+
+func bcuActionTarget(input: [String: Any], key: String = "element_index") throws -> ActionTargetRequestDTO {
+    let raw = try string(input, key).trimmingCharacters(in: .whitespacesAndNewlines)
+    if let displayIndex = Int(raw) {
+        return try ActionTargetRequestDTO.displayIndex(displayIndex)
+    }
+    return try ActionTargetRequestDTO.nodeID(raw)
+}
+
+func bcuMouseButton(input: [String: Any]) throws -> MouseButtonDTO? {
+    guard let raw = try optionalString(input, "mouse_button")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased(), !raw.isEmpty else {
+        return nil
+    }
+    switch raw {
+    case "left":
+        return .left
+    case "right":
+        return .right
+    case "middle":
+        return .middle
+    default:
+        throw HelperFailure(code: "actionFailed", message: "Unsupported mouse_button '\(raw)'.")
+    }
+}
+
+func bcuScrollDirection(input: [String: Any]) throws -> ScrollDirectionDTO {
+    let raw = try string(input, "direction").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch raw {
+    case "up":
+        return .up
+    case "down":
+        return .down
+    case "left":
+        return .left
+    case "right":
+        return .right
+    default:
+        throw HelperFailure(code: "actionFailed", message: "Unsupported scroll direction '\(raw)'.")
+    }
+}
+
+func bcuOptionalTarget(input: [String: Any]) throws -> ActionTargetRequestDTO? {
+    guard let raw = try optionalString(input, "element_index")?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty else {
+        return nil
+    }
+    if let displayIndex = Int(raw) {
+        return try ActionTargetRequestDTO.displayIndex(displayIndex)
+    }
+    return try ActionTargetRequestDTO.nodeID(raw)
+}
+
 do {
     let command = CommandLine.arguments.dropFirst().first ?? "permissions"
     let input = try readInputObject()
@@ -1233,6 +1330,93 @@ do {
             writeJSON(openPermissionGuide(request: request))
         }
         dispatchMain()
+    case "bcu-list-apps":
+        writeEncodableJSON(bcuRuntime().listApps())
+    case "bcu-list-windows":
+        writeEncodableJSON(try bcuRuntime().listWindows(ListWindowsRequest(app: try string(input, "app"))))
+    case "bcu-get-window-state":
+        let runtime = bcuRuntime()
+        let window = try bcuWindowID(runtime: runtime, input: input)
+        writeEncodableJSON(try runtime.getWindowState(GetWindowStateRequest(
+            window: window,
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input)
+        )))
+    case "bcu-click":
+        let runtime = bcuRuntime()
+        let window = try bcuWindowID(runtime: runtime, input: input)
+        if let target = try bcuOptionalTarget(input: input) {
+            writeEncodableJSON(try runtime.click(ClickRequest(
+                window: window,
+                stateToken: try optionalString(input, "stateToken"),
+                target: target,
+                clickCount: try optionalInteger(input, "click_count"),
+                mouseButton: try bcuMouseButton(input: input),
+                maxNodes: try optionalInteger(input, "maxNodes"),
+                imageMode: try bcuImageMode(input: input, fallback: .omit)
+            )))
+        }
+        writeEncodableJSON(try runtime.click(ClickRequest(
+            window: window,
+            stateToken: try optionalString(input, "stateToken"),
+            x: try number(input, "x"),
+            y: try number(input, "y"),
+            clickCount: try optionalInteger(input, "click_count"),
+            mouseButton: try bcuMouseButton(input: input),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-scroll":
+        let runtime = bcuRuntime()
+        writeEncodableJSON(try runtime.scroll(ScrollRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            direction: try bcuScrollDirection(input: input),
+            pages: try optionalInteger(input, "pages"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-perform-secondary-action":
+        let runtime = bcuRuntime()
+        writeEncodableJSON(try runtime.performSecondaryAction(PerformSecondaryActionRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            action: try string(input, "action"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-set-value":
+        let runtime = bcuRuntime()
+        writeEncodableJSON(try runtime.setValue(SetValueRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            value: try string(input, "value"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-type-text":
+        let runtime = bcuRuntime()
+        writeEncodableJSON(try runtime.typeText(TypeTextRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuOptionalTarget(input: input),
+            text: try string(input, "text"),
+            focusAssistMode: .focusAndCaretEnd,
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-press-key":
+        let runtime = bcuRuntime()
+        writeEncodableJSON(try runtime.pressKey(PressKeyRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            key: try string(input, "key"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
     default:
         fail("actionFailed", "Unsupported command '\(command)'.")
     }

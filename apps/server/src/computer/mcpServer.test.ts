@@ -46,119 +46,100 @@ afterEach(() => {
 });
 
 describe("computerUseMcpServer", () => {
-  it("exposes a permissions tool that does not require desktop-action approval metadata", () => {
+  it("exposes the Shiori Computer Use provider tool surface", () => {
     process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL = "1";
 
     const tools = toolSchemas();
-    const createSession = tools.find((tool) => tool.name === "computer_create_session");
-    const closeSession = tools.find((tool) => tool.name === "computer_close_session");
-    const permissions = tools.find((tool) => tool.name === "computer_permissions");
-    const requestPermission = tools.find((tool) => tool.name === "computer_request_permission");
-    const openPermissionGuide = tools.find(
-      (tool) => tool.name === "computer_open_permission_guide",
-    );
-    const listApps = tools.find((tool) => tool.name === "computer_list_apps");
-    const focusApp = tools.find((tool) => tool.name === "computer_focus_app");
-    const focusWindow = tools.find((tool) => tool.name === "computer_focus_window");
-    const screenshot = tools.find((tool) => tool.name === "computer_screenshot");
-    const click = tools.find((tool) => tool.name === "computer_click");
-    const doubleClick = tools.find((tool) => tool.name === "computer_double_click");
-    const rightClick = tools.find((tool) => tool.name === "computer_right_click");
-    const move = tools.find((tool) => tool.name === "computer_move");
-    const drag = tools.find((tool) => tool.name === "computer_drag");
-    const scroll = tools.find((tool) => tool.name === "computer_scroll");
-    const wait = tools.find((tool) => tool.name === "computer_wait");
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "list_apps",
+      "get_app_state",
+      "click",
+      "perform_secondary_action",
+      "set_value",
+      "select_text",
+      "scroll",
+      "drag",
+      "press_key",
+      "type_text",
+    ]);
 
-    expect(createSession?.inputSchema["x-shioricode-needs-approval"]).toBeUndefined();
-    expect(closeSession?.inputSchema["x-shioricode-needs-approval"]).toBeUndefined();
-    expect(closeSession?.inputSchema).toMatchObject({
-      properties: { sessionId: { type: "string" } },
-      required: ["sessionId"],
-    });
-    expect(permissions?.inputSchema["x-shioricode-needs-approval"]).toBeUndefined();
-    expect(requestPermission?.inputSchema["x-shioricode-needs-approval"]).toBeUndefined();
-    expect(requestPermission?.inputSchema).toMatchObject({
-      properties: { kind: { type: "string", enum: ["accessibility", "screen-recording"] } },
-      required: ["kind"],
-    });
-    expect(openPermissionGuide?.inputSchema["x-shioricode-needs-approval"]).toBeUndefined();
-    expect(openPermissionGuide?.inputSchema).toMatchObject({
-      properties: { kind: { type: "string", enum: ["accessibility", "screen-recording"] } },
-      required: ["kind"],
-    });
-    expect(listApps?.inputSchema["x-shioricode-needs-approval"]).toBe(true);
-    expect(listApps?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
+    const listApps = tools.find((tool) => tool.name === "list_apps");
+    const getAppState = tools.find((tool) => tool.name === "get_app_state");
+    const click = tools.find((tool) => tool.name === "click");
+    const secondaryAction = tools.find((tool) => tool.name === "perform_secondary_action");
+    const setValue = tools.find((tool) => tool.name === "set_value");
+    const selectText = tools.find((tool) => tool.name === "select_text");
+    const scroll = tools.find((tool) => tool.name === "scroll");
+    const drag = tools.find((tool) => tool.name === "drag");
+    const pressKey = tools.find((tool) => tool.name === "press_key");
+    const typeText = tools.find((tool) => tool.name === "type_text");
+
     expect(listApps?.inputSchema).toMatchObject({
-      properties: { sessionId: { type: "string" } },
+      properties: {},
+      required: [],
+      additionalProperties: false,
     });
-    expect(focusApp?.inputSchema["x-shioricode-needs-approval"]).toBe(true);
-    expect(focusApp?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(focusApp?.inputSchema).toMatchObject({
+    expect(getAppState?.description).toContain("called once per assistant turn");
+    expect(getAppState?.inputSchema).toMatchObject({
       properties: {
-        sessionId: { type: "string" },
-        bundleIdentifier: { type: "string" },
-        processIdentifier: { type: "integer" },
-        name: { type: "string" },
+        app: { type: "string" },
       },
-      anyOf: [
-        { required: ["bundleIdentifier"] },
-        { required: ["processIdentifier"] },
-        { required: ["name"] },
-      ],
-    });
-    expect(focusWindow?.inputSchema["x-shioricode-needs-approval"]).toBe(true);
-    expect(focusWindow?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(focusWindow?.inputSchema).toMatchObject({
-      properties: {
-        sessionId: { type: "string" },
-        bundleIdentifier: { type: "string" },
-        processIdentifier: { type: "integer" },
-        name: { type: "string" },
-        windowIndex: { type: "integer" },
-        windowTitle: { type: "string" },
-      },
-      anyOf: [
-        { required: ["bundleIdentifier"] },
-        { required: ["processIdentifier"] },
-        { required: ["name"] },
-      ],
-    });
-    expect(screenshot?.inputSchema["x-shioricode-needs-approval"]).toBe(true);
-    expect(screenshot?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(click?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(doubleClick?.description).toContain("double-click");
-    expect(doubleClick?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(rightClick?.description).toContain("right-click");
-    expect(rightClick?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(move?.description).toContain("screenshot pixel coordinates");
-    expect(drag?.description).toContain("drag from one coordinate to another");
-    expect(drag?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(scroll?.description).toContain("When x/y are provided");
-    expect(scroll?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(scroll?.inputSchema).toMatchObject({
-      properties: {
-        x: { type: "number" },
-        y: { type: "number" },
-        coordinateSpace: { type: "string", enum: ["screenshot", "screen"] },
-        screenshotWidth: { type: "number" },
-        screenshotHeight: { type: "number" },
-      },
-    });
-    expect(wait?.description).toContain("wait for macOS desktop UI changes");
-    expect(wait?.inputSchema["x-shioricode-request-kind"]).toBe("computer-use");
-    expect(wait?.inputSchema).toMatchObject({
-      properties: {
-        durationMs: { type: "number" },
-      },
+      required: ["app"],
+      additionalProperties: false,
     });
     expect(click?.inputSchema).toMatchObject({
       properties: {
-        sessionId: { type: "string" },
-        coordinateSpace: { type: "string", enum: ["screenshot", "screen"] },
-        screenshotWidth: { type: "number" },
-        screenshotHeight: { type: "number" },
+        app: { type: "string" },
+        element_index: { type: ["string", "null"] },
+        x: { type: ["number", "null"] },
+        y: { type: ["number", "null"] },
+        mouse_button: { type: ["string", "null"], enum: ["left", "right", "middle", null] },
+        click_count: { type: ["integer", "null"] },
       },
+      required: ["app", "element_index", "x", "y", "mouse_button", "click_count"],
+      additionalProperties: false,
     });
+    expect(secondaryAction?.inputSchema).toMatchObject({
+      required: ["app", "element_index", "action"],
+    });
+    expect(setValue?.inputSchema).toMatchObject({
+      required: ["app", "element_index", "value"],
+    });
+    expect(selectText?.inputSchema).toMatchObject({
+      required: ["app", "element_index", "text", "prefix", "suffix", "selection"],
+    });
+    expect(scroll?.inputSchema).toMatchObject({
+      properties: {
+        app: { type: "string" },
+        element_index: { type: "string" },
+        direction: { type: "string", enum: ["up", "down", "left", "right"] },
+        pages: { type: ["number", "null"] },
+      },
+      required: ["app", "element_index", "direction", "pages"],
+    });
+    expect(drag?.inputSchema).toMatchObject({
+      required: ["app", "from_x", "from_y", "to_x", "to_y"],
+    });
+    expect(pressKey?.inputSchema).toMatchObject({
+      required: ["app", "key"],
+    });
+    expect(typeText?.inputSchema).toMatchObject({
+      required: ["app", "text"],
+    });
+    expect(helperCommandForTool("list_apps")).toBe("bcu-list-apps");
+    expect(helperCommandForTool("get_app_state")).toBe("bcu-get-window-state");
+    expect(helperCommandForTool("click")).toBe("bcu-click");
+    expect(helperCommandForTool("perform_secondary_action")).toBe("bcu-perform-secondary-action");
+    expect(helperCommandForTool("set_value")).toBe("bcu-set-value");
+    expect(helperCommandForTool("scroll")).toBe("bcu-scroll");
+    expect(helperCommandForTool("press_key")).toBe("bcu-press-key");
+    expect(helperCommandForTool("type_text")).toBe("bcu-type-text");
+    expect(() => helperCommandForTool("select_text")).toThrow(
+      "Shiori Computer Use does not expose a native select_text helper command yet.",
+    );
+    expect(() => helperCommandForTool("drag")).toThrow(
+      "Shiori Computer Use does not expose a native point-to-point drag helper command yet.",
+    );
     expect(helperCommandForTool("computer_permissions")).toBe("permissions");
     expect(helperCommandForTool("computer_request_permission")).toBe("request-permission");
     expect(helperCommandForTool("computer_open_permission_guide")).toBe("permission-guide");
@@ -284,7 +265,7 @@ describe("computerUseMcpServer", () => {
       assertComputerToolAllowed("computer_focus_app", { bundleIdentifier: "com.apple.Terminal" }),
     ).toThrow("not approved");
     expect(() => assertComputerToolAllowed("computer_focus_app", { name: "Finder" })).toThrow(
-      "requires an approved bundleIdentifier",
+      "requires an approved app bundle identifier",
     );
 
     process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = "[]";
@@ -364,6 +345,64 @@ describe("computerUseMcpServer", () => {
           type: "image",
           mimeType: "image/png",
           data: "abc",
+        },
+      ],
+    });
+  });
+
+  it("returns BackgroundComputerUse app state as rendered tree text plus screenshot content", () => {
+    expect(
+      toolResultContent({
+        stateToken: "state-123",
+        window: {
+          windowID: "window-1",
+          title: "Example Page",
+          bundleID: "app.example",
+          pid: 42,
+          frameAppKit: { x: 10, y: 20, width: 800, height: 600 },
+        },
+        screenshot: {
+          status: "ok",
+          image: {
+            imageBase64: "abc",
+            mimeType: "image/png",
+            pixelWidth: 1600,
+            pixelHeight: 1200,
+          },
+        },
+        tree: {
+          nodeCount: 2,
+          truncated: false,
+          renderedText: '[1] button "Play"\n[2] text "Now playing"',
+        },
+        focusedElement: {
+          index: 1,
+          displayRole: "button",
+          title: "Play",
+        },
+        notes: ["Background read preserved frontmost app."],
+      }),
+    ).toEqual({
+      content: [
+        {
+          type: "text",
+          text: [
+            "Shiori Computer Use app state.",
+            "Window: Example Page | app.example | pid 42 | window window-1 | 800x600 at 10,20.",
+            "State token: state-123.",
+            "Screenshot: 1600x1200 window pixels.",
+            "Accessibility tree: 2 nodes.",
+            "Focused element: index 1 | button | Play.",
+            "Use element_index values from the rendered tree for click, scroll, set_value, type_text, and perform_secondary_action. Call get_app_state again after meaningful UI changes.",
+            "Notes:\n- Background read preserved frontmost app.",
+            "Rendered accessibility tree:",
+            '[1] button "Play"\n[2] text "Now playing"',
+          ].join("\n"),
+        },
+        {
+          type: "image",
+          data: "abc",
+          mimeType: "image/png",
         },
       ],
     });
@@ -477,6 +516,24 @@ describe("computerUseMcpServer", () => {
       ),
     ).toEqual({
       durationMs: 500,
+      approvedAppBundleIdentifiers: ["com.apple.finder"],
+    });
+  });
+
+  it("strips provider-schema null placeholders before helper actions", () => {
+    expect(
+      helperInputForComputerTool(
+        "computer_focus_app",
+        {
+          sessionId: null,
+          bundleIdentifier: "com.apple.finder",
+          processIdentifier: null,
+          name: null,
+        },
+        new Set(["com.apple.finder"]),
+      ),
+    ).toEqual({
+      bundleIdentifier: "com.apple.finder",
       approvedAppBundleIdentifiers: ["com.apple.finder"],
     });
   });
@@ -876,10 +933,10 @@ describe("computerUseMcpServer", () => {
       }),
     ).not.toThrow();
     expect(() => assertComputerToolAllowed("computer_focus_app", { name: "Safari" })).toThrow(
-      "requires an approved bundleIdentifier",
+      "requires an approved app bundle identifier",
     );
     expect(() => assertComputerToolAllowed("computer_focus_window", { name: "Safari" })).toThrow(
-      "requires an approved bundleIdentifier",
+      "requires an approved app bundle identifier",
     );
     expect(() =>
       assertComputerToolAllowed("computer_focus_app", {

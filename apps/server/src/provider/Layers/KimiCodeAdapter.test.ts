@@ -105,17 +105,16 @@ describe("KimiCodeAdapter helpers", () => {
   it("detects MCP tools that need ShioriCode-side approval wrapping", () => {
     expect(
       kimiMcpToolNeedsShioriApproval({
-        name: "mcp__shioricode-computer__computer_click",
+        name: "mcp__shiori-computer-use__computer_click",
         description: "Click.",
         inputSchema: {
           type: "object",
-          "x-shioricode-needs-approval": true,
         },
       }),
     ).toBe(true);
     expect(
       kimiMcpToolNeedsShioriApproval({
-        name: "mcp__shioricode-computer__computer_permissions",
+        name: "mcp__shiori-computer-use__computer_permissions",
         description: "Inspect permissions.",
         inputSchema: {
           type: "object",

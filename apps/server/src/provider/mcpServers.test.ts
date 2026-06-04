@@ -134,7 +134,7 @@ describe("toAcpMcpServers", () => {
 
     expect(servers.map((server) => server.name)).toEqual([
       "shioricode-browser",
-      "shioricode-computer",
+      "shiori-computer-use",
     ]);
     expect(servers[0]).toMatchObject({
       command: process.execPath,
@@ -213,7 +213,7 @@ describe("toAcpMcpServers", () => {
 
     expect(servers.map((server) => server.name)).toEqual([
       "shioricode-browser",
-      "shioricode-computer",
+      "shiori-computer-use",
     ]);
     expect(servers[0]).toMatchObject({
       transport: "stdio",
@@ -246,7 +246,7 @@ describe("toAcpMcpServers", () => {
 
     expect(servers).toHaveLength(1);
     expect(servers[0]).toMatchObject({
-      name: "shioricode-computer",
+      name: "shiori-computer-use",
       providers: ["claudeAgent"],
       env: {
         SHIORICODE_COMPUTER_USE_ENABLED: "1",
@@ -293,7 +293,7 @@ describe("toAcpMcpServers", () => {
 
     expect(servers).toHaveLength(1);
     expect(servers[0]).toMatchObject({
-      name: "shioricode-computer",
+      name: "shiori-computer-use",
       env: {
         SHIORICODE_COMPUTER_USE_ENABLED: "1",
         SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
@@ -326,7 +326,7 @@ describe("toAcpMcpServers", () => {
 
       expect(servers).toHaveLength(1);
       expect(servers[0]).toMatchObject({
-        name: "shioricode-computer",
+        name: "shiori-computer-use",
         env: {
           SHIORICODE_COMPUTER_USE_ENABLED: "1",
           SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
@@ -374,7 +374,7 @@ describe("toAcpMcpServers", () => {
 
       expect(servers).toHaveLength(1);
       expect(servers[0]).toMatchObject({
-        name: "shioricode-computer",
+        name: "shiori-computer-use",
         env: {
           SHIORICODE_COMPUTER_USE_ENABLED: "1",
           SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
@@ -566,7 +566,7 @@ describe("listEffectiveMcpServerRows", () => {
       .digest("hex")
       .slice(0, 16);
     await writeFile(
-      path.join(oauthStorageDir, `codex:remote-${digest}.json`),
+      path.join(oauthStorageDir, `codex_remote-${digest}.json`),
       `${JSON.stringify({ tokens: { access_token: "access-token" } }, null, 2)}\n`,
       "utf8",
     );
@@ -779,7 +779,7 @@ describe("external MCP discovery", () => {
     expect(result.warnings).toEqual([]);
     expect(result.servers).toHaveLength(1);
     expect(result.servers[0]).toMatchObject({
-      name: "shioricode-computer",
+      name: "shiori-computer-use",
       providers: ["codex"],
       args: expect.arrayContaining(["computer-use-mcp"]),
       env: {
@@ -912,7 +912,7 @@ describe("external MCP discovery", () => {
     expect(result.warnings).toEqual([]);
     expect(result.servers.map((server) => server.name)).toEqual([
       "configured",
-      "shioricode-computer",
+      "shiori-computer-use",
     ]);
     expect(result.servers.at(-1)).toMatchObject({
       providers: ["kimiCode"],
@@ -947,7 +947,7 @@ describe("external MCP discovery", () => {
     expect(result.warnings).toEqual([]);
     expect(result.servers).toHaveLength(1);
     expect(result.servers[0]).toMatchObject({
-      name: "shioricode-computer",
+      name: "shiori-computer-use",
       providers: ["kimiCode"],
       args: expect.arrayContaining(["computer-use-mcp"]),
       env: {
