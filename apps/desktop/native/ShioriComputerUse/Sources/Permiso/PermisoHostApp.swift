@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-public struct PermisoHostApp: Sendable {
+public struct PermisoHostApp: @unchecked Sendable {
     public let displayName: String
     public let bundleURL: URL
     public let icon: NSImage

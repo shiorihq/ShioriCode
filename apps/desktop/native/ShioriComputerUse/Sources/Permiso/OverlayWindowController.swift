@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuartzCore
 
 final class OverlayWindowController: NSWindowController {
     private let windowSize = NSSize(width: 530, height: 109)
@@ -7,7 +8,7 @@ final class OverlayWindowController: NSWindowController {
     private let launchAnimationResponse: Double = 0.72
     private let launchAnimationDampingFraction: Double = 1.0
     private let initialAlpha: CGFloat = 0.9
-    private var launchAnimationTimer: Timer?
+    private var launchDisplayLink: CADisplayLink?
     private var launchStartTime: CFTimeInterval = 0
     private var launchFromFrame = NSRect.zero
     private var launchToFrame = NSRect.zero
@@ -53,22 +54,16 @@ final class OverlayWindowController: NSWindowController {
         isAnimatingLaunch = true
         launchFromFrame = sourceFrameInScreen
         launchToFrame = targetFrame
-        launchStartTime = ProcessInfo.processInfo.systemUptime
+        launchStartTime = CACurrentMediaTime()
 
         window.alphaValue = initialAlpha
         window.setFrame(sourceFrameInScreen, display: false)
         window.orderFrontRegardless()
         stepLaunchAnimation()
 
-        let timer = Timer(
-            timeInterval: 1.0 / 60.0,
-            target: self,
-            selector: #selector(animationTimerDidFire(_:)),
-            userInfo: nil,
-            repeats: true
-        )
-        RunLoop.main.add(timer, forMode: .common)
-        launchAnimationTimer = timer
+        let displayLink = window.displayLink(target: self, selector: #selector(displayLinkDidFire(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        launchDisplayLink = displayLink
     }
 
     func updatePosition(with settingsFrame: CGRect, visibleFrame: CGRect) {
@@ -102,7 +97,7 @@ final class OverlayWindowController: NSWindowController {
             return
         }
 
-        let elapsed = max(0, ProcessInfo.processInfo.systemUptime - launchStartTime)
+        let elapsed = max(0, CACurrentMediaTime() - launchStartTime)
         if elapsed >= launchAnimationDuration {
             isAnimatingLaunch = false
             stopLaunchAnimation()
@@ -117,13 +112,13 @@ final class OverlayWindowController: NSWindowController {
     }
 
     @objc
-    private func animationTimerDidFire(_ timer: Timer) {
+    private func displayLinkDidFire(_ displayLink: CADisplayLink) {
         stepLaunchAnimation()
     }
 
     private func stopLaunchAnimation() {
-        launchAnimationTimer?.invalidate()
-        launchAnimationTimer = nil
+        launchDisplayLink?.invalidate()
+        launchDisplayLink = nil
     }
 
     // Hopper shows the transition builder fed with 0.72 and 1.0; model it as a critically damped spring.

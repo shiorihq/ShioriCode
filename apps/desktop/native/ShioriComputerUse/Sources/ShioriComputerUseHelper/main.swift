@@ -1117,7 +1117,9 @@ func permissionGuideHostApp(request: PermissionGuideRequest) -> PermisoHostApp {
 }
 
 @MainActor
-func wakePermissionGuideRunLoop() {
+func stopPermissionGuideRunLoop() {
+    PermisoAssistant.shared.dismiss()
+    NSApp.stop(nil)
     if let event = NSEvent.otherEvent(
         with: .applicationDefined,
         location: .zero,
@@ -1137,8 +1139,7 @@ func wakePermissionGuideRunLoop() {
 final class PermissionGuideTimeout: NSObject {
     @objc
     func fire(_ timer: Timer) {
-        NSApp.stop(nil)
-        wakePermissionGuideRunLoop()
+        stopPermissionGuideRunLoop()
     }
 }
 
@@ -1162,7 +1163,6 @@ func openPermissionGuide(request: PermissionGuideRequest) -> [String: Any] {
     NSApp.run()
     withExtendedLifetime(timeout) {}
     dismissTimer.invalidate()
-    PermisoAssistant.shared.dismiss()
 
     return [
         "ok": true,
