@@ -10,10 +10,7 @@ let package = Package(
         .executable(name: "ShioriComputerUseHelper", targets: ["ShioriComputerUseHelper"])
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/actuallyepic/background-computer-use",
-            revision: "52116acfe0f2f57174f5e0166881abe944cb6eeb"
-        )
+        .package(path: "../BackgroundComputerUse")
     ],
     targets: [
         .target(
@@ -24,7 +21,7 @@ let package = Package(
             name: "ShioriComputerUseHelper",
             dependencies: [
                 "Permiso",
-                .product(name: "BackgroundComputerUseKit", package: "background-computer-use")
+                .product(name: "BackgroundComputerUseKit", package: "BackgroundComputerUse")
             ],
             exclude: ["Info.plist"],
             linkerSettings: [
