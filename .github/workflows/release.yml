@@ -332,6 +332,7 @@ jobs:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: ShioriCode
 
       - name: Checkout
         uses: actions/checkout@v6
