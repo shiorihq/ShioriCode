@@ -5,6 +5,7 @@ import { defineConfig, mergeConfig } from "vitest/config";
 import { createWebViteConfig } from "./vite.config";
 
 const srcPath = fileURLToPath(new URL("./src", import.meta.url));
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default mergeConfig(
   createWebViteConfig({ includeRouterPlugin: false }),
@@ -18,7 +19,11 @@ export default mergeConfig(
       include: ["src/components/**/*.browser.tsx"],
       browser: {
         enabled: true,
-        provider: playwright(),
+        provider: playwright({
+          launchOptions: {
+            ...(chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {}),
+          },
+        }),
         instances: [{ browser: "chromium" }],
         headless: true,
       },

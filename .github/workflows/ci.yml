@@ -8,6 +8,7 @@ on:
 
 env:
   NUCLEO_LICENSE_KEY: ${{ secrets.NUCLEO_LICENSE_KEY }}
+  PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
 
 jobs:
   quality:
@@ -37,20 +38,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Install browser test runtime
-        timeout-minutes: 5
-        run: bun run --cwd apps/web test:browser:install
 
       - name: Format
         run: bun run fmt:check

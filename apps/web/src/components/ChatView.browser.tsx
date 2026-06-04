@@ -1185,6 +1185,7 @@ async function mountChatView(options: {
   const cleanup = async () => {
     customWsRpcResolver = null;
     await screen.unmount();
+    await waitForLayout();
     host.remove();
   };
 
@@ -1293,8 +1294,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     customWsRpcResolver = null;
+    await waitForLayout();
     document.body.innerHTML = "";
   });
 

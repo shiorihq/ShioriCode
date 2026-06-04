@@ -22,6 +22,8 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-24.04
+    env:
+      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/google-chrome
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
@@ -70,10 +72,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        timeout-minutes: 5
-        run: cd apps/web && bun run test:browser:install
 
       - name: Lint
         run: bun run lint
