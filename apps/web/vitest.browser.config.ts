@@ -20,9 +20,7 @@ export default mergeConfig(
       browser: {
         enabled: true,
         provider: playwright({
-          launchOptions: {
-            ...(chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {}),
-          },
+          launchOptions: chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {},
         }),
         instances: [{ browser: "chromium" }],
         headless: true,
