@@ -301,11 +301,7 @@ export const makeOrchestrationIntegrationHarness = (
       checkedAt,
       models: [],
     });
-    const providerStatuses = [
-      readyProvider("shiori"),
-      readyProvider("codex"),
-      readyProvider("claudeAgent"),
-    ] as const;
+    const providerStatuses = [readyProvider("codex"), readyProvider("claudeAgent")] as const;
     const providerRegistryLayer = Layer.succeed(ProviderRegistry, {
       getProviders: Effect.succeed(providerStatuses),
       refresh: (_provider?: ServerProvider["provider"]) => Effect.succeed(providerStatuses),

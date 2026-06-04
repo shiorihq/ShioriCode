@@ -4,8 +4,6 @@ import { IconCheckOutline24 as CheckIcon } from "nucleo-core-outline-24";
 import { PROVIDER_DISPLAY_NAMES, type ProviderKind, type ServerProvider } from "contracts";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { useSettings } from "../../hooks/useSettings";
-import { getPersonalDetailsBlurClass } from "../../lib/personalDetails";
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 
@@ -19,7 +17,6 @@ const STATUS_DOT_STYLES: Record<ServerProvider["status"], string> = {
 };
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderKind, string> = {
-  shiori: "Shiori hosted API",
   kimiCode: "Kimi Code CLI",
   gemini: "Google Antigravity SDK",
   cursor: "Cursor CLI",
@@ -37,19 +34,11 @@ const PROVIDER_INSTALL_INSTRUCTIONS: Partial<Record<ProviderKind, readonly strin
 type ProviderCardProps = {
   provider: ServerProvider;
   index: number;
-  viewerEmail?: string | null | undefined;
   onRefresh: () => void;
   isRefreshing: boolean;
 };
 
-export function ProviderCard({
-  provider,
-  index,
-  viewerEmail,
-  onRefresh,
-  isRefreshing,
-}: ProviderCardProps) {
-  const blurPersonalData = useSettings().blurPersonalData;
+export function ProviderCard({ provider, index, onRefresh, isRefreshing }: ProviderCardProps) {
   const shouldReduceMotion = useReducedMotion();
   const skip = !!shouldReduceMotion;
   const isReady = provider.status === "ready";
@@ -85,7 +74,6 @@ export function ProviderCard({
         : "Checking";
 
   const showInstructions = !isReady && instructions;
-  const showShioriDetail = kind === "shiori" && isReady && viewerEmail;
 
   return (
     <LazyMotion features={domAnimation}>
@@ -129,16 +117,7 @@ export function ProviderCard({
         </div>
 
         {/* Description */}
-        <p className="mt-1.5 pl-[18px] text-xs text-muted-foreground/60">
-          {showShioriDetail ? (
-            <>
-              Authenticated as{" "}
-              <span className={getPersonalDetailsBlurClass(blurPersonalData)}>{viewerEmail}</span>
-            </>
-          ) : (
-            description
-          )}
-        </p>
+        <p className="mt-1.5 pl-[18px] text-xs text-muted-foreground/60">{description}</p>
 
         {/* Install instructions for CLI providers */}
         {showInstructions ? (
@@ -164,15 +143,6 @@ export function ProviderCard({
                 {isRefreshing ? "Checking..." : "Check again"}
               </Button>
             </div>
-          </div>
-        ) : null}
-
-        {/* Not-ready Shiori (edge case) */}
-        {kind === "shiori" && !isReady ? (
-          <div className="mt-2 pl-[18px]">
-            <Button size="xs" variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-              {isRefreshing ? "Checking..." : "Check again"}
-            </Button>
           </div>
         ) : null}
       </m.div>

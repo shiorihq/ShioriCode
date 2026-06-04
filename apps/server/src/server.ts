@@ -20,7 +20,6 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
-import { ShioriAdapterLive } from "./provider/Layers/ShioriAdapter";
 import { KimiCodeAdapterLive } from "./provider/Layers/KimiCodeAdapter";
 import { makeGeminiAdapterLive } from "./provider/Layers/GeminiAdapter";
 import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter";
@@ -52,14 +51,11 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { SubagentDetailQueryLive } from "./orchestration/Layers/SubagentDetailQuery";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
-import { ShioriProviderLive } from "./provider/Layers/ShioriProvider";
 import { ServerSettingsLive } from "./serverSettings";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
-import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore";
-import { HostedBillingLive } from "./hostedBilling";
 import { ComputerUseManagerLive } from "./computer/Layers/MacOSComputerUseManager";
 import { AutomationRepositoryLive } from "./automations/Layers/AutomationRepository";
 import { AutomationServiceLive } from "./automations/Layers/AutomationService";
@@ -157,9 +153,6 @@ const ProviderLayerLive = Layer.unwrap(
     const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
     });
-    const shioriAdapterLayer = ShioriAdapterLive.pipe(
-      Layer.provide(ProviderSessionDirectoryLayerLive),
-    );
     const kimiCodeAdapterLayer = KimiCodeAdapterLive;
     const geminiAdapterLayer = makeGeminiAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
@@ -174,7 +167,6 @@ const ProviderLayerLive = Layer.unwrap(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(shioriAdapterLayer),
       Layer.provide(kimiCodeAdapterLayer),
       Layer.provide(geminiAdapterLayer),
       Layer.provide(cursorAdapterLayer),
@@ -230,11 +222,8 @@ const RuntimeServicesBaseLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(AutomationLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
-  Layer.provideMerge(ShioriProviderLive),
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
-  Layer.provideMerge(HostedShioriAuthTokenStoreLive),
-  Layer.provideMerge(HostedBillingLive),
 );
 
 const RuntimeServicesLive = RuntimeServicesBaseLive.pipe(
@@ -308,7 +297,7 @@ export const makeServerLayer = Layer.unwrap(
 );
 
 // Important: Only `ServerConfig` should be provided by the CLI layer.
-const RunServerDependencies = Layer.mergeAll(ServerSettingsLive, HostedShioriAuthTokenStoreLive);
+const RunServerDependencies = ServerSettingsLive;
 
 export const runServer = Layer.launch(makeServerLayer).pipe(Effect.provide(RunServerDependencies));
 

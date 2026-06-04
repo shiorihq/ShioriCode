@@ -38,7 +38,6 @@ class MockController implements AgentController {
   respondToUserInput = vi.fn(async () => undefined);
   refreshProviders = vi.fn(async () => undefined);
   updateServerSettings = vi.fn(async () => undefined);
-  setShioriAuthToken = vi.fn(async () => undefined);
   runProviderLogin = vi.fn(async () => undefined);
 
   constructor(state: AgentControllerState) {
@@ -170,7 +169,6 @@ function makeServerConfig(provider: Thread["modelSelection"]["provider"] = "code
     claudeAgent: [
       { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", isCustom: false, capabilities: null },
     ],
-    shiori: [{ slug: "openai/gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
   } as const;
 
   return {
@@ -180,16 +178,6 @@ function makeServerConfig(provider: Thread["modelSelection"]["provider"] = "code
     keybindings: [],
     issues: [],
     providers: [
-      {
-        provider: "shiori",
-        enabled: true,
-        installed: true,
-        version: null,
-        status: provider === "shiori" ? "ready" : "warning",
-        auth: { status: "unknown", label: "Signed in to Shiori" },
-        checkedAt: "2026-04-17T10:00:00.000Z",
-        models: modelsByProvider.shiori,
-      },
       {
         provider: "codex",
         enabled: true,
@@ -627,39 +615,5 @@ describe("App", () => {
       "question-1": "Large",
     });
     expect(controller.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it("edits Shiori provider settings via the /model overlay", async () => {
-    const controller = new MockController(
-      makeState(
-        makeThread({
-          modelSelection: {
-            provider: "shiori",
-            model: "openai/gpt-5.4",
-          },
-        }),
-        makeServerConfig("shiori"),
-      ),
-    );
-    const app = render(<App controller={controller} dimensions={{ columns: 120, rows: 40 }} />);
-
-    app.stdin.write("/model");
-    await flushUi();
-    app.stdin.write("\r");
-    await flushUi();
-    app.stdin.write("e");
-    await flushUi();
-    app.stdin.write("https://shiori.example");
-    await flushUi();
-    app.stdin.write("\r");
-    await flushUi();
-
-    expect(controller.updateServerSettings).toHaveBeenCalledWith({
-      providers: {
-        shiori: {
-          apiBaseUrl: "https://shiori.example",
-        },
-      },
-    });
   });
 });

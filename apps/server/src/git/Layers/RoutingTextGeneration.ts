@@ -4,7 +4,7 @@
  * request input.
  *
  * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; for `"shiori"` and other values it currently falls through
+ * the Claude layer; for other values it currently falls through
  * to the Codex layer until a dedicated Shiori text-generation path is added.
  *
  * @module RoutingTextGeneration

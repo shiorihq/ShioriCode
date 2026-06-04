@@ -234,7 +234,6 @@ describe("ProviderCommandReactor", () => {
       ...overrides,
     });
     const providerStatuses = harnessOptions?.providerStatuses ?? [
-      readyProvider("shiori"),
       readyProvider("codex"),
       readyProvider("claudeAgent"),
     ];
@@ -710,19 +709,19 @@ describe("ProviderCommandReactor", () => {
     const warningCheckedAt = new Date().toISOString();
     const harness = await createHarness({
       threadModelSelection: {
-        provider: "shiori",
-        model: "openai/gpt-5.4",
+        provider: "kimiCode",
+        model: "kimi-code/kimi-for-coding",
       },
       providerStatuses: [
         {
-          provider: "shiori",
+          provider: "kimiCode",
           enabled: true,
           installed: true,
           version: null,
           status: "warning",
           auth: { status: "authenticated" },
           checkedAt: warningCheckedAt,
-          message: "ShioriCode requires an active paid Shiori subscription for hosted access.",
+          message: "Kimi Code is not available.",
           models: [],
         },
         {
@@ -757,7 +756,7 @@ describe("ProviderCommandReactor", () => {
         message: {
           messageId: asMessageId("user-message-provider-warning"),
           role: "user",
-          text: "start a hosted shiori turn",
+          text: "start a kimi turn",
           attachments: [],
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -788,7 +787,7 @@ describe("ProviderCommandReactor", () => {
     ).toMatchObject({
       summary: "Provider turn start failed",
       payload: {
-        detail: "ShioriCode requires an active paid Shiori subscription for hosted access.",
+        detail: "Kimi Code is not available.",
       },
     });
   });
@@ -798,7 +797,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness({
       providerStatuses: [
         {
-          provider: "shiori",
+          provider: "kimiCode",
           enabled: true,
           installed: true,
           version: null,
@@ -1055,21 +1054,21 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("skips first-turn title generation for shiori threads", async () => {
+  it("skips first-turn title generation when a title seed is provided", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        provider: "shiori",
-        model: "openai/gpt-5.4",
+        provider: "kimiCode",
+        model: "kimi-code/kimi-for-coding",
       },
     });
     const now = new Date().toISOString();
-    const seededTitle = "Summarize the hosted provider setup.";
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Hosted title" }));
+    const seededTitle = "Summarize the provider setup.";
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Seeded title" }));
 
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-thread-title-seed-shiori"),
+        commandId: CommandId.makeUnsafe("cmd-thread-title-seed-kimi"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         title: seededTitle,
       }),
@@ -1078,12 +1077,12 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-title-shiori"),
+        commandId: CommandId.makeUnsafe("cmd-turn-start-title-kimi"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         message: {
-          messageId: asMessageId("user-message-title-shiori"),
+          messageId: asMessageId("user-message-title-kimi"),
           role: "user",
-          text: "Summarize the hosted provider setup.",
+          text: "Summarize the provider setup.",
           attachments: [],
         },
         titleSeed: seededTitle,

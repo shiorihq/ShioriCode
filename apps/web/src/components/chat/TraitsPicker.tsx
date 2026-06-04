@@ -5,7 +5,6 @@ import {
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
-  type ShioriModelOptions,
   type ThreadId,
 } from "contracts";
 import {
@@ -55,9 +54,6 @@ function getRawEffort(
   if (provider === "codex") {
     return trimOrNull((modelOptions as CodexModelOptions | undefined)?.reasoningEffort);
   }
-  if (provider === "shiori") {
-    return trimOrNull((modelOptions as ShioriModelOptions | undefined)?.reasoningEffort);
-  }
   if (provider === "cursor") {
     return trimOrNull((modelOptions as CursorModelOptions | undefined)?.reasoning);
   }
@@ -84,9 +80,6 @@ function buildNextOptions(
 ): ProviderOptions {
   if (provider === "codex") {
     return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
-  }
-  if (provider === "shiori") {
-    return { ...(modelOptions as ShioriModelOptions | undefined), ...patch } as ShioriModelOptions;
   }
   if (provider === "cursor") {
     return { ...(modelOptions as CursorModelOptions | undefined), ...patch } as CursorModelOptions;
@@ -115,11 +108,9 @@ function getSelectedTraits(
 
   // Thinking toggle (only for models that support it)
   const thinkingEnabled = caps.supportsThinkingToggle
-    ? provider === "shiori"
-      ? ((modelOptions as ShioriModelOptions | undefined)?.thinking ?? false)
-      : provider === "cursor"
-        ? ((modelOptions as CursorModelOptions | undefined)?.thinking ?? false)
-        : ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
+    ? provider === "cursor"
+      ? ((modelOptions as CursorModelOptions | undefined)?.thinking ?? false)
+      : ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
     : null;
 
   // Fast mode
@@ -369,7 +360,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   }
 
   if (caps.supportsThinkingToggle && thinkingEnabled !== null) {
-    const thinkingDefault = provider !== "shiori";
+    const thinkingDefault = true;
     sections.push({
       key: "thinking",
       content: (

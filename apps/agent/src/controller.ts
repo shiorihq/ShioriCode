@@ -37,7 +37,6 @@ import {
   normalizeCodexModelOptionsWithCapabilities,
   normalizeCursorModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
-  normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
 import type { WsRpcClient } from "shared/wsRpc";
 
@@ -83,7 +82,6 @@ export interface AgentController {
   ) => Promise<void>;
   readonly refreshProviders: () => Promise<void>;
   readonly updateServerSettings: (patch: ServerSettingsPatch) => Promise<void>;
-  readonly setShioriAuthToken: (token: string | null) => Promise<void>;
   readonly runProviderLogin: (provider: "codex" | "claudeAgent") => Promise<void>;
 }
 
@@ -146,16 +144,6 @@ function normalizeSelectionWithCapabilities(
         ...(options ? { options } : {}),
       };
     }
-    case "shiori": {
-      const options = selection.options
-        ? normalizeShioriModelOptionsWithCapabilities(caps, selection.options)
-        : undefined;
-      return {
-        provider: selection.provider,
-        model: selection.model,
-        ...(options ? { options } : {}),
-      };
-    }
     case "kimiCode": {
       const options = selection.options
         ? normalizeKimiCodeModelOptionsWithCapabilities(caps, selection.options)
@@ -166,8 +154,6 @@ function normalizeSelectionWithCapabilities(
         ...(options ? { options } : {}),
       };
     }
-    case "gemini":
-      return selection;
     case "cursor": {
       const options = selection.options
         ? normalizeCursorModelOptionsWithCapabilities(caps, selection.options)
@@ -178,6 +164,9 @@ function normalizeSelectionWithCapabilities(
         ...(options ? { options } : {}),
       };
     }
+    case "gemini":
+    default:
+      return selection;
   }
 }
 
@@ -673,16 +662,6 @@ class RealAgentController implements AgentController {
     });
   }
 
-  async setShioriAuthToken(token: string | null) {
-    const rpc = this.rpc;
-    if (!rpc) {
-      return;
-    }
-    await this.runMutation(async () => {
-      await rpc.server.setShioriAuthToken(token);
-    });
-  }
-
   async runProviderLogin(provider: "codex" | "claudeAgent") {
     if (provider === "codex") {
       await runCommand("codex", ["login"]);
@@ -717,7 +696,6 @@ export function cycleProvider(
   delta: number,
 ): ProviderKind {
   const providers = serverConfig?.providers.map((provider) => provider.provider) ?? [
-    "shiori",
     "kimiCode",
     "gemini",
     "cursor",

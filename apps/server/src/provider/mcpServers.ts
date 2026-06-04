@@ -263,7 +263,7 @@ function mcpServerEntryFromRaw(input: {
     source: input.source,
     transport,
     enabled,
-    providers: ["shiori"],
+    providers: [],
     ...(url ? { url } : {}),
     ...(headers ? { headers } : {}),
     ...(envHttpHeaders ? { envHttpHeaders } : {}),
@@ -515,24 +515,21 @@ export async function loadEffectiveMcpServersForProvider(input: {
   readonly cwd?: string;
   readonly exposeComputerWhenApprovalRequired?: boolean;
 }): Promise<EffectiveMcpServersResult> {
-  if (input.provider !== "shiori") {
-    const configuredServers = filterMcpServersForProvider(
-      input.provider,
-      input.settings.mcpServers.servers,
-    );
-    const builtInServers = builtInShioriMcpServers({
-      provider: input.provider,
-      settings: input.settings,
-      ...(input.exposeComputerWhenApprovalRequired !== undefined
-        ? { exposeComputerWhenApprovalRequired: input.exposeComputerWhenApprovalRequired }
-        : {}),
-    });
-    return {
-      servers: [...configuredServers, ...builtInServers],
-      warnings: [],
-    };
-  }
+  return {
+    servers: filterMcpServersForProvider(input.provider, input.settings.mcpServers.servers),
+    warnings: [],
+  };
+}
 
+/**
+ * Load the union of user-managed and discovered (codex/claude) MCP servers for
+ * presentation in the settings UI. Unlike {@link loadEffectiveMcpServersForProvider},
+ * this is not scoped to a single provider.
+ */
+export async function loadAllEffectiveMcpServers(input: {
+  readonly settings: ServerSettings;
+  readonly cwd?: string;
+}): Promise<EffectiveMcpServersResult> {
   const [codex, claude] = await Promise.all([
     discoverCodexMcpServers({
       ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -547,7 +544,7 @@ export async function loadEffectiveMcpServersForProvider(input: {
     ...claude.servers,
   ]);
   return {
-    servers: dedupeEquivalentMcpServers(filterMcpServersForProvider(input.provider, servers)),
+    servers: dedupeEquivalentMcpServers(servers.filter((server) => server.enabled)),
     warnings: [...codex.warnings, ...claude.warnings],
   };
 }
@@ -607,7 +604,7 @@ export async function loadCodexManagedMcpServers(input: {
 
 function resolveEffectiveServerMetadata(
   server: McpServerEntry,
-): Pick<EffectiveMcpServerEntry, "source" | "sourceName" | "configPath" | "readOnly"> {
+): Pick<EffectiveMcpServerEntry, "source" | "sourceName" | "configPath" | "readOnly"> | null {
   if (server.name.startsWith("codex:")) {
     const discovered = server as Partial<DiscoveredMcpServerEntry>;
     return {
@@ -626,7 +623,7 @@ function resolveEffectiveServerMetadata(
       readOnly: true,
     };
   }
-  return { source: "shiori", readOnly: false };
+  return null;
 }
 
 async function resolveEffectiveMcpServerAuth(input: {
@@ -663,26 +660,30 @@ export async function listEffectiveMcpServerRows(input: {
   readonly cwd?: string;
   readonly oauthStorageDir?: string;
 }): Promise<EffectiveMcpServerRowsResult> {
-  const effective = await loadEffectiveMcpServersForProvider({
-    provider: "shiori",
+  const effective = await loadAllEffectiveMcpServers({
     settings: input.settings,
     ...(input.cwd ? { cwd: input.cwd } : {}),
   });
+  const rows = await Promise.all(
+    effective.servers.map(async (server): Promise<EffectiveMcpServerEntry | null> => {
+      const metadata = resolveEffectiveServerMetadata(server);
+      if (!metadata) {
+        // User-managed servers are edited directly via settings, not surfaced here.
+        return null;
+      }
+      return {
+        ...server,
+        ...metadata,
+        auth: await resolveEffectiveMcpServerAuth({
+          server,
+          source: metadata.source,
+          ...(input.oauthStorageDir ? { oauthStorageDir: input.oauthStorageDir } : {}),
+        }),
+      };
+    }),
+  );
   return {
-    servers: await Promise.all(
-      effective.servers.map(async (server): Promise<EffectiveMcpServerEntry> => {
-        const metadata = resolveEffectiveServerMetadata(server);
-        return {
-          ...server,
-          ...metadata,
-          auth: await resolveEffectiveMcpServerAuth({
-            server,
-            source: metadata.source,
-            ...(input.oauthStorageDir ? { oauthStorageDir: input.oauthStorageDir } : {}),
-          }),
-        };
-      }),
-    ),
+    servers: rows.filter((row): row is EffectiveMcpServerEntry => row !== null),
     warnings: effective.warnings,
   };
 }
@@ -1026,7 +1027,7 @@ export function builtInShioriMcpServers(input: {
     );
   }
 
-  const provider = input.provider ?? "shiori";
+  const provider = input.provider ?? "codex";
   return servers.map((server) => ({ ...server, providers: [provider] }));
 }
 
@@ -1057,7 +1058,7 @@ function makeBuiltInStdioMcpServerEntry(
     command: process.execPath,
     args: [...serverEntrypointArgs(), subcommand],
     enabled: true,
-    providers: ["shiori"],
+    providers: [],
   };
   return env ? { ...entry, env } : entry;
 }

@@ -5,7 +5,6 @@ import {
   CursorModelOptions,
   GeminiModelOptions,
   KimiCodeModelOptions,
-  ShioriModelOptions,
 } from "./model";
 import {
   ApprovalRequestId,
@@ -35,7 +34,6 @@ export const ORCHESTRATION_WS_METHODS = {
 } as const;
 
 export const ProviderKind = Schema.Literals([
-  "shiori",
   "kimiCode",
   "gemini",
   "cursor",
@@ -58,13 +56,6 @@ export const ProviderSandboxMode = Schema.Literals([
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
-
-export const ShioriModelSelection = Schema.Struct({
-  provider: Schema.Literal("shiori"),
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(ShioriModelOptions),
-});
-export type ShioriModelSelection = typeof ShioriModelSelection.Type;
 
 export const KimiCodeModelSelection = Schema.Struct({
   provider: Schema.Literal("kimiCode"),
@@ -102,7 +93,6 @@ export const ClaudeModelSelection = Schema.Struct({
 export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
 export const ModelSelection = Schema.Union([
-  ShioriModelSelection,
   KimiCodeModelSelection,
   GeminiModelSelection,
   CursorModelSelection,

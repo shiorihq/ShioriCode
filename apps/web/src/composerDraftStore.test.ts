@@ -75,7 +75,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "shiori" | "codex" | "claudeAgent",
+  provider: "cursor" | "codex" | "claudeAgent",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -730,13 +730,13 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(modelSelection("codex", "gpt-5.4"));
   });
 
-  it("stores a shiori model selection in the draft", () => {
+  it("stores a cursor model selection in the draft", () => {
     const store = useComposerDraftStore.getState();
-    store.setModelSelection(threadId, modelSelection("shiori", "gpt-5.4"));
+    store.setModelSelection(threadId, modelSelection("cursor", "composer-2"));
 
     expect(
-      useComposerDraftStore.getState().draftsByThreadId[threadId]?.modelSelectionByProvider.shiori,
-    ).toEqual(modelSelection("shiori", "openai/gpt-5.4"));
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.modelSelectionByProvider.cursor,
+    ).toEqual(modelSelection("cursor", "composer-2"));
   });
 
   it("replaces only the targeted provider options on the current model selection", () => {

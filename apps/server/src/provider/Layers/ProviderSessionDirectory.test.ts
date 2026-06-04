@@ -258,28 +258,4 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
-
-  it("accepts persisted shiori bindings", () =>
-    Effect.gen(function* () {
-      const directory = yield* ProviderSessionDirectory;
-      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
-      const threadId = ThreadId.makeUnsafe("thread-shiori");
-
-      yield* runtimeRepository.upsert({
-        threadId,
-        providerName: "shiori",
-        adapterKey: "shiori",
-        runtimeMode: "full-access",
-        status: "running",
-        lastSeenAt: new Date().toISOString(),
-        resumeCursor: null,
-        runtimePayload: null,
-      });
-
-      const resolvedBinding = yield* directory.getBinding(threadId);
-      assertSome(resolvedBinding, {
-        threadId,
-        provider: "shiori",
-      });
-    }));
 });

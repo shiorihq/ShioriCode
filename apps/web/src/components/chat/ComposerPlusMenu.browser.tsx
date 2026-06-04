@@ -63,10 +63,10 @@ const CODEX_MODELS = [
   },
 ] as const;
 
-const SHIORI_MODELS = [
+const GEMINI_MODELS = [
   {
-    slug: "zhipu/glm-5.1",
-    name: "GLM-5.1",
+    slug: "gemini-3-pro",
+    name: "Gemini 3 Pro",
     isCustom: false,
     multiModal: false,
     capabilities: {
@@ -81,7 +81,7 @@ const SHIORI_MODELS = [
 
 async function mountMenu(props?: {
   provider?: ProviderKind;
-  model?: "claude-opus-4-6" | "claude-opus-4-7" | "gpt-5.4" | "zhipu/glm-5.1";
+  model?: "claude-opus-4-6" | "claude-opus-4-7" | "gpt-5.4" | "gemini-3-pro";
   fastMode?: boolean;
 }) {
   const threadId = ThreadId.makeUnsafe("thread-composer-plus-menu");
@@ -90,14 +90,14 @@ async function mountMenu(props?: {
     props?.model ??
     (provider === "claudeAgent"
       ? "claude-opus-4-6"
-      : provider === "shiori"
-        ? "zhipu/glm-5.1"
+      : provider === "gemini"
+        ? "gemini-3-pro"
         : "gpt-5.4");
   const models =
     provider === "claudeAgent"
       ? CLAUDE_MODELS
-      : provider === "shiori"
-        ? SHIORI_MODELS
+      : provider === "gemini"
+        ? GEMINI_MODELS
         : CODEX_MODELS;
   const modelOptions = props?.fastMode !== undefined ? { fastMode: props.fastMode } : undefined;
 
@@ -210,7 +210,7 @@ describe("ComposerPlusMenu", () => {
   });
 
   it("disables file attachments for models without multimodal support", async () => {
-    const mounted = await mountMenu({ provider: "shiori", model: "zhipu/glm-5.1" });
+    const mounted = await mountMenu({ provider: "gemini", model: "gemini-3-pro" });
 
     try {
       await page.getByRole("button", { name: "More options" }).click();

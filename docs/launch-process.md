@@ -5,8 +5,6 @@ This is the short operational flow for launching ShioriCode locally and confirmi
 ## Prepare
 
 1. Run `bun install`.
-2. If you want the hosted Shiori provider, copy `apps/web/.env.example` to `apps/web/.env.local` and set `VITE_CONVEX_URL`.
-3. If you use Convex locally, start it with `bun run convex:dev`.
 
 ## Launch
 

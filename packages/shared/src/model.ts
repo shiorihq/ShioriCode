@@ -9,7 +9,6 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
-  type ShioriModelOptions,
 } from "contracts";
 
 export interface SelectableModelOption {
@@ -99,21 +98,6 @@ export function normalizeCodexModelOptionsWithCapabilities(
       ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
       : {}),
     ...(fastMode !== undefined ? { fastMode } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
-}
-
-export function normalizeShioriModelOptionsWithCapabilities(
-  caps: ModelCapabilities,
-  modelOptions: ShioriModelOptions | null | undefined,
-): ShioriModelOptions | undefined {
-  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
-  const thinking = caps.supportsThinkingToggle ? (modelOptions?.thinking ?? false) : undefined;
-  const nextOptions: ShioriModelOptions = {
-    ...(thinking !== undefined ? { thinking } : {}),
-    ...(reasoningEffort
-      ? { reasoningEffort: reasoningEffort as ShioriModelOptions["reasoningEffort"] }
-      : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
@@ -263,7 +247,6 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
       }
     }
     case "kimiCode":
-    case "shiori":
     default: {
       return modelSelection.model;
     }

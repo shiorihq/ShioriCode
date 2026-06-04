@@ -7,10 +7,8 @@ import {
   type ThreadId,
   type UploadChatAttachment,
 } from "contracts";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
-import { useMergedServerProviders } from "../../convex/shioriProvider";
 import { newCommandId } from "../../lib/utils";
 import { readNativeApi } from "../../nativeApi";
 import { getProviderUnavailableReason } from "../../providerModels";
@@ -29,6 +27,8 @@ import { type Thread } from "../../types";
 import { type QueuedTurnDraft, useQueuedTurnsStore } from "../../queuedTurnsStore";
 import { useServerConfig } from "../../rpc/serverState";
 
+const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+
 function modelSelectionsEqual(a: ModelSelection, b: ModelSelection): boolean {
   return (
     a.provider === b.provider &&
@@ -37,29 +37,14 @@ function modelSelectionsEqual(a: ModelSelection, b: ModelSelection): boolean {
   );
 }
 
-async function ensureProviderCanStartQueuedTurn(input: {
+function ensureProviderCanStartQueuedTurn(input: {
   provider: ProviderKind;
   providerStatuses: ReadonlyArray<ServerProvider>;
-  hostedShioriAuthToken: string | null;
 }) {
   const unavailableReason = getProviderUnavailableReason(input.providerStatuses, input.provider);
   if (unavailableReason) {
     throw new Error(unavailableReason);
   }
-  if (input.provider !== "shiori") {
-    return;
-  }
-
-  const api = readNativeApi();
-  if (!api) {
-    throw new Error("Native API not found");
-  }
-  if (!input.hostedShioriAuthToken) {
-    throw new Error(
-      "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
-    );
-  }
-  await api.server.setShioriAuthToken(input.hostedShioriAuthToken);
 }
 
 async function persistThreadSettingsForQueuedTurn(input: {
@@ -224,8 +209,10 @@ export function QueuedTurnsProcessor() {
   const setThreadError = useStore((state) => state.setError);
   const draftThreadsByThreadId = useComposerDraftStore((state) => state.draftThreadsByThreadId);
   const serverConfig = useServerConfig();
-  const providerStatuses = useMergedServerProviders(serverConfig?.providers ?? []);
-  const { authToken: hostedShioriAuthToken } = useHostedShioriState();
+  const providerStatuses = useMemo(
+    () => serverConfig?.providers ?? EMPTY_PROVIDERS,
+    [serverConfig?.providers],
+  );
   const queuedTurnsByThreadId = useQueuedTurnsStore((state) => state.queuedTurnsByThreadId);
   const removeQueuedTurn = useQueuedTurnsStore((state) => state.removeQueuedTurn);
   const markQueuedTurnSending = useQueuedTurnsStore((state) => state.markQueuedTurnSending);
@@ -302,10 +289,9 @@ export function QueuedTurnsProcessor() {
           // Preserve queue ordering in the panel, but stamp orchestration events
           // with the actual dequeue time so persisted transcript order matches
           // when the turn really started.
-          await ensureProviderCanStartQueuedTurn({
+          ensureProviderCanStartQueuedTurn({
             provider: nextQueuedTurn.modelSelection.provider,
             providerStatuses,
-            hostedShioriAuthToken,
           });
           const commands = buildQueuedTurnDispatchCommands({
             queuedTurn: nextQueuedTurn,
@@ -327,7 +313,6 @@ export function QueuedTurnsProcessor() {
     }
   }, [
     clearQueuedTurns,
-    hostedShioriAuthToken,
     markQueuedTurnFailed,
     markQueuedTurnSending,
     providerStatuses,

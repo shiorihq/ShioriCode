@@ -111,8 +111,8 @@ describe("projectProviderRuntimeEventsToTurnWorkSnapshot", () => {
           taskType: "subagent",
         },
         raw: {
-          source: "shiori.hosted",
-          method: "shiori/subagent/task_started",
+          source: "codex.eventmsg",
+          method: "provider/subagent/task_started",
           payload: { task_id: "agent-1", tool_use_id: "spawn-1" },
         },
       }),
@@ -124,8 +124,8 @@ describe("projectProviderRuntimeEventsToTurnWorkSnapshot", () => {
           summary: "No issues found",
         },
         raw: {
-          source: "shiori.hosted",
-          method: "shiori/subagent/task_completed",
+          source: "codex.eventmsg",
+          method: "provider/subagent/task_completed",
           payload: { task_id: "agent-1", tool_use_id: "spawn-1" },
         },
       }),

@@ -7,7 +7,7 @@ import {
 } from "./hostedShioriFeatureFlags";
 
 describe("hosted Shiori feature flag env overrides", () => {
-  it("maps Convex flag keys to server and Vite env names", () => {
+  it("maps flag keys to server and Vite env names", () => {
     expect(hostedShioriFeatureFlagEnvNames("shioricode_browser_use_enabled")).toEqual([
       "SHIORICODE_FEATURE_FLAG_SHIORICODE_BROWSER_USE_ENABLED",
       "VITE_SHIORICODE_FEATURE_FLAG_SHIORICODE_BROWSER_USE_ENABLED",

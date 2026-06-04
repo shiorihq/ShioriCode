@@ -9,32 +9,10 @@ import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { CursorAdapter, CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { GeminiAdapter, GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { KimiCodeAdapter, KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
-import { ShioriAdapter, ShioriAdapterShape } from "../Services/ShioriAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-
-const fakeShioriAdapter: ShioriAdapterShape = {
-  provider: "shiori",
-  capabilities: {
-    sessionModelSwitch: "restart-session",
-    recovery: { supportsResumeCursor: false, supportsAdoptActiveSession: false },
-    observability: { emitsStructuredSessionExit: false, emitsRuntimeDiagnostics: false },
-  },
-  startSession: vi.fn(),
-  sendTurn: vi.fn(),
-  interruptTurn: vi.fn(),
-  respondToRequest: vi.fn(),
-  respondToUserInput: vi.fn(),
-  stopSession: vi.fn(),
-  listSessions: vi.fn(),
-  hasSession: vi.fn(),
-  readThread: vi.fn(),
-  rollbackThread: vi.fn(),
-  stopAll: vi.fn(),
-  streamEvents: Stream.empty,
-};
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
@@ -148,7 +126,6 @@ const layer = it.layer(
     Layer.provide(
       ProviderAdapterRegistryLive,
       Layer.mergeAll(
-        Layer.succeed(ShioriAdapter, fakeShioriAdapter),
         Layer.succeed(KimiCodeAdapter, fakeKimiCodeAdapter),
         Layer.succeed(GeminiAdapter, fakeGeminiAdapter),
         Layer.succeed(CursorAdapter, fakeCursorAdapter),
@@ -164,13 +141,11 @@ layer("ProviderAdapterRegistryLive", (it) => {
   it.effect("resolves a registered provider adapter", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
-      const shiori = yield* registry.getByProvider("shiori");
       const kimiCode = yield* registry.getByProvider("kimiCode");
       const gemini = yield* registry.getByProvider("gemini");
       const cursor = yield* registry.getByProvider("cursor");
       const codex = yield* registry.getByProvider("codex");
       const claude = yield* registry.getByProvider("claudeAgent");
-      assert.equal(shiori, fakeShioriAdapter);
       assert.equal(kimiCode, fakeKimiCodeAdapter);
       assert.equal(gemini, fakeGeminiAdapter);
       assert.equal(cursor, fakeCursorAdapter);
@@ -178,14 +153,7 @@ layer("ProviderAdapterRegistryLive", (it) => {
       assert.equal(claude, fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, [
-        "shiori",
-        "kimiCode",
-        "gemini",
-        "cursor",
-        "codex",
-        "claudeAgent",
-      ]);
+      assert.deepEqual(providers, ["kimiCode", "gemini", "cursor", "codex", "claudeAgent"]);
     }),
   );
 

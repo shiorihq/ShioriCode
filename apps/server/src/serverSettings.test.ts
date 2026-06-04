@@ -236,7 +236,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             enabled: false,
           },
-          shiori: {
+          kimiCode: {
             enabled: true,
           },
           codex: {
@@ -248,36 +248,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const next = yield* serverSettings.getSettings;
 
       assert.deepEqual(next.defaultModelSelection, {
-        provider: "shiori",
-        model: "openai/gpt-5.4",
+        provider: "kimiCode",
+        model: "kimi-code/kimi-for-coding",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("keeps the default Shiori API base URL on hosted production", () =>
-    withEnvVar(
-      "SHIORICODE_SHIORI_API_BASE_URL",
-      undefined,
-      Effect.gen(function* () {
-        const serverSettings = yield* ServerSettingsService;
-        const settings = yield* serverSettings.getSettings;
-
-        assert.equal(settings.providers.shiori.apiBaseUrl, "https://shiori.ai");
-      }).pipe(Effect.provide(makeServerSettingsLayer())),
-    ),
-  );
-
-  it.effect("honors explicit Shiori API base URL overrides", () =>
-    withEnvVar(
-      "SHIORICODE_SHIORI_API_BASE_URL",
-      "http://127.0.0.1:3000",
-      Effect.gen(function* () {
-        const serverSettings = yield* ServerSettingsService;
-        const settings = yield* serverSettings.getSettings;
-
-        assert.equal(settings.providers.shiori.apiBaseUrl, "http://127.0.0.1:3000");
-      }).pipe(Effect.provide(makeServerSettingsLayer())),
-    ),
   );
 
   it.effect("trims provider path settings when updates are applied", () =>

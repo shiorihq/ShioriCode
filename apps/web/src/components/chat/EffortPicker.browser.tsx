@@ -1,11 +1,6 @@
 import "../../index.css";
 
-import {
-  type ClaudeModelOptions,
-  type CodexModelOptions,
-  type ShioriModelOptions,
-  ThreadId,
-} from "contracts";
+import { type ClaudeModelOptions, type CodexModelOptions, ThreadId } from "contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -51,31 +46,13 @@ const TEST_MODELS = {
       },
     },
   ],
-  shiori: [
-    {
-      slug: "openai/gpt-5.4",
-      name: "GPT-5.4",
-      isCustom: false,
-      capabilities: {
-        reasoningEffortLevels: [
-          { value: "low", label: "Low" },
-          { value: "medium", label: "Medium", isDefault: true },
-          { value: "high", label: "High" },
-        ],
-        supportsFastMode: false,
-        supportsThinkingToggle: false,
-        contextWindowOptions: [],
-        promptInjectedEffortLevels: [],
-      },
-    },
-  ],
 } as const;
 
 async function mountEffortPicker(props: {
-  provider: "codex" | "claudeAgent" | "shiori";
+  provider: "codex" | "claudeAgent";
   model: string;
   prompt?: string;
-  options?: ClaudeModelOptions | CodexModelOptions | ShioriModelOptions;
+  options?: ClaudeModelOptions | CodexModelOptions;
 }) {
   const threadId = ThreadId.makeUnsafe(`thread-effort-${props.provider}`);
   useComposerDraftStore.setState({
@@ -204,36 +181,19 @@ describe("EffortPicker", () => {
     });
   });
 
-  it("persists Shiori reasoning effort with the provider-specific option key", async () => {
-    await using _ = await mountEffortPicker({
-      provider: "shiori",
-      model: "openai/gpt-5.4",
-      options: { reasoningEffort: "medium" },
-    });
-
-    await page.getByRole("button").click();
-
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.shiori).toMatchObject({
-      provider: "shiori",
-      options: {
-        reasoningEffort: "high",
-      },
-    });
-  });
-
   it("cycles the effort without opening a selector", async () => {
     await using _ = await mountEffortPicker({
-      provider: "shiori",
-      model: "openai/gpt-5.4",
-      options: { reasoningEffort: "medium" },
+      provider: "codex",
+      model: "gpt-5.4",
+      options: { reasoningEffort: "high" },
     });
 
     await page.getByRole("button").click();
 
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.shiori).toMatchObject({
-      provider: "shiori",
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
+      provider: "codex",
       options: {
-        reasoningEffort: "high",
+        reasoningEffort: "xhigh",
       },
     });
     expect(document.body.textContent ?? "").not.toContain("Effort");

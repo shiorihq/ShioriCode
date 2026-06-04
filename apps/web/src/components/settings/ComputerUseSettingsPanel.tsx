@@ -19,6 +19,7 @@ import {
 } from "nucleo-core-outline-24";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useComputerUseFeatureEnabled } from "../../featureFlags";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -190,6 +191,64 @@ export function computerUseWindowLabel(
   return bounds ? `[${index}] ${title} (${bounds})` : `[${index}] ${title}`;
 }
 
+export function computerUseAgentVisibilityStatus(input: {
+  readonly enabled: boolean;
+  readonly shareWithProviders: boolean;
+  readonly requireApproval: boolean;
+  readonly approvedAppCount: number;
+  readonly permissionsReady: boolean;
+}): {
+  readonly title: string;
+  readonly description: string;
+  readonly variant: "info" | "warning" | "success";
+} {
+  if (!input.enabled) {
+    return {
+      title: "Agent turns cannot see Computer Use",
+      description: "Enable Computer Use to prepare the local macOS helper.",
+      variant: "info",
+    };
+  }
+  if (!input.shareWithProviders) {
+    return {
+      title: "Agent turns cannot see Computer Use yet",
+      description:
+        "Turn on provider sharing when you want chat agents to receive the Computer Use tools and their screenshot or action results.",
+      variant: "warning",
+    };
+  }
+  if (!input.permissionsReady) {
+    return {
+      title: "Computer Use is shared but permissions are not ready",
+      description:
+        "Grant Accessibility and Screen Recording before asking an agent to inspect or control the desktop.",
+      variant: "warning",
+    };
+  }
+  if (input.approvedAppCount === 0) {
+    return {
+      title: "Computer Use is shared but no apps are approved",
+      description:
+        "Approve at least one running app before testing with an agent; provider-facing screenshots and desktop actions stay blocked with an empty allowlist.",
+      variant: "warning",
+    };
+  }
+  if (input.requireApproval) {
+    return {
+      title: "Computer Use is shared with approval prompts",
+      description:
+        "Supported agents can see Computer Use tools, but some external providers may hide approval-gated desktop tools.",
+      variant: "info",
+    };
+  }
+  return {
+    title: "Computer Use is visible to supported agents",
+    description:
+      "Agent turns can receive Computer Use tools and may send screenshots, app context, and action results to the selected provider.",
+    variant: "success",
+  };
+}
+
 function ApprovedAppRow({
   app,
   onRevoke,
@@ -345,6 +404,7 @@ function ScreenshotPreview() {
 export function ComputerUseSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const computerUseEnabled = useComputerUseFeatureEnabled();
   const queryClient = useQueryClient();
   const cancelPermissionRecheckRef = useRef<(() => void) | null>(null);
   const [permissionFlowKind, setPermissionFlowKind] = useState<ComputerUsePermissionKind | null>(
@@ -396,6 +456,13 @@ export function ComputerUseSettingsPanel() {
   const ready = permissionsQuery.data?.supported === true && grantedCount === totalCount;
   const permissionSubject = permissionSubjectLabel(permissionsQuery.data);
   const approvedApps = settings.computerUse.approvedApps;
+  const agentVisibilityStatus = computerUseAgentVisibilityStatus({
+    enabled: settings.computerUse.enabled,
+    shareWithProviders: settings.computerUse.shareWithProviders,
+    requireApproval: settings.computerUse.requireApproval,
+    approvedAppCount: approvedApps.length,
+    permissionsReady: ready,
+  });
   const approvedAppIds = useMemo(
     () => new Set(approvedApps.map((app) => app.bundleIdentifier)),
     [approvedApps],
@@ -510,7 +577,7 @@ export function ComputerUseSettingsPanel() {
       <SettingsSection title="Computer Use" icon={<MonitorIcon className="size-3.5" />}>
         <SettingsRow
           title="Enable Computer Use"
-          description="Expose local macOS desktop screenshots, app context, pointer, keyboard, and scroll tools to supported agents."
+          description="Prepare local macOS desktop screenshots, app context, pointer, keyboard, and scroll tools. Agent chats need provider sharing below."
           control={
             <Switch
               checked={settings.computerUse.enabled}
@@ -528,7 +595,7 @@ export function ComputerUseSettingsPanel() {
         />
         <SettingsRow
           title="Require approval for desktop tools"
-          description="Ask before Shiori runs desktop screenshots or actions; some external providers may hide these tools while approval is required."
+          description="Ask before an agent runs raw desktop actions; some external providers may hide these tools while approval is required."
           control={
             <Switch
               checked={settings.computerUse.requireApproval}
@@ -562,6 +629,11 @@ export function ComputerUseSettingsPanel() {
             />
           }
         />
+        <Alert variant={agentVisibilityStatus.variant} className="m-4">
+          <MonitorIcon />
+          <AlertTitle>{agentVisibilityStatus.title}</AlertTitle>
+          <AlertDescription>{agentVisibilityStatus.description}</AlertDescription>
+        </Alert>
         <Alert variant="info" className="m-4">
           <ShieldCheckIcon />
           <AlertTitle>Local desktop boundary</AlertTitle>

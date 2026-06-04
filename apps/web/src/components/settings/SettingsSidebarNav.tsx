@@ -2,23 +2,20 @@ import type { ComponentType } from "react";
 import {
   IconArchiveOutline24 as ArchiveIcon,
   IconArrowLeftOutline24 as ArrowLeftIcon,
-  IconChartBarTrendUpOutline24 as BarChart3Icon,
   IconBoltOutline24 as McpIcon,
   IconBoxOutline24 as PluginsIcon,
   IconSparkleOutline24 as SkillsIcon,
   IconMonitorOutline24 as MonitorIcon,
-  IconMessageOutline24 as MessageSquareIcon,
   IconPaletteOutline24 as PaletteIcon,
   IconGear2Outline24 as Settings2Icon,
   IconMobileOutline24 as SmartphoneIcon,
-  IconUserOutline24 as UserIcon,
 } from "nucleo-core-outline-24";
 import { useNavigate } from "@tanstack/react-router";
 import {
   readSettingsReturnPath,
   resolveSettingsBackNavigation,
 } from "../../lib/settingsNavigation";
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useMobileAppFeatureEnabled } from "../../featureFlags";
 
 import {
   SidebarContent,
@@ -35,12 +32,9 @@ export type SettingsSectionPath =
   | "/settings/skills"
   | "/settings/mcp"
   | "/settings/plugins"
-  | "/settings/account"
   | "/settings/archived"
   | "/settings/computer-use"
-  | "/settings/mobile"
-  | "/settings/usage"
-  | "/settings/feedback";
+  | "/settings/mobile";
 
 type SettingsFeature = "mobileApp";
 
@@ -60,7 +54,6 @@ export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
     items: [
       { label: "General", to: "/settings/general", icon: Settings2Icon },
       { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
-      { label: "Account", to: "/settings/account", icon: UserIcon },
     ],
   },
   {
@@ -89,17 +82,13 @@ export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
   },
   {
     label: "Workspace",
-    items: [
-      { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
-      { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
-      { label: "Feedback", to: "/settings/feedback", icon: MessageSquareIcon },
-    ],
+    items: [{ label: "Archive", to: "/settings/archived", icon: ArchiveIcon }],
   },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const { mobileAppEnabled } = useHostedShioriState();
+  const mobileAppEnabled = useMobileAppFeatureEnabled();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };

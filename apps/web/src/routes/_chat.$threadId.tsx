@@ -51,7 +51,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
-import { useHostedShioriState } from "../convex/HostedShioriProvider";
+import { useBrowserUseFeatureEnabled } from "../featureFlags";
 import { isSessionActivelyRunningTurn } from "../session-logic";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
@@ -505,7 +505,7 @@ function ChatThreadRouteView() {
   const draftThreadExists = Object.hasOwn(draftThreadsByThreadId, threadId);
   const routeThreadExists = threadExists || draftThreadExists;
   const shouldPrewarmSession = shouldPrewarmThreadSession(routeThread);
-  const { browserUseEnabled } = useHostedShioriState();
+  const browserUseEnabled = useBrowserUseFeatureEnabled();
   const diffOpen = search.diff === "1";
   const artifactOpen = search.artifact === "1" && Boolean(search.artifactPath);
   const browserOpen = browserUseEnabled && search.browser === "1";

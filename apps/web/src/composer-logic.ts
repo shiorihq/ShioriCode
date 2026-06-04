@@ -5,7 +5,6 @@ export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
 export type ComposerSlashCommand =
   | "compact"
   | "fast"
-  | "feedback"
   | "fork"
   | "mcp"
   | "memories"
@@ -17,7 +16,7 @@ export type ComposerSlashCommand =
 
 export type StandaloneComposerSlashCommand =
   | {
-      command: "compact" | "fast" | "feedback" | "mcp" | "memories" | "plan" | "default" | "review";
+      command: "compact" | "fast" | "mcp" | "memories" | "plan" | "default" | "review";
     }
   | { command: "fork"; value?: "local" | "worktree" }
   | { command: "personality"; value: "default" | "friendly" | "sassy" | "coach" | "pragmatic" };
@@ -33,7 +32,6 @@ export interface ComposerTrigger {
 const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
   "compact",
   "fast",
-  "feedback",
   "fork",
   "mcp",
   "memories",
@@ -326,7 +324,7 @@ export function parseStandaloneComposerSlashCommand(
     }
   }
 
-  const match = /^\/(compact|fast|feedback|mcp|memories|plan|default|review)\s*$/i.exec(trimmed);
+  const match = /^\/(compact|fast|mcp|memories|plan|default|review)\s*$/i.exec(trimmed);
   if (!match || !match[1]) {
     return null;
   }
@@ -334,7 +332,6 @@ export function parseStandaloneComposerSlashCommand(
   if (
     command === "compact" ||
     command === "fast" ||
-    command === "feedback" ||
     command === "mcp" ||
     command === "memories" ||
     command === "plan" ||

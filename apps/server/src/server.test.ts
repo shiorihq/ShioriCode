@@ -60,8 +60,6 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
-import { HostedShioriAuthTokenStoreLive } from "./hostedShioriAuthTokenStore.ts";
-import { HostedBillingService, type HostedBillingShape } from "./hostedBilling.ts";
 import { BrowserPanelRequestsLive } from "./browserPanelRequests.ts";
 import {
   ComputerUseManager,
@@ -150,7 +148,6 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
-    hostedBilling?: Partial<HostedBillingShape>;
     computerUseManager?: Partial<ComputerUseManagerShape>;
     automationService?: Partial<AutomationServiceShape>;
   };
@@ -327,11 +324,6 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.serverRuntimeStartup,
         }),
       ),
-      Layer.provide(
-        HostedBillingService.layerTest({
-          ...options?.layers?.hostedBilling,
-        }),
-      ),
     );
 
     const appLayer = appLayerBase.pipe(
@@ -348,7 +340,6 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(Layer.mergeAll(BrowserPanelRequestsLive, computerUseManagerLayer)),
       Layer.provide(workspaceAndProjectServicesLayer),
-      Layer.provide(HostedShioriAuthTokenStoreLive),
       Layer.provide(layerConfig),
     );
 
@@ -664,37 +655,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not leak hosted shiori auth tokens through server.getConfig", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        layers: {
-          keybindings: {
-            loadConfigState: Effect.succeed({
-              keybindings: [],
-              issues: [],
-            }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const config = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            yield* client[WS_METHODS.serverSetShioriAuthToken]({
-              token: "header.payload.signature",
-            });
-            return yield* client[WS_METHODS.serverGetConfig]({});
-          }),
-        ),
-      );
-
-      const serializedConfig = JSON.stringify(config);
-      assert.isFalse(serializedConfig.includes("header.payload.signature"));
-      assert.isFalse(serializedConfig.includes("X-Convex-Auth-Token"));
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const providers = [] as const;
@@ -936,80 +896,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assertFailure(result, openError);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc hosted billing methods", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        layers: {
-          hostedBilling: {
-            getSnapshot: Effect.succeed({
-              plans: [
-                {
-                  id: "plus",
-                  name: "Plus",
-                  description: "Starter paid plan",
-                  monthlyPrice: 10,
-                  annualPrice: 96,
-                  sortOrder: 0,
-                  highlighted: true,
-                  buttonText: "Get Plus",
-                  features: ["Feature A"],
-                },
-              ],
-            }),
-            createCheckout: () =>
-              Effect.succeed({
-                sessionId: "cs_test_1",
-                url: "https://checkout.stripe.test/session",
-              }),
-            createPortal: () =>
-              Effect.succeed({
-                url: "https://billing.stripe.test/session",
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.all({
-            snapshot: client[WS_METHODS.serverGetHostedBillingSnapshot]({}),
-            checkout: client[WS_METHODS.serverCreateHostedBillingCheckout]({
-              planId: "pro",
-              isAnnual: true,
-            }),
-            portal: client[WS_METHODS.serverCreateHostedBillingPortal]({
-              flow: "manage",
-            }),
-          }),
-        ),
-      );
-
-      assert.deepEqual(result.snapshot, {
-        plans: [
-          {
-            id: "plus",
-            name: "Plus",
-            description: "Starter paid plan",
-            monthlyPrice: 10,
-            annualPrice: 96,
-            sortOrder: 0,
-            highlighted: true,
-            buttonText: "Get Plus",
-            features: ["Feature A"],
-          },
-        ],
-      });
-      assert.deepEqual(result.checkout, {
-        sessionId: "cs_test_1",
-        url: "https://checkout.stripe.test/session",
-      });
-      assert.deepEqual(result.portal, {
-        url: "https://billing.stripe.test/session",
-      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

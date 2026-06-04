@@ -9,33 +9,24 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as GoalsRouteImport } from './routes/goals'
 import { Route as AutomationsRouteImport } from './routes/automations'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
-import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
 import { Route as SettingsThemeBuilderRouteImport } from './routes/settings.theme-builder'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsPluginsRouteImport } from './routes/settings.plugins'
 import { Route as SettingsMobileRouteImport } from './routes/settings.mobile'
 import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
-import { Route as SettingsFeedbackRouteImport } from './routes/settings.feedback'
 import { Route as SettingsCreditsRouteImport } from './routes/settings.credits'
 import { Route as SettingsComputerUseRouteImport } from './routes/settings.computer-use'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
-import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
 
-const WelcomeRoute = WelcomeRouteImport.update({
-  id: '/welcome',
-  path: '/welcome',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -64,11 +55,6 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
-} as any)
-const SettingsUsageRoute = SettingsUsageRouteImport.update({
-  id: '/usage',
-  path: '/usage',
-  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsThemeBuilderRoute = SettingsThemeBuilderRouteImport.update({
   id: '/theme-builder',
@@ -100,11 +86,6 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsFeedbackRoute = SettingsFeedbackRouteImport.update({
-  id: '/feedback',
-  path: '/feedback',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const SettingsCreditsRoute = SettingsCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
@@ -125,11 +106,6 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsAccountRoute = SettingsAccountRouteImport.update({
-  id: '/account',
-  path: '/account',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
   id: '/$threadId',
   path: '/$threadId',
@@ -142,42 +118,34 @@ export interface FileRoutesByFullPath {
   '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
-  '/welcome': typeof WelcomeRoute
   '/$threadId': typeof ChatThreadIdRoute
-  '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
-  '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
-  '/settings/usage': typeof SettingsUsageRoute
 }
 export interface FileRoutesByTo {
   '/automations': typeof AutomationsRoute
   '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
-  '/welcome': typeof WelcomeRoute
   '/$threadId': typeof ChatThreadIdRoute
-  '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
-  '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
-  '/settings/usage': typeof SettingsUsageRoute
   '/': typeof ChatIndexRoute
 }
 export interface FileRoutesById {
@@ -187,21 +155,17 @@ export interface FileRoutesById {
   '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
-  '/welcome': typeof WelcomeRoute
   '/_chat/$threadId': typeof ChatThreadIdRoute
-  '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/computer-use': typeof SettingsComputerUseRoute
   '/settings/credits': typeof SettingsCreditsRoute
-  '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
-  '/settings/usage': typeof SettingsUsageRoute
   '/_chat/': typeof ChatIndexRoute
 }
 export interface FileRouteTypes {
@@ -212,42 +176,34 @@ export interface FileRouteTypes {
     | '/goals'
     | '/pull-requests'
     | '/settings'
-    | '/welcome'
     | '/$threadId'
-    | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/computer-use'
     | '/settings/credits'
-    | '/settings/feedback'
     | '/settings/general'
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
-    | '/settings/usage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/automations'
     | '/goals'
     | '/pull-requests'
     | '/settings'
-    | '/welcome'
     | '/$threadId'
-    | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/computer-use'
     | '/settings/credits'
-    | '/settings/feedback'
     | '/settings/general'
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
-    | '/settings/usage'
     | '/'
   id:
     | '__root__'
@@ -256,21 +212,17 @@ export interface FileRouteTypes {
     | '/goals'
     | '/pull-requests'
     | '/settings'
-    | '/welcome'
     | '/_chat/$threadId'
-    | '/settings/account'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/computer-use'
     | '/settings/credits'
-    | '/settings/feedback'
     | '/settings/general'
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
-    | '/settings/usage'
     | '/_chat/'
   fileRoutesById: FileRoutesById
 }
@@ -280,18 +232,10 @@ export interface RootRouteChildren {
   GoalsRoute: typeof GoalsRoute
   PullRequestsRoute: typeof PullRequestsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
-  WelcomeRoute: typeof WelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/welcome': {
-      id: '/welcome'
-      path: '/welcome'
-      fullPath: '/welcome'
-      preLoaderRoute: typeof WelcomeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -333,13 +277,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
-    }
-    '/settings/usage': {
-      id: '/settings/usage'
-      path: '/usage'
-      fullPath: '/settings/usage'
-      preLoaderRoute: typeof SettingsUsageRouteImport
-      parentRoute: typeof SettingsRoute
     }
     '/settings/theme-builder': {
       id: '/settings/theme-builder'
@@ -383,13 +320,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/feedback': {
-      id: '/settings/feedback'
-      path: '/feedback'
-      fullPath: '/settings/feedback'
-      preLoaderRoute: typeof SettingsFeedbackRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/settings/credits': {
       id: '/settings/credits'
       path: '/credits'
@@ -418,13 +348,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/account': {
-      id: '/settings/account'
-      path: '/account'
-      fullPath: '/settings/account'
-      preLoaderRoute: typeof SettingsAccountRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/_chat/$threadId': {
       id: '/_chat/$threadId'
       path: '/$threadId'
@@ -448,35 +371,29 @@ const ChatRouteChildren: ChatRouteChildren = {
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
-  SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsComputerUseRoute: typeof SettingsComputerUseRoute
   SettingsCreditsRoute: typeof SettingsCreditsRoute
-  SettingsFeedbackRoute: typeof SettingsFeedbackRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsMobileRoute: typeof SettingsMobileRoute
   SettingsPluginsRoute: typeof SettingsPluginsRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsThemeBuilderRoute: typeof SettingsThemeBuilderRoute
-  SettingsUsageRoute: typeof SettingsUsageRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
-  SettingsAccountRoute: SettingsAccountRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsComputerUseRoute: SettingsComputerUseRoute,
   SettingsCreditsRoute: SettingsCreditsRoute,
-  SettingsFeedbackRoute: SettingsFeedbackRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsMcpRoute: SettingsMcpRoute,
   SettingsMobileRoute: SettingsMobileRoute,
   SettingsPluginsRoute: SettingsPluginsRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsThemeBuilderRoute: SettingsThemeBuilderRoute,
-  SettingsUsageRoute: SettingsUsageRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
@@ -489,7 +406,6 @@ const rootRouteChildren: RootRouteChildren = {
   GoalsRoute: GoalsRoute,
   PullRequestsRoute: PullRequestsRoute,
   SettingsRoute: SettingsRouteWithChildren,
-  WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

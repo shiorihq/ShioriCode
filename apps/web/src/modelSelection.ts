@@ -34,13 +34,6 @@ export interface AppModelOption {
 }
 
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
-  shiori: {
-    provider: "shiori",
-    title: "Shiori",
-    description: "Save additional Shiori model slugs for the picker and `/model` command.",
-    placeholder: "your-shiori-model-slug",
-    example: "anthropic/claude-sonnet-4-5",
-  },
   kimiCode: {
     provider: "kimiCode",
     title: "Kimi Code",
@@ -188,10 +181,6 @@ export function buildProviderModelSelection(
   options?: ProviderModelOptions[ProviderKind] | ProviderModelOptions[keyof ProviderModelOptions],
 ): ModelSelection {
   switch (provider) {
-    case "shiori":
-      return options !== undefined
-        ? { provider, model, options: options as NonNullable<ProviderModelOptions["shiori"]> }
-        : { provider, model };
     case "kimiCode":
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["kimiCode"]> }
@@ -224,12 +213,6 @@ export function getCustomModelOptionsByProvider(
   selectedModel?: string | null,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
-    shiori: getAppModelOptions(
-      settings,
-      providers,
-      "shiori",
-      selectedProvider === "shiori" ? selectedModel : undefined,
-    ),
     kimiCode: getAppModelOptions(
       settings,
       providers,

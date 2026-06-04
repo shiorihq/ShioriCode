@@ -17,8 +17,9 @@ import {
   discoverClaudeMcpServers,
   discoverCodexMcpServers,
   filterMcpServersForProvider,
-  loadEffectiveMcpServersForProvider,
+  loadAllEffectiveMcpServers,
   loadCodexManagedMcpServers,
+  loadEffectiveMcpServersForProvider,
   prepareCodexHomeWithManagedMcpServers,
   removeExternalMcpServer,
   toAcpMcpServers,
@@ -85,11 +86,11 @@ describe("filterMcpServersForProvider", () => {
         providers: [],
       },
       {
-        name: "shiori-only",
+        name: "claude-only",
         transport: "stdio",
         command: "node",
         enabled: true,
-        providers: ["shiori"],
+        providers: ["claudeAgent"],
       },
       {
         name: "disabled",
@@ -100,10 +101,9 @@ describe("filterMcpServersForProvider", () => {
       },
     ];
 
-    expect(filterMcpServersForProvider("shiori", servers).map((server) => server.name)).toEqual([
-      "global",
-      "shiori-only",
-    ]);
+    expect(
+      filterMcpServersForProvider("claudeAgent", servers).map((server) => server.name),
+    ).toEqual(["global", "claude-only"]);
     expect(filterMcpServersForProvider("codex", servers).map((server) => server.name)).toEqual([
       "global",
     ]);
@@ -219,7 +219,7 @@ describe("toAcpMcpServers", () => {
       transport: "stdio",
       command: process.execPath,
       args: expect.arrayContaining(["browser-panel-mcp"]),
-      providers: ["shiori"],
+      providers: [],
     });
     expect(servers[1]).toMatchObject({
       transport: "stdio",
@@ -230,7 +230,7 @@ describe("toAcpMcpServers", () => {
         SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
         SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
       },
-      providers: ["shiori"],
+      providers: [],
     });
   });
 
@@ -258,7 +258,7 @@ describe("toAcpMcpServers", () => {
 
   it("does not expose built-in Shiori Computer Use MCP servers without provider sharing", () => {
     const servers = builtInShioriMcpServers({
-      provider: "shiori",
+      provider: "claudeAgent",
       settings: {
         browserUse: { enabled: false },
         computerUse: { enabled: true, requireApproval: false, shareWithProviders: false },
@@ -271,7 +271,7 @@ describe("toAcpMcpServers", () => {
 
   it("passes approved Computer Use app bundle identifiers to built-in MCP servers", () => {
     const servers = builtInShioriMcpServers({
-      provider: "shiori",
+      provider: "claudeAgent",
       settings: {
         browserUse: { enabled: false },
         computerUse: {
@@ -311,7 +311,7 @@ describe("toAcpMcpServers", () => {
       "/Users/choki/Developer/shiori-code/apps/desktop/native/ShioriComputerUse";
     try {
       const servers = builtInShioriMcpServers({
-        provider: "shiori",
+        provider: "claudeAgent",
         settings: {
           browserUse: { enabled: false },
           computerUse: {
@@ -358,7 +358,7 @@ describe("toAcpMcpServers", () => {
     process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME = "ShioriCode";
     try {
       const servers = builtInShioriMcpServers({
-        provider: "shiori",
+        provider: "claudeAgent",
         settings: {
           browserUse: { enabled: false },
           computerUse: {
@@ -535,22 +535,20 @@ describe("buildCodexLeanAppServerConfig", () => {
 });
 
 describe("listEffectiveMcpServerRows", () => {
-  it("marks Shiori-managed remote servers unauthenticated until OAuth tokens exist", async () => {
+  it("marks discovered Codex remote servers unauthenticated until OAuth tokens exist", async () => {
+    const codexHome = await createTempDir("mcp-oauth-codex-home-");
     const oauthStorageDir = await createTempDir("mcp-oauth-storage-");
+    await writeFile(
+      path.join(codexHome, "config.toml"),
+      ["[mcp_servers.remote]", 'url = "https://example.com/sse"', 'transport = "sse"'].join("\n"),
+      "utf8",
+    );
     const settings = {
       providers: {
-        codex: { homePath: "/tmp/codex" },
+        codex: { homePath: codexHome },
       },
       mcpServers: {
-        servers: [
-          {
-            name: "remote",
-            transport: "sse",
-            url: "https://example.com/sse",
-            enabled: true,
-            providers: ["shiori"],
-          },
-        ],
+        servers: [],
       },
     } as never;
 
@@ -564,11 +562,11 @@ describe("listEffectiveMcpServerRows", () => {
     });
 
     const digest = createHash("sha256")
-      .update("remote\nhttps://example.com/sse")
+      .update("codex:remote\nhttps://example.com/sse")
       .digest("hex")
       .slice(0, 16);
     await writeFile(
-      path.join(oauthStorageDir, `remote-${digest}.json`),
+      path.join(oauthStorageDir, `codex:remote-${digest}.json`),
       `${JSON.stringify({ tokens: { access_token: "access-token" } }, null, 2)}\n`,
       "utf8",
     );
@@ -581,24 +579,27 @@ describe("listEffectiveMcpServerRows", () => {
   });
 
   it("leaves header-authenticated remote servers in an unknown auth state", async () => {
+    const codexHome = await createTempDir("mcp-oauth-codex-home-");
     const oauthStorageDir = await createTempDir("mcp-oauth-storage-");
+    await writeFile(
+      path.join(codexHome, "config.toml"),
+      [
+        "[mcp_servers.header-auth]",
+        'url = "https://example.com/mcp"',
+        "",
+        "[mcp_servers.header-auth.http_headers]",
+        'Authorization = "Bearer secret"',
+      ].join("\n"),
+      "utf8",
+    );
     const result = await listEffectiveMcpServerRows({
       oauthStorageDir,
       settings: {
         providers: {
-          codex: { homePath: "/tmp/codex" },
+          codex: { homePath: codexHome },
         },
         mcpServers: {
-          servers: [
-            {
-              name: "header-auth",
-              transport: "http",
-              url: "https://example.com/mcp",
-              headers: { Authorization: "Bearer secret" },
-              enabled: true,
-              providers: ["shiori"],
-            },
-          ],
+          servers: [],
         },
       } as never,
     });
@@ -837,7 +838,7 @@ describe("external MCP discovery", () => {
     expect(result.servers[2]).toMatchObject({
       transport: "http",
       url: "https://project.example/mcp",
-      providers: ["shiori"],
+      providers: [],
     });
   });
 
@@ -871,8 +872,7 @@ describe("external MCP discovery", () => {
       "utf8",
     );
 
-    const result = await loadEffectiveMcpServersForProvider({
-      provider: "shiori",
+    const result = await loadAllEffectiveMcpServers({
       cwd: workspaceRoot,
       settings: {
         providers: {
@@ -1044,21 +1044,21 @@ describe("buildProviderMcpToolRuntime", () => {
 
     const runtime = await buildProviderMcpToolRuntime(
       {
-        provider: "shiori",
+        provider: "codex",
         servers: [
           {
             name: "Good",
             transport: "http",
             url: "https://good.example/mcp",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
           {
             name: "Bad",
             transport: "sse",
             url: "https://bad.example/sse",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
         ],
       },
@@ -1103,21 +1103,21 @@ describe("buildProviderMcpToolRuntime", () => {
 
     const runtime = await buildProviderMcpToolRuntime(
       {
-        provider: "shiori",
+        provider: "codex",
         servers: [
           {
             name: "Fast",
             transport: "http",
             url: "https://fast.example/mcp",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
           {
             name: "Slow",
             transport: "http",
             url: "https://slow.example/mcp",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
         ],
       },
@@ -1154,21 +1154,21 @@ describe("buildProviderMcpToolRuntime", () => {
 
     const runtime = await buildProviderMcpToolRuntime(
       {
-        provider: "shiori",
+        provider: "codex",
         servers: [
           {
             name: "Demo API",
             transport: "http",
             url: "https://one.example/mcp",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
           {
             name: "demo_api",
             transport: "http",
             url: "https://two.example/mcp",
             enabled: true,
-            providers: ["shiori"],
+            providers: [],
           },
         ],
       },

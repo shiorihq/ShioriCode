@@ -6,14 +6,14 @@ import { resolveConfigurableModelSelectionState } from "./modelSelection";
 
 const providers: ReadonlyArray<ServerProvider> = [
   {
-    provider: "shiori",
+    provider: "gemini",
     enabled: true,
     installed: true,
     version: "1.0.0",
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-04-04T10:00:00.000Z",
-    models: [{ slug: "openai/gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+    models: [{ slug: "gemini-3-pro", name: "Gemini 3 Pro", isCustom: false, capabilities: null }],
   },
   {
     provider: "codex",
@@ -78,8 +78,8 @@ describe("resolveConfigurableModelSelectionState", () => {
     );
 
     expect(result).toEqual({
-      provider: "shiori",
-      model: "openai/gpt-5.4",
+      provider: "gemini",
+      model: "gemini-3-pro",
     });
   });
 });

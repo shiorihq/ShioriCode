@@ -123,9 +123,9 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   };
 }
 
-function buildShioriProvider(models: ServerProvider["models"]): ServerProvider {
+function buildKimiCodeProvider(models: ServerProvider["models"]): ServerProvider {
   return {
-    provider: "shiori",
+    provider: "kimiCode",
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -375,7 +375,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("hides search when a non-shiori provider is locked", async () => {
+  it("hides search when a non-kimiCode provider is locked", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",
       model: "claude-opus-4-6",
@@ -394,13 +394,13 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows search when the shiori provider is locked", async () => {
+  it("shows search when the kimiCode provider is locked", async () => {
     const mounted = await mountPicker({
-      provider: "shiori",
+      provider: "kimiCode",
       model: "openai/gpt-5",
-      lockedProvider: "shiori",
+      lockedProvider: "kimiCode",
       providers: [
-        buildShioriProvider([
+        buildKimiCodeProvider([
           {
             slug: "openai/gpt-5",
             name: "GPT-5",

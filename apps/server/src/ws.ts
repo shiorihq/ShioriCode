@@ -1,9 +1,7 @@
 import path from "node:path";
 
-import { ConvexHttpClient } from "convex/browser";
 import { Duration, Effect, Layer, Option, Queue, Ref, Result, Schema, Stream } from "effect";
 import {
-  HostedAuthError,
   OnboardingError,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
@@ -16,9 +14,6 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   type OrchestrationEvent,
-  type HostedOAuthStartResult,
-  type HostedPasswordAuthInput,
-  type HostedPasswordAuthResult,
   type ServerProvider,
   type ServerProviderUsageSnapshot,
   ServerSettingsError,
@@ -34,12 +29,6 @@ import {
   resetOnboardingProgress,
   resolveOnboardingState,
 } from "shared/onboarding";
-import {
-  decodeHostedShioriAuthTokenClaims,
-  HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL,
-  hostedShioriAuthTokenMatchesConvexUrl,
-  resolveHostedShioriConvexUrl,
-} from "shared/hostedShioriConvex";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
@@ -62,8 +51,6 @@ import { listEffectiveSkills, removeEffectiveSkill } from "./provider/skills.ts"
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
-import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore";
-import { HostedBillingService } from "./hostedBilling";
 import { AutomationService } from "./automations/Services/AutomationService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { BrowserPanelRequests } from "./browserPanelRequests.ts";
@@ -197,59 +184,6 @@ function isTrustedWebSocketOrigin(input: {
   return collectTrustedWebSocketOrigins(input).has(input.origin.origin);
 }
 
-type ConvexHostedAuthResponse =
-  | {
-      redirect: string;
-      verifier?: string;
-      tokens?: undefined;
-    }
-  | {
-      redirect?: undefined;
-      verifier?: undefined;
-      tokens?: { token: string; refreshToken: string } | null;
-    };
-
-const hostedShioriConvexUrl = resolveHostedShioriConvexUrl(
-  process.env.VITE_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL,
-  process.env.VITE_DEV_SERVER_URL ? HOSTED_SHIORI_DEVELOPMENT_CONVEX_URL : undefined,
-);
-
-function describeHostedShioriAuthToken(token: string | null) {
-  const claims = decodeHostedShioriAuthTokenClaims(token);
-  return {
-    present: token !== null,
-    issuer: claims?.iss ?? null,
-    audience: claims?.aud ?? null,
-    subject: claims?.sub ?? null,
-  };
-}
-
-function toHostedAuthMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.trim().length > 0) {
-    return cause.message;
-  }
-
-  if (typeof cause === "string" && cause.trim().length > 0) {
-    return cause.trim();
-  }
-
-  return fallback;
-}
-
-function runHostedShioriAuthSignIn(
-  provider: string,
-  params: Record<string, unknown>,
-): Promise<ConvexHostedAuthResponse> {
-  return (
-    new ConvexHttpClient(hostedShioriConvexUrl) as unknown as {
-      action: (name: string, args: Record<string, unknown>) => Promise<ConvexHostedAuthResponse>;
-    }
-  ).action("auth:signIn", {
-    provider,
-    params,
-  });
-}
-
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
@@ -265,8 +199,6 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const config = yield* ServerConfig;
     const lifecycleEvents = yield* ServerLifecycleEvents;
     const serverSettings = yield* ServerSettingsService;
-    const hostedShioriAuthTokenStore = yield* HostedShioriAuthTokenStore;
-    const hostedBilling = yield* HostedBillingService;
     const startup = yield* ServerRuntimeStartup;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
@@ -483,28 +415,15 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           Effect.as({}),
         ),
       [WS_METHODS.serverRemoveMcpServer]: (input) =>
-        Effect.gen(function* () {
-          if (input.source === "shiori") {
-            const settings = yield* serverSettings.getSettings;
-            yield* serverSettings.updateSettings({
-              mcpServers: {
-                servers: settings.mcpServers.servers.filter((server) => server.name !== input.name),
-              },
-            });
-            return {};
-          }
-
-          yield* Effect.tryPromise({
-            try: () => removeExternalMcpServer(input),
-            catch: (cause) =>
-              new ServerSettingsError({
-                settingsPath: config.settingsPath,
-                detail: "failed to remove MCP server",
-                cause,
-              }),
-          });
-          return {};
-        }),
+        Effect.tryPromise({
+          try: () => removeExternalMcpServer(input),
+          catch: (cause) =>
+            new ServerSettingsError({
+              settingsPath: config.settingsPath,
+              detail: "failed to remove MCP server",
+              cause,
+            }),
+        }).pipe(Effect.as({})),
       [WS_METHODS.serverListSkills]: (_input) =>
         serverSettings.getSettings.pipe(
           Effect.flatMap((settings) =>
@@ -533,148 +452,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               cause,
             }),
         }).pipe(Effect.as({})),
-      [WS_METHODS.serverSetShioriAuthToken]: ({ token }) =>
-        Effect.gen(function* () {
-          if (
-            token !== null &&
-            !hostedShioriAuthTokenMatchesConvexUrl({
-              token,
-              convexUrl: hostedShioriConvexUrl,
-            })
-          ) {
-            yield* Effect.logWarning("ignored shiori account auth token for wrong deployment", {
-              expectedConvexUrl: hostedShioriConvexUrl,
-              token: describeHostedShioriAuthToken(token),
-            });
-            return {};
-          }
-          yield* Effect.logInfo("shiori account auth token updated", {
-            token: describeHostedShioriAuthToken(token),
-          });
-          yield* hostedShioriAuthTokenStore.setToken(token);
-          yield* analytics.record("server.shiori_auth.updated", {
-            hasToken: token !== null,
-          });
-          return {};
-        }),
       [WS_METHODS.serverGetProviderUsage]: ({ provider }) =>
         providerService
           .readUsage(provider)
           .pipe(Effect.map(toServerProviderUsageSnapshot), Effect.orDie),
-      [WS_METHODS.serverGetHostedBillingSnapshot]: (_input) => hostedBilling.getSnapshot,
-      [WS_METHODS.serverCreateHostedBillingCheckout]: (input) =>
-        hostedBilling.createCheckout(input),
-      [WS_METHODS.serverCreateHostedBillingPortal]: (input) => hostedBilling.createPortal(input),
-      [WS_METHODS.serverHostedOAuthStart]: (input) =>
-        Effect.logInfo("hosted oauth start requested", {
-          provider: input.provider,
-          hasRedirectTo: input.redirectTo.length > 0,
-        }).pipe(
-          Effect.andThen(
-            Effect.tryPromise({
-              try: () =>
-                runHostedShioriAuthSignIn(input.provider, { redirectTo: input.redirectTo }),
-              catch: (cause) =>
-                new HostedAuthError({
-                  code: "requestFailed",
-                  message: toHostedAuthMessage(cause, "Hosted OAuth sign-in failed."),
-                  cause,
-                }),
-            }).pipe(
-              Effect.timeoutOrElse({
-                duration: Duration.seconds(15),
-                orElse: () =>
-                  Effect.fail(
-                    new HostedAuthError({
-                      code: "unavailable",
-                      message: "Hosted OAuth sign-in timed out.",
-                    }),
-                  ),
-              }),
-              Effect.flatMap((result) => {
-                if (!result.redirect || !result.verifier) {
-                  return Effect.fail(
-                    new HostedAuthError({
-                      code: "requestFailed",
-                      message: "Hosted OAuth sign-in did not return a redirect.",
-                    }),
-                  );
-                }
-
-                return Effect.succeed({
-                  redirect: result.redirect,
-                  verifier: result.verifier,
-                } satisfies HostedOAuthStartResult);
-              }),
-              Effect.tap((result) =>
-                Effect.logInfo("hosted oauth start completed", {
-                  provider: input.provider,
-                  hasRedirect: result.redirect.length > 0,
-                  hasVerifier: result.verifier.length > 0,
-                }),
-              ),
-            ),
-          ),
-        ),
-      [WS_METHODS.serverHostedPasswordAuth]: (input) =>
-        Effect.logInfo("hosted password auth requested", {
-          flow: input.flow,
-          hasEmail: typeof input.email === "string" && input.email.length > 0,
-          hasPassword: typeof input.password === "string" && input.password.length > 0,
-          hasCode: typeof input.code === "string" && input.code.length > 0,
-          hasNewPassword: typeof input.newPassword === "string" && input.newPassword.length > 0,
-        }).pipe(
-          Effect.andThen(
-            Effect.tryPromise({
-              try: () =>
-                runHostedShioriAuthSignIn("password", input satisfies HostedPasswordAuthInput),
-              catch: (cause) =>
-                new HostedAuthError({
-                  code: "requestFailed",
-                  message: toHostedAuthMessage(cause, "Hosted password authentication failed."),
-                  cause,
-                }),
-            }).pipe(
-              Effect.timeoutOrElse({
-                duration: Duration.seconds(15),
-                orElse: () =>
-                  Effect.fail(
-                    new HostedAuthError({
-                      code: "unavailable",
-                      message: "Hosted password authentication timed out.",
-                    }),
-                  ),
-              }),
-              Effect.flatMap((result) => {
-                const tokens = result.tokens ?? null;
-                const persistToken =
-                  tokens?.token !== undefined &&
-                  hostedShioriAuthTokenMatchesConvexUrl({
-                    token: tokens.token,
-                    convexUrl: hostedShioriConvexUrl,
-                  })
-                    ? hostedShioriAuthTokenStore.setToken(tokens.token)
-                    : Effect.void;
-
-                return persistToken.pipe(
-                  Effect.as({
-                    signingIn: tokens !== null,
-                    token: tokens?.token ?? null,
-                    refreshToken: tokens?.refreshToken ?? null,
-                  } satisfies HostedPasswordAuthResult),
-                );
-              }),
-              Effect.tap((result) =>
-                Effect.logInfo("hosted password auth completed", {
-                  flow: input.flow,
-                  signingIn: result.signingIn,
-                  hasToken: result.token !== null,
-                  hasRefreshToken: result.refreshToken !== null,
-                }),
-              ),
-            ),
-          ),
-        ),
       [WS_METHODS.onboardingGetState]: (_input) =>
         serverSettings.getSettings.pipe(
           Effect.map((settings) => resolveOnboardingState(settings.onboarding)),

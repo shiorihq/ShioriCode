@@ -30,21 +30,21 @@ function buildProvider(
 
 describe("getProviderUnavailableReason", () => {
   it("returns null when the provider is ready", () => {
-    expect(getProviderUnavailableReason([buildProvider("shiori")], "shiori")).toBeNull();
+    expect(getProviderUnavailableReason([buildProvider("cursor")], "cursor")).toBeNull();
   });
 
   it("returns the provider message when the provider is warning", () => {
     expect(
       getProviderUnavailableReason(
         [
-          buildProvider("shiori", {
+          buildProvider("cursor", {
             status: "warning",
-            message: "ShioriCode requires an active paid Shiori subscription.",
+            message: "The Cursor CLI is temporarily unavailable.",
           }),
         ],
-        "shiori",
+        "cursor",
       ),
-    ).toBe("ShioriCode requires an active paid Shiori subscription.");
+    ).toBe("The Cursor CLI is temporarily unavailable.");
   });
 
   it("returns null while the provider is still being checked in the background", () => {
@@ -132,9 +132,9 @@ describe("getProviderPickerState", () => {
   it("disables blocking warnings in the picker", () => {
     expect(
       getProviderPickerState(
-        buildProvider("shiori", {
+        buildProvider("cursor", {
           status: "warning",
-          message: "ShioriCode requires an active paid Shiori subscription.",
+          message: "The Cursor CLI is temporarily unavailable.",
         }),
       ),
     ).toEqual({
@@ -156,7 +156,7 @@ describe("providerModelSupportsImageAttachments", () => {
       },
     ];
 
-    expect(providerModelSupportsImageAttachments(models, "zhipu/glm-5.1", "shiori")).toBe(false);
+    expect(providerModelSupportsImageAttachments(models, "zhipu/glm-5.1", "cursor")).toBe(false);
   });
 
   it("defaults to allowing attachments when capability metadata is missing", () => {
@@ -169,7 +169,7 @@ describe("providerModelSupportsImageAttachments", () => {
       },
     ];
 
-    expect(providerModelSupportsImageAttachments(models, "openai/gpt-5.4", "shiori")).toBe(true);
+    expect(providerModelSupportsImageAttachments(models, "openai/gpt-5.4", "cursor")).toBe(true);
   });
 });
 
@@ -185,6 +185,6 @@ describe("getProviderModelDisplayName", () => {
       },
     ];
 
-    expect(getProviderModelDisplayName(models, "zhipu/glm-5.1", "shiori")).toBe("GLM-5.1");
+    expect(getProviderModelDisplayName(models, "zhipu/glm-5.1", "cursor")).toBe("GLM-5.1");
   });
 });

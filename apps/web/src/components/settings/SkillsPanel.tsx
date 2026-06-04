@@ -73,7 +73,7 @@ function SkillsSection({
           <EmptyHeader>
             <EmptyTitle>No skills found</EmptyTitle>
             <EmptyDescription>
-              Add Shiori skills under ~/.agents/skills or workspace .agents/skills.
+              Add skills under ~/.agents/skills or workspace .agents/skills.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

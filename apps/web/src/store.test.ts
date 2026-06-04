@@ -1090,7 +1090,7 @@ describe("incremental orchestration updates", () => {
     const turnId = TurnId.makeUnsafe("turn-1");
     const thread = makeThread({
       session: {
-        provider: "shiori",
+        provider: "codex",
         status: "running",
         orchestrationStatus: "running",
         activeTurnId: turnId,

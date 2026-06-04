@@ -3,7 +3,6 @@ import { type ServerProvider, ServerProvider as ServerProviderSchema } from "con
 import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 
 export const PROVIDER_CACHE_IDS = [
-  "shiori",
   "kimiCode",
   "gemini",
   "cursor",
