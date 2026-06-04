@@ -185,11 +185,18 @@ const buildAppUnderTest = (options?: {
       createSession: Effect.die("unused"),
       closeSession: () => Effect.die("unused"),
       screenshot: () => Effect.die("unused"),
+      listApps: () => Effect.die("unused"),
+      focusApp: () => Effect.die("unused"),
+      focusWindow: () => Effect.die("unused"),
       click: () => Effect.die("unused"),
+      doubleClick: () => Effect.die("unused"),
+      rightClick: () => Effect.die("unused"),
       move: () => Effect.die("unused"),
+      drag: () => Effect.die("unused"),
       type: () => Effect.die("unused"),
       key: () => Effect.die("unused"),
       scroll: () => Effect.die("unused"),
+      wait: () => Effect.die("unused"),
       ...options?.layers?.computerUseManager,
     });
 
@@ -215,6 +222,7 @@ const buildAppUnderTest = (options?: {
         Layer.mock(ProviderService)({
           startSession: () => Effect.die("unused"),
           sendTurn: () => Effect.die("unused"),
+          steerTurn: () => Effect.die("unused"),
           interruptTurn: () => Effect.die("unused"),
           respondToRequest: () => Effect.die("unused"),
           respondToUserInput: () => Effect.die("unused"),

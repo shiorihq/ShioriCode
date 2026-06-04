@@ -159,6 +159,7 @@ export type MessagesTimelineRow =
   | { kind: "working"; id: string; createdAt: string | null };
 
 export const DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT = 8;
+export const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
 
 export function deriveFirstUnvirtualizedTimelineRowIndex(input: {
   rows: ReadonlyArray<MessagesTimelineRow>;
@@ -2196,8 +2197,6 @@ function estimateReasoningRowHeight(text: string): number {
   return 36 + Math.min(lineCount * 14, 140);
 }
 
-export const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
-
 function estimateWorkRowHeight(
   row: WorkTimelineRow,
   input: {
@@ -2246,8 +2245,7 @@ function estimateWorkRowHeight(
     if (!isExpanded) {
       return 16 + 26;
     }
-    const visibleChildRows = row.childRows.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
-    return 16 + 26 + nestedRowsHeight(visibleChildRows) + 8;
+    return 16 + 26 + nestedRowsHeight(row.childRows) + 8;
   }
 
   const displayedEntries = getDisplayedWorkEntries(row.groupedEntries);
@@ -2274,15 +2272,13 @@ function estimateWorkRowHeight(
   }
 
   if (row.inlineEntries) {
-    const visibleInlineEntries = row.inlineEntries.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
-    return 16 + 26 + estimateGroupedInlineItemsHeight(visibleInlineEntries) + 8;
+    return 16 + 26 + estimateGroupedInlineItemsHeight(row.inlineEntries) + 8;
   }
 
-  const visibleEntries = displayedEntries.slice(-MAX_RENDERED_WORK_GROUP_ITEMS);
-  const visibleEntriesHeight = visibleEntries.reduce((total, entry) => {
+  const entriesHeight = displayedEntries.reduce((total, entry) => {
     return total + estimateGroupedWorkListEntryHeight(entry);
   }, 0);
-  return 16 + 26 + visibleEntriesHeight + 8;
+  return 16 + 26 + entriesHeight + 8;
 }
 
 function estimateOutputLineCount(output: unknown): number {

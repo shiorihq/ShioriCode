@@ -95,7 +95,7 @@ export default function BrowserPanel({
     }
 
     const viewport = viewportRef.current;
-    if (!viewport || !active) {
+    if (!viewport) {
       return;
     }
 
@@ -198,7 +198,7 @@ export default function BrowserPanel({
         webviewRef.current = null;
       }
     };
-  }, [active, browserAvailable, threadId]);
+  }, [browserAvailable, threadId]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -355,7 +355,10 @@ export default function BrowserPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-card text-foreground">
+    <div
+      data-browser-panel-active={active ? "true" : "false"}
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-card text-foreground"
+    >
       <div className="shrink-0 border-b border-border/70 bg-card">
         <BrowserPanelHeader
           title={snapshot.title}

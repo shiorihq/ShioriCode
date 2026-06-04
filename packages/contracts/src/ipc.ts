@@ -6,20 +6,27 @@ import type {
 } from "./browser";
 import type {
   ComputerUseActionResult,
+  ComputerUseAppStateResult,
   ComputerUseClickInput,
   ComputerUseCloseSessionInput,
   ComputerUseCreateSessionInput,
+  ComputerUseDoubleClickInput,
+  ComputerUseDragInput,
+  ComputerUseFocusAppInput,
+  ComputerUseFocusWindowInput,
   ComputerUseKeyInput,
+  ComputerUseListAppsInput,
   ComputerUseMoveInput,
   ComputerUsePermissionActionInput,
   ComputerUsePermissionActionResult,
-  ComputerUsePermissionKind,
   ComputerUsePermissionsSnapshot,
+  ComputerUseRightClickInput,
   ComputerUseScreenshotInput,
   ComputerUseScreenshotResult,
   ComputerUseScrollInput,
   ComputerUseSessionSnapshot,
   ComputerUseTypeInput,
+  ComputerUseWaitInput,
 } from "./computer";
 import type {
   GitCheckoutInput,
@@ -209,7 +216,12 @@ export interface DesktopBridge {
     ) => Promise<DesktopBrowserCaptureResult>;
   };
   getComputerUsePermissions?: () => Promise<ComputerUsePermissionsSnapshot>;
-  showComputerUsePermissionGuide?: (kind: ComputerUsePermissionKind) => Promise<boolean>;
+  requestComputerUsePermission?: (
+    input: ComputerUsePermissionActionInput,
+  ) => Promise<ComputerUsePermissionActionResult>;
+  showComputerUsePermissionGuide?: (
+    input: ComputerUsePermissionActionInput,
+  ) => Promise<ComputerUsePermissionActionResult>;
 }
 
 export interface NativeApi {
@@ -336,10 +348,25 @@ export interface NativeApi {
     screenshot: (
       input: typeof ComputerUseScreenshotInput.Encoded,
     ) => Promise<ComputerUseScreenshotResult>;
+    listApps: (
+      input: typeof ComputerUseListAppsInput.Encoded,
+    ) => Promise<ComputerUseAppStateResult>;
+    focusApp: (input: typeof ComputerUseFocusAppInput.Encoded) => Promise<ComputerUseActionResult>;
+    focusWindow: (
+      input: typeof ComputerUseFocusWindowInput.Encoded,
+    ) => Promise<ComputerUseActionResult>;
     click: (input: typeof ComputerUseClickInput.Encoded) => Promise<ComputerUseActionResult>;
+    doubleClick: (
+      input: typeof ComputerUseDoubleClickInput.Encoded,
+    ) => Promise<ComputerUseActionResult>;
+    rightClick: (
+      input: typeof ComputerUseRightClickInput.Encoded,
+    ) => Promise<ComputerUseActionResult>;
     move: (input: typeof ComputerUseMoveInput.Encoded) => Promise<ComputerUseActionResult>;
+    drag: (input: typeof ComputerUseDragInput.Encoded) => Promise<ComputerUseActionResult>;
     type: (input: typeof ComputerUseTypeInput.Encoded) => Promise<ComputerUseActionResult>;
     key: (input: typeof ComputerUseKeyInput.Encoded) => Promise<ComputerUseActionResult>;
     scroll: (input: typeof ComputerUseScrollInput.Encoded) => Promise<ComputerUseActionResult>;
+    wait: (input: typeof ComputerUseWaitInput.Encoded) => Promise<ComputerUseActionResult>;
   };
 }

@@ -2273,20 +2273,59 @@ it.layer(
           },
         },
       });
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.makeUnsafe("evt-structured-network-approval"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-structured-approval"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-structured-network-approval"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-structured-network-approval"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-structured-approval"),
+          activity: {
+            id: EventId.makeUnsafe("activity-structured-network-approval"),
+            tone: "approval",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: {
+              requestId: "approval-structured-2",
+              decision: {
+                applyNetworkPolicyAmendment: {
+                  network_policy_amendment: {
+                    host: "example.com",
+                    action: "allow",
+                  },
+                },
+              },
+            },
+            turnId: null,
+            createdAt: now,
+          },
+        },
+      });
 
       yield* projectionPipeline.bootstrap;
 
       const rows = yield* sql<{
+        readonly requestId: string;
         readonly status: string;
         readonly decision: string | null;
       }>`
         SELECT
+          request_id AS "requestId",
           status,
           decision
         FROM projection_pending_approvals
-        WHERE request_id = 'approval-structured-1'
+        WHERE request_id IN ('approval-structured-1', 'approval-structured-2')
+        ORDER BY request_id ASC
       `;
-      assert.deepEqual(rows, [{ status: "resolved", decision: "accept" }]);
+      assert.deepEqual(rows, [
+        { requestId: "approval-structured-1", status: "resolved", decision: "accept" },
+        { requestId: "approval-structured-2", status: "resolved", decision: "accept" },
+      ]);
     }),
   );
 });

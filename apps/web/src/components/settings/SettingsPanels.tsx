@@ -151,7 +151,6 @@ type InstallProviderSettings = {
 type ProviderSettingsTextFieldKey =
   | "apiBaseUrl"
   | "apiEndpoint"
-  | "acpFlag"
   | "binaryPath"
   | "googleCloudProject"
   | "shareDir";
@@ -200,25 +199,19 @@ const PROVIDER_SETTINGS_BY_PROVIDER = {
   },
   gemini: {
     provider: "gemini",
-    title: "Gemini",
+    title: "Antigravity",
     textFields: [
       {
         key: "binaryPath",
-        label: "Gemini binary path",
-        placeholder: "gemini",
-        description: "Path to the Gemini CLI binary.",
+        label: "Antigravity harness path",
+        placeholder: "localharness",
+        description: "Optional path to the Antigravity localharness runtime.",
       },
       {
         key: "googleCloudProject",
         label: "Google Cloud project",
         placeholder: "GOOGLE_CLOUD_PROJECT",
-        description: "Optional project ID passed to the Gemini ACP runtime.",
-      },
-      {
-        key: "acpFlag",
-        label: "ACP flag",
-        placeholder: "--acp",
-        description: "Optional Gemini ACP flag override.",
+        description: "Optional Vertex AI project used by the Antigravity SDK.",
       },
     ],
   },
@@ -366,7 +359,7 @@ function readProviderTextField(
     case "gemini":
       if (key === "binaryPath") return providers.gemini.binaryPath;
       if (key === "googleCloudProject") return providers.gemini.googleCloudProject;
-      return key === "acpFlag" ? providers.gemini.acpFlag : null;
+      return null;
     case "cursor":
       if (key === "binaryPath") return providers.cursor.binaryPath;
       return key === "apiEndpoint" ? providers.cursor.apiEndpoint : null;
@@ -402,9 +395,7 @@ function updateProviderTextField(
       if (key === "googleCloudProject") {
         return { ...providers, gemini: { ...providers.gemini, googleCloudProject: value } };
       }
-      return key === "acpFlag"
-        ? { ...providers, gemini: { ...providers.gemini, acpFlag: value } }
-        : providers;
+      return providers;
     case "cursor":
       if (key === "binaryPath") {
         return { ...providers, cursor: { ...providers.cursor, binaryPath: value } };
@@ -986,7 +977,6 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.gemini.binaryPath ||
       settings.providers.gemini.googleCloudProject !==
         DEFAULT_UNIFIED_SETTINGS.providers.gemini.googleCloudProject ||
-      settings.providers.gemini.acpFlag !== DEFAULT_UNIFIED_SETTINGS.providers.gemini.acpFlag ||
       settings.providers.gemini.customModels.length > 0,
     ),
     cursor: Boolean(

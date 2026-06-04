@@ -10,13 +10,22 @@ export interface CodexCreditsUsageSnapshot {
   readonly balance: string | null;
 }
 
+export interface CodexIndividualLimitUsageSnapshot {
+  readonly limit: string | null;
+  readonly used: string | null;
+  readonly remainingPercent: number | null;
+  readonly resetsAt: string | null;
+}
+
 export interface CodexRateLimitUsageSnapshot {
   readonly limitId: string | null;
   readonly limitName: string | null;
   readonly primary: ProviderUsageWindowSnapshot | null;
   readonly secondary: ProviderUsageWindowSnapshot | null;
   readonly credits: CodexCreditsUsageSnapshot | null;
+  readonly individualLimit?: CodexIndividualLimitUsageSnapshot | null;
   readonly planType: string | null;
+  readonly rateLimitReachedType?: string | null;
 }
 
 export interface CodexUsageSnapshot {

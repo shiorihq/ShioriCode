@@ -9,6 +9,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
@@ -63,7 +64,6 @@ import {
   buildWorkGroupSummaryParts,
   DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT,
   deriveWorkGroupIconKind,
-  MAX_RENDERED_WORK_GROUP_ITEMS,
   deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
   estimateMessagesTimelineRowHeight,
@@ -86,6 +86,7 @@ import {
   type WorkTimelineRow,
 } from "./MessagesTimeline.logic";
 import { AssistantSelectionAddToChatButton } from "./AssistantSelectionAddToChatButton";
+import { useWorkGroupAutoScroll } from "./useWorkGroupAutoScroll";
 import { summarizeToolOutput } from "./toolOutput";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
@@ -112,6 +113,8 @@ const TIMELINE_ROW_HEIGHT_CACHE_DELTA_PX = 0.5;
 const TIMELINE_ROW_HEIGHT_TEXT_FINGERPRINT_CHARS = 96;
 const EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID = new Map<MessageId, TurnDiffSummary>();
 const EMPTY_REVEALING_BUFFERED_ASSISTANT_MESSAGE_IDS = new Set<MessageId>();
+// Used when no shared suppress counter is supplied (e.g. tests/standalone harness).
+const FALLBACK_AUTO_SCROLL_SUPPRESS_REF: MutableRefObject<number> = { current: 0 };
 
 interface MessagesTimelineProps {
   hasMessages: boolean;
@@ -122,6 +125,11 @@ interface MessagesTimelineProps {
   activeTurnId?: TurnId | null;
   revealingBufferedAssistantMessageIds?: ReadonlySet<MessageId>;
   scrollContainer: HTMLDivElement | null;
+  /**
+   * Shared counter letting an in-progress workgroup claim the smooth follow so
+   * the conversation's global stick-to-bottom defers to it while streaming.
+   */
+  workGroupAutoScrollSuppressRef?: MutableRefObject<number>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
@@ -164,6 +172,7 @@ function MessagesTimelineView({
   activeTurnId = null,
   revealingBufferedAssistantMessageIds = EMPTY_REVEALING_BUFFERED_ASSISTANT_MESSAGE_IDS,
   scrollContainer,
+  workGroupAutoScrollSuppressRef = FALLBACK_AUTO_SCROLL_SUPPRESS_REF,
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
@@ -186,6 +195,10 @@ function MessagesTimelineView({
   onAddAssistantSelectionToChat,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
+  const localWorkGroupAutoScrollSuppressRef = useRef(0);
+  const resolvedWorkGroupAutoScrollSuppressRef =
+    workGroupAutoScrollSuppressRef ?? localWorkGroupAutoScrollSuppressRef;
+
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const measuredNonVirtualizedRowHeightsRef = useRef(
     new Map<string, TimelineRowHeightCacheEntry>(),
@@ -655,6 +668,8 @@ function MessagesTimelineView({
                 onToggleWorkGroup(groupId, isExpanded);
                 scheduleTimelineMeasure();
               }}
+              scrollContainer={scrollContainer}
+              autoScrollSuppressRef={resolvedWorkGroupAutoScrollSuppressRef}
             />
           </div>
         );
@@ -710,6 +725,8 @@ function MessagesTimelineView({
             onToggleWorkGroup(groupId, isExpanded);
             scheduleTimelineMeasure();
           }}
+          scrollContainer={scrollContainer}
+          autoScrollSuppressRef={resolvedWorkGroupAutoScrollSuppressRef}
         />
       </div>
     );
@@ -1557,10 +1574,6 @@ function formatDurationParts(parts: ReadonlyArray<readonly [number, string]>): s
 
 function formatDurationUnit(value: number, unit: string): string {
   return `${value} ${value === 1 ? unit : `${unit}s`}`;
-}
-
-function formatHiddenWorkGroupItemCount(count: number): string {
-  return `${count} older ${count === 1 ? "entry" : "entries"} hidden`;
 }
 
 function formatMessageMeta(
@@ -2827,10 +2840,13 @@ type GroupedWorkEntriesProps = {
   onToggleWorkGroup: (groupId: string, currentlyExpanded: boolean) => void;
   onToggleGroup: () => void;
   onHeightChange?: (() => void) | undefined;
+  scrollContainer: HTMLDivElement | null;
+  autoScrollSuppressRef: MutableRefObject<number>;
 };
 
 const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEntriesProps) {
   const {
+    autoScrollSuppressRef,
     expandedWorkGroups,
     entries,
     groupItemsId,
@@ -2842,9 +2858,10 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
     onHeightChange,
     onToggleGroup,
     onToggleWorkGroup,
+    scrollContainer,
     summary,
   } = props;
-  const [showAllRenderedItems, setShowAllRenderedItems] = useState(false);
+  const groupRef = useRef<HTMLDivElement | null>(null);
   const displayedEntries = useMemo(() => getDisplayedWorkEntries(entries), [entries]);
   const iconKind = useMemo(() => deriveWorkGroupIconKind(entries), [entries]);
   const iconName = useMemo(
@@ -2860,27 +2877,21 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
       displayedEntries.map((entry) => ({ kind: "work" as const, id: entry.id, entry })),
     [displayedEntries, inlineEntries],
   );
-  const visibleRenderedItems = useMemo(
-    () =>
-      !showAllRenderedItems && renderedItems.length > MAX_RENDERED_WORK_GROUP_ITEMS
-        ? renderedItems.slice(-MAX_RENDERED_WORK_GROUP_ITEMS)
-        : renderedItems,
-    [renderedItems, showAllRenderedItems],
-  );
-  const hiddenRenderedItemCount = renderedItems.length - visibleRenderedItems.length;
 
-  useEffect(() => {
-    if (renderedItems.length <= MAX_RENDERED_WORK_GROUP_ITEMS && showAllRenderedItems) {
-      setShowAllRenderedItems(false);
-    }
-  }, [renderedItems.length, showAllRenderedItems]);
+  useWorkGroupAutoScroll({
+    scrollContainer,
+    groupRef,
+    isActive: isInProgress && isExpanded,
+    entryCount: renderedItems.length,
+    globalAutoScrollSuppressRef: autoScrollSuppressRef,
+  });
 
   useLayoutEffect(() => {
     onHeightChange?.();
-  }, [hiddenRenderedItemCount, isExpanded, onHeightChange, visibleRenderedItems.length]);
+  }, [isExpanded, onHeightChange, renderedItems.length]);
 
   return (
-    <div>
+    <div ref={groupRef}>
       <button
         type="button"
         aria-controls={groupItemsId}
@@ -2933,30 +2944,7 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
         <div id={groupItemsId} className="mt-0.5">
           <div className={nested ? "pr-1" : undefined}>
             <ul>
-              {hiddenRenderedItemCount > 0 && (
-                <li className="list-none py-0.5">
-                  <div
-                    className={cn(
-                      CHAT_THREAD_BODY_CLASS,
-                      "flex items-center gap-2",
-                      "text-muted-foreground/60",
-                      "assistant-text-selectable",
-                    )}
-                  >
-                    <span>{formatHiddenWorkGroupItemCount(hiddenRenderedItemCount)}</span>
-                    <button
-                      type="button"
-                      className="rounded-sm text-[12px] font-medium text-muted-foreground/80 underline-offset-[3px] transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                      onClick={() => {
-                        setShowAllRenderedItems(true);
-                      }}
-                    >
-                      Show
-                    </button>
-                  </div>
-                </li>
-              )}
-              {visibleRenderedItems.map((item) => {
+              {renderedItems.map((item) => {
                 if (item.kind === "reasoning") {
                   return (
                     <li key={`work-row:${item.id}`} className="list-none py-0.5">
@@ -3035,13 +3023,14 @@ function areGroupedWorkEntriesPropsEqual(
     previous.nested !== next.nested ||
     previous.onHeightChange !== next.onHeightChange ||
     previous.onToggleWorkGroup !== next.onToggleWorkGroup ||
+    previous.scrollContainer !== next.scrollContainer ||
     previous.summary.leadingVerb !== next.summary.leadingVerb ||
     previous.summary.rest !== next.summary.rest
   ) {
     return false;
   }
 
-  for (const expansionKey of getVisibleGroupedWorkEntryExpansionKeys(next)) {
+  for (const expansionKey of getGroupedWorkEntryExpansionKeys(next)) {
     if (previous.expandedWorkGroups[expansionKey] !== next.expandedWorkGroups[expansionKey]) {
       return false;
     }
@@ -3050,7 +3039,7 @@ function areGroupedWorkEntriesPropsEqual(
   return true;
 }
 
-function getVisibleGroupedWorkEntryExpansionKeys(
+function getGroupedWorkEntryExpansionKeys(
   props: Pick<GroupedWorkEntriesProps, "entries" | "inlineEntries">,
 ): string[] {
   const renderedItems =
@@ -3060,12 +3049,8 @@ function getVisibleGroupedWorkEntryExpansionKeys(
       id: entry.id,
       entry,
     }));
-  const visibleRenderedItems =
-    renderedItems.length > MAX_RENDERED_WORK_GROUP_ITEMS
-      ? renderedItems.slice(-MAX_RENDERED_WORK_GROUP_ITEMS)
-      : renderedItems;
 
-  return visibleRenderedItems.flatMap((item) =>
+  return renderedItems.flatMap((item) =>
     item.kind === "work" && !item.entry.running && item.entry.itemType !== "web_search"
       ? [getGroupedWorkEntryExpansionKey(item.entry.id)]
       : [],

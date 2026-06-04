@@ -602,6 +602,27 @@ it.effect("decodes codex execpolicy amendment approval decisions", () =>
   }),
 );
 
+it.effect("decodes codex network policy amendment approval decisions", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProviderApprovalDecision({
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: {
+          host: "example.com",
+          action: "allow",
+        },
+      },
+    });
+    assert.deepStrictEqual(parsed, {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: {
+          host: "example.com",
+          action: "allow",
+        },
+      },
+    });
+  }),
+);
+
 it.effect("rejects structured decisions in pending approval projection rows", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

@@ -21,14 +21,18 @@ export interface PendingApprovalRequest {
   requestId: ApprovalRequestId;
   jsonRpcId: string | number;
   method:
+    | "applyPatchApproval"
+    | "execCommandApproval"
     | "item/commandExecution/requestApproval"
     | "item/fileChange/requestApproval"
     | "item/fileRead/requestApproval"
+    | "item/permissions/requestApproval"
     | "permissions/requestApproval";
   requestKind: ProviderRequestKind;
   threadId: ThreadId;
   turnId?: TurnId;
   itemId?: ProviderItemId;
+  requestedPermissions?: unknown;
 }
 
 export interface PendingUserInputRequest {

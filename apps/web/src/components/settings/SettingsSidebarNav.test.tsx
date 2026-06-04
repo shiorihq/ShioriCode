@@ -27,11 +27,10 @@ vi.mock("../../lib/settingsNavigation", () => ({
   resolveSettingsBackNavigation: () => ({ to: "/" }),
 }));
 
-let computerUseEnabled = false;
 let mobileAppEnabled = false;
 
 vi.mock("../../convex/HostedShioriProvider", () => ({
-  useHostedShioriState: () => ({ computerUseEnabled, mobileAppEnabled }),
+  useHostedShioriState: () => ({ mobileAppEnabled }),
 }));
 
 import { SidebarProvider } from "../ui/sidebar";
@@ -47,27 +46,23 @@ function renderSettingsSidebar(pathname = "/settings/general") {
 
 describe("SettingsSidebarNav", () => {
   beforeEach(() => {
-    computerUseEnabled = false;
     mobileAppEnabled = false;
   });
 
   it("inherits the shared sidebar hover color for back and section items", () => {
     const html = renderSettingsSidebar("/settings/appearance");
+    const menuButtonClassNames = [...html.matchAll(/<button\b[^>]*>/g)]
+      .map((match) => match[0])
+      .filter((button) => button.includes('data-slot="sidebar-menu-button"'))
+      .map((button) => button.match(/class="([^"]*)"/)?.[1] ?? "")
+      .join(" ");
 
     expect(html).toContain('data-slot="sidebar-menu-button"');
     expect(html).toContain("hover:text-sidebar-hover-foreground");
-    expect(html).not.toContain("text-muted-foreground");
+    expect(menuButtonClassNames).not.toContain("text-muted-foreground");
   });
 
-  it("hides Computer Use when the hosted feature flag is off", () => {
-    const html = renderSettingsSidebar();
-
-    expect(html).not.toContain("Computer Use");
-  });
-
-  it("shows Computer Use when the hosted feature flag is on", () => {
-    computerUseEnabled = true;
-
+  it("always shows local Computer Use settings", () => {
     const html = renderSettingsSidebar("/settings/computer-use");
 
     expect(html).toContain("Computer Use");

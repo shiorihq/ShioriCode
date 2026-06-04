@@ -1,6 +1,6 @@
 {
   "name": "shioricode",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "license": "Elastic-2.0",
   "repository": {
     "type": "git",
@@ -33,6 +33,7 @@
     "ai": "^6.0.141",
     "convex": "^1.28.0",
     "effect": "catalog:",
+    "google-antigravity": "file:../../../playground/antigravity-sdk-typescript",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",
     "smol-toml": "^1.6.0",

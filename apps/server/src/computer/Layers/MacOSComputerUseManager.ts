@@ -1,51 +1,61 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 
 import {
   type ComputerUseActionResult,
+  type ComputerUseAppSnapshot,
+  type ComputerUseAppStateResult,
+  type ComputerUsePermissionSubject,
+  type ComputerUseSettings,
   type ComputerUseClickInput,
   type ComputerUseCloseSessionInput,
+  type ComputerUseDoubleClickInput,
+  type ComputerUseDragInput,
   ComputerUseError,
+  type ComputerUseFocusAppInput,
+  type ComputerUseFocusWindowInput,
   type ComputerUseKeyInput,
+  type ComputerUseListAppsInput,
   type ComputerUseMoveInput,
   type ComputerUsePermissionActionInput,
   type ComputerUsePermissionActionResult,
   type ComputerUsePermissionsSnapshot,
+  type ComputerUseRightClickInput,
   type ComputerUseScreenshotInput,
   type ComputerUseScreenshotResult,
   type ComputerUseScrollInput,
   type ComputerUseSessionId,
   type ComputerUseSessionSnapshot,
   type ComputerUseTypeInput,
+  type ComputerUseWaitInput,
 } from "contracts";
 import { Effect, Layer, Ref } from "effect";
 
 import { ServerSettingsService } from "../../serverSettings";
 import { runProcess } from "../../processRunner";
+import {
+  computerUseHelperCandidatesFor,
+  computerUsePermissionSubjectForHelperPath,
+  processResourcesPath,
+  resolveAppRootFromModule,
+} from "../helperResolver";
+import { enrichComputerPermissionGuideInput } from "../permissionInput";
 import { ComputerUseManager } from "../Services/ComputerUseManager";
-
-function resolveAppRootFromModule(moduleUrl: string): string {
-  const modulePath = fileURLToPath(moduleUrl);
-  const marker = `${path.sep}apps${path.sep}server${path.sep}`;
-  const markerIndex = modulePath.lastIndexOf(marker);
-  return markerIndex >= 0 ? modulePath.slice(0, markerIndex) : process.cwd();
-}
+import {
+  enrichScreenshotCoordinateInput,
+  screenshotSizeFromResult,
+  type ScreenshotSize,
+} from "../screenshotCoordinates";
 
 const DEFAULT_APP_ROOT = resolveAppRootFromModule(import.meta.url);
 const DEFAULT_HELPER_PACKAGE_PATH = path.join(
   DEFAULT_APP_ROOT,
   "apps/desktop/native/ShioriComputerUse",
 );
-const DEFAULT_HELPER_BUILD_PATHS = [
-  path.join(DEFAULT_HELPER_PACKAGE_PATH, ".build/debug/ShioriComputerUseHelper"),
-  path.join(DEFAULT_HELPER_PACKAGE_PATH, ".build/release/ShioriComputerUseHelper"),
-  path.join(DEFAULT_APP_ROOT, "apps/desktop/resources/native/macos/ShioriComputerUseHelper"),
-  path.join(DEFAULT_APP_ROOT, "apps/desktop/prod-resources/native/macos/ShioriComputerUseHelper"),
-];
 const HELPER_TIMEOUT_MS = 30_000;
 const HELPER_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024;
+const SCREENSHOT_COORDINATE_COMMANDS = new Set(["click", "move", "drag", "scroll"]);
 
 type ComputerUseErrorCode =
   | "unsupported"
@@ -70,26 +80,37 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function unsupportedSnapshot(message: string): ComputerUsePermissionsSnapshot {
+function unsupportedSnapshot(input: {
+  readonly message: string;
+  readonly supported?: boolean;
+  readonly helperPath?: string | null;
+  readonly permissionSubject?: ComputerUsePermissionSubject | null;
+}): ComputerUsePermissionsSnapshot {
+  const helperPath = input.helperPath ?? null;
+  const permissionSubject =
+    input.permissionSubject === null
+      ? undefined
+      : (input.permissionSubject ?? computerUsePermissionSubjectForHelperPath(helperPath));
   return {
     platform: process.platform,
-    supported: false,
-    helperAvailable: false,
-    helperPath: null,
+    supported: input.supported ?? false,
+    helperAvailable: helperPath !== null,
+    helperPath,
+    ...(permissionSubject ? { permissionSubject } : {}),
     checkedAt: nowIso(),
-    message,
+    message: input.message,
     permissions: [
       {
         kind: "accessibility",
         label: "Accessibility",
         state: "unsupported",
-        detail: "Computer Use is currently only supported on macOS.",
+        detail: input.message,
       },
       {
         kind: "screen-recording",
         label: "Screen Recording",
         state: "unsupported",
-        detail: "Computer Use is currently only supported on macOS.",
+        detail: input.message,
       },
     ],
   };
@@ -106,7 +127,12 @@ function readHelperPathFromEnv(): string | null {
 function existingCandidatePath(): string | null {
   const envPath = readHelperPathFromEnv();
   if (envPath) return envPath;
-  for (const candidate of DEFAULT_HELPER_BUILD_PATHS) {
+  for (const candidate of computerUseHelperCandidatesFor({
+    appRoot: DEFAULT_APP_ROOT,
+    configured: null,
+    packagePath: process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH ?? null,
+    resourcesPath: processResourcesPath(),
+  })) {
     if (existsSync(candidate)) {
       return candidate;
     }
@@ -168,11 +194,75 @@ function helperError(input: {
   });
 }
 
+function normalizedBundleIdentifier(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function approvedAppBundleIdentifiersFromSettings(
+  computerUse: Pick<ComputerUseSettings, "approvedApps">,
+): ReadonlyArray<string> {
+  return Array.from(
+    new Set(
+      computerUse.approvedApps.flatMap((app) => {
+        const bundleIdentifier = normalizedBundleIdentifier(app.bundleIdentifier);
+        return bundleIdentifier ? [bundleIdentifier] : [];
+      }),
+    ),
+  );
+}
+
+function withApprovedAppBundleIdentifiers(
+  input: Record<string, unknown>,
+  approvedAppBundleIdentifiers: ReadonlyArray<string>,
+): Record<string, unknown> {
+  return { ...input, approvedAppBundleIdentifiers };
+}
+
+function noApprovedAppsError(action: string): ComputerUseError {
+  return new ComputerUseError({
+    code: "permissionDenied",
+    message: `Computer Use ${action} is blocked because no apps are approved in Settings > Computer Use.`,
+  });
+}
+
+function focusAppTargetDescription(input: ComputerUseFocusAppInput): string {
+  const bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
+  if (bundleIdentifier) return bundleIdentifier;
+  if (typeof input.processIdentifier === "number")
+    return `pid ${Math.trunc(input.processIdentifier)}`;
+  const name = input.name?.trim();
+  return name && name.length > 0 ? name : "unknown app";
+}
+
+function resolveAppBundleIdentifierFromState(
+  input: ComputerUseFocusAppInput,
+  apps: ReadonlyArray<ComputerUseAppSnapshot>,
+): string | null {
+  const bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
+  if (bundleIdentifier) return bundleIdentifier;
+
+  if (typeof input.processIdentifier === "number") {
+    const processIdentifier = Math.trunc(input.processIdentifier);
+    return (
+      apps.find((app) => app.processIdentifier === processIdentifier)?.bundleIdentifier?.trim() ??
+      null
+    );
+  }
+
+  const name = input.name?.trim();
+  if (!name) return null;
+  const matches = apps.filter((app) => app.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  if (matches.length !== 1) return null;
+  return matches[0]?.bundleIdentifier?.trim() ?? null;
+}
+
 export const ComputerUseManagerLive = Layer.effect(
   ComputerUseManager,
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
     const sessionsRef = yield* Ref.make(new Map<string, ComputerUseSessionSnapshot>());
+    const latestScreenshotSizesRef = yield* Ref.make(new Map<string, ScreenshotSize>());
     const helperRef = yield* Ref.make<HelperResolveState>({
       path: null,
       buildAttempted: false,
@@ -324,19 +414,26 @@ export const ComputerUseManagerLive = Layer.effect(
           }),
         );
       }
+      return settings;
     });
 
     const getPermissions = Effect.gen(function* () {
       if (process.platform !== "darwin") {
-        return unsupportedSnapshot("Computer Use is currently only supported on macOS.");
+        return unsupportedSnapshot({
+          message: "Computer Use is currently only supported on macOS.",
+          permissionSubject: null,
+        });
       }
-      const helperPathResult = yield* Effect.exit(resolveHelperPath());
-      if (helperPathResult._tag === "Failure") {
-        return {
-          ...unsupportedSnapshot("The macOS Computer Use helper is unavailable."),
-          platform: process.platform,
+      const helperAvailable = yield* resolveHelperPath().pipe(
+        Effect.as(true),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+      if (!helperAvailable) {
+        const state = yield* Ref.get(helperRef);
+        return unsupportedSnapshot({
+          message: state.lastError ?? "The macOS Computer Use helper is unavailable.",
           supported: true,
-        };
+        });
       }
       return yield* runHelper<ComputerUsePermissionsSnapshot>(
         "permissions",
@@ -385,11 +482,21 @@ export const ComputerUseManagerLive = Layer.effect(
       input: Record<string, unknown>,
       fallbackMessage: string,
     ) {
-      yield* ensureEnabled();
+      const settings = yield* ensureEnabled();
       const session = yield* resolveSession(sessionId);
+      const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
+        settings.computerUse,
+      );
+      const latestScreenshotSizes = yield* Ref.get(latestScreenshotSizesRef);
+      const actionInput = SCREENSHOT_COORDINATE_COMMANDS.has(command)
+        ? enrichScreenshotCoordinateInput(input, latestScreenshotSizes.get(session.id))
+        : input;
       return yield* runHelper<ComputerUseActionResult>(
         command,
-        { ...input, sessionId: session.id },
+        withApprovedAppBundleIdentifiers(
+          { ...actionInput, sessionId: session.id },
+          approvedAppBundleIdentifiers,
+        ),
         fallbackMessage,
       );
     });
@@ -405,7 +512,7 @@ export const ComputerUseManagerLive = Layer.effect(
       showPermissionGuide: (input: ComputerUsePermissionActionInput) =>
         runHelper<ComputerUsePermissionActionResult>(
           "permission-guide",
-          input,
+          enrichComputerPermissionGuideInput(input),
           "Failed to open macOS Computer Use permission settings.",
         ),
       createSession: Effect.gen(function* () {
@@ -415,31 +522,203 @@ export const ComputerUseManagerLive = Layer.effect(
         return session;
       }),
       closeSession: (input: ComputerUseCloseSessionInput) =>
-        Ref.update(sessionsRef, (current) => {
-          const next = new Map(current);
-          next.delete(input.sessionId);
-          return next;
+        Effect.gen(function* () {
+          const sessions = yield* Ref.get(sessionsRef);
+          if (!sessions.has(input.sessionId)) {
+            return yield* Effect.fail(
+              new ComputerUseError({
+                code: "sessionNotFound",
+                message: `Computer Use session '${input.sessionId}' does not exist.`,
+              }),
+            );
+          }
+
+          yield* Ref.update(sessionsRef, (current) => {
+            const next = new Map(current);
+            next.delete(input.sessionId);
+            return next;
+          });
+          yield* Ref.update(latestScreenshotSizesRef, (current) => {
+            const next = new Map(current);
+            next.delete(input.sessionId);
+            return next;
+          });
         }),
       screenshot: (input: ComputerUseScreenshotInput) =>
         Effect.gen(function* () {
-          yield* ensureEnabled();
+          const settings = yield* ensureEnabled();
           const session = yield* resolveSession(input.sessionId);
-          return yield* runHelper<ComputerUseScreenshotResult>(
+          const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
+            settings.computerUse,
+          );
+          const result = yield* runHelper<ComputerUseScreenshotResult>(
             "screenshot",
-            { sessionId: session.id },
+            withApprovedAppBundleIdentifiers(
+              { sessionId: session.id },
+              approvedAppBundleIdentifiers,
+            ),
             "Failed to capture the macOS screen.",
+          );
+          const remembered = screenshotSizeFromResult(result, session.id);
+          if (remembered) {
+            yield* Ref.update(latestScreenshotSizesRef, (current) =>
+              new Map(current).set(remembered.sessionId, remembered.size),
+            );
+          }
+          return result;
+        }),
+      listApps: (input: ComputerUseListAppsInput) =>
+        Effect.gen(function* () {
+          const settings = yield* ensureEnabled();
+          const session = yield* resolveSession(input.sessionId);
+          const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
+            settings.computerUse,
+          );
+          return yield* runHelper<ComputerUseAppStateResult>(
+            "list-apps",
+            withApprovedAppBundleIdentifiers(
+              { sessionId: session.id },
+              approvedAppBundleIdentifiers,
+            ),
+            "Failed to list visible macOS applications.",
+          );
+        }),
+      focusApp: (input: ComputerUseFocusAppInput) =>
+        Effect.gen(function* () {
+          const settings = yield* ensureEnabled();
+          const session = yield* resolveSession(input.sessionId);
+          const approvedBundleIds = new Set(
+            approvedAppBundleIdentifiersFromSettings(settings.computerUse),
+          );
+
+          if (approvedBundleIds.size === 0) {
+            return yield* Effect.fail(noApprovedAppsError("focus"));
+          }
+
+          if (approvedBundleIds.size > 0) {
+            let bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
+            if (!bundleIdentifier) {
+              const appState = yield* runHelper<ComputerUseAppStateResult>(
+                "list-apps",
+                withApprovedAppBundleIdentifiers(
+                  { sessionId: session.id },
+                  Array.from(approvedBundleIds),
+                ),
+                "Failed to resolve the macOS app before focusing it.",
+              );
+              bundleIdentifier = resolveAppBundleIdentifierFromState(input, appState.apps);
+            }
+
+            if (!bundleIdentifier) {
+              return yield* Effect.fail(
+                new ComputerUseError({
+                  code: "actionFailed",
+                  message:
+                    "Computer Use can only focus approved apps. Use a bundleIdentifier from the app list.",
+                }),
+              );
+            }
+            if (!approvedBundleIds.has(bundleIdentifier)) {
+              return yield* Effect.fail(
+                new ComputerUseError({
+                  code: "permissionDenied",
+                  message: `App '${focusAppTargetDescription(input)}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing it.`,
+                }),
+              );
+            }
+          }
+
+          return yield* runHelper<ComputerUseActionResult>(
+            "focus-app",
+            withApprovedAppBundleIdentifiers(
+              { ...input, sessionId: session.id },
+              Array.from(approvedBundleIds),
+            ),
+            "Failed to focus a macOS application.",
+          );
+        }),
+      focusWindow: (input: ComputerUseFocusWindowInput) =>
+        Effect.gen(function* () {
+          const settings = yield* ensureEnabled();
+          const session = yield* resolveSession(input.sessionId);
+          const approvedBundleIds = new Set(
+            approvedAppBundleIdentifiersFromSettings(settings.computerUse),
+          );
+
+          if (approvedBundleIds.size === 0) {
+            return yield* Effect.fail(noApprovedAppsError("window focus"));
+          }
+
+          if (approvedBundleIds.size > 0) {
+            let bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
+            if (!bundleIdentifier) {
+              const appState = yield* runHelper<ComputerUseAppStateResult>(
+                "list-apps",
+                withApprovedAppBundleIdentifiers(
+                  { sessionId: session.id },
+                  Array.from(approvedBundleIds),
+                ),
+                "Failed to resolve the macOS app before focusing its window.",
+              );
+              bundleIdentifier = resolveAppBundleIdentifierFromState(input, appState.apps);
+            }
+
+            if (!bundleIdentifier) {
+              return yield* Effect.fail(
+                new ComputerUseError({
+                  code: "actionFailed",
+                  message:
+                    "Computer Use can only focus windows in approved apps. Use a bundleIdentifier from the app list.",
+                }),
+              );
+            }
+            if (!approvedBundleIds.has(bundleIdentifier)) {
+              return yield* Effect.fail(
+                new ComputerUseError({
+                  code: "permissionDenied",
+                  message: `App '${focusAppTargetDescription(input)}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing a window.`,
+                }),
+              );
+            }
+          }
+
+          return yield* runHelper<ComputerUseActionResult>(
+            "focus-window",
+            withApprovedAppBundleIdentifiers(
+              { ...input, sessionId: session.id },
+              Array.from(approvedBundleIds),
+            ),
+            "Failed to focus a macOS window.",
           );
         }),
       click: (input: ComputerUseClickInput) =>
         actionResult(input.sessionId, "click", input, "Failed to click the macOS desktop."),
+      doubleClick: (input: ComputerUseDoubleClickInput) =>
+        actionResult(
+          input.sessionId,
+          "click",
+          { ...input, clickCount: 2 },
+          "Failed to double-click the macOS desktop.",
+        ),
+      rightClick: (input: ComputerUseRightClickInput) =>
+        actionResult(
+          input.sessionId,
+          "click",
+          { ...input, button: "right" },
+          "Failed to right-click the macOS desktop.",
+        ),
       move: (input: ComputerUseMoveInput) =>
         actionResult(input.sessionId, "move", input, "Failed to move the macOS pointer."),
+      drag: (input: ComputerUseDragInput) =>
+        actionResult(input.sessionId, "drag", input, "Failed to drag the macOS pointer."),
       type: (input: ComputerUseTypeInput) =>
         actionResult(input.sessionId, "type", input, "Failed to type into the macOS desktop."),
       key: (input: ComputerUseKeyInput) =>
         actionResult(input.sessionId, "key", input, "Failed to press a macOS key."),
       scroll: (input: ComputerUseScrollInput) =>
         actionResult(input.sessionId, "scroll", input, "Failed to scroll the macOS desktop."),
+      wait: (input: ComputerUseWaitInput) =>
+        actionResult(input.sessionId, "wait", input, "Failed to wait for the macOS desktop."),
     };
   }),
 );

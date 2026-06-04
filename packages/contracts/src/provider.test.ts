@@ -69,31 +69,6 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.runtimeMode).toBe("full-access");
   });
 
-  it("accepts shiori reasoning controls", () => {
-    const parsed = decodeProviderSessionStartInput({
-      threadId: "thread-1",
-      provider: "shiori",
-      cwd: "/tmp/workspace",
-      modelSelection: {
-        provider: "shiori",
-        model: "openai/gpt-5.4",
-        options: {
-          thinking: false,
-          reasoningEffort: "medium",
-        },
-      },
-      runtimeMode: "full-access",
-    });
-
-    expect(parsed.provider).toBe("shiori");
-    expect(parsed.modelSelection?.provider).toBe("shiori");
-    if (parsed.modelSelection?.provider !== "shiori") {
-      throw new Error("Expected shiori modelSelection");
-    }
-    expect(parsed.modelSelection.options?.thinking).toBe(false);
-    expect(parsed.modelSelection.options?.reasoningEffort).toBe("medium");
-  });
-
   it("accepts gemini model selections", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
@@ -180,26 +155,5 @@ describe("ProviderSendTurnInput", () => {
     }
     expect(parsed.modelSelection.options?.effort).toBe("ultrathink");
     expect(parsed.modelSelection.options?.fastMode).toBe(true);
-  });
-
-  it("accepts shiori modelSelection including reasoning controls", () => {
-    const parsed = decodeProviderSendTurnInput({
-      threadId: "thread-1",
-      modelSelection: {
-        provider: "shiori",
-        model: "anthropic/claude-sonnet-4.5",
-        options: {
-          thinking: true,
-          reasoningEffort: "high",
-        },
-      },
-    });
-
-    expect(parsed.modelSelection?.provider).toBe("shiori");
-    if (parsed.modelSelection?.provider !== "shiori") {
-      throw new Error("Expected shiori modelSelection");
-    }
-    expect(parsed.modelSelection.options?.thinking).toBe(true);
-    expect(parsed.modelSelection.options?.reasoningEffort).toBe("high");
   });
 });

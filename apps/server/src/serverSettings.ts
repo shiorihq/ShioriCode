@@ -101,20 +101,10 @@ const PROVIDER_ORDER: readonly ProviderKind[] = [
   "codex",
   "claudeAgent",
 ];
-const DEV_SHIORI_API_BASE_URL = "http://127.0.0.1:3000";
 
 function resolveShioriApiBaseUrl(settings: ServerSettings): ServerSettings {
   const configuredOverride = process.env.SHIORICODE_SHIORI_API_BASE_URL?.trim();
-  const override =
-    configuredOverride && configuredOverride.length > 0
-      ? configuredOverride
-      : process.env.NODE_ENV !== "production" &&
-          settings.providers.shiori.apiBaseUrl ===
-            DEFAULT_SERVER_SETTINGS.providers.shiori.apiBaseUrl
-        ? DEV_SHIORI_API_BASE_URL
-        : null;
-
-  if (!override || settings.providers.shiori.apiBaseUrl === override) {
+  if (!configuredOverride || settings.providers.shiori.apiBaseUrl === configuredOverride) {
     return settings;
   }
 
@@ -124,7 +114,7 @@ function resolveShioriApiBaseUrl(settings: ServerSettings): ServerSettings {
       ...settings.providers,
       shiori: {
         ...settings.providers.shiori,
-        apiBaseUrl: override,
+        apiBaseUrl: configuredOverride,
       },
     },
   };

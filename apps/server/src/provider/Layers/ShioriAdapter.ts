@@ -16,6 +16,7 @@ import {
   type UserInputQuestion,
   type McpServerEntry,
   type CanonicalItemType,
+  type ServerSettings,
   RuntimeItemId,
   RuntimeRequestId,
   type ShioriModelOptions,
@@ -233,11 +234,16 @@ export function buildShioriWorkspaceRules(
       ? [
           [
             "## Computer Use",
-            "Computer Use means the ShioriCode desktop-control tools whose names end with computer_screenshot, computer_click, computer_move, computer_type, computer_key, and computer_scroll.",
+            "Computer Use means the ShioriCode desktop-control tools whose names end with computer_create_session, computer_close_session, computer_permissions, computer_request_permission, computer_open_permission_guide, computer_list_apps, computer_focus_app, computer_focus_window, computer_screenshot, computer_click, computer_double_click, computer_right_click, computer_move, computer_drag, computer_type, computer_key, computer_scroll, and computer_wait.",
             "When the user explicitly asks to use Computer Use, satisfy that request with those Computer Use tools.",
             "Do not substitute shell commands such as open, osascript, screencapture, xdotool, cliclick, or browser automation for an explicit Computer Use request.",
             "If the Computer Use tools are not exposed in the current tool surface, say Computer Use is unavailable or gated in this session instead of simulating it with shell commands.",
-            "Use computer_screenshot before claiming what is visible on the desktop or choosing screen coordinates.",
+            "Use computer_create_session before multi-step desktop workflows, then pass its sessionId to screenshots and actions so coordinate memory stays scoped. Use computer_close_session when the workflow is done.",
+            "Use computer_permissions when desktop control readiness is unclear.",
+            "Use computer_list_apps when app/window context is useful before choosing a target. Use computer_focus_app with a bundleIdentifier or processIdentifier from computer_list_apps when you need to bring a target app forward. Use computer_focus_window with a bundleIdentifier plus windowIndex or windowTitle when a specific window should be brought forward before screenshot, typing, or clicking.",
+            "computer_list_apps may be filtered by the user's local approved-app settings. Treat missing or filtered apps as an intentional privacy boundary, and do not use shell commands or other tools to discover or control unlisted desktop apps.",
+            "computer_screenshot may include the full visible desktop. Approved-app settings limit which apps you may focus or act on; they do not redact screenshots.",
+            "Use computer_screenshot before claiming what is visible on the desktop or choosing screen coordinates. computer_click, computer_double_click, computer_right_click, computer_move, computer_drag, and computer_scroll with x/y default to screenshot pixel coordinates. Use computer_wait after actions that may trigger UI transitions before inspecting the next state.",
             "Do not claim to have visually verified desktop state unless a Computer Use screenshot or another tool result provided that evidence.",
           ].join("\n"),
         ]
@@ -309,7 +315,7 @@ export const CONSERVATIVE_SHIORI_BOOTSTRAP: ShioriCodeBootstrapConfig = {
   },
 };
 
-export type ApprovalRequestKind = "command" | "file-read" | "file-change";
+export type ApprovalRequestKind = "command" | "file-read" | "file-change" | "computer-use";
 type HostedDescriptorRequestKind = ApprovalRequestKind | "mcp-side-effect";
 
 type HostedShioriMessage = UIMessage;
@@ -1009,6 +1015,7 @@ function hostedDescriptorRequestKindFromSchema(
     case "command":
     case "file-read":
     case "file-change":
+    case "computer-use":
       return requestKind;
     case "side-effect":
     case "mcp-side-effect":
@@ -1129,13 +1136,15 @@ function canUseHostedGoalTools(bootstrap: ShioriCodeBootstrapConfig | null | und
   return effectiveShioriBootstrap(bootstrap).goals.enabled;
 }
 
-function runtimePromptFeatureGates(
-  bootstrap: ShioriCodeBootstrapConfig | null | undefined,
-): Pick<ShioriRuntimePromptContext, "browserUseEnabled" | "computerUseEnabled"> {
-  const resolvedBootstrap = effectiveShioriBootstrap(bootstrap);
+export function runtimePromptFeatureGates(input: {
+  bootstrap: ShioriCodeBootstrapConfig | null | undefined;
+  settings: ServerSettings;
+}): Pick<ShioriRuntimePromptContext, "browserUseEnabled" | "computerUseEnabled"> {
+  const resolvedBootstrap = effectiveShioriBootstrap(input.bootstrap);
   return {
     browserUseEnabled: resolvedBootstrap.browserUse.enabled,
-    computerUseEnabled: resolvedBootstrap.computerUse.enabled,
+    computerUseEnabled:
+      input.settings.computerUse.enabled && input.settings.computerUse.shareWithProviders,
   };
 }
 
@@ -2075,7 +2084,8 @@ function decodeResumeCursor(value: unknown): DecodedShioriResumeState {
           const requestKind =
             record.requestKind === "command" ||
             record.requestKind === "file-read" ||
-            record.requestKind === "file-change"
+            record.requestKind === "file-change" ||
+            record.requestKind === "computer-use"
               ? record.requestKind
               : undefined;
           const approvalId =
@@ -3754,7 +3764,9 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
         const detail =
           input.requestKind === "command"
             ? String(input.toolInput.command ?? input.toolName)
-            : String(input.toolInput.path ?? input.toolName);
+            : input.requestKind === "computer-use"
+              ? String(input.toolInput.action ?? input.toolName)
+              : String(input.toolInput.path ?? input.toolName);
         yield* emit({
           ...runtimeEventBase({
             threadId: input.threadId,
@@ -3767,11 +3779,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             requestType:
               input.requestKind === "command"
                 ? "exec_command_approval"
-                : input.toolName === "apply_patch"
-                  ? "apply_patch_approval"
-                  : input.requestKind === "file-read"
-                    ? "file_read_approval"
-                    : "file_change_approval",
+                : input.requestKind === "computer-use"
+                  ? "computer_use_approval"
+                  : input.toolName === "apply_patch"
+                    ? "apply_patch_approval"
+                    : input.requestKind === "file-read"
+                      ? "file_read_approval"
+                      : "file_change_approval",
             detail,
             args: {
               toolName: input.toolName,
@@ -3803,11 +3817,13 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
             requestType:
               input.toolName === "exec_command"
                 ? "exec_command_approval"
-                : input.toolName === "apply_patch"
-                  ? "apply_patch_approval"
-                  : input.requestKind === "file-read"
-                    ? "file_read_approval"
-                    : "file_change_approval",
+                : input.requestKind === "computer-use"
+                  ? "computer_use_approval"
+                  : input.toolName === "apply_patch"
+                    ? "apply_patch_approval"
+                    : input.requestKind === "file-read"
+                      ? "file_read_approval"
+                      : "file_change_approval",
             decision: resolvedDecision,
           },
         } satisfies ProviderRuntimeEvent);
@@ -4297,7 +4313,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               personality: settings.assistantPersonality,
               generateMemories: settings.generateMemories,
               skillPrompt: sessionContext.activeTurn?.skillPrompt,
-              ...runtimePromptFeatureGates(hostedBootstrap),
+              ...runtimePromptFeatureGates({ bootstrap: hostedBootstrap, settings }),
             }),
           },
           tools: buildHostedToolDescriptors({
@@ -5472,7 +5488,7 @@ const makeShioriAdapter = (options?: ShioriAdapterLiveOptions) =>
               generateMemories: settings.generateMemories,
               interactionMode,
               skillPrompt: input.context.activeTurn?.skillPrompt,
-              ...runtimePromptFeatureGates(hostedBootstrap),
+              ...runtimePromptFeatureGates({ bootstrap: hostedBootstrap, settings }),
             }),
           },
           tools,

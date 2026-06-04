@@ -88,7 +88,7 @@ import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
-import { materializeMcpServersForRuntime } from "../mcpServers.ts";
+import { builtInShioriMcpServers, materializeMcpServersForRuntime } from "../mcpServers.ts";
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 import {
   ProviderAdapterProcessError,
@@ -751,7 +751,9 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
       ? "command_execution_approval"
       : requestKind === "file-change"
         ? "file_change_approval"
-        : "dynamic_tool_call";
+        : requestKind === "computer-use"
+          ? "computer_use_approval"
+          : "dynamic_tool_call";
 }
 
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
@@ -3455,7 +3457,14 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         requireMaterializedOauth: true,
       });
       mcpWarnings.push(...postvalidatedMcpServers.warnings);
-      const claudeMcpServers = buildClaudeMcpServers(postvalidatedMcpServers.servers);
+      const claudeMcpServers = buildClaudeMcpServers([
+        ...postvalidatedMcpServers.servers,
+        ...builtInShioriMcpServers({
+          provider: PROVIDER,
+          settings: serverSettings,
+          exposeComputerWhenApprovalRequired: true,
+        }),
+      ]);
       const assistantSettingsAppendix = buildAssistantSettingsAppendix({
         personality: serverSettings.assistantPersonality,
         generateMemories: serverSettings.generateMemories,

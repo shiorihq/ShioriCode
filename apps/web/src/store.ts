@@ -167,6 +167,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     pinnedAt: thread.pinnedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    goal: thread.goal ?? null,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     parentThreadId: thread.parentThreadId ?? null,
     branchSourceTurnId: thread.branchSourceTurnId ?? null,
@@ -205,6 +206,7 @@ function sidebarThreadSummariesEqual(
     left.pinnedAt === right.pinnedAt &&
     left.updatedAt === right.updatedAt &&
     left.latestTurn === right.latestTurn &&
+    left.goal === right.goal &&
     left.parentThreadId === right.parentThreadId &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
@@ -338,6 +340,7 @@ function preserveExistingThreadRuntimeState(existing: Thread, nextThread: Thread
     archivedAt: existing.archivedAt,
     updatedAt: existingUpdatedAt > nextUpdatedAt ? existingUpdatedAt : nextUpdatedAt,
     latestTurn: existing.latestTurn,
+    goal: existing.goal ?? null,
     pendingSourceProposedPlan: existing.pendingSourceProposedPlan,
     turnDiffSummaries: existing.turnDiffSummaries,
     activities: existing.activities,
@@ -938,6 +941,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         tag: event.payload.tag ?? null,
         resumeState: "resumed",
         latestTurn: null,
+        goal: null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
         pinnedAt: event.payload.pinnedAt ?? null,
@@ -1060,6 +1064,22 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       }));
     }
 
+    case "thread.goal-updated": {
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        goal: event.payload.goal,
+        updatedAt: event.payload.goal.updatedAt,
+      }));
+    }
+
+    case "thread.goal-cleared": {
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        goal: null,
+        updatedAt: event.payload.clearedAt,
+      }));
+    }
+
     case "thread.turn-start-requested": {
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
@@ -1069,6 +1089,13 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        updatedAt: event.occurredAt,
+      }));
+    }
+
+    case "thread.turn-steer-requested": {
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
         updatedAt: event.occurredAt,
       }));
     }

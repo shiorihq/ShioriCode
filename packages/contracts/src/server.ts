@@ -209,6 +209,14 @@ export const ServerUsageWindow = Schema.Struct({
 });
 export type ServerUsageWindow = typeof ServerUsageWindow.Type;
 
+export const ServerCodexIndividualLimit = Schema.Struct({
+  limit: Schema.NullOr(Schema.String),
+  used: Schema.NullOr(Schema.String),
+  remainingPercent: Schema.NullOr(Schema.Number),
+  resetsAt: Schema.NullOr(IsoDateTime),
+});
+export type ServerCodexIndividualLimit = typeof ServerCodexIndividualLimit.Type;
+
 export const ServerCodexUsageSnapshot = Schema.Struct({
   provider: Schema.Literal("codex"),
   source: Schema.Literal("app-server"),
@@ -216,6 +224,9 @@ export const ServerCodexUsageSnapshot = Schema.Struct({
   unavailableReason: Schema.NullOr(TrimmedNonEmptyString),
   primary: Schema.NullOr(ServerUsageWindow),
   secondary: Schema.NullOr(ServerUsageWindow),
+  planType: Schema.optional(Schema.NullOr(Schema.String)),
+  individualLimit: Schema.optional(Schema.NullOr(ServerCodexIndividualLimit)),
+  rateLimitReachedType: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ServerCodexUsageSnapshot = typeof ServerCodexUsageSnapshot.Type;
 

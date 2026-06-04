@@ -25,7 +25,6 @@ import type {
   DesktopUpdateCheckResult,
   DesktopUpdateState,
   ComputerUsePermissionActionResult,
-  ComputerUsePermissionKind,
   ComputerUsePermissionsSnapshot,
 } from "contracts";
 import { autoUpdater } from "electron-updater";
@@ -68,6 +67,14 @@ import {
   installBrowserPanelWebviewHandlers,
   registerBrowserPanelIpcHandlers,
 } from "./browserPanel";
+import { resolveComputerUseHelperPath } from "./computerUseHelperResolver";
+import {
+  computerUsePermissionFailureResult,
+  computerUsePermissionSubjectForHelperPath,
+  computerUseHelperError,
+  normalizeComputerUsePermissionActionInput,
+  parseComputerUseHelperOutput,
+} from "./computerUsePermissionBridge";
 
 syncShellEnvironment();
 
@@ -89,6 +96,7 @@ const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const COMPUTER_USE_GET_PERMISSIONS_CHANNEL = "desktop:computer-use-get-permissions";
+const COMPUTER_USE_REQUEST_PERMISSION_CHANNEL = "desktop:computer-use-request-permission";
 const COMPUTER_USE_PERMISSION_GUIDE_CHANNEL = "desktop:computer-use-permission-guide";
 const VIBRANT_WINDOW_BACKGROUND_COLOR = "#01000000";
 const OPAQUE_WINDOW_BACKGROUND_COLOR = "#FFFFFFFF";
@@ -118,7 +126,6 @@ const COMPANION_CLI_PACKAGE_NAME = "shiori-cli";
 const COMPANION_CLI_BINARY_NAME = "shiori";
 const TOGGLE_DEVTOOLS_ACCELERATOR =
   process.platform === "darwin" ? "Command+Option+I" : "Ctrl+Shift+I";
-const COMPUTER_USE_HELPER_BINARY_NAME = "ShioriComputerUseHelper";
 const COMPUTER_USE_HELPER_TIMEOUT_MS = 30_000;
 const COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES = 1024 * 1024;
 
@@ -622,10 +629,15 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.SHIORICODE_NO_BROWSER;
   delete env.SHIORICODE_HOST;
   delete env.SHIORICODE_DESKTOP_WS_URL;
-  const computerUseHelperPath = resolveComputerUseHelperPath();
+  const computerUseHelperPath = resolveComputerUseHelperPath(ROOT_DIR);
   if (computerUseHelperPath) {
     env.SHIORICODE_COMPUTER_USE_HELPER_BINARY = computerUseHelperPath;
   }
+  const hostAppBundlePath = resolveDarwinAppBundlePath();
+  if (hostAppBundlePath) {
+    env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH = hostAppBundlePath;
+  }
+  env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME = APP_DISPLAY_NAME;
   return env;
 }
 
@@ -1240,35 +1252,19 @@ function resolveResourcePath(fileName: string): string | null {
   return null;
 }
 
-function isAsarPath(filePath: string): boolean {
-  return filePath
-    .split(/[\\/]/)
-    .some((segment) => segment === "app.asar" || segment.endsWith(".asar"));
-}
-
-function resolveExecutableResourcePath(fileName: string): string | null {
-  const candidates = [
-    Path.join(process.resourcesPath, fileName),
-    Path.join(process.resourcesPath, "resources", fileName),
-    Path.join(__dirname, "../resources", fileName),
-    Path.join(__dirname, "../prod-resources", fileName),
-  ];
-
-  for (const candidate of candidates) {
-    if (!isAsarPath(candidate) && FS.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function unsupportedComputerUsePermissions(message: string): ComputerUsePermissionsSnapshot {
+function unsupportedComputerUsePermissions(
+  message: string,
+  helperPath: string | null = null,
+): ComputerUsePermissionsSnapshot {
+  const permissionSubject = helperPath
+    ? computerUsePermissionSubjectForHelperPath(helperPath)
+    : undefined;
   return {
     platform: process.platform,
     supported: false,
-    helperAvailable: false,
-    helperPath: null,
+    helperAvailable: helperPath !== null,
+    helperPath,
+    ...(permissionSubject ? { permissionSubject } : {}),
     checkedAt: new Date().toISOString(),
     message,
     permissions: [
@@ -1288,71 +1284,25 @@ function unsupportedComputerUsePermissions(message: string): ComputerUsePermissi
   };
 }
 
-function normalizeComputerUsePermissionKind(rawKind: unknown): ComputerUsePermissionKind {
-  return rawKind === "screen-recording" ? "screen-recording" : "accessibility";
-}
-
-function resolveComputerUseHelperPath(): string | null {
+function resolveDarwinAppBundlePath(): string | null {
   if (process.platform !== "darwin") {
     return null;
   }
-
-  const configured = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY?.trim();
-  const resourcePath = resolveExecutableResourcePath(
-    Path.join("native", "macos", COMPUTER_USE_HELPER_BINARY_NAME),
-  );
-  const candidates = [
-    configured,
-    Path.join(
-      ROOT_DIR,
-      "apps/desktop/native/ShioriComputerUse/.build/release",
-      COMPUTER_USE_HELPER_BINARY_NAME,
-    ),
-    Path.join(
-      ROOT_DIR,
-      "apps/desktop/native/ShioriComputerUse/.build/debug",
-      COMPUTER_USE_HELPER_BINARY_NAME,
-    ),
-    resourcePath,
-  ].flatMap((candidate) => (candidate ? [candidate] : []));
-
-  return candidates.find((candidate) => FS.existsSync(candidate)) ?? null;
+  const executablePath = process.execPath;
+  const appSegment = ".app/Contents/MacOS/";
+  const segmentIndex = executablePath.indexOf(appSegment);
+  if (segmentIndex >= 0) {
+    return executablePath.slice(0, segmentIndex + ".app".length);
+  }
+  return null;
 }
 
-function parseComputerUseHelperOutput<T>(stdout: string): T {
-  const text = stdout.trim();
-  if (!text) {
-    return {} as T;
-  }
-  return JSON.parse(text) as T;
-}
-
-function computerUseHelperError(result: {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly code: number | null;
-  readonly timedOut: boolean;
-}): Error {
-  const text = result.stdout.trim();
-  const errorText = result.stderr.trim();
-  try {
-    const parsed = JSON.parse(text || errorText) as { error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error.trim()) {
-      return new Error(parsed.error.trim());
-    }
-  } catch {
-    // Use raw output below.
-  }
-  if (result.timedOut) {
-    return new Error("Computer Use helper timed out.");
-  }
-  return new Error(
-    errorText || text || `Computer Use helper failed with code ${result.code ?? "null"}.`,
-  );
-}
-
-function runComputerUseHelper<T>(command: string, input: Record<string, unknown> = {}): Promise<T> {
-  const helperPath = resolveComputerUseHelperPath();
+function runComputerUseHelper<T>(
+  command: string,
+  input: Record<string, unknown> = {},
+  resolvedHelperPath?: string | null,
+): Promise<T> {
+  const helperPath = resolvedHelperPath ?? resolveComputerUseHelperPath(ROOT_DIR);
   if (!helperPath) {
     throw new Error("The macOS Computer Use helper is unavailable.");
   }
@@ -1429,13 +1379,22 @@ async function getComputerUsePermissions(): Promise<ComputerUsePermissionsSnapsh
   if (process.platform !== "darwin") {
     return unsupportedComputerUsePermissions("Computer Use is currently only supported on macOS.");
   }
+  const helperPath = resolveComputerUseHelperPath(ROOT_DIR);
+  if (!helperPath) {
+    return unsupportedComputerUsePermissions("The macOS Computer Use helper is unavailable.");
+  }
   try {
-    return await runComputerUseHelper<ComputerUsePermissionsSnapshot>("permissions");
+    return await runComputerUseHelper<ComputerUsePermissionsSnapshot>(
+      "permissions",
+      {},
+      helperPath,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      ...unsupportedComputerUsePermissions(message),
+      ...unsupportedComputerUsePermissions(message, helperPath),
       supported: true,
+      helperAvailable: true,
       message,
     };
   }
@@ -1916,18 +1875,49 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(COMPUTER_USE_GET_PERMISSIONS_CHANNEL);
   ipcMain.handle(COMPUTER_USE_GET_PERMISSIONS_CHANNEL, async () => getComputerUsePermissions());
 
-  ipcMain.removeHandler(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL);
-  ipcMain.handle(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, async (_event, rawKind: unknown) => {
-    const kind = normalizeComputerUsePermissionKind(rawKind);
+  ipcMain.removeHandler(COMPUTER_USE_REQUEST_PERMISSION_CHANNEL);
+  ipcMain.handle(COMPUTER_USE_REQUEST_PERMISSION_CHANNEL, async (_event, rawInput: unknown) => {
+    const input = normalizeComputerUsePermissionActionInput(rawInput);
+    const helperPath = resolveComputerUseHelperPath(ROOT_DIR);
     try {
+      return await runComputerUseHelper<ComputerUsePermissionActionResult>(
+        "request-permission",
+        input,
+        helperPath,
+      );
+    } catch (error) {
+      console.warn("[desktop] failed to request Computer Use permission", error);
+      return computerUsePermissionFailureResult({
+        kind: input.kind,
+        helperPath,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  ipcMain.removeHandler(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL);
+  ipcMain.handle(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, async (_event, rawInput: unknown) => {
+    const input = normalizeComputerUsePermissionActionInput(rawInput);
+    const helperPath = resolveComputerUseHelperPath(ROOT_DIR);
+    try {
+      const hostAppBundlePath = resolveDarwinAppBundlePath();
       const result = await runComputerUseHelper<ComputerUsePermissionActionResult>(
         "permission-guide",
-        { kind },
+        {
+          ...input,
+          hostAppDisplayName: input.hostAppDisplayName ?? APP_DISPLAY_NAME,
+          ...(hostAppBundlePath ? { hostAppBundlePath } : {}),
+        },
+        helperPath,
       );
-      return result.ok;
+      return result;
     } catch (error) {
       console.warn("[desktop] failed to open Computer Use permission guide", error);
-      return false;
+      return computerUsePermissionFailureResult({
+        kind: input.kind,
+        helperPath,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 

@@ -19,7 +19,9 @@ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsUsageRouteImport } from './routes/settings.usage'
 import { Route as SettingsThemeBuilderRouteImport } from './routes/settings.theme-builder'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
+import { Route as SettingsPluginsRouteImport } from './routes/settings.plugins'
 import { Route as SettingsMobileRouteImport } from './routes/settings.mobile'
+import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsFeedbackRouteImport } from './routes/settings.feedback'
 import { Route as SettingsCreditsRouteImport } from './routes/settings.credits'
@@ -78,9 +80,19 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsPluginsRoute = SettingsPluginsRouteImport.update({
+  id: '/plugins',
+  path: '/plugins',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsMobileRoute = SettingsMobileRouteImport.update({
   id: '/mobile',
   path: '/mobile',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsMcpRoute = SettingsMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -139,7 +151,9 @@ export interface FileRoutesByFullPath {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -158,7 +172,9 @@ export interface FileRoutesByTo {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -180,7 +196,9 @@ export interface FileRoutesById {
   '/settings/credits': typeof SettingsCreditsRoute
   '/settings/feedback': typeof SettingsFeedbackRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/settings/usage': typeof SettingsUsageRoute
@@ -203,7 +221,9 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mcp'
     | '/settings/mobile'
+    | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -222,7 +242,9 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mcp'
     | '/settings/mobile'
+    | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -243,7 +265,9 @@ export interface FileRouteTypes {
     | '/settings/credits'
     | '/settings/feedback'
     | '/settings/general'
+    | '/settings/mcp'
     | '/settings/mobile'
+    | '/settings/plugins'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/settings/usage'
@@ -331,11 +355,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/plugins': {
+      id: '/settings/plugins'
+      path: '/plugins'
+      fullPath: '/settings/plugins'
+      preLoaderRoute: typeof SettingsPluginsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/mobile': {
       id: '/settings/mobile'
       path: '/mobile'
       fullPath: '/settings/mobile'
       preLoaderRoute: typeof SettingsMobileRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/mcp': {
+      id: '/settings/mcp'
+      path: '/mcp'
+      fullPath: '/settings/mcp'
+      preLoaderRoute: typeof SettingsMcpRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
@@ -417,7 +455,9 @@ interface SettingsRouteChildren {
   SettingsCreditsRoute: typeof SettingsCreditsRoute
   SettingsFeedbackRoute: typeof SettingsFeedbackRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsMobileRoute: typeof SettingsMobileRoute
+  SettingsPluginsRoute: typeof SettingsPluginsRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsThemeBuilderRoute: typeof SettingsThemeBuilderRoute
   SettingsUsageRoute: typeof SettingsUsageRoute
@@ -431,7 +471,9 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCreditsRoute: SettingsCreditsRoute,
   SettingsFeedbackRoute: SettingsFeedbackRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsMcpRoute: SettingsMcpRoute,
   SettingsMobileRoute: SettingsMobileRoute,
+  SettingsPluginsRoute: SettingsPluginsRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsThemeBuilderRoute: SettingsThemeBuilderRoute,
   SettingsUsageRoute: SettingsUsageRoute,

@@ -1,6 +1,6 @@
 {
   "name": "shared",
-  "version": "0.0.0-alpha.1",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
   "exports": {
@@ -63,6 +63,10 @@
     "./hostedShioriFeatureFlags": {
       "types": "./src/hostedShioriFeatureFlags.ts",
       "import": "./src/hostedShioriFeatureFlags.ts"
+    },
+    "./computerUseHelper": {
+      "types": "./src/computerUseHelper.ts",
+      "import": "./src/computerUseHelper.ts"
     },
     "./fontFamily": {
       "types": "./src/fontFamily.ts",

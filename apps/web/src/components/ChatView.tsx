@@ -16,6 +16,7 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
+  type ThreadGoalStatus,
 } from "contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "shared/model";
 import { truncate } from "shared/String";
@@ -30,9 +31,11 @@ import { ASSISTANT_PERSONALITY_OPTIONS } from "../assistantPersonalityOptions";
 import { isElectron } from "../env";
 import {
   parseDiffRouteSearch,
+  resolveActiveThreadPanel,
   stripBrowserSearchParams,
   stripArtifactSearchParams,
   stripDiffSearchParams,
+  stripRightPanelSearchParam,
 } from "../diffRouteSearch";
 import {
   clampCollapsedComposerCursor,
@@ -94,7 +97,6 @@ import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useThreadActions } from "../hooks/useThreadActions";
-import { useMediaQuery } from "../hooks/useMediaQuery";
 import BranchToolbar from "./BranchToolbar";
 import { NoActiveThreadState } from "./chat/NoActiveThreadState";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -158,7 +160,6 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import type { ComposerVimMode } from "../composer-vim-logic";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import BrowserPanel from "./browser/BrowserPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { deriveBackgroundSubagentRows } from "./chat/subagentDetail";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -170,6 +171,7 @@ import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalAc
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerRuntimeModeButton } from "./chat/ComposerRuntimeModeButton";
 import { ComposerPlusMenu } from "./chat/ComposerPlusMenu";
+import { GoalModeMenu } from "./chat/GoalModeMenu";
 import { ComposerPlanModeSuggestion } from "./chat/ComposerPlanModeSuggestion";
 import { PlanModeIndicator } from "./chat/PlanModeIndicator";
 import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
@@ -219,7 +221,6 @@ import {
   selectQueuedTurnsForThread,
   useQueuedTurnsStore,
 } from "../queuedTurnsStore";
-import { Sheet, SheetPopup } from "./ui/sheet";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const BUFFERED_ASSISTANT_REVEAL_DURATION_MS = 420;
@@ -230,7 +231,6 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const BROWSER_PANEL_SHEET_MEDIA_QUERY = "(max-width: 1180px)";
 const COMPOSER_VIM_MODE_LABELS = {
   insert: "INSERT",
   normal: "NORMAL",
@@ -912,6 +912,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  // > 0 while an in-progress workgroup owns the smooth follow; the global
+  // stick-to-bottom stands down so its instant jump cannot mask the animation.
+  const workGroupAutoScrollSuppressRef = useRef(0);
   const lastKnownScrollTopRef = useRef(0);
   const isPointerScrollActiveRef = useRef(false);
   const lastTouchClientYRef = useRef<number | null>(null);
@@ -1053,9 +1056,11 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const { authToken: hostedShioriAuthToken, browserUseEnabled } = useHostedShioriState();
-  const diffOpen = scopedSearch.diff === "1";
-  const browserOpen = browserUseEnabled && scopedSearch.browser === "1";
-  const shouldUseBrowserSheet = useMediaQuery(BROWSER_PANEL_SHEET_MEDIA_QUERY);
+  const activeRightPanel = resolveActiveThreadPanel(scopedSearch, {
+    browserEnabled: browserUseEnabled,
+  });
+  const diffOpen = activeRightPanel === "diff";
+  const browserOpen = activeRightPanel === "browser";
   const activeThreadId = activeThread?.id ?? null;
   const { serverThreadIds, parentThread, childThreads } = useThreadRelations({
     isServerThread,
@@ -1634,6 +1639,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     activeLatestTurn,
     activeThread?.session ?? null,
   );
+  const activeTurnIdForComposerAction =
+    activeThread?.session?.activeTurnId ?? activeLatestTurn?.turnId ?? null;
+  const canSteerRunningTurn =
+    isTurnRunning &&
+    selectedProvider === "codex" &&
+    composerImages.length === 0 &&
+    activeTurnIdForComposerAction !== null;
   const isWorking = isTurnRunning || isSendBusy || isConnecting || isRevertingCheckpoint;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2392,8 +2404,11 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       params: { threadId },
       replace: true,
       search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+        if (diffOpen) {
+          const next = { ...stripDiffSearchParams(previous), diff: undefined };
+          return previous.panel === "diff" ? stripRightPanelSearchParam(next) : next;
+        }
+        return { ...previous, diff: "1", panel: "diff" };
       },
     });
   }, [diffOpen, isProjectThread, navigate, threadId]);
@@ -2402,7 +2417,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       to: "/$threadId",
       params: { threadId },
       replace: true,
-      search: (previous) => stripBrowserSearchParams(previous),
+      search: (previous) => {
+        const next = stripBrowserSearchParams(previous);
+        return previous.panel === "browser" ? stripRightPanelSearchParam(next) : next;
+      },
     });
   }, [navigate, threadId]);
   const openBrowser = useCallback(() => {
@@ -2415,7 +2433,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       to: "/$threadId",
       params: { threadId },
       replace: true,
-      search: (previous) => ({ ...stripBrowserSearchParams(previous), browser: "1" }),
+      search: (previous) => ({ ...previous, browser: "1", panel: "browser" }),
     });
   }, [browserUseEnabled, closeBrowser, navigate, threadId]);
   const onToggleBrowser = useCallback(() => {
@@ -2701,6 +2719,73 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const ensureThreadForGoalMode = useCallback(async (): Promise<boolean> => {
+    if (!activeThread) {
+      return false;
+    }
+    if (isServerThread) {
+      return true;
+    }
+    if (!isLocalDraftThread) {
+      return false;
+    }
+    return materializeLocalDraftThread({
+      title: activeThread.title,
+      modelSelection: draftThreadCreateModelSelection,
+      branch: activeThread.branch,
+      worktreePath: activeThread.worktreePath,
+    });
+  }, [
+    activeThread,
+    draftThreadCreateModelSelection,
+    isLocalDraftThread,
+    isServerThread,
+    materializeLocalDraftThread,
+  ]);
+  const handleGoalSet = useCallback(
+    async (patch: {
+      objective?: string;
+      status?: ThreadGoalStatus;
+      tokenBudget?: number | null;
+    }) => {
+      const api = readNativeApi();
+      if (!api || !(await ensureThreadForGoalMode())) {
+        toastManager.add({
+          type: "warning",
+          title: "Goal mode is unavailable",
+          description: "Start or reconnect this thread before setting a goal.",
+        });
+        return;
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.goal.set",
+        commandId: newCommandId(),
+        threadId,
+        ...(patch.objective !== undefined ? { objective: patch.objective } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.tokenBudget !== undefined ? { tokenBudget: patch.tokenBudget } : {}),
+        createdAt: new Date().toISOString(),
+      });
+    },
+    [ensureThreadForGoalMode, threadId],
+  );
+  const handleGoalClear = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !(await ensureThreadForGoalMode())) {
+      toastManager.add({
+        type: "warning",
+        title: "Goal mode is unavailable",
+        description: "Start or reconnect this thread before clearing a goal.",
+      });
+      return;
+    }
+    await api.orchestration.dispatchCommand({
+      type: "thread.goal.clear",
+      commandId: newCommandId(),
+      threadId,
+      createdAt: new Date().toISOString(),
+    });
+  }, [ensureThreadForGoalMode, threadId]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -3212,6 +3297,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
     if (isTurnRunning) {
+      // An in-progress workgroup owns the smooth follow while it streams.
+      if (workGroupAutoScrollSuppressRef.current > 0) return;
       scheduleStickToBottom();
       return;
     }
@@ -3226,7 +3313,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       if (!canScroll) {
         setScrollChromeState({ showScrollToBottom: false, isScrolledFromTop: false });
       }
-      if (shouldAutoScrollRef.current) {
+      if (shouldAutoScrollRef.current && workGroupAutoScrollSuppressRef.current === 0) {
         scheduleStickToBottomSettlement(1);
       }
     });
@@ -3969,6 +4056,72 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     }));
 
     if (isTurnRunning) {
+      const activeTurnIdForSteer = activeThread.session?.activeTurnId ?? activeLatestTurn?.turnId;
+      const canSteerThisRunningTurn =
+        selectedModelSelection.provider === "codex" &&
+        composerImagesSnapshot.length === 0 &&
+        activeTurnIdForSteer !== null &&
+        activeTurnIdForSteer !== undefined;
+      if (canSteerThisRunningTurn) {
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "omitted",
+          );
+          toastManager.add({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          });
+        }
+
+        flushSync(() => {
+          promptRef.current = "";
+          clearComposerDraftContent(threadIdForSend);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+          setThreadError(threadIdForSend, null);
+        });
+        autoScrollOnSend();
+
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.turn.steer",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            turnId: activeTurnIdForSteer,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+            },
+            createdAt: messageCreatedAt,
+          })
+          .catch((err: unknown) => {
+            if (
+              promptRef.current.length === 0 &&
+              composerImagesRef.current.length === 0 &&
+              composerTerminalContextsRef.current.length === 0
+            ) {
+              promptRef.current = promptForSend;
+              setPrompt(promptForSend);
+              setComposerCursor(
+                collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+              );
+              addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
+              setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+            }
+            setThreadError(
+              threadIdForSend,
+              err instanceof Error ? err.message : "Failed to steer the running turn.",
+            );
+          });
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        return;
+      }
+
       const queuedImageSnapshots = await queuedImageSnapshotPromise;
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -5243,8 +5396,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         search: (previous) => {
           const rest = stripDiffSearchParams(previous);
           return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
+            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath, panel: "diff" }
+            : { ...rest, diff: "1", diffTurnId: turnId, panel: "diff" };
         },
       });
     },
@@ -5260,9 +5413,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         to: "/$threadId",
         params: { threadId },
         search: (previous) => ({
-          ...stripDiffSearchParams(stripArtifactSearchParams(previous)),
+          ...stripArtifactSearchParams(previous),
           artifact: "1",
           artifactPath: filePath,
+          panel: "artifact",
         }),
       });
     },
@@ -5415,6 +5569,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   activeTurnId={activeTurnId}
                   revealingBufferedAssistantMessageIds={revealingBufferedAssistantMessageIds}
                   scrollContainer={messagesScrollElement}
+                  workGroupAutoScrollSuppressRef={workGroupAutoScrollSuppressRef}
                   timelineEntries={timelineEntries}
                   completionDividerBeforeEntryId={completionDividerBeforeEntryId}
                   completionSummary={completionSummary}
@@ -5686,7 +5841,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                     {activePendingApproval ? (
                       <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
                         <ComposerPendingApprovalActions
-                          requestId={activePendingApproval.requestId}
+                          approval={activePendingApproval}
                           isResponding={respondingRequestIds.includes(
                             activePendingApproval.requestId,
                           )}
@@ -5721,6 +5876,14 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             planModeActive={interactionMode === "plan"}
                             onTogglePlanMode={toggleInteractionMode}
                             onAddFiles={addComposerImages}
+                          />
+
+                          <GoalModeMenu
+                            threadId={threadId}
+                            goal={activeThread?.goal ?? null}
+                            disabled={!activeThread}
+                            onSetGoal={handleGoalSet}
+                            onClearGoal={handleGoalClear}
                           />
 
                           {settings.composerVimMode && composerVimMode ? (
@@ -5862,6 +6025,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               isConnecting={isConnecting}
                               isPreparingWorktree={isPreparingWorktree}
                               hasSendableContent={composerSendState.hasSendableContent}
+                              canSteerRunningTurn={canSteerRunningTurn}
                               onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                               onInterrupt={() => void onInterrupt()}
                               onImplementPlanInNewThread={() =>
@@ -5916,25 +6080,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         </div>
         {/* end chat column */}
 
-        {browserUseEnabled && !shouldUseBrowserSheet && browserOpen ? (
-          <div
-            className={cn(
-              "hidden min-h-0 shrink-0 border-l border-border bg-card text-foreground md:flex",
-              "w-[min(42vw,36rem)] min-w-[24rem] max-w-[44rem]",
-              "shadow-[-20px_0_40px_-36px_rgba(15,23,42,0.55)]",
-            )}
-          >
-            <BrowserPanel
-              threadId={activeThread.id}
-              active
-              cwd={gitCwd ?? activeProject?.cwd ?? null}
-              isAgentWorking={isWorking}
-              onClose={closeBrowser}
-              onStopAgent={() => void onInterrupt()}
-            />
-          </div>
-        ) : null}
-
         {/* Plan sidebar */}
         {planSidebarOpen ? (
           <PlanSidebar
@@ -5968,35 +6113,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}
-
-      {browserUseEnabled && shouldUseBrowserSheet ? (
-        <Sheet
-          open={browserOpen}
-          onOpenChange={(open) => {
-            if (!open && browserOpen) {
-              closeBrowser();
-            }
-          }}
-        >
-          <SheetPopup
-            side="right"
-            showCloseButton={false}
-            keepMounted
-            className="w-[min(92vw,920px)] max-w-[920px] p-0"
-          >
-            {browserOpen ? (
-              <BrowserPanel
-                threadId={activeThread.id}
-                active
-                cwd={gitCwd ?? activeProject?.cwd ?? null}
-                isAgentWorking={isWorking}
-                onClose={closeBrowser}
-                onStopAgent={() => void onInterrupt()}
-              />
-            ) : null}
-          </SheetPopup>
-        </Sheet>
-      ) : null}
 
       {expandedImage && expandedImageItem && (
         <div

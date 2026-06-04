@@ -567,6 +567,68 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.goal.set": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.objective === undefined && thread.goal === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Creating a thread goal requires an objective.",
+        });
+      }
+      const occurredAt = command.createdAt;
+      const goal = {
+        threadId: command.threadId,
+        objective: command.objective ?? thread.goal!.objective,
+        status: command.status ?? thread.goal?.status ?? ("active" as const),
+        tokenBudget:
+          command.tokenBudget !== undefined
+            ? command.tokenBudget
+            : (thread.goal?.tokenBudget ?? null),
+        tokensUsed: command.tokensUsed ?? thread.goal?.tokensUsed ?? 0,
+        timeUsedSeconds: command.timeUsedSeconds ?? thread.goal?.timeUsedSeconds ?? 0,
+        createdAt: command.goalCreatedAt ?? thread.goal?.createdAt ?? occurredAt,
+        updatedAt: command.goalUpdatedAt ?? occurredAt,
+      };
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: command.threadId,
+          goal,
+        },
+      };
+    }
+
+    case "thread.goal.clear": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: command.threadId,
+          clearedAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.turn.start": {
       const targetThread = yield* requireThread({
         readModel,
@@ -640,6 +702,60 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.steer": {
+      const targetThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const activeTurnId =
+        command.turnId ??
+        targetThread.session?.activeTurnId ??
+        (targetThread.latestTurn?.state === "running" ? targetThread.latestTurn.turnId : null);
+      if (!activeTurnId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Cannot steer thread '${command.threadId}' because it has no running turn.`,
+        });
+      }
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          turnId: activeTurnId,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnSteerRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-steer-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          turnId: activeTurnId,
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, turnSteerRequestedEvent];
     }
 
     case "thread.turn.interrupt": {

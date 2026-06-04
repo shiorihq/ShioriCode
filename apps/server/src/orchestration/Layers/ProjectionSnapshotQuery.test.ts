@@ -347,6 +347,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
         createdAt: "2026-02-24T00:00:02.000Z",
         updatedAt: "2026-02-24T00:00:03.000Z",
+        goal: null,
         archivedAt: null,
         deletedAt: null,
         messages: [

@@ -2,6 +2,7 @@ import type { ServerProviderModel } from "contracts";
 
 import type {
   CodexCreditsUsageSnapshot,
+  CodexIndividualLimitUsageSnapshot,
   CodexRateLimitUsageSnapshot,
   CodexUsageSnapshot,
   ProviderUsageWindowSnapshot,
@@ -12,14 +13,17 @@ export type CodexPlanType =
   | "go"
   | "plus"
   | "pro"
+  | "prolite"
   | "team"
+  | "self_serve_business_usage_based"
   | "business"
+  | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
   | "unknown";
 
 export interface CodexAccountSnapshot {
-  readonly type: "apiKey" | "chatgpt" | "unknown";
+  readonly type: "apiKey" | "chatgpt" | "amazonBedrock" | "unknown";
   readonly planType: CodexPlanType | null;
   readonly sparkEnabled: boolean;
 }
@@ -27,6 +31,20 @@ export interface CodexAccountSnapshot {
 export const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
+const CODEX_PLAN_TYPES = new Set<CodexPlanType>([
+  "free",
+  "go",
+  "plus",
+  "pro",
+  "prolite",
+  "team",
+  "self_serve_business_usage_based",
+  "business",
+  "enterprise_cbp_usage_based",
+  "enterprise",
+  "edu",
+  "unknown",
+]);
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
@@ -41,6 +59,14 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readCodexPlanType(value: unknown): CodexPlanType {
+  const planType = asString(value);
+  if (planType && CODEX_PLAN_TYPES.has(planType as CodexPlanType)) {
+    return planType as CodexPlanType;
+  }
+  return "unknown";
 }
 
 function normalizeCodexResetTimestamp(value: unknown): string | null {
@@ -77,6 +103,22 @@ function readCodexCreditsSnapshot(value: unknown): CodexCreditsUsageSnapshot | n
   };
 }
 
+function readCodexIndividualLimitSnapshot(
+  value: unknown,
+): CodexIndividualLimitUsageSnapshot | null {
+  const record = asObject(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    limit: asString(record.limit) ?? null,
+    used: asString(record.used) ?? null,
+    remainingPercent: asNumber(record.remainingPercent) ?? null,
+    resetsAt: normalizeCodexResetTimestamp(record.resetsAt),
+  };
+}
+
 function readCodexRateLimitSnapshot(value: unknown): CodexRateLimitUsageSnapshot | null {
   const record = asObject(value);
   if (!record) {
@@ -89,7 +131,9 @@ function readCodexRateLimitSnapshot(value: unknown): CodexRateLimitUsageSnapshot
     primary: readCodexUsageWindow(record.primary),
     secondary: readCodexUsageWindow(record.secondary),
     credits: readCodexCreditsSnapshot(record.credits),
+    individualLimit: readCodexIndividualLimitSnapshot(record.individualLimit),
     planType: asString(record.planType) ?? null,
+    rateLimitReachedType: asString(record.rateLimitReachedType) ?? null,
   };
 }
 
@@ -107,11 +151,19 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
   }
 
   if (accountType === "chatgpt") {
-    const planType = (account?.planType as CodexPlanType | null) ?? "unknown";
+    const planType = readCodexPlanType(account?.planType);
     return {
       type: "chatgpt",
       planType,
       sparkEnabled: CODEX_SPARK_ENABLED_PLAN_TYPES.has(planType),
+    };
+  }
+
+  if (accountType === "amazonBedrock") {
+    return {
+      type: "amazonBedrock",
+      planType: null,
+      sparkEnabled: false,
     };
   }
 
@@ -127,6 +179,10 @@ export function codexAuthSubType(account: CodexAccountSnapshot | undefined): str
     return "apiKey";
   }
 
+  if (account?.type === "amazonBedrock") {
+    return "amazonBedrock";
+  }
+
   if (account?.type !== "chatgpt") {
     return undefined;
   }
@@ -138,6 +194,8 @@ export function codexAuthSubLabel(account: CodexAccountSnapshot | undefined): st
   switch (codexAuthSubType(account)) {
     case "apiKey":
       return "OpenAI API Key";
+    case "amazonBedrock":
+      return "Amazon Bedrock";
     case "chatgpt":
       return "ChatGPT Subscription";
     case "free":
@@ -148,10 +206,16 @@ export function codexAuthSubLabel(account: CodexAccountSnapshot | undefined): st
       return "ChatGPT Plus Subscription";
     case "pro":
       return "ChatGPT Pro Subscription";
+    case "prolite":
+      return "ChatGPT Pro Lite Subscription";
     case "team":
       return "ChatGPT Team Subscription";
+    case "self_serve_business_usage_based":
+      return "ChatGPT Business Usage-Based Subscription";
     case "business":
       return "ChatGPT Business Subscription";
+    case "enterprise_cbp_usage_based":
+      return "ChatGPT Enterprise Usage-Based Subscription";
     case "enterprise":
       return "ChatGPT Enterprise Subscription";
     case "edu":

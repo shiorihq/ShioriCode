@@ -12,20 +12,28 @@ import {
 } from "./automation";
 import {
   ComputerUseActionResult,
+  ComputerUseAppStateResult,
   ComputerUseClickInput,
   ComputerUseCloseSessionInput,
   ComputerUseCreateSessionInput,
+  ComputerUseDoubleClickInput,
+  ComputerUseDragInput,
   ComputerUseError,
+  ComputerUseFocusAppInput,
+  ComputerUseFocusWindowInput,
   ComputerUseKeyInput,
+  ComputerUseListAppsInput,
   ComputerUseMoveInput,
   ComputerUsePermissionActionInput,
   ComputerUsePermissionActionResult,
   ComputerUsePermissionsSnapshot,
+  ComputerUseRightClickInput,
   ComputerUseScreenshotInput,
   ComputerUseScreenshotResult,
   ComputerUseScrollInput,
   ComputerUseSessionSnapshot,
   ComputerUseTypeInput,
+  ComputerUseWaitInput,
 } from "./computer";
 import { OpenError, OpenInEditorInput } from "./editor";
 import {
@@ -97,17 +105,17 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  HostedAuthError,
   HostedBillingCheckoutInput,
   HostedBillingCheckoutResult,
   HostedBillingError,
-  HostedAuthError,
   HostedBillingPortalInput,
   HostedBillingPortalResult,
+  HostedBillingSnapshot,
   HostedOAuthStartInput,
   HostedOAuthStartResult,
   HostedPasswordAuthInput,
   HostedPasswordAuthResult,
-  HostedBillingSnapshot,
   ServerLifecycleStreamEvent,
   ServerProviderUsageSnapshot,
   ServerProviderUpdatedPayload,
@@ -214,11 +222,18 @@ export const WS_METHODS = {
   computerCreateSession: "computer.createSession",
   computerCloseSession: "computer.closeSession",
   computerScreenshot: "computer.screenshot",
+  computerListApps: "computer.listApps",
+  computerFocusApp: "computer.focusApp",
+  computerFocusWindow: "computer.focusWindow",
   computerClick: "computer.click",
+  computerDoubleClick: "computer.doubleClick",
+  computerRightClick: "computer.rightClick",
   computerMove: "computer.move",
+  computerDrag: "computer.drag",
   computerType: "computer.type",
   computerKey: "computer.key",
   computerScroll: "computer.scroll",
+  computerWait: "computer.wait",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -642,14 +657,50 @@ export const WsComputerScreenshotRpc = Rpc.make(WS_METHODS.computerScreenshot, {
   error: ComputerUseError,
 });
 
+export const WsComputerListAppsRpc = Rpc.make(WS_METHODS.computerListApps, {
+  payload: ComputerUseListAppsInput,
+  success: ComputerUseAppStateResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerFocusAppRpc = Rpc.make(WS_METHODS.computerFocusApp, {
+  payload: ComputerUseFocusAppInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerFocusWindowRpc = Rpc.make(WS_METHODS.computerFocusWindow, {
+  payload: ComputerUseFocusWindowInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
 export const WsComputerClickRpc = Rpc.make(WS_METHODS.computerClick, {
   payload: ComputerUseClickInput,
   success: ComputerUseActionResult,
   error: ComputerUseError,
 });
 
+export const WsComputerDoubleClickRpc = Rpc.make(WS_METHODS.computerDoubleClick, {
+  payload: ComputerUseDoubleClickInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerRightClickRpc = Rpc.make(WS_METHODS.computerRightClick, {
+  payload: ComputerUseRightClickInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
 export const WsComputerMoveRpc = Rpc.make(WS_METHODS.computerMove, {
   payload: ComputerUseMoveInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerDragRpc = Rpc.make(WS_METHODS.computerDrag, {
+  payload: ComputerUseDragInput,
   success: ComputerUseActionResult,
   error: ComputerUseError,
 });
@@ -668,6 +719,12 @@ export const WsComputerKeyRpc = Rpc.make(WS_METHODS.computerKey, {
 
 export const WsComputerScrollRpc = Rpc.make(WS_METHODS.computerScroll, {
   payload: ComputerUseScrollInput,
+  success: ComputerUseActionResult,
+  error: ComputerUseError,
+});
+
+export const WsComputerWaitRpc = Rpc.make(WS_METHODS.computerWait, {
+  payload: ComputerUseWaitInput,
   success: ComputerUseActionResult,
   error: ComputerUseError,
 });
@@ -735,11 +792,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsComputerCreateSessionRpc,
   WsComputerCloseSessionRpc,
   WsComputerScreenshotRpc,
+  WsComputerListAppsRpc,
+  WsComputerFocusAppRpc,
+  WsComputerFocusWindowRpc,
   WsComputerClickRpc,
+  WsComputerDoubleClickRpc,
+  WsComputerRightClickRpc,
   WsComputerMoveRpc,
+  WsComputerDragRpc,
   WsComputerTypeRpc,
   WsComputerKeyRpc,
   WsComputerScrollRpc,
+  WsComputerWaitRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

@@ -11,6 +11,8 @@ import {
   resolveVisibleThreadPaneIds,
   stripBrowserSearchParams,
   stripArtifactSearchParams,
+  stripRightPanelSearchParam,
+  stripRightSidebarSearchParams,
 } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
@@ -54,9 +56,11 @@ describe("parseDiffRouteSearch", () => {
     expect(
       parseDiffRouteSearch({
         browser: true,
+        panel: "browser",
       }),
     ).toEqual({
       browser: "1",
+      panel: "browser",
     });
   });
 
@@ -65,10 +69,23 @@ describe("parseDiffRouteSearch", () => {
       parseDiffRouteSearch({
         artifact: true,
         artifactPath: "docs/plan.md",
+        panel: "artifact",
       }),
     ).toEqual({
       artifact: "1",
       artifactPath: "docs/plan.md",
+      panel: "artifact",
+    });
+  });
+
+  it("drops panel values without a matching open panel", () => {
+    expect(
+      parseDiffRouteSearch({
+        browser: true,
+        panel: "diff",
+      }),
+    ).toEqual({
+      browser: "1",
     });
   });
 
@@ -134,6 +151,13 @@ describe("stripArtifactSearchParams", () => {
         panes: "thread-a,thread-b",
       }),
     ).toEqual({
+      artifact: undefined,
+      artifactPath: undefined,
+      browser: undefined,
+      diff: undefined,
+      diffFilePath: undefined,
+      diffTurnId: undefined,
+      panel: undefined,
       panes: "thread-a,thread-b",
     });
   });
@@ -283,6 +307,40 @@ describe("stripBrowserSearchParams", () => {
     ).toEqual({
       diff: "1",
       diffTurnId: "turn-1",
+    });
+  });
+});
+
+describe("stripRightPanelSearchParam", () => {
+  it("removes only the active right panel selection", () => {
+    expect(
+      stripRightPanelSearchParam({
+        diff: "1",
+        browser: "1",
+        panel: "browser",
+      }),
+    ).toEqual({
+      diff: "1",
+      browser: "1",
+    });
+  });
+});
+
+describe("stripRightSidebarSearchParams", () => {
+  it("removes every right sidebar panel flag and preserves unrelated search", () => {
+    expect(
+      stripRightSidebarSearchParams({
+        diff: "1",
+        diffTurnId: "turn-1",
+        diffFilePath: "src/app.ts",
+        browser: "1",
+        artifact: "1",
+        artifactPath: "docs/plan.md",
+        panel: "browser",
+        panes: "thread-a,thread-b",
+      }),
+    ).toEqual({
+      panes: "thread-a,thread-b",
     });
   });
 });

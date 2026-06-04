@@ -1766,6 +1766,9 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Exploring 6 files");
     expect(markup).toContain("<ul");
+    // Every entry renders; nothing is collapsed behind a "Show" affordance.
+    expect(markup).not.toContain("entry hidden");
+    expect(markup).not.toContain("entries hidden");
     expect(markup).toContain("file-1.ts");
     expect(markup).toContain("file-5.ts");
     expect(markup).toContain("file-6.ts");
@@ -1777,7 +1780,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Show 1 more");
   });
 
-  it("renders only the recent slice of massive expanded work groups", async () => {
+  it("renders every entry of massive expanded work groups", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const timelineEntries = Array.from({ length: 100 }, (_, index) => {
       const commandNumber = String(index + 1).padStart(3, "0");
@@ -1826,14 +1829,15 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Running 100 commands");
-    expect(markup).toContain("20 older entries hidden");
-    expect(markup).toContain(">Show</button>");
-    expect(markup).not.toContain("command-001");
-    expect(markup).toContain("command-021");
+    // No item-count cap: every command renders, none collapse behind "Show".
+    expect(markup).not.toContain("entries hidden");
+    expect(markup).not.toContain(">Show</button>");
+    expect(markup).toContain("command-001");
+    expect(markup).toContain("command-050");
     expect(markup).toContain("command-100");
   });
 
-  it("renders completed groups in normal page flow until the item-count cap", async () => {
+  it("renders completed groups in normal page flow", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -2015,7 +2019,10 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Find message action row implementation (explore)");
+    // Nested subagent lists render every child; nothing collapses behind "Show".
+    expect(markup).not.toContain("entries hidden");
     expect(markup).toContain("apps/web/src/components/chat/file-1.tsx");
+    expect(markup).toContain("apps/web/src/components/chat/file-4.tsx");
     expect(markup).toContain("apps/web/src/components/chat/file-8.tsx");
     expect(markup).not.toContain("max-h-48");
     expect(markup).not.toContain("overflow-y-auto");

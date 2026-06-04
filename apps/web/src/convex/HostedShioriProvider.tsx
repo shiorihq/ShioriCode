@@ -178,13 +178,10 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       isAuthenticated &&
       ((mobileAppEnabledOverride === undefined && mobileAppEnabledFlag === undefined) ||
         (browserUseEnabledOverride === undefined && browserUseEnabledFlag === undefined) ||
-        (computerUseEnabledOverride === undefined && computerUseEnabledFlag === undefined) ||
         (goalsEnabledOverride === undefined && goalsEnabledFlag === undefined))
     ) {
       return;
     }
-
-    const computerUseAvailable = computerUseEnabled;
 
     void api.server.updateSettings({
       browserUse: {
@@ -196,21 +193,11 @@ export function HostedShioriProvider({ children }: { children: ReactNode }) {
       goals: {
         enabled: goalsEnabled,
       },
-      ...(computerUseAvailable
-        ? {}
-        : {
-            computerUse: {
-              enabled: false,
-            },
-          }),
     });
   }, [
     browserUseEnabled,
     browserUseEnabledFlag,
     browserUseEnabledOverride,
-    computerUseEnabled,
-    computerUseEnabledFlag,
-    computerUseEnabledOverride,
     goalsEnabled,
     isAuthenticated,
     goalsEnabledFlag,

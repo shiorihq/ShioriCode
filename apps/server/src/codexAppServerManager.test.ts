@@ -4,7 +4,13 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
-import { ApprovalRequestId, ProviderItemId, ThreadId, TurnId } from "contracts";
+import {
+  ApprovalRequestId,
+  ProviderItemId,
+  ThreadId,
+  TurnId,
+  type ProviderSession,
+} from "contracts";
 
 import {
   buildCodexAppServerArgs,
@@ -15,7 +21,14 @@ import {
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
+import {
+  codexAuthSubLabel,
+  codexAuthSubType,
+  readCodexUsageSnapshot,
+} from "./provider/codexAccount";
+import { readCodexModelListSnapshot } from "./provider/codexAppServer";
 import { classifyCodexStderrLine, isRecoverableThreadResumeError } from "./provider/codexStderr";
+import type { PendingApprovalRequest } from "./provider/codexRequestTracker";
 import { buildCodexCollaborationMode } from "./provider/policy/codexPromptPolicy";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -67,17 +80,19 @@ function createSendTurnHarness() {
 
 function createThreadControlHarness() {
   const manager = new CodexAppServerManager();
+  const session: ProviderSession = {
+    provider: "codex",
+    status: "ready",
+    threadId: asThreadId("thread_1"),
+    runtimeMode: "full-access",
+    model: "gpt-5.3-codex",
+    resumeCursor: { threadId: "thread_1" },
+    activeTurnId: undefined,
+    createdAt: "2026-02-10T00:00:00.000Z",
+    updatedAt: "2026-02-10T00:00:00.000Z",
+  };
   const context = {
-    session: {
-      provider: "codex",
-      status: "ready",
-      threadId: "thread_1",
-      runtimeMode: "full-access",
-      model: "gpt-5.3-codex",
-      resumeCursor: { threadId: "thread_1" },
-      createdAt: "2026-02-10T00:00:00.000Z",
-      updatedAt: "2026-02-10T00:00:00.000Z",
-    },
+    session,
     collabReceiverTurns: new Map(),
   };
 
@@ -98,7 +113,12 @@ function createThreadControlHarness() {
   return { manager, context, requireSession, sendRequest, updateSession };
 }
 
-function createPendingUserInputHarness() {
+function createPendingUserInputHarness(
+  requestMethod?:
+    | "item/tool/requestUserInput"
+    | "tool/requestUserInput"
+    | "mcpServer/elicitation/request",
+) {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
@@ -118,6 +138,7 @@ function createPendingUserInputHarness() {
           requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
           jsonRpcId: 42,
           threadId: asThreadId("thread_1"),
+          ...(requestMethod ? { requestMethod } : {}),
         },
       ],
     ]),
@@ -153,7 +174,7 @@ function createPendingApprovalHarness() {
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
-    pendingApprovals: new Map([
+    pendingApprovals: new Map<ApprovalRequestId, PendingApprovalRequest>([
       [
         ApprovalRequestId.makeUnsafe("req-approval-1"),
         {
@@ -162,8 +183,8 @@ function createPendingApprovalHarness() {
           method: "item/commandExecution/requestApproval",
           requestKind: "command",
           threadId: asThreadId("thread_1"),
-          turnId: "turn_1",
-          itemId: "item_1",
+          turnId: TurnId.makeUnsafe("turn_1"),
+          itemId: ProviderItemId.makeUnsafe("item_1"),
         },
       ],
     ]),
@@ -499,6 +520,83 @@ describe("pending request cleanup", () => {
     );
   });
 
+  it("clears pending approvals when Codex emits serverRequest/resolved", () => {
+    const { manager, context, emitEvent } = createProcessHarness();
+
+    (
+      manager as unknown as {
+        handleServerNotification: (context: unknown, notification: Record<string, unknown>) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "serverRequest/resolved",
+      params: {
+        threadId: "provider_thread_1",
+        requestId: 42,
+      },
+    });
+
+    expect(context.pendingApprovals.size).toBe(0);
+    expect(context.pendingUserInputs.size).toBe(1);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "serverRequest/resolved",
+        requestId: "req-approval-1",
+        requestKind: "command",
+        turnId: "turn_1",
+        itemId: "item_1",
+        payload: expect.objectContaining({
+          request: {
+            method: "item/commandExecution/requestApproval",
+            kind: "command",
+          },
+        }),
+      }),
+    );
+  });
+
+  it("clears pending user input when Codex emits serverRequest/resolved before an answer", () => {
+    const { manager, context, emitEvent } = createProcessHarness();
+
+    (
+      manager as unknown as {
+        handleServerNotification: (context: unknown, notification: Record<string, unknown>) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "serverRequest/resolved",
+      params: {
+        threadId: "provider_thread_1",
+        requestId: 43,
+      },
+    });
+
+    expect(context.pendingApprovals.size).toBe(1);
+    expect(context.pendingUserInputs.size).toBe(0);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "tool/requestUserInput/answered",
+        requestId: "req-user-input-1",
+        turnId: "turn_1",
+        payload: expect.objectContaining({
+          requestId: "req-user-input-1",
+          status: "cancelled",
+          answers: {},
+        }),
+      }),
+    );
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "serverRequest/resolved",
+        requestId: "req-user-input-1",
+        turnId: "turn_1",
+        payload: expect.objectContaining({
+          request: {
+            method: "tool/requestUserInput",
+          },
+        }),
+      }),
+    );
+  });
+
   it("clears pending start requests when stdin is no longer writable", async () => {
     const { manager, context } = createProcessHarness();
     context.pending.clear();
@@ -611,6 +709,44 @@ describe("readCodexAccountSnapshot", () => {
     });
   });
 
+  it("preserves amazon bedrock accounts from current Codex account responses", () => {
+    const account = readCodexAccountSnapshot({
+      type: "amazonBedrock",
+    });
+
+    expect(account).toEqual({
+      type: "amazonBedrock",
+      planType: null,
+      sparkEnabled: false,
+    });
+    expect(codexAuthSubType(account)).toBe("amazonBedrock");
+    expect(codexAuthSubLabel(account)).toBe("Amazon Bedrock");
+  });
+
+  it("preserves current Codex chatgpt plan types from account responses", () => {
+    const planTypeCases = [
+      ["prolite", "ChatGPT Pro Lite Subscription"],
+      ["self_serve_business_usage_based", "ChatGPT Business Usage-Based Subscription"],
+      ["enterprise_cbp_usage_based", "ChatGPT Enterprise Usage-Based Subscription"],
+    ] as const;
+
+    for (const [planType, label] of planTypeCases) {
+      const account = readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: `${planType}@example.com`,
+        planType,
+      });
+
+      expect(account).toEqual({
+        type: "chatgpt",
+        planType,
+        sparkEnabled: false,
+      });
+      expect(codexAuthSubType(account)).toBe(planType);
+      expect(codexAuthSubLabel(account)).toBe(label);
+    }
+  });
+
   it("disables spark for unknown chatgpt plans", () => {
     expect(
       readCodexAccountSnapshot({
@@ -622,6 +758,140 @@ describe("readCodexAccountSnapshot", () => {
       planType: "unknown",
       sparkEnabled: false,
     });
+  });
+
+  it("normalizes unexpected chatgpt plan types to unknown", () => {
+    const account = readCodexAccountSnapshot({
+      type: "chatgpt",
+      email: "future@example.com",
+      planType: "future_plan",
+    });
+
+    expect(account).toEqual({
+      type: "chatgpt",
+      planType: "unknown",
+      sparkEnabled: false,
+    });
+    expect(codexAuthSubType(account)).toBe("chatgpt");
+    expect(codexAuthSubLabel(account)).toBe("ChatGPT Subscription");
+  });
+});
+
+describe("readCodexModelListSnapshot", () => {
+  it("preserves current Codex service tiers from model/list responses", () => {
+    expect(
+      readCodexModelListSnapshot({
+        data: [
+          {
+            id: "gpt-5.5",
+            model: "gpt-5.5",
+            displayName: "GPT-5.5",
+            description: "Frontier model for complex coding.",
+            hidden: false,
+            supportedReasoningEfforts: [],
+            defaultReasoningEffort: "medium",
+            inputModalities: ["text", "image"],
+            additionalSpeedTiers: [],
+            serviceTiers: [
+              {
+                id: "fast",
+                name: "Fast",
+                description: "Lower-latency responses",
+              },
+            ],
+            defaultServiceTier: "fast",
+            supportsPersonality: true,
+            isDefault: true,
+          },
+        ],
+      })[0],
+    ).toEqual(
+      expect.objectContaining({
+        id: "gpt-5.5",
+        additionalSpeedTiers: [],
+        serviceTiers: [
+          {
+            id: "fast",
+            name: "Fast",
+            description: "Lower-latency responses",
+          },
+        ],
+        defaultServiceTier: "fast",
+        supportsPersonality: true,
+      }),
+    );
+  });
+});
+
+describe("readCodexUsageSnapshot", () => {
+  it("preserves current Codex rate-limit metadata from account/rateLimits/read", () => {
+    const usage = readCodexUsageSnapshot({
+      rateLimits: {
+        limitId: "codex-5h",
+        limitName: "Codex 5h",
+        primary: {
+          usedPercent: 99,
+          windowDurationMins: 300,
+          resetsAt: 1_776_800_000,
+        },
+        secondary: null,
+        credits: {
+          hasCredits: false,
+          unlimited: false,
+          balance: "0",
+        },
+        individualLimit: {
+          limit: "100",
+          used: "99",
+          remainingPercent: 1,
+          resetsAt: 1_776_803_600,
+        },
+        planType: "prolite",
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+      },
+      rateLimitsByLimitId: {
+        "codex-5h": {
+          limitId: "codex-5h",
+          limitName: "Codex 5h",
+          primary: null,
+          secondary: null,
+          credits: null,
+          individualLimit: {
+            limit: "100",
+            used: "99",
+            remainingPercent: 1,
+            resetsAt: 1_776_803_600,
+          },
+          planType: "prolite",
+          rateLimitReachedType: "workspace_member_usage_limit_reached",
+        },
+      },
+    });
+
+    expect(usage.rateLimits).toEqual(
+      expect.objectContaining({
+        individualLimit: {
+          limit: "100",
+          used: "99",
+          remainingPercent: 1,
+          resetsAt: "2026-04-21T20:33:20.000Z",
+        },
+        planType: "prolite",
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+      }),
+    );
+    expect(usage.rateLimitsByLimitId["codex-5h"]).toEqual(
+      expect.objectContaining({
+        individualLimit: {
+          limit: "100",
+          used: "99",
+          remainingPercent: 1,
+          resetsAt: "2026-04-21T20:33:20.000Z",
+        },
+        planType: "prolite",
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+      }),
+    );
   });
 });
 
@@ -675,6 +945,7 @@ describe("startSession", () => {
       },
       capabilities: {
         experimentalApi: true,
+        requestAttestation: false,
       },
     });
   });
@@ -804,6 +1075,9 @@ describe("startSession", () => {
         expect.objectContaining({
           model: "gpt-5.3-codex",
         }),
+      );
+      expect(calls.find((call) => call.method === "thread/start")?.params).not.toHaveProperty(
+        "experimentalRawEvents",
       );
       expect(calls.find((call) => call.method === "turn/start")?.params).toEqual(
         expect.objectContaining({
@@ -952,6 +1226,7 @@ describe("sendTurn", () => {
 
     const result = await manager.sendTurn({
       threadId: asThreadId("thread_1"),
+      messageId: "msg_1",
       input: "Inspect this image",
       attachments: [
         {
@@ -972,6 +1247,7 @@ describe("sendTurn", () => {
     expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
       threadId: "thread_1",
+      clientUserMessageId: "msg_1",
       input: [
         {
           type: "text",
@@ -1411,6 +1687,35 @@ describe("thread checkpoint control", () => {
       turns: [],
     });
   });
+
+  it("steers active turns using the Codex expected-turn precondition", async () => {
+    const { manager, context, sendRequest } = createThreadControlHarness();
+    context.session = {
+      ...context.session,
+      status: "running",
+      activeTurnId: TurnId.makeUnsafe("turn_1"),
+    };
+    sendRequest.mockResolvedValue({ turnId: "turn_1" });
+
+    await manager.steerTurn({
+      threadId: asThreadId("thread_1"),
+      messageId: "msg_steer_1",
+      input: "Please prioritize the failing typecheck first.",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/steer", {
+      threadId: "thread_1",
+      clientUserMessageId: "msg_steer_1",
+      input: [
+        {
+          type: "text",
+          text: "Please prioritize the failing typecheck first.",
+          text_elements: [],
+        },
+      ],
+      expectedTurnId: "turn_1",
+    });
+  });
 });
 
 describe("respondToRequest", () => {
@@ -1446,6 +1751,214 @@ describe("respondToRequest", () => {
         }),
       }),
     );
+  });
+
+  it("passes codex network policy amendment approval decisions through", async () => {
+    const { manager, context, writeMessage, emitEvent } = createPendingApprovalHarness();
+    const decision = {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: {
+          host: "example.com",
+          action: "allow",
+        },
+      },
+    } as const;
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-approval-1"),
+      decision,
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        decision,
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/requestApproval/decision",
+        payload: expect.objectContaining({
+          requestId: "req-approval-1",
+          requestKind: "command",
+          decision,
+        }),
+      }),
+    );
+  });
+
+  it("responds to legacy Codex approvals with a decision envelope", async () => {
+    const { manager, context, writeMessage } = createPendingApprovalHarness();
+    context.pendingApprovals.set(ApprovalRequestId.makeUnsafe("req-legacy-exec"), {
+      requestId: ApprovalRequestId.makeUnsafe("req-legacy-exec"),
+      jsonRpcId: 43,
+      method: "execCommandApproval",
+      requestKind: "command",
+      threadId: asThreadId("thread_1"),
+      turnId: TurnId.makeUnsafe("turn_1"),
+      itemId: ProviderItemId.makeUnsafe("item_1"),
+    });
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-legacy-exec"),
+      "acceptForSession",
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 43,
+      result: {
+        decision: "acceptForSession",
+      },
+    });
+  });
+
+  it("responds to current Codex permission approvals with granted permissions", async () => {
+    const { manager, context, writeMessage } = createPendingApprovalHarness();
+    context.pendingApprovals.set(ApprovalRequestId.makeUnsafe("req-permissions-1"), {
+      requestId: ApprovalRequestId.makeUnsafe("req-permissions-1"),
+      jsonRpcId: 43,
+      method: "item/permissions/requestApproval",
+      requestKind: "command",
+      threadId: asThreadId("thread_1"),
+      turnId: TurnId.makeUnsafe("turn_1"),
+      itemId: ProviderItemId.makeUnsafe("item_1"),
+      requestedPermissions: {
+        network: { enabled: true },
+        fileSystem: {
+          read: ["/repo/.git"],
+          write: ["/repo"],
+        },
+      },
+    });
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-permissions-1"),
+      "acceptForSession",
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 43,
+      result: {
+        permissions: {
+          network: { enabled: true },
+          fileSystem: {
+            read: ["/repo/.git"],
+            write: ["/repo"],
+          },
+        },
+        scope: "session",
+      },
+    });
+  });
+
+  it("treats Codex network policy amendments as accepted permission approvals", async () => {
+    const { manager, context, writeMessage } = createPendingApprovalHarness();
+    context.pendingApprovals.set(ApprovalRequestId.makeUnsafe("req-permissions-network"), {
+      requestId: ApprovalRequestId.makeUnsafe("req-permissions-network"),
+      jsonRpcId: 44,
+      method: "item/permissions/requestApproval",
+      requestKind: "command",
+      threadId: asThreadId("thread_1"),
+      turnId: TurnId.makeUnsafe("turn_1"),
+      itemId: ProviderItemId.makeUnsafe("item_1"),
+      requestedPermissions: {
+        network: { enabled: true },
+      },
+    });
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-permissions-network"),
+      {
+        applyNetworkPolicyAmendment: {
+          network_policy_amendment: {
+            host: "example.com",
+            action: "allow",
+          },
+        },
+      },
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 44,
+      result: {
+        permissions: {
+          network: { enabled: true },
+        },
+        scope: "turn",
+      },
+    });
+  });
+
+  it("responds to legacy Codex permission approvals with permission grants", async () => {
+    const { manager, context, writeMessage } = createPendingApprovalHarness();
+    context.pendingApprovals.set(ApprovalRequestId.makeUnsafe("req-permissions-legacy"), {
+      requestId: ApprovalRequestId.makeUnsafe("req-permissions-legacy"),
+      jsonRpcId: 45,
+      method: "permissions/requestApproval",
+      requestKind: "command",
+      threadId: asThreadId("thread_1"),
+      turnId: TurnId.makeUnsafe("turn_1"),
+      itemId: ProviderItemId.makeUnsafe("item_1"),
+      requestedPermissions: {
+        network: { enabled: true },
+        fileSystem: {
+          write: ["/repo"],
+        },
+      },
+    });
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-permissions-legacy"),
+      "acceptForSession",
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 45,
+      result: {
+        permissions: {
+          network: { enabled: true },
+          fileSystem: {
+            write: ["/repo"],
+          },
+        },
+        scope: "session",
+      },
+    });
+  });
+
+  it("declines current Codex permission approvals with an empty permission grant", async () => {
+    const { manager, context, writeMessage } = createPendingApprovalHarness();
+    context.pendingApprovals.set(ApprovalRequestId.makeUnsafe("req-permissions-1"), {
+      requestId: ApprovalRequestId.makeUnsafe("req-permissions-1"),
+      jsonRpcId: 43,
+      method: "item/permissions/requestApproval",
+      requestKind: "command",
+      threadId: asThreadId("thread_1"),
+      turnId: TurnId.makeUnsafe("turn_1"),
+      itemId: ProviderItemId.makeUnsafe("item_1"),
+      requestedPermissions: {
+        network: { enabled: true },
+      },
+    });
+
+    await manager.respondToRequest(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-permissions-1"),
+      "decline",
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 43,
+      result: {
+        permissions: {},
+        scope: "turn",
+      },
+    });
   });
 });
 
@@ -1585,41 +2098,9 @@ describe("respondToUserInput", () => {
   });
 
   it("answers mcp elicitation requests with MCP accept content", async () => {
-    const manager = new CodexAppServerManager();
-    const context = {
-      session: {
-        provider: "codex",
-        status: "ready",
-        threadId: "thread_1",
-        runtimeMode: "full-access",
-        model: "gpt-5.3-codex",
-        resumeCursor: { threadId: "thread_1" },
-        createdAt: "2026-02-10T00:00:00.000Z",
-        updatedAt: "2026-02-10T00:00:00.000Z",
-      },
-      pendingUserInputs: new Map([
-        [
-          ApprovalRequestId.makeUnsafe("req-user-input-1"),
-          {
-            requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
-            jsonRpcId: 42,
-            threadId: asThreadId("thread_1"),
-            requestMethod: "mcpServer/elicitation/request",
-          },
-        ],
-      ]),
-      collabReceiverTurns: new Map(),
-    };
-    vi.spyOn(
-      manager as unknown as { requireSession: (sessionId: string) => unknown },
-      "requireSession",
-    ).mockReturnValue(context);
-    const writeMessage = vi
-      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
-      .mockImplementation(() => {});
-    const emitEvent = vi
-      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
-      .mockImplementation(() => {});
+    const { manager, context, writeMessage, emitEvent } = createPendingUserInputHarness(
+      "mcpServer/elicitation/request",
+    );
 
     await manager.respondToUserInput(
       asThreadId("thread_1"),
@@ -1643,8 +2124,78 @@ describe("respondToUserInput", () => {
         method: "item/tool/requestUserInput/answered",
         payload: {
           requestId: "req-user-input-1",
+          action: "accept",
           answers: {
             project: "server",
+          },
+        },
+      }),
+    );
+  });
+
+  it("answers mcp elicitation requests with explicit MCP decline actions", async () => {
+    const { manager, context, writeMessage, emitEvent } = createPendingUserInputHarness(
+      "mcpServer/elicitation/request",
+    );
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        __codexElicitationAction: "decline",
+        project: "server",
+      },
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        action: "decline",
+        content: null,
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          action: "decline",
+          answers: {
+            project: "server",
+          },
+        },
+      }),
+    );
+  });
+
+  it("maps simple mcp elicitation cancel responses to MCP cancel actions", async () => {
+    const { manager, context, writeMessage, emitEvent } = createPendingUserInputHarness(
+      "mcpServer/elicitation/request",
+    );
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        response: "Cancel",
+      },
+    );
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        action: "cancel",
+        content: null,
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          action: "cancel",
+          answers: {
+            response: "Cancel",
           },
         },
       }),
@@ -1818,7 +2369,7 @@ describe("respondToUserInput", () => {
     expect(writeMessage).not.toHaveBeenCalled();
   });
 
-  it("tracks permissions/requestApproval as a command approval", () => {
+  it("tracks current Codex item/permissions/requestApproval as a command approval", () => {
     const manager = new CodexAppServerManager();
     const context = {
       session: {
@@ -1842,21 +2393,29 @@ describe("respondToUserInput", () => {
     ).handleServerRequest(context, {
       jsonrpc: "2.0",
       id: 42,
-      method: "permissions/requestApproval",
+      method: "item/permissions/requestApproval",
       params: {
         reason: "Need to run a command",
+        permissions: {
+          network: { enabled: true },
+          fileSystem: null,
+        },
       },
     });
 
     expect(Array.from(context.pendingApprovals.values())[0]).toEqual(
       expect.objectContaining({
-        method: "permissions/requestApproval",
+        method: "item/permissions/requestApproval",
         requestKind: "command",
+        requestedPermissions: {
+          network: { enabled: true },
+          fileSystem: null,
+        },
       }),
     );
   });
 
-  it("returns explicit unsupported responses for app-server tool calls", () => {
+  it("tracks legacy Codex approval requests without rejecting them", () => {
     const manager = new CodexAppServerManager();
     const context = {
       session: {
@@ -1875,6 +2434,94 @@ describe("respondToUserInput", () => {
     const writeMessage = vi
       .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
       .mockImplementation(() => {});
+    const emitEvent = vi
+      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+      .mockImplementation(() => {});
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "execCommandApproval",
+      params: {
+        conversationId: "provider_thread_1",
+        callId: "call_exec_1",
+        approvalId: null,
+        command: ["bun", "lint"],
+        cwd: "/repo",
+        reason: "Need to run lint",
+        parsedCmd: [],
+      },
+    });
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 43,
+      method: "applyPatchApproval",
+      params: {
+        conversationId: "provider_thread_1",
+        callId: "call_patch_1",
+        fileChanges: {},
+        reason: "Need to edit files",
+        grantRoot: null,
+      },
+    });
+
+    expect(Array.from(context.pendingApprovals.values())).toEqual([
+      expect.objectContaining({
+        jsonRpcId: 42,
+        method: "execCommandApproval",
+        requestKind: "command",
+      }),
+      expect.objectContaining({
+        jsonRpcId: 43,
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+      }),
+    ]);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "execCommandApproval",
+        requestKind: "command",
+      }),
+    );
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+      }),
+    );
+    expect(writeMessage).not.toHaveBeenCalled();
+  });
+
+  it("returns documented failed content responses for unsupported dynamic tool calls", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+    };
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+    const emitEvent = vi
+      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+      .mockImplementation(() => {});
 
     (
       manager as unknown as {
@@ -1885,17 +2532,38 @@ describe("respondToUserInput", () => {
       id: 42,
       method: "item/tool/call",
       params: {
-        name: "unknown",
+        callId: "call_dynamic_1",
+        tool: "lookup_ticket",
+        arguments: { id: "ABC-123" },
       },
     });
 
     expect(writeMessage).toHaveBeenCalledWith(context, {
       id: 42,
-      error: {
-        code: -32601,
-        message: "Unsupported server request: item/tool/call",
+      result: {
+        contentItems: [
+          {
+            type: "inputText",
+            text: "Dynamic tool 'lookup_ticket' is not registered in ShioriCode.",
+          },
+        ],
+        success: false,
       },
     });
+    expect(emitEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "notification",
+        method: "serverRequest/resolved",
+        payload: expect.objectContaining({
+          status: "unsupported",
+          request: {
+            method: "item/tool/call",
+            tool: "lookup_ticket",
+            callId: "call_dynamic_1",
+          },
+        }),
+      }),
+    );
   });
 
   it("returns explicit unsupported responses for ChatGPT auth refresh requests", () => {
@@ -1936,6 +2604,61 @@ describe("respondToUserInput", () => {
         message: "Unsupported server request: account/chatgptAuthTokens/refresh",
       },
     });
+  });
+
+  it("returns explicit unsupported responses for unexpected attestation requests", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+    };
+    const writeMessage = vi
+      .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+      .mockImplementation(() => {});
+    const emitEvent = vi
+      .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+      .mockImplementation(() => {});
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "attestation/generate",
+      params: {},
+    });
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      error: {
+        code: -32601,
+        message: "Unsupported server request: attestation/generate",
+      },
+    });
+    expect(emitEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "notification",
+        method: "serverRequest/resolved",
+        payload: expect.objectContaining({
+          status: "unsupported",
+          request: {
+            method: "attestation/generate",
+          },
+        }),
+      }),
+    );
   });
 });
 
@@ -2031,6 +2754,159 @@ describe("collab child conversation routing", () => {
         turn: { id: "turn_child_1", status: "completed" },
       },
     });
+
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it("suppresses child thread metadata and realtime notifications", () => {
+    const { manager, context, emitEvent, updateSession } = createCollabNotificationHarness();
+
+    (
+      manager as unknown as {
+        handleServerNotification: (context: unknown, notification: Record<string, unknown>) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "call_collab_1",
+          receiverThreadIds: ["child_provider_1"],
+        },
+        threadId: "provider_parent",
+        turnId: "turn_parent",
+      },
+    });
+    emitEvent.mockClear();
+    updateSession.mockClear();
+
+    const childNotifications = [
+      {
+        method: "thread/settings/updated",
+        params: {
+          threadId: "child_provider_1",
+          threadSettings: { model: "gpt-5.3-codex" },
+        },
+      },
+      {
+        method: "thread/goal/updated",
+        params: {
+          threadId: "child_provider_1",
+          goal: {
+            threadId: "child_provider_1",
+            objective: "child work",
+            status: "active",
+          },
+        },
+      },
+      {
+        method: "thread/goal/cleared",
+        params: {
+          threadId: "child_provider_1",
+        },
+      },
+      {
+        method: "thread/realtime/started",
+        params: {
+          threadId: "child_provider_1",
+          realtimeSessionId: "rt_child_1",
+        },
+      },
+      {
+        method: "thread/realtime/transcript/delta",
+        params: {
+          threadId: "child_provider_1",
+          role: "assistant",
+          delta: "hello",
+        },
+      },
+    ] as const;
+
+    for (const notification of childNotifications) {
+      (
+        manager as unknown as {
+          handleServerNotification: (
+            context: unknown,
+            notification: Record<string, unknown>,
+          ) => void;
+        }
+      ).handleServerNotification(context, notification);
+    }
+
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it("suppresses child turn state and raw response notifications", () => {
+    const { manager, context, emitEvent, updateSession } = createCollabNotificationHarness();
+
+    (
+      manager as unknown as {
+        handleServerNotification: (context: unknown, notification: Record<string, unknown>) => void;
+      }
+    ).handleServerNotification(context, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "call_collab_1",
+          receiverThreadIds: ["child_provider_1"],
+        },
+        threadId: "provider_parent",
+        turnId: "turn_parent",
+      },
+    });
+    emitEvent.mockClear();
+    updateSession.mockClear();
+
+    const childNotifications = [
+      {
+        method: "turn/diff/updated",
+        params: {
+          threadId: "child_provider_1",
+          turnId: "turn_child_1",
+          diff: "diff --git a/child.txt b/child.txt",
+        },
+      },
+      {
+        method: "model/rerouted",
+        params: {
+          threadId: "child_provider_1",
+          turnId: "turn_child_1",
+          fromModel: "gpt-5.3-codex",
+          toModel: "gpt-5.3-codex-spark",
+          reason: "child model routing",
+        },
+      },
+      {
+        method: "model/verification",
+        params: {
+          threadId: "child_provider_1",
+          turnId: "turn_child_1",
+          verifications: ["trustedAccessForCyber"],
+        },
+      },
+      {
+        method: "rawResponseItem/added",
+        params: {
+          threadId: "child_provider_1",
+          turnId: "turn_child_1",
+          item: { id: "raw_child_1", type: "reasoning" },
+        },
+      },
+    ] as const;
+
+    for (const notification of childNotifications) {
+      (
+        manager as unknown as {
+          handleServerNotification: (
+            context: unknown,
+            notification: Record<string, unknown>,
+          ) => void;
+        }
+      ).handleServerNotification(context, notification);
+    }
 
     expect(emitEvent).not.toHaveBeenCalled();
     expect(updateSession).not.toHaveBeenCalled();

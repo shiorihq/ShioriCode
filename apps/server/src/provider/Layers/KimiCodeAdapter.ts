@@ -23,10 +23,12 @@ import {
 } from "@moonshot-ai/kimi-agent-sdk";
 import {
   EventId,
+  type CanonicalRequestType,
   ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderApprovalDecision,
   type ProviderTurnStartResult,
   RuntimeItemId,
   RuntimeRequestId,
@@ -59,8 +61,11 @@ import {
 import {
   buildProviderMcpToolRuntime,
   loadEffectiveMcpServersForProvider,
+  type ProviderMcpDescriptor,
+  type ProviderMcpToolExecutor,
   type ProviderMcpToolRuntime,
 } from "../mcpServers.ts";
+import { normalizeProviderApprovalDecision } from "../providerApprovalDecision.ts";
 import { buildShioriSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
 import type { ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { KimiCodeAdapter, type KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
@@ -126,13 +131,26 @@ type KimiTodoBlock = {
   readonly items: ReadonlyArray<KimiTodoItem>;
 };
 
-type PendingApproval = {
+type NativePendingApproval = {
+  readonly source: "kimi";
   readonly requestId: string;
   readonly requestType: Extract<
     ProviderRuntimeEvent,
     { type: "request.opened" }
   >["payload"]["requestType"];
 };
+
+type LocalPendingApproval = {
+  readonly source: "shioricode";
+  readonly requestId: string;
+  readonly requestType: Extract<
+    ProviderRuntimeEvent,
+    { type: "request.opened" }
+  >["payload"]["requestType"];
+  readonly resolve: (decision: ProviderApprovalDecision) => void;
+};
+
+type PendingApproval = NativePendingApproval | LocalPendingApproval;
 
 type PendingQuestion = {
   readonly requestId: string;
@@ -195,6 +213,7 @@ type KimiSessionContext = {
   stopped: boolean;
   interrupting: boolean;
   pendingApprovals: Map<string, PendingApproval>;
+  approvedShioriRequestTypes: Set<CanonicalRequestType>;
   pendingQuestions: Map<string, PendingQuestion>;
   activeTurn: ActiveTurnState | null;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
@@ -451,6 +470,27 @@ function normalizeExternalToolResult(result: unknown): string {
     return result;
   }
   return JSON.stringify(result, null, 2);
+}
+
+export function kimiMcpToolNeedsShioriApproval(descriptor: ProviderMcpDescriptor): boolean {
+  return descriptor.inputSchema["x-shioricode-needs-approval"] === true;
+}
+
+export function shouldRequestKimiShioriApproval(input: {
+  readonly requestType: CanonicalRequestType;
+  readonly approvedRequestTypes: ReadonlySet<CanonicalRequestType>;
+}): boolean {
+  return !input.approvedRequestTypes.has(input.requestType);
+}
+
+export function rememberKimiShioriApprovalDecision(input: {
+  readonly requestType: CanonicalRequestType;
+  readonly approvedRequestTypes: Set<CanonicalRequestType>;
+  readonly decision: ProviderApprovalDecision;
+}): void {
+  if (normalizeProviderApprovalDecision(input.decision) === "acceptForSession") {
+    input.approvedRequestTypes.add(input.requestType);
+  }
 }
 
 function formatKimiToolTimeoutMessage(toolName: string, timeoutMs: number): string {
@@ -798,7 +838,7 @@ export function shouldOmitKimiCompletedToolData(input: {
   return normalized === "read" || normalized === "read file" || normalized === "view";
 }
 
-function mapRequestKindToCanonical(
+export function mapKimiRequestKindToCanonical(
   kind: ReturnType<typeof classifyProviderToolRequestKind>,
 ): Extract<ProviderRuntimeEvent, { type: "request.opened" }>["payload"]["requestType"] {
   switch (kind) {
@@ -808,6 +848,8 @@ function mapRequestKindToCanonical(
       return "file_read_approval";
     case "file-change":
       return "file_change_approval";
+    case "computer-use":
+      return "computer_use_approval";
     default:
       return "unknown";
   }
@@ -1017,6 +1059,124 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     yield* setSessions(next);
   });
 
+  const requestShioriApprovalForKimiMcpTool = Effect.fn("requestShioriApprovalForKimiMcpTool")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly toolName: string;
+      readonly toolInput: Record<string, unknown>;
+      readonly timeoutMs: number;
+    }) {
+      const context = yield* requireSession(input.threadId);
+      const turn = context.activeTurn;
+      const requestType = mapKimiRequestKindToCanonical(
+        classifyProviderToolRequestKind(input.toolName),
+      );
+      if (
+        !shouldRequestKimiShioriApproval({
+          requestType,
+          approvedRequestTypes: context.approvedShioriRequestTypes,
+        })
+      ) {
+        return "acceptForSession" as ProviderApprovalDecision;
+      }
+
+      const requestId = `kimi-local:${randomUUID()}`;
+      if (!turn || context.stopped || context.interrupting) {
+        return "decline" as ProviderApprovalDecision;
+      }
+
+      let resolveDecision: ((decision: ProviderApprovalDecision) => void) | null = null;
+      const decisionPromise = new Promise<ProviderApprovalDecision>((resolve) => {
+        resolveDecision = resolve;
+      });
+      if (!resolveDecision) {
+        return "decline" as ProviderApprovalDecision;
+      }
+      context.pendingApprovals.set(requestId, {
+        source: "shioricode",
+        requestId,
+        requestType,
+        resolve: resolveDecision,
+      });
+
+      yield* publish({
+        type: "request.opened",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        createdAt: nowIso(),
+        turnId: turn.turnId,
+        requestId: RuntimeRequestId.makeUnsafe(requestId),
+        payload: {
+          requestType,
+          detail: summarizeProviderToolInvocation(input.toolName, input.toolInput),
+          args: {
+            toolName: input.toolName,
+            input: input.toolInput,
+          },
+        },
+        providerRefs: {
+          providerRequestId: requestId,
+        },
+        raw: rawEvent("kimi.local_mcp_approval", {
+          toolName: input.toolName,
+          input: input.toolInput,
+        }),
+      });
+
+      const timeoutMs = Math.max(1, input.timeoutMs);
+      const decision = yield* Effect.promise(
+        () =>
+          new Promise<ProviderApprovalDecision>((resolve) => {
+            const timer = setTimeout(() => {
+              resolve("decline");
+            }, timeoutMs);
+            decisionPromise.then(
+              (value) => {
+                clearTimeout(timer);
+                resolve(value);
+              },
+              () => {
+                clearTimeout(timer);
+                resolve("decline");
+              },
+            );
+          }),
+      );
+      context.pendingApprovals.delete(requestId);
+      const resolvedDecision = normalizeProviderApprovalDecision(decision) ?? "decline";
+      rememberKimiShioriApprovalDecision({
+        requestType,
+        approvedRequestTypes: context.approvedShioriRequestTypes,
+        decision,
+      });
+
+      yield* publish({
+        type: "request.resolved",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        createdAt: nowIso(),
+        turnId: turn.turnId,
+        requestId: RuntimeRequestId.makeUnsafe(requestId),
+        payload: {
+          requestType,
+          decision: resolvedDecision,
+          ...(typeof decision === "string" ? {} : { resolution: decision }),
+        },
+        providerRefs: {
+          providerRequestId: requestId,
+        },
+        raw: rawEvent("kimi.local_mcp_approval.decision", {
+          toolName: input.toolName,
+          decision,
+        }),
+      });
+
+      return resolvedDecision;
+    },
+  );
+
   const closeSessionResources = Effect.fn("closeSessionResources")(function* (
     context: KimiSessionContext,
   ) {
@@ -1111,6 +1271,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           provider: PROVIDER,
           settings,
           cwd: input.cwd,
+          exposeComputerWhenApprovalRequired: true,
         }),
       catch: (cause) =>
         new ProviderAdapterProcessError({
@@ -1183,6 +1344,35 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         }),
     });
 
+    const executeMcpTool = async (input: {
+      readonly threadId: ThreadId;
+      readonly descriptor: ProviderMcpDescriptor;
+      readonly executor: ProviderMcpToolExecutor;
+      readonly params: Record<string, unknown>;
+      readonly timeoutMs: number;
+    }): Promise<unknown> => {
+      if (!kimiMcpToolNeedsShioriApproval(input.descriptor)) {
+        return await input.executor.execute(input.params);
+      }
+
+      const decision = await Effect.runPromise(
+        requestShioriApprovalForKimiMcpTool({
+          threadId: input.threadId,
+          toolName: input.descriptor.name,
+          toolInput: input.params,
+          timeoutMs: Math.max(1, input.timeoutMs - 1_000),
+        }),
+      );
+      if (decision !== "accept" && decision !== "acceptForSession") {
+        return {
+          ok: false,
+          message: "Computer Use tool execution was declined by the user.",
+        };
+      }
+
+      return await input.executor.execute(input.params);
+    };
+
     const externalTools: ExternalTool[] = [
       ...mergedMcpRuntime.descriptors.map((descriptor) => ({
         name: descriptor.name,
@@ -1200,7 +1390,14 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             toolName: descriptor.name,
             timeoutMs: resolveKimiExternalToolTimeoutMsFromEnv(),
             execute: async () => {
-              const result = await executor.execute(params);
+              const timeoutMs = resolveKimiExternalToolTimeoutMsFromEnv();
+              const result = await executeMcpTool({
+                threadId: input.threadId,
+                descriptor,
+                executor,
+                params,
+                timeoutMs,
+              });
               return {
                 output: normalizeExternalToolResult(result),
                 message: executor.title,
@@ -1977,10 +2174,11 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     readonly turn: ActiveTurnState;
     readonly payload: ApprovalRequestPayload;
   }) {
-    const requestType = mapRequestKindToCanonical(
+    const requestType = mapKimiRequestKindToCanonical(
       classifyProviderToolRequestKind(input.payload.sender),
     );
     input.context.pendingApprovals.set(input.payload.id, {
+      source: "kimi",
       requestId: input.payload.id,
       requestType,
     });
@@ -2651,6 +2849,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         stopped: false,
         interrupting: false,
         pendingApprovals: new Map(),
+        approvedShioriRequestTypes: new Set(),
         pendingQuestions: new Map(),
         activeTurn: null,
         turns: hydratedSnapshot.turns.map((turn) => ({
@@ -2905,12 +3104,19 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
   ) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
-      if (!context.pendingApprovals.has(requestId)) {
+      const pending = context.pendingApprovals.get(requestId);
+      if (!pending) {
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "request/respond",
           detail: `Unknown Kimi Code approval request '${requestId}'.`,
         });
+      }
+
+      if (pending.source === "shioricode") {
+        context.pendingApprovals.delete(requestId);
+        pending.resolve(decision);
+        return;
       }
 
       const approvalResponse =

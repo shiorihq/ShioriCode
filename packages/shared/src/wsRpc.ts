@@ -411,11 +411,23 @@ export function createWsRpcClient(options: {
           .then(() => undefined),
       screenshot: (input) =>
         transport.request((client) => client[WS_METHODS.computerScreenshot](input)),
+      listApps: (input) =>
+        transport.request((client) => client[WS_METHODS.computerListApps](input)),
+      focusApp: (input) =>
+        transport.request((client) => client[WS_METHODS.computerFocusApp](input)),
+      focusWindow: (input) =>
+        transport.request((client) => client[WS_METHODS.computerFocusWindow](input)),
       click: (input) => transport.request((client) => client[WS_METHODS.computerClick](input)),
+      doubleClick: (input) =>
+        transport.request((client) => client[WS_METHODS.computerDoubleClick](input)),
+      rightClick: (input) =>
+        transport.request((client) => client[WS_METHODS.computerRightClick](input)),
       move: (input) => transport.request((client) => client[WS_METHODS.computerMove](input)),
+      drag: (input) => transport.request((client) => client[WS_METHODS.computerDrag](input)),
       type: (input) => transport.request((client) => client[WS_METHODS.computerType](input)),
       key: (input) => transport.request((client) => client[WS_METHODS.computerKey](input)),
       scroll: (input) => transport.request((client) => client[WS_METHODS.computerScroll](input)),
+      wait: (input) => transport.request((client) => client[WS_METHODS.computerWait](input)),
     },
   };
 }

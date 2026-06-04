@@ -28,6 +28,7 @@ interface ComposerPrimaryActionsProps {
   isConnecting: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  canSteerRunningTurn: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -59,10 +60,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isConnecting,
   isPreparingWorktree,
   hasSendableContent,
+  canSteerRunningTurn,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
+  const runningSubmitLabel = canSteerRunningTurn
+    ? isSendBusy
+      ? "Steering..."
+      : "Steer"
+    : isSendBusy
+      ? "Queueing..."
+      : "Queue";
+
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
@@ -123,7 +133,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             className={cn("rounded-full", compact ? "px-3" : "px-4")}
             disabled={isSendBusy || isConnecting}
           >
-            {isSendBusy ? "Queueing..." : "Queue"}
+            {runningSubmitLabel}
           </Button>
         ) : null}
         {awaitingSendAck ? (

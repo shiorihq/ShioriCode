@@ -96,6 +96,7 @@ describe("orchestration projector", () => {
         tag: null,
         resumeState: "resumed",
         latestTurn: null,
+        goal: null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,

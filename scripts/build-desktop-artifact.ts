@@ -65,6 +65,9 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
 };
 
 const MAC_ICON_PAD_SIZE = 1300;
+const MAC_COMPUTER_USE_HELPER_RELATIVE_PATH = "native/macos/ShioriComputerUseHelper";
+const MAC_COMPUTER_USE_HELPER_DISPLAY_NAME = "ShioriCode Computer Use Helper";
+const MAC_COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER = "com.shioritools.shioricode.computer-use-helper";
 
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
@@ -293,6 +296,85 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Comm
     });
   }
 });
+
+function parseJsonObjectFromProcessOutput(output: string): unknown {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      return null;
+    }
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+}
+
+function getRecordField(record: unknown, key: string): unknown {
+  return record && typeof record === "object"
+    ? (record as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function validateMacComputerUseHelperBinary(helperPath: string) {
+  return Effect.gen(function* () {
+    const result = spawnSync(helperPath, ["permissions"], {
+      encoding: "utf8",
+      input: "{}",
+      maxBuffer: 1024 * 1024,
+    });
+
+    if (result.error) {
+      return yield* new BuildScriptError({
+        message: `Computer Use helper at ${helperPath} could not be executed.`,
+        cause: result.error,
+      });
+    }
+
+    if (result.status !== 0) {
+      return yield* new BuildScriptError({
+        message: `Computer Use helper at ${helperPath} failed packaging validation with exit code ${result.status ?? "null"}.`,
+      });
+    }
+
+    const parsed = yield* Effect.try({
+      try: () => parseJsonObjectFromProcessOutput(result.stdout),
+      catch: (cause) =>
+        new BuildScriptError({
+          message: `Computer Use helper at ${helperPath} did not print valid JSON during packaging validation.`,
+          cause,
+        }),
+    });
+    const permissionSubject = getRecordField(parsed, "permissionSubject");
+    const displayName = getRecordField(permissionSubject, "displayName");
+
+    if (displayName !== MAC_COMPUTER_USE_HELPER_DISPLAY_NAME) {
+      return yield* new BuildScriptError({
+        message: `Computer Use helper at ${helperPath} is missing its embedded Info.plist display name.`,
+      });
+    }
+
+    const plist = spawnSync("plutil", ["-p", helperPath], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    if (
+      plist.status !== 0 ||
+      !plist.stdout.includes(
+        `"CFBundleIdentifier" => "${MAC_COMPUTER_USE_HELPER_BUNDLE_IDENTIFIER}"`,
+      )
+    ) {
+      return yield* new BuildScriptError({
+        message: `Computer Use helper at ${helperPath} is missing its embedded Info.plist bundle identifier.`,
+      });
+    }
+  });
+}
 
 function generateMacIconSet(
   sourcePng: string,
@@ -667,7 +749,10 @@ const stageMacComputerUseHelper = Effect.fn("stageMacComputerUseHelper")(functio
     );
   }
 
-  const stagedHelperPath = path.join(input.stageResourcesDir, "native/macos", helperName);
+  const stagedHelperPath = path.join(
+    input.stageResourcesDir,
+    MAC_COMPUTER_USE_HELPER_RELATIVE_PATH,
+  );
   const helperCandidates = [
     path.join(helperPackageDir, ".build/release", helperName),
     ...(input.skipBuild ? [path.join(helperPackageDir, ".build/debug", helperName)] : []),
@@ -700,7 +785,33 @@ const stageMacComputerUseHelper = Effect.fn("stageMacComputerUseHelper")(functio
       ...commandOutputOptions(input.verbose),
     })`chmod 755 ${stagedHelperPath}`,
   );
+  yield* validateMacComputerUseHelperBinary(stagedHelperPath);
 });
+
+const validateMacComputerUseHelperPackaging = Effect.fn("validateMacComputerUseHelperPackaging")(
+  function* (input: {
+    readonly platform: typeof BuildPlatform.Type;
+    readonly stageAppDir: string;
+  }) {
+    if (input.platform !== "mac") {
+      return;
+    }
+
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stagedPackagedHelperPath = path.join(
+      input.stageAppDir,
+      "apps/desktop/prod-resources",
+      MAC_COMPUTER_USE_HELPER_RELATIVE_PATH,
+    );
+    if (!(yield* fs.exists(stagedPackagedHelperPath))) {
+      return yield* new BuildScriptError({
+        message: `Computer Use helper was not staged for packaging at ${stagedPackagedHelperPath}.`,
+      });
+    }
+    yield* validateMacComputerUseHelperBinary(stagedPackagedHelperPath);
+  },
+);
 
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
@@ -815,6 +926,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
+  yield* validateMacComputerUseHelperPackaging({
+    platform: options.platform,
+    stageAppDir,
+  });
 
   const stagePackageJson: StagePackageJson = {
     name: "shioricode",

@@ -19,6 +19,7 @@ const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const COMPUTER_USE_GET_PERMISSIONS_CHANNEL = "desktop:computer-use-get-permissions";
+const COMPUTER_USE_REQUEST_PERMISSION_CHANNEL = "desktop:computer-use-request-permission";
 const COMPUTER_USE_PERMISSION_GUIDE_CHANNEL = "desktop:computer-use-permission-guide";
 const BROWSER_CAPTURE_VISIBLE_PAGE_CHANNEL = "desktop:browser-capture-visible-page";
 
@@ -56,8 +57,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     captureVisiblePage: (input) => ipcRenderer.invoke(BROWSER_CAPTURE_VISIBLE_PAGE_CHANNEL, input),
   },
   getComputerUsePermissions: () => ipcRenderer.invoke(COMPUTER_USE_GET_PERMISSIONS_CHANNEL),
-  showComputerUsePermissionGuide: (kind) =>
-    ipcRenderer.invoke(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, kind),
+  requestComputerUsePermission: (input) =>
+    ipcRenderer.invoke(COMPUTER_USE_REQUEST_PERMISSION_CHANNEL, input),
+  showComputerUsePermissionGuide: (input) =>
+    ipcRenderer.invoke(COMPUTER_USE_PERMISSION_GUIDE_CHANNEL, input),
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

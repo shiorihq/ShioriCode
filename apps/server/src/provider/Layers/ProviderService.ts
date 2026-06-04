@@ -19,9 +19,11 @@ import {
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
+  ProviderSteerTurnInput,
   ProviderStopSessionInput,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ThreadGoal,
 } from "contracts";
 import {
   Effect,
@@ -138,6 +140,71 @@ function readPersistedModelSelection(
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
   return Schema.is(ModelSelection)(raw) ? raw : undefined;
+}
+
+function formatGoalStatus(status: ThreadGoal["status"]): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "paused":
+      return "paused";
+    case "blocked":
+      return "blocked";
+    case "usageLimited":
+      return "usage limited";
+    case "budgetLimited":
+      return "budget limited";
+    case "complete":
+      return "complete";
+  }
+}
+
+function formatGoalElapsed(seconds: number): string | null {
+  if (seconds <= 0) {
+    return null;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${Math.max(1, minutes)}m`;
+}
+
+function buildGoalModePrefix(goal: ThreadGoal): string {
+  const budget =
+    goal.tokenBudget !== null
+      ? `Token usage: ${goal.tokensUsed}/${goal.tokenBudget}`
+      : goal.tokensUsed > 0
+        ? `Token usage: ${goal.tokensUsed}`
+        : null;
+  const elapsed = formatGoalElapsed(goal.timeUsedSeconds);
+  const usage = [budget, elapsed ? `Elapsed: ${elapsed}` : null].filter(Boolean).join("; ");
+
+  return [
+    "Goal mode is active for this thread.",
+    `Objective: ${goal.objective}`,
+    `Status: ${formatGoalStatus(goal.status)}`,
+    usage.length > 0 ? usage : null,
+    "Work toward the objective across turns. If the goal is complete, say so explicitly. If blocked, describe the blocker and the smallest useful next step.",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+function applyGoalModeInputContext<T extends ProviderSendTurnInput>(input: T): T {
+  if (!input.goal) {
+    return input;
+  }
+  const prefix = buildGoalModePrefix(input.goal);
+  const userInput = input.input?.trim();
+  return {
+    ...input,
+    input: userInput ? `${prefix}\n\nUser request:\n${userInput}` : prefix,
+  };
 }
 
 function shouldReusePersistedResumeCursor(input: {
@@ -658,10 +725,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       payload: rawInput,
     });
 
-    const input = {
+    const input = applyGoalModeInputContext({
       ...parsed,
       attachments: parsed.attachments ?? [],
-    };
+    });
     if (!input.input && input.attachments.length === 0) {
       return yield* toValidationError(
         "ProviderService.sendTurn",
@@ -694,6 +761,49 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       hasInput: typeof input.input === "string" && input.input.trim().length > 0,
     });
     return turn;
+  });
+
+  const steerTurn: ProviderServiceShape["steerTurn"] = Effect.fn("steerTurn")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.steerTurn",
+      schema: ProviderSteerTurnInput,
+      payload: rawInput,
+    });
+
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.steerTurn",
+      allowRecovery: false,
+    });
+    if (!routed.isActive) {
+      return yield* toValidationError(
+        "ProviderService.steerTurn",
+        `Cannot steer thread '${input.threadId}' because no active provider session is running.`,
+      );
+    }
+    if (!routed.adapter.steerTurn) {
+      return yield* toValidationError(
+        "ProviderService.steerTurn",
+        `Provider '${routed.adapter.provider}' does not support live turn steering.`,
+      );
+    }
+
+    yield* routed.adapter.steerTurn(input);
+    yield* directory.upsert({
+      threadId: input.threadId,
+      provider: routed.adapter.provider,
+      status: "running",
+      runtimePayload: {
+        ...(input.turnId !== undefined ? { activeTurnId: input.turnId } : {}),
+        lastRuntimeEvent: "provider.steerTurn",
+        lastRuntimeEventAt: new Date().toISOString(),
+      },
+    });
+    yield* analytics.record("provider.turn.steered", {
+      provider: routed.adapter.provider,
+      hasTurnId: input.turnId !== undefined,
+      inputLength: input.input.length,
+    });
   });
 
   const interruptTurn: ProviderServiceShape["interruptTurn"] = Effect.fn("interruptTurn")(
@@ -1044,6 +1154,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

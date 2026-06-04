@@ -35,6 +35,13 @@ export interface CodexAppServerModelSnapshot {
   readonly defaultReasoningEffort: string | null;
   readonly inputModalities: ReadonlyArray<string>;
   readonly additionalSpeedTiers: ReadonlyArray<string>;
+  readonly serviceTiers: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string | null;
+    readonly description: string | null;
+  }>;
+  readonly defaultServiceTier: string | null;
+  readonly supportsPersonality: boolean | null;
   readonly isDefault: boolean;
 }
 
@@ -124,6 +131,23 @@ function readStringArray(value: unknown): ReadonlyArray<string> {
   return (asArray(value) ?? []).filter((item): item is string => typeof item === "string");
 }
 
+function readCodexModelServiceTiers(value: unknown): CodexAppServerModelSnapshot["serviceTiers"] {
+  return (asArray(value) ?? []).flatMap((entry) => {
+    const tier = asObject(entry);
+    const id = asString(tier?.id);
+    if (!id) {
+      return [];
+    }
+    return [
+      {
+        id,
+        name: asString(tier?.name),
+        description: asString(tier?.description),
+      },
+    ];
+  });
+}
+
 export function readCodexModelListSnapshot(
   response: unknown,
 ): ReadonlyArray<CodexAppServerModelSnapshot> {
@@ -163,6 +187,9 @@ export function readCodexModelListSnapshot(
         defaultReasoningEffort: asString(model.defaultReasoningEffort),
         inputModalities: readStringArray(model.inputModalities),
         additionalSpeedTiers: readStringArray(model.additionalSpeedTiers),
+        serviceTiers: readCodexModelServiceTiers(model.serviceTiers),
+        defaultServiceTier: asString(model.defaultServiceTier),
+        supportsPersonality: asBoolean(model.supportsPersonality) ?? null,
         isDefault: asBoolean(model.isDefault) ?? false,
       },
     ];
@@ -178,6 +205,7 @@ export function buildCodexInitializeParams() {
     },
     capabilities: {
       experimentalApi: true,
+      requestAttestation: false,
     },
   } as const;
 }

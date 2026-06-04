@@ -6,6 +6,7 @@
  *
  * @module CodexAdapterLive
  */
+import { Buffer } from "node:buffer";
 import path from "node:path";
 
 import {
@@ -13,6 +14,8 @@ import {
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
+  type ThreadGoal,
+  type ThreadGoalStatus,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -171,8 +174,36 @@ function asArray(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
+function asNonEmptyStringArray(value: unknown): string[] {
+  return (
+    asArray(value)
+      ?.flatMap((entry) => {
+        const text = asString(entry)?.trim();
+        return text ? [text] : [];
+      })
+      .filter((entry, index, entries) => entries.indexOf(entry) === index) ?? []
+  );
+}
+
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asNonNegativeInteger(value: unknown): number | undefined {
+  const number = asNumber(value);
+  return number !== undefined && Number.isInteger(number) && number >= 0 ? number : undefined;
+}
+
+function decodeBase64Text(value: unknown): string | undefined {
+  const encoded = asString(value);
+  if (!encoded || encoded.length === 0) {
+    return undefined;
+  }
+  try {
+    return Buffer.from(encoded, "base64").toString("utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -224,6 +255,82 @@ function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | un
   };
 }
 
+function normalizeCodexGoalTimestamp(value: unknown): string | undefined {
+  const text = asString(value)?.trim();
+  if (text) {
+    const timestamp = Date.parse(text);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+  }
+
+  const number = asNumber(value);
+  if (number === undefined || number < 0) {
+    return undefined;
+  }
+
+  const milliseconds = number > 10_000_000_000 ? number : number * 1000;
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function toThreadGoalStatus(value: unknown): ThreadGoalStatus | undefined {
+  switch (value) {
+    case "active":
+    case "paused":
+    case "blocked":
+    case "usageLimited":
+    case "budgetLimited":
+    case "complete":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeCodexThreadGoal(
+  value: unknown,
+  fallbackThreadId: ThreadId,
+): ThreadGoal | undefined {
+  const goal = asObject(value);
+  if (!goal) {
+    return undefined;
+  }
+
+  const objective = asString(goal.objective)?.trim();
+  const status = toThreadGoalStatus(goal.status);
+  const tokensUsed = asNonNegativeInteger(goal.tokensUsed ?? goal.tokens_used);
+  const timeUsedSeconds = asNonNegativeInteger(goal.timeUsedSeconds ?? goal.time_used_seconds);
+  const createdAt = normalizeCodexGoalTimestamp(goal.createdAt ?? goal.created_at);
+  const updatedAt = normalizeCodexGoalTimestamp(goal.updatedAt ?? goal.updated_at);
+
+  if (
+    !objective ||
+    !status ||
+    tokensUsed === undefined ||
+    timeUsedSeconds === undefined ||
+    !createdAt ||
+    !updatedAt
+  ) {
+    return undefined;
+  }
+
+  const tokenBudgetValue = goal.tokenBudget ?? goal.token_budget;
+  const tokenBudget =
+    tokenBudgetValue === null ? null : (asNonNegativeInteger(tokenBudgetValue) ?? null);
+
+  return {
+    threadId: ThreadId.makeUnsafe(
+      asString(goal.threadId ?? goal.thread_id) ?? String(fallbackThreadId),
+    ),
+    objective,
+    status,
+    tokenBudget,
+    tokensUsed,
+    timeUsedSeconds,
+    createdAt,
+    updatedAt,
+  };
+}
+
 function toTurnId(value: string | undefined): TurnId | undefined {
   return value?.trim() ? TurnId.makeUnsafe(value) : undefined;
 }
@@ -269,8 +376,8 @@ function toCanonicalItemType(raw: unknown): CanonicalItemType {
   if (type.includes("collab")) return "collab_agent_tool_call";
   if (type.includes("web search")) return "web_search";
   if (type.includes("image")) return "image_view";
-  if (type.includes("review entered")) return "review_entered";
-  if (type.includes("review exited")) return "review_exited";
+  if (type.includes("entered review") || type.includes("review entered")) return "review_entered";
+  if (type.includes("exited review") || type.includes("review exited")) return "review_exited";
   if (type.includes("compact")) return "context_compaction";
   if (type.includes("error")) return "error";
   return "unknown";
@@ -300,6 +407,10 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
       return "Web search";
     case "image_view":
       return "Image view";
+    case "review_entered":
+      return "Review started";
+    case "review_exited":
+      return "Review completed";
     case "error":
       return "Error";
     default:
@@ -399,6 +510,7 @@ function itemDetail(
     asString(item.title),
     asString(item.summary),
     asString(item.text),
+    asString(item.review),
     asString(item.path),
     asString(item.prompt),
     asString(nestedResult?.command),
@@ -413,6 +525,29 @@ function itemDetail(
     return trimmed;
   }
   return undefined;
+}
+
+function fileChangePatchDetail(payload: Record<string, unknown>): string | undefined {
+  const item = asObject(payload.item);
+  const source = item ?? payload;
+  const changes = asArray(source.changes) ?? asArray(payload.changes);
+  const paths =
+    changes
+      ?.flatMap((entry) => {
+        const change = asObject(entry);
+        const path = asString(change?.path)?.trim();
+        return path ? [path] : [];
+      })
+      .filter((path, index, allPaths) => allPaths.indexOf(path) === index) ?? [];
+
+  if (paths.length === 1) {
+    return paths[0];
+  }
+  if (paths.length > 1) {
+    return `${paths.length} file changes`;
+  }
+
+  return asString(source.path)?.trim() ?? asString(payload.path)?.trim();
 }
 
 function extractTextDelta(
@@ -431,6 +566,8 @@ function extractTextDelta(
     asString(payload?.text),
     asString(payload?.textDelta),
     asString(payload?.text_delta),
+    decodeBase64Text(payload?.deltaBase64),
+    decodeBase64Text(payload?.delta_base64),
     asString(content?.delta),
     asString(content?.text),
     asString(content?.textDelta),
@@ -467,9 +604,17 @@ function extractSummaryIndex(payload: Record<string, unknown> | undefined): numb
   );
 }
 
+function outputStreamFromPayload(
+  payload: Record<string, unknown> | undefined,
+): "stdout" | "stderr" | undefined {
+  const stream = asString(payload?.stream);
+  return stream === "stdout" || stream === "stderr" ? stream : undefined;
+}
+
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
+    case "item/permissions/requestApproval":
     case "permissions/requestApproval":
       return "command_execution_approval";
     case "item/fileRead/requestApproval":
@@ -488,6 +633,8 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "dynamic_tool_call";
     case "account/chatgptAuthTokens/refresh":
       return "auth_tokens_refresh";
+    case "attestation/generate":
+      return "attestation_generate";
     default:
       return "unknown";
   }
@@ -501,24 +648,60 @@ function toRequestTypeFromKind(kind: unknown): CanonicalRequestType {
       return "file_read_approval";
     case "file-change":
       return "file_change_approval";
+    case "computer-use":
+      return "computer_use_approval";
     default:
       return "unknown";
   }
 }
 
-function toRequestTypeFromResolvedPayload(
+function toRequestTypeFromPayload(
   payload: Record<string, unknown> | undefined,
 ): CanonicalRequestType {
   const request = asObject(payload?.request);
-  const method = asString(request?.method) ?? asString(payload?.method);
+  const method =
+    asString(request?.method) ??
+    asString(request?.requestMethod) ??
+    asString(request?.request_method) ??
+    asString(payload?.method) ??
+    asString(payload?.requestMethod) ??
+    asString(payload?.request_method);
   if (method) {
     return toRequestTypeFromMethod(method);
   }
-  const requestKind = asString(request?.kind) ?? asString(payload?.requestKind);
+  const requestKind =
+    asString(request?.kind) ??
+    asString(request?.requestKind) ??
+    asString(request?.request_kind) ??
+    asString(payload?.requestKind) ??
+    asString(payload?.request_kind) ??
+    asString(payload?.kind);
   if (requestKind) {
     return toRequestTypeFromKind(requestKind);
   }
   return "unknown";
+}
+
+function requestIdFromPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  const request = asObject(payload?.request);
+  return (
+    asString(payload?.requestId) ??
+    asString(payload?.request_id) ??
+    asString(request?.id) ??
+    asString(request?.requestId) ??
+    asString(request?.request_id)
+  );
+}
+
+function toRequestTypeFromEvent(event: ProviderEvent): CanonicalRequestType {
+  const payloadRequestType = toRequestTypeFromPayload(asObject(event.payload));
+  if (payloadRequestType !== "unknown") {
+    return payloadRequestType;
+  }
+  if (event.requestKind !== undefined) {
+    return toRequestTypeFromKind(event.requestKind);
+  }
+  return toRequestTypeFromMethod(event.method);
 }
 
 function toCanonicalUserInputAnswers(
@@ -561,30 +744,60 @@ function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
     .map((entry) => {
       const question = asObject(entry);
       if (!question) return undefined;
-      const options = asArray(question.options)
-        ?.map((option) => {
-          const optionRecord = asObject(option);
-          if (!optionRecord) return undefined;
-          const label = asString(optionRecord.label)?.trim();
-          const description = asString(optionRecord.description)?.trim();
-          if (!label || !description) {
-            return undefined;
-          }
-          return { label, description };
-        })
-        .filter((option): option is { label: string; description: string } => option !== undefined);
-      const id = asString(question.id)?.trim();
-      const header = asString(question.header)?.trim();
-      const prompt = asString(question.question)?.trim();
-      if (!id || !header || !prompt || !options || options.length === 0) {
+      const id = asString(question.id ?? question.name)?.trim();
+      if (!id) {
         return undefined;
       }
-      return {
+      const header = asString(question.header)?.trim() ?? asString(question.title)?.trim() ?? id;
+      const prompt =
+        asString(question.question)?.trim() ??
+        asString(question.prompt)?.trim() ??
+        asString(question.description)?.trim() ??
+        header;
+      const parsedOptions =
+        asArray(question.options)
+          ?.map((option) => {
+            const directLabel = asString(option)?.trim();
+            if (directLabel) {
+              return { label: directLabel, description: directLabel };
+            }
+
+            const optionRecord = asObject(option);
+            if (!optionRecord) return undefined;
+            const label =
+              asString(optionRecord.label)?.trim() ??
+              asString(optionRecord.title)?.trim() ??
+              asString(optionRecord.value)?.trim() ??
+              asString(optionRecord.id)?.trim();
+            if (!label) {
+              return undefined;
+            }
+            return {
+              label,
+              description: asString(optionRecord.description)?.trim() ?? label,
+            };
+          })
+          .filter(
+            (option): option is { label: string; description: string } => option !== undefined,
+          ) ?? [];
+      const options =
+        parsedOptions.length > 0 ? parsedOptions : [{ label: "Respond", description: prompt }];
+      const multiSelect =
+        typeof question.multiSelect === "boolean"
+          ? question.multiSelect
+          : typeof question.multi_select === "boolean"
+            ? question.multi_select
+            : undefined;
+      const normalizedQuestion = {
         id,
         header,
         question: prompt,
         options,
       };
+      if (multiSelect !== undefined) {
+        return Object.assign(normalizedQuestion, { multiSelect });
+      }
+      return normalizedQuestion;
     })
     .filter(
       (
@@ -594,6 +807,7 @@ function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
         header: string;
         question: string;
         options: Array<{ label: string; description: string }>;
+        multiSelect?: boolean;
       } => question !== undefined,
     );
 
@@ -603,9 +817,16 @@ function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
 function toThreadState(
   value: unknown,
 ): "active" | "idle" | "archived" | "closed" | "compacted" | "error" {
+  const status = asObject(value);
+  if (status) {
+    return toThreadState(status.type);
+  }
+
   switch (value) {
     case "idle":
       return "idle";
+    case "notLoaded":
+      return "closed";
     case "archived":
       return "archived";
     case "closed":
@@ -614,6 +835,7 @@ function toThreadState(
       return "compacted";
     case "error":
     case "failed":
+    case "systemError":
       return "error";
     default:
       return "active";
@@ -636,6 +858,8 @@ function contentStreamKindFromMethod(
       return "reasoning_text";
     case "item/reasoning/summaryTextDelta":
       return "reasoning_summary_text";
+    case "command/exec/outputDelta":
+    case "process/outputDelta":
     case "item/commandExecution/outputDelta":
       return "command_output";
     case "item/fileChange/outputDelta":
@@ -677,6 +901,40 @@ function normalizeCodexPlanStepStatus(value: unknown): "pending" | "inProgress" 
     default:
       return "pending";
   }
+}
+
+function normalizeCodexHookOutcome(value: unknown): "success" | "error" | "cancelled" {
+  switch (value) {
+    case "completed":
+      return "success";
+    case "stopped":
+      return "cancelled";
+    case "failed":
+    case "blocked":
+    default:
+      return "error";
+  }
+}
+
+function codexHookOutput(
+  entries: unknown[] | undefined,
+  options?: { readonly kind?: string },
+): string | undefined {
+  const text = entries
+    ?.flatMap((entry) => {
+      const output = asObject(entry);
+      if (!output) {
+        return [];
+      }
+      if (options?.kind && asString(output.kind) !== options.kind) {
+        return [];
+      }
+      const line = asString(output.text)?.trim();
+      return line ? [line] : [];
+    })
+    .join("\n")
+    .trim();
+  return text && text.length > 0 ? text : undefined;
 }
 
 type CodexTaskListItem = Extract<
@@ -759,6 +1017,47 @@ function runtimeEventBase(
   };
 }
 
+function runtimeEventBaseWithProviderItemId(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  itemId: string | undefined,
+): Omit<ProviderRuntimeEvent, "type" | "payload"> {
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const trimmedItemId = itemId?.trim();
+  if (!trimmedItemId) {
+    return base;
+  }
+  const providerItemId = ProviderItemId.makeUnsafe(trimmedItemId);
+  return {
+    ...base,
+    itemId: RuntimeItemId.makeUnsafe(trimmedItemId),
+    providerRefs: {
+      ...base.providerRefs,
+      providerItemId,
+    },
+  };
+}
+
+function runtimeEventBaseWithProviderRequestId(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  requestId: string | undefined,
+): Omit<ProviderRuntimeEvent, "type" | "payload"> {
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const trimmedRequestId = requestId?.trim();
+  if (!trimmedRequestId) {
+    return base;
+  }
+  return {
+    ...base,
+    requestId: asRuntimeRequestId(trimmedRequestId),
+    providerRefs: {
+      ...base.providerRefs,
+      providerRequestId: trimmedRequestId,
+    },
+  };
+}
+
 function mapItemLifecycle(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -771,6 +1070,7 @@ function mapItemLifecycle(
     return undefined;
   }
 
+  const providerItemId = asString(source.id) ?? asString(payload?.itemId);
   const inferredToolData = normalizedCodexToolData({
     item: source,
     payload: payload ?? {},
@@ -795,7 +1095,7 @@ function mapItemLifecycle(
         : undefined;
 
   return {
-    ...runtimeEventBase(event, canonicalThreadId),
+    ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, providerItemId),
     type: lifecycle,
     payload: {
       itemType,
@@ -811,6 +1111,98 @@ function mapItemLifecycle(
         : event.payload !== undefined
           ? { data: event.payload }
           : {}),
+    },
+  };
+}
+
+function toApprovalReviewStatus(
+  value: unknown,
+): "inProgress" | "approved" | "denied" | "aborted" | undefined {
+  switch (value) {
+    case "inProgress":
+    case "approved":
+    case "denied":
+    case "aborted":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function toApprovalReviewRiskLevel(
+  value: unknown,
+): "low" | "medium" | "high" | "critical" | undefined {
+  switch (value) {
+    case "low":
+    case "medium":
+    case "high":
+    case "critical":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function toApprovalReviewUserAuthorization(
+  value: unknown,
+): "unknown" | "low" | "medium" | "high" | undefined {
+  switch (value) {
+    case "unknown":
+    case "low":
+    case "medium":
+    case "high":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function trimmedNonEmpty(value: unknown): string | undefined {
+  const text = asString(value)?.trim();
+  return text && text.length > 0 ? text : undefined;
+}
+
+function mapAutoApprovalReview(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  lifecycle: "approval.review.started" | "approval.review.completed",
+): ProviderRuntimeEvent | undefined {
+  const payload = asObject(event.payload);
+  if (!payload) {
+    return undefined;
+  }
+
+  const review = asObject(payload.review);
+  const targetItemId =
+    trimmedNonEmpty(payload.targetItemId) ?? trimmedNonEmpty(payload.target_item_id);
+  const reviewId =
+    trimmedNonEmpty(payload.reviewId) ??
+    trimmedNonEmpty(payload.review_id) ??
+    trimmedNonEmpty(review?.id) ??
+    trimmedNonEmpty(review?.reviewId) ??
+    trimmedNonEmpty(review?.review_id);
+  const status = toApprovalReviewStatus(review?.status ?? payload.status);
+  const riskLevel = toApprovalReviewRiskLevel(review?.riskLevel ?? review?.risk_level);
+  const userAuthorization = toApprovalReviewUserAuthorization(
+    review?.userAuthorization ?? review?.user_authorization,
+  );
+  const rationale =
+    trimmedNonEmpty(review?.rationale) ??
+    trimmedNonEmpty(review?.reason) ??
+    trimmedNonEmpty(payload.rationale);
+
+  return {
+    ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, targetItemId),
+    type: lifecycle,
+    payload: {
+      ...(targetItemId ? { targetItemId: RuntimeItemId.makeUnsafe(targetItemId) } : {}),
+      ...(reviewId ? { reviewId } : {}),
+      ...(status ? { status } : {}),
+      ...(riskLevel ? { riskLevel } : {}),
+      ...(userAuthorization ? { userAuthorization } : {}),
+      ...(rationale ? { rationale } : {}),
+      ...(payload.review !== undefined ? { review: payload.review } : {}),
+      ...(payload.action !== undefined ? { action: payload.action } : {}),
     },
   };
 }
@@ -851,7 +1243,11 @@ function mapToRuntimeEvents(
       }
       return [
         {
-          ...runtimeEventBase(event, canonicalThreadId),
+          ...runtimeEventBaseWithProviderRequestId(
+            event,
+            canonicalThreadId,
+            requestIdFromPayload(payload),
+          ),
           type: "user-input.requested",
           payload: {
             questions,
@@ -864,10 +1260,14 @@ function mapToRuntimeEvents(
       asString(payload?.command) ?? asString(payload?.reason) ?? asString(payload?.prompt);
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderRequestId(
+          event,
+          canonicalThreadId,
+          requestIdFromPayload(payload),
+        ),
         type: "request.opened",
         payload: {
-          requestType: toRequestTypeFromMethod(event.method),
+          requestType: toRequestTypeFromEvent(event),
           ...(detail ? { detail } : {}),
           ...(event.payload !== undefined ? { args: event.payload } : {}),
         },
@@ -875,15 +1275,16 @@ function mapToRuntimeEvents(
     ];
   }
 
-  if (event.method === "item/requestApproval/decision" && event.requestId) {
+  if (event.method === "item/requestApproval/decision") {
     const decision = normalizeProviderApprovalDecision(payload?.decision);
-    const requestType =
-      event.requestKind !== undefined
-        ? toRequestTypeFromKind(event.requestKind)
-        : toRequestTypeFromMethod(event.method);
+    const requestType = toRequestTypeFromEvent(event);
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderRequestId(
+          event,
+          canonicalThreadId,
+          requestIdFromPayload(payload),
+        ),
         type: "request.resolved",
         payload: {
           requestType,
@@ -947,17 +1348,31 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/started") {
-    const payloadThreadId = asString(asObject(payload?.thread)?.id);
+    const thread = asObject(payload?.thread);
+    const payloadThreadId = asString(thread?.id);
     const providerThreadId = payloadThreadId ?? asString(payload?.threadId);
     if (!providerThreadId) {
       return [];
     }
+    const startedEvent = {
+      ...runtimeEventBase(event, canonicalThreadId),
+      type: "thread.started" as const,
+      payload: {
+        providerThreadId,
+      },
+    };
+    const initialStatus = thread?.status ?? payload?.status ?? thread?.state ?? payload?.state;
+    if (initialStatus === undefined) {
+      return [startedEvent];
+    }
     return [
+      startedEvent,
       {
+        type: "thread.state.changed",
         ...runtimeEventBase(event, canonicalThreadId),
-        type: "thread.started",
         payload: {
-          providerThreadId,
+          state: toThreadState(initialStatus),
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
     ];
@@ -982,7 +1397,9 @@ function mapToRuntimeEvents(
                 ? "closed"
                 : event.method === "thread/compacted"
                   ? "compacted"
-                  : toThreadState(asObject(payload?.thread)?.state ?? payload?.state),
+                  : toThreadState(
+                      payload?.status ?? asObject(payload?.thread)?.status ?? payload?.state,
+                    ),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -997,6 +1414,50 @@ function mapToRuntimeEvents(
         payload: {
           ...(asString(payload?.threadName) ? { name: asString(payload?.threadName) } : {}),
           ...(event.payload !== undefined ? { metadata: asObject(event.payload) } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/settings/updated") {
+    const threadSettings = asObject(payload?.threadSettings);
+    return [
+      {
+        type: "thread.metadata.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          metadata: {
+            ...(event.payload !== undefined ? { raw: event.payload } : {}),
+            ...(threadSettings ? { threadSettings } : {}),
+          },
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/updated") {
+    const goal = normalizeCodexThreadGoal(payload?.goal, canonicalThreadId);
+    if (!goal) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          goal,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/cleared") {
+    return [
+      {
+        type: "thread.goal.cleared",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          clearedAt: event.createdAt,
         },
       },
     ];
@@ -1038,7 +1499,8 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/completed") {
-    const errorMessage = asString(asObject(turn?.error)?.message);
+    const error = asObject(turn?.error);
+    const errorMessage = asString(error?.message);
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
@@ -1052,6 +1514,7 @@ function mapToRuntimeEvents(
             ? { totalCostUsd: asNumber(turn?.totalCostUsd) }
             : {}),
           ...(errorMessage ? { errorMessage } : {}),
+          ...(error ? { error } : {}),
         },
       },
     ];
@@ -1064,6 +1527,49 @@ function mapToRuntimeEvents(
         type: "turn.aborted",
         payload: {
           reason: event.message ?? "Turn aborted",
+        },
+      },
+    ];
+  }
+
+  if (event.method === "hook/started") {
+    const run = asObject(payload?.run);
+    const hookId = asString(run?.id) ?? `${event.id}:hook`;
+    const hookEvent = asString(run?.eventName) ?? "unknown";
+    const sourcePath = asString(run?.sourcePath);
+    const hookName =
+      (sourcePath ? path.basename(sourcePath) : undefined) ??
+      asString(run?.handlerType) ??
+      "Codex hook";
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "hook.started",
+        payload: {
+          hookId,
+          hookName,
+          hookEvent,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "hook/completed") {
+    const run = asObject(payload?.run);
+    const entries = asArray(run?.entries);
+    const output = codexHookOutput(entries);
+    const stderr = codexHookOutput(entries, { kind: "error" });
+    const statusMessage = asString(run?.statusMessage)?.trim();
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "hook.completed",
+        payload: {
+          hookId: asString(run?.id) ?? `${event.id}:hook`,
+          outcome: normalizeCodexHookOutcome(run?.status),
+          ...(output ? { output } : {}),
+          ...(stderr ? { stderr } : {}),
+          ...(statusMessage ? { stdout: statusMessage } : {}),
         },
       },
     ];
@@ -1137,7 +1643,11 @@ function mapToRuntimeEvents(
       }
       return [
         {
-          ...runtimeEventBase(event, canonicalThreadId),
+          ...runtimeEventBaseWithProviderItemId(
+            event,
+            canonicalThreadId,
+            asString(source.id) ?? asString(payload?.itemId),
+          ),
           type: "turn.proposed.completed",
           payload: {
             planMarkdown: detail,
@@ -1149,13 +1659,27 @@ function mapToRuntimeEvents(
     return completed ? [completed] : [];
   }
 
+  if (event.method === "item/autoApprovalReview/started") {
+    const review = mapAutoApprovalReview(event, canonicalThreadId, "approval.review.started");
+    return review ? [review] : [];
+  }
+
+  if (event.method === "item/autoApprovalReview/completed") {
+    const review = mapAutoApprovalReview(event, canonicalThreadId, "approval.review.completed");
+    return review ? [review] : [];
+  }
+
   if (event.method === "item/reasoning/summaryPartAdded") {
     const delta = extractTextDelta(event, payload);
     if (delta && delta.length > 0) {
       const summaryIndex = extractSummaryIndex(payload);
       return [
         {
-          ...runtimeEventBase(event, canonicalThreadId),
+          ...runtimeEventBaseWithProviderItemId(
+            event,
+            canonicalThreadId,
+            asString(payload?.itemId),
+          ),
           type: "content.delta",
           payload: {
             streamKind: "reasoning_summary_text",
@@ -1170,8 +1694,41 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/commandExecution/terminalInteraction") {
-    const updated = mapItemLifecycle(event, canonicalThreadId, "item.updated");
-    return updated ? [updated] : [];
+    const processId = asString(payload?.processId);
+    return [
+      {
+        ...runtimeEventBaseWithProviderItemId(
+          event,
+          canonicalThreadId,
+          asString(payload?.itemId) ?? processId,
+        ),
+        type: "item.updated",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          title: "Ran command",
+          detail: processId ? `Sent terminal input to process ${processId}` : "Sent terminal input",
+          ...(event.payload !== undefined ? { data: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "item/fileChange/patchUpdated") {
+    const detail = payload ? fileChangePatchDetail(payload) : undefined;
+    return [
+      {
+        ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, asString(payload?.itemId)),
+        type: "item.updated",
+        payload: {
+          itemType: "file_change",
+          status: "inProgress",
+          title: "File change",
+          ...(detail ? { detail } : {}),
+          ...(event.payload !== undefined ? { data: event.payload } : {}),
+        },
+      },
+    ];
   }
 
   if (event.method === "item/plan/delta") {
@@ -1185,7 +1742,7 @@ function mapToRuntimeEvents(
     }
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, asString(payload?.itemId)),
         type: "turn.proposed.delta",
         payload: {
           delta,
@@ -1196,6 +1753,8 @@ function mapToRuntimeEvents(
 
   if (
     event.method === "item/agentMessage/delta" ||
+    event.method === "command/exec/outputDelta" ||
+    event.method === "process/outputDelta" ||
     event.method === "item/commandExecution/outputDelta" ||
     event.method === "item/fileChange/outputDelta" ||
     event.method === "item/reasoning/summaryTextDelta" ||
@@ -1206,9 +1765,18 @@ function mapToRuntimeEvents(
     if (!delta || delta.length === 0) {
       return [];
     }
+    const providerItemId =
+      event.method === "command/exec/outputDelta"
+        ? asString(payload?.processId)
+        : event.method === "process/outputDelta"
+          ? asString(payload?.processHandle)
+          : asString(payload?.itemId);
+    const outputStream = outputStreamFromPayload(payload);
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...(providerItemId
+          ? runtimeEventBaseWithProviderItemId(event, canonicalThreadId, providerItemId)
+          : runtimeEventBase(event, canonicalThreadId)),
         type: "content.delta",
         payload: {
           streamKind: contentStreamKindFromMethod(event.method),
@@ -1217,20 +1785,55 @@ function mapToRuntimeEvents(
             ? { contentIndex: payload.contentIndex }
             : {}),
           ...(summaryIndex !== undefined ? { summaryIndex } : {}),
+          ...(outputStream ? { outputStream } : {}),
+          ...(typeof payload?.capReached === "boolean" ? { capReached: payload.capReached } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "process/exited") {
+    const processHandle = asString(payload?.processHandle);
+    const exitCode = asNumber(payload?.exitCode);
+    const stdout = asString(payload?.stdout);
+    const stderr = asString(payload?.stderr);
+    return [
+      {
+        ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, processHandle),
+        type: "item.completed",
+        payload: {
+          itemType: "command_execution",
+          status: exitCode === undefined || exitCode === 0 ? "completed" : "failed",
+          title: "Ran command",
+          detail:
+            exitCode !== undefined ? `Process exited with code ${exitCode}` : "Process exited",
+          data: {
+            ...(processHandle ? { processHandle } : {}),
+            ...(exitCode !== undefined ? { exitCode } : {}),
+            ...(stdout !== undefined ? { stdout } : {}),
+            ...(stderr !== undefined ? { stderr } : {}),
+            ...(payload?.stdoutCapReached !== undefined
+              ? { stdoutCapReached: payload.stdoutCapReached }
+              : {}),
+            ...(payload?.stderrCapReached !== undefined
+              ? { stderrCapReached: payload.stderrCapReached }
+              : {}),
+          },
         },
       },
     ];
   }
 
   if (event.method === "item/mcpToolCall/progress") {
+    const summary = asString(payload?.summary) ?? asString(payload?.message);
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderItemId(event, canonicalThreadId, asString(payload?.itemId)),
         type: "tool.progress",
         payload: {
           ...(asString(payload?.toolUseId) ? { toolUseId: asString(payload?.toolUseId) } : {}),
           ...(asString(payload?.toolName) ? { toolName: asString(payload?.toolName) } : {}),
-          ...(asString(payload?.summary) ? { summary: asString(payload?.summary) } : {}),
+          ...(summary ? { summary } : {}),
           ...(asNumber(payload?.elapsedSeconds) !== undefined
             ? { elapsedSeconds: asNumber(payload?.elapsedSeconds) }
             : {}),
@@ -1240,19 +1843,32 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "serverRequest/resolved") {
-    const requestType =
-      toRequestTypeFromResolvedPayload(payload) !== "unknown"
-        ? toRequestTypeFromResolvedPayload(payload)
-        : event.requestId && event.requestKind !== undefined
-          ? toRequestTypeFromKind(event.requestKind)
-          : "unknown";
+    const requestType = toRequestTypeFromEvent(event);
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderRequestId(
+          event,
+          canonicalThreadId,
+          requestIdFromPayload(payload),
+        ),
         type: "request.resolved",
         payload: {
           requestType,
           ...(event.payload !== undefined ? { resolution: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method?.startsWith("rawResponseItem/") === true) {
+    return [
+      {
+        type: "raw-response.item",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          method: event.method,
+          ...(payload?.item !== undefined ? { item: payload.item } : {}),
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
     ];
@@ -1264,7 +1880,11 @@ function mapToRuntimeEvents(
   ) {
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...runtimeEventBaseWithProviderRequestId(
+          event,
+          canonicalThreadId,
+          requestIdFromPayload(payload),
+        ),
         type: "user-input.resolved",
         payload: {
           answers: toCanonicalUserInputAnswers(
@@ -1395,6 +2015,18 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "model/verification") {
+    return [
+      {
+        type: "model.verification",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          verifications: asArray(payload?.verifications) ?? [],
+        },
+      },
+    ];
+  }
+
   if (event.method === "deprecationNotice") {
     return [
       {
@@ -1423,6 +2055,22 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "warning" || event.method === "guardianWarning") {
+    return [
+      {
+        type: "runtime.warning",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          message:
+            asString(payload?.message) ??
+            event.message ??
+            (event.method === "guardianWarning" ? "Guardian warning" : "Provider warning"),
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
   if (event.method === "account/updated") {
     return [
       {
@@ -1441,7 +2089,23 @@ function mapToRuntimeEvents(
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          rateLimits: event.payload ?? {},
+          rateLimits: payload?.rateLimits ?? event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "account/login/completed") {
+    const success = payload?.success === true;
+    const error = asString(payload?.error)?.trim();
+    return [
+      {
+        type: "auth.status",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          isAuthenticating: false,
+          output: [success ? "Codex login completed." : "Codex login failed."],
+          ...(!success && error ? { error } : {}),
         },
       },
     ];
@@ -1461,14 +2125,153 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "mcpServer/startupStatus/updated") {
+    return [
+      {
+        type: "mcp.status.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          status: event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "skills/changed") {
+    return [
+      {
+        type: "skills.changed",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: event.payload !== undefined ? { detail: event.payload } : {},
+      },
+    ];
+  }
+
+  if (event.method === "app/list/updated") {
+    return [
+      {
+        type: "apps.list.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          apps: asArray(payload?.data) ?? asArray(payload?.apps) ?? [],
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "remoteControl/status/changed") {
+    const status = trimmedNonEmpty(payload?.status);
+    if (!status) {
+      return [];
+    }
+    const environmentId =
+      payload?.environmentId === null ? null : trimmedNonEmpty(payload?.environmentId);
+    return [
+      {
+        type: "remote-control.status.changed",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          status,
+          ...(trimmedNonEmpty(payload?.serverName)
+            ? { serverName: trimmedNonEmpty(payload?.serverName) }
+            : {}),
+          ...(environmentId !== undefined ? { environmentId } : {}),
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "externalAgentConfig/import/completed") {
+    return [
+      {
+        type: "external-agent-config.import.completed",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: event.payload !== undefined ? { detail: event.payload } : {},
+      },
+    ];
+  }
+
+  if (event.method === "fuzzyFileSearch/sessionUpdated") {
+    const sessionId = trimmedNonEmpty(payload?.sessionId);
+    if (!sessionId) {
+      return [];
+    }
+    return [
+      {
+        type: "fuzzy-file-search.session.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          sessionId,
+          ...(asString(payload?.query) !== undefined ? { query: asString(payload?.query) } : {}),
+          files: asArray(payload?.files) ?? [],
+        },
+      },
+    ];
+  }
+
+  if (event.method === "fuzzyFileSearch/sessionCompleted") {
+    const sessionId = trimmedNonEmpty(payload?.sessionId);
+    if (!sessionId) {
+      return [];
+    }
+    return [
+      {
+        type: "fuzzy-file-search.session.completed",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          sessionId,
+          ...(asString(payload?.query) !== undefined ? { query: asString(payload?.query) } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "fs/changed") {
+    const watchId = trimmedNonEmpty(payload?.watchId);
+    const changedPaths = asNonEmptyStringArray(payload?.changedPaths);
+    if (!watchId || changedPaths.length === 0) {
+      return [];
+    }
+    return [
+      {
+        type: "files.changed",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          watchId,
+          changedPaths,
+        },
+      },
+    ];
+  }
+
   if (event.method === "thread/realtime/started") {
     const realtimeSessionId = asString(payload?.realtimeSessionId);
+    const version = trimmedNonEmpty(payload?.version);
     return [
       {
         type: "thread.realtime.started",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          realtimeSessionId,
+          ...(realtimeSessionId ? { realtimeSessionId } : {}),
+          ...(version ? { version } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/sdp") {
+    const sdp = asString(payload?.sdp)?.trim();
+    if (!sdp) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.realtime.sdp",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          sdp,
         },
       },
     ];
@@ -1480,7 +2283,33 @@ function mapToRuntimeEvents(
         type: "thread.realtime.item-added",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          item: event.payload ?? {},
+          item: payload?.item ?? event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/transcript/delta") {
+    return [
+      {
+        type: "thread.realtime.transcript.delta",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          ...(asString(payload?.role) ? { role: asString(payload?.role) } : {}),
+          delta: asString(payload?.delta) ?? "",
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/transcript/done") {
+    return [
+      {
+        type: "thread.realtime.transcript.done",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          ...(asString(payload?.role) ? { role: asString(payload?.role) } : {}),
+          text: asString(payload?.text) ?? "",
         },
       },
     ];
@@ -1492,7 +2321,7 @@ function mapToRuntimeEvents(
         type: "thread.realtime.audio.delta",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          audio: event.payload ?? {},
+          audio: payload?.audio ?? event.payload ?? {},
         },
       },
     ];
@@ -1512,13 +2341,12 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/realtime/closed") {
+    const reason = trimmedNonEmpty(payload?.reason) ?? event.message;
     return [
       {
         type: "thread.realtime.closed",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          reason: event.message,
-        },
+        payload: reason ? { reason } : {},
       },
     ];
   }
@@ -1819,6 +2647,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       try: () => {
         const managerInput = {
           threadId: input.threadId,
+          ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
           ...(input.input !== undefined ? { input: input.input } : {}),
           ...(input.modelSelection?.provider === "codex"
             ? { model: input.modelSelection.model }
@@ -1845,6 +2674,18 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
   });
+
+  const steerTurn: NonNullable<CodexAdapterShape["steerTurn"]> = (input) =>
+    Effect.tryPromise({
+      try: () =>
+        manager.steerTurn({
+          threadId: input.threadId,
+          ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
+          ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+          input: input.input,
+        }),
+      catch: (cause) => toRequestError(input.threadId, "turn/steer", cause),
+    });
 
   const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
     Effect.tryPromise({
@@ -2057,6 +2898,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     },
     startSession,
     sendTurn,
+    steerTurn,
     interruptTurn,
     readThread,
     rollbackThread,

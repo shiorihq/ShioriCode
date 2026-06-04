@@ -116,7 +116,7 @@ describe("toAcpMcpServers", () => {
       "gemini",
       {
         browserUse: { enabled: true },
-        computerUse: { enabled: true, requireApproval: false },
+        computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
         mcpServers: { servers: [] },
       } as never,
       undefined,
@@ -154,6 +154,7 @@ describe("toAcpMcpServers", () => {
       env: expect.arrayContaining([
         { name: "SHIORICODE_COMPUTER_USE_ENABLED", value: "1" },
         { name: "SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL", value: "0" },
+        { name: "SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS", value: "[]" },
       ]),
     });
   });
@@ -163,7 +164,7 @@ describe("toAcpMcpServers", () => {
       "gemini",
       {
         browserUse: { enabled: true },
-        computerUse: { enabled: true, requireApproval: true },
+        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
         mcpServers: { servers: [] },
       } as never,
       undefined,
@@ -182,11 +183,21 @@ describe("toAcpMcpServers", () => {
     expect(servers.map((server) => server.name)).toEqual(["shioricode-browser"]);
   });
 
+  it("does not expose provider-facing Computer Use until desktop result sharing is enabled", () => {
+    const servers = toAcpMcpServers("gemini", {
+      browserUse: { enabled: false },
+      computerUse: { enabled: true, requireApproval: false, shareWithProviders: false },
+      mcpServers: { servers: [] },
+    } as never);
+
+    expect(servers.map((server) => server.name)).toEqual([]);
+  });
+
   it("exposes built-in Shiori MCP servers with Computer Use approval metadata enabled", () => {
     const servers = builtInShioriMcpServers({
       settings: {
         browserUse: { enabled: true },
-        computerUse: { enabled: true, requireApproval: true },
+        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
         mcpServers: { servers: [] },
       } as never,
       browserPanel: {
@@ -217,9 +228,172 @@ describe("toAcpMcpServers", () => {
       env: {
         SHIORICODE_COMPUTER_USE_ENABLED: "1",
         SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
       },
       providers: ["shiori"],
     });
+  });
+
+  it("targets built-in Computer Use MCP servers at the requesting provider", () => {
+    const servers = builtInShioriMcpServers({
+      provider: "claudeAgent",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
+        mcpServers: { servers: [] },
+      } as never,
+    });
+
+    expect(servers).toHaveLength(1);
+    expect(servers[0]).toMatchObject({
+      name: "shioricode-computer",
+      providers: ["claudeAgent"],
+      env: {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+      },
+    });
+  });
+
+  it("does not expose built-in Shiori Computer Use MCP servers without provider sharing", () => {
+    const servers = builtInShioriMcpServers({
+      provider: "shiori",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: false, shareWithProviders: false },
+        mcpServers: { servers: [] },
+      } as never,
+    });
+
+    expect(servers).toEqual([]);
+  });
+
+  it("passes approved Computer Use app bundle identifiers to built-in MCP servers", () => {
+    const servers = builtInShioriMcpServers({
+      provider: "shiori",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: {
+          enabled: true,
+          requireApproval: true,
+          shareWithProviders: true,
+          approvedApps: [
+            {
+              bundleIdentifier: "com.apple.finder",
+              name: "Finder",
+              approvedAt: "2026-06-04T14:00:00.000Z",
+            },
+          ],
+        },
+        mcpServers: { servers: [] },
+      } as never,
+      exposeComputerWhenApprovalRequired: true,
+    });
+
+    expect(servers).toHaveLength(1);
+    expect(servers[0]).toMatchObject({
+      name: "shioricode-computer",
+      env: {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: JSON.stringify(["com.apple.finder"]),
+      },
+    });
+  });
+
+  it("passes resolved Computer Use helper paths to built-in MCP servers", () => {
+    const originalHelperBinary = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY;
+    const originalHelperPackagePath = process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH;
+    process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY =
+      "/Applications/ShioriCode.app/Contents/Resources/native/macos/ShioriComputerUseHelper";
+    process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH =
+      "/Users/choki/Developer/shiori-code/apps/desktop/native/ShioriComputerUse";
+    try {
+      const servers = builtInShioriMcpServers({
+        provider: "shiori",
+        settings: {
+          browserUse: { enabled: false },
+          computerUse: {
+            enabled: true,
+            requireApproval: false,
+            shareWithProviders: true,
+            approvedApps: [],
+          },
+          mcpServers: { servers: [] },
+        } as never,
+      });
+
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({
+        name: "shioricode-computer",
+        env: {
+          SHIORICODE_COMPUTER_USE_ENABLED: "1",
+          SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+          SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+          SHIORICODE_COMPUTER_USE_HELPER_BINARY:
+            "/Applications/ShioriCode.app/Contents/Resources/native/macos/ShioriComputerUseHelper",
+          SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH:
+            "/Users/choki/Developer/shiori-code/apps/desktop/native/ShioriComputerUse",
+        },
+      });
+    } finally {
+      if (originalHelperBinary === undefined) {
+        delete process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY;
+      } else {
+        process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY = originalHelperBinary;
+      }
+      if (originalHelperPackagePath === undefined) {
+        delete process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH;
+      } else {
+        process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH = originalHelperPackagePath;
+      }
+    }
+  });
+
+  it("passes desktop host app identity to built-in Computer Use MCP servers", () => {
+    const originalBundlePath = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
+    const originalDisplayName = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME;
+    process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH = "/Applications/ShioriCode.app";
+    process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME = "ShioriCode";
+    try {
+      const servers = builtInShioriMcpServers({
+        provider: "shiori",
+        settings: {
+          browserUse: { enabled: false },
+          computerUse: {
+            enabled: true,
+            requireApproval: true,
+            shareWithProviders: true,
+            approvedApps: [],
+          },
+          mcpServers: { servers: [] },
+        } as never,
+        exposeComputerWhenApprovalRequired: true,
+      });
+
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({
+        name: "shioricode-computer",
+        env: {
+          SHIORICODE_COMPUTER_USE_ENABLED: "1",
+          SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+          SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH: "/Applications/ShioriCode.app",
+          SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME: "ShioriCode",
+        },
+      });
+    } finally {
+      if (originalBundlePath === undefined) {
+        delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
+      } else {
+        process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH = originalBundlePath;
+      }
+      if (originalDisplayName === undefined) {
+        delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME;
+      } else {
+        process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME = originalDisplayName;
+      }
+    }
   });
 
   it("does not expose built-in MCP servers when their settings are disabled", () => {
@@ -580,6 +754,41 @@ describe("external MCP discovery", () => {
     expect(result.servers.some((server) => server.name === "codex:global_codex")).toBe(false);
   });
 
+  it("adds the built-in Computer Use MCP server to managed Codex MCP config when enabled", async () => {
+    const codexHome = await createTempDir("codex-managed-computer-home-");
+    const claudeHome = await createTempDir("codex-managed-computer-claude-home-");
+    const claudeDesktopConfig = path.join(claudeHome, "claude_desktop_config.json");
+
+    await writeFile(path.join(codexHome, "config.toml"), "", "utf8");
+    await writeFile(claudeDesktopConfig, JSON.stringify({ mcpServers: {} }), "utf8");
+
+    const result = await loadCodexManagedMcpServers({
+      claudeHomePath: claudeHome,
+      claudeDesktopConfigPath: claudeDesktopConfig,
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
+        providers: {
+          codex: { homePath: codexHome },
+        },
+        mcpServers: { servers: [] },
+      } as never,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.servers).toHaveLength(1);
+    expect(result.servers[0]).toMatchObject({
+      name: "shioricode-computer",
+      providers: ["codex"],
+      args: expect.arrayContaining(["computer-use-mcp"]),
+      env: {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+      },
+    });
+  });
+
   it("loads Claude MCP servers from user, desktop, and project config", async () => {
     const claudeHome = await createTempDir("claude-mcp-home-");
     const workspaceRoot = await createTempDir("claude-mcp-project-");
@@ -678,6 +887,75 @@ describe("external MCP discovery", () => {
     expect(result.warnings).toEqual([]);
     expect(result.servers.filter((server) => server.name === "codex:posthog")).toHaveLength(1);
     expect(result.servers.some((server) => server.name === "claude:posthog")).toBe(false);
+  });
+
+  it("includes the built-in Computer Use server for non-Shiori providers when safe", async () => {
+    const result = await loadEffectiveMcpServersForProvider({
+      provider: "kimiCode",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
+        mcpServers: {
+          servers: [
+            {
+              name: "configured",
+              transport: "stdio",
+              command: "node",
+              enabled: true,
+              providers: ["kimiCode"],
+            },
+          ],
+        },
+      } as never,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.servers.map((server) => server.name)).toEqual([
+      "configured",
+      "shioricode-computer",
+    ]);
+    expect(result.servers.at(-1)).toMatchObject({
+      providers: ["kimiCode"],
+      args: expect.arrayContaining(["computer-use-mcp"]),
+    });
+  });
+
+  it("does not expose built-in Computer Use to non-Shiori providers while approvals are required", async () => {
+    const result = await loadEffectiveMcpServersForProvider({
+      provider: "kimiCode",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
+        mcpServers: { servers: [] },
+      } as never,
+    });
+
+    expect(result.servers).toEqual([]);
+  });
+
+  it("exposes approval-required built-in Computer Use when a non-Shiori provider opts into approval wrapping", async () => {
+    const result = await loadEffectiveMcpServersForProvider({
+      provider: "kimiCode",
+      exposeComputerWhenApprovalRequired: true,
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
+        mcpServers: { servers: [] },
+      } as never,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.servers).toHaveLength(1);
+    expect(result.servers[0]).toMatchObject({
+      name: "shioricode-computer",
+      providers: ["kimiCode"],
+      args: expect.arrayContaining(["computer-use-mcp"]),
+      env: {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+      },
+    });
   });
 
   it("removes Codex MCP servers from config.toml", async () => {

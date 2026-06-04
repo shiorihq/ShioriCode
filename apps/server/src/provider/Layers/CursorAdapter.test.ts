@@ -1,253 +1,388 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type {
+  AgentOptions,
+  Run,
+  RunOperation,
+  RunResult,
+  RunStatus,
+  SDKAgent,
+  SDKMessage,
+  SDKUserMessage,
+  SendOptions,
+} from "@cursor/sdk";
+import type { ProviderRuntimeEvent } from "contracts";
 import { ThreadId } from "contracts";
-import { Effect, Fiber, Layer, Option, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import { Effect, Layer, Option } from "effect";
+import { vi } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { AcpSessionRuntimeShape } from "../acp/AcpSessionRuntime.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
-import {
-  makeCursorAdapterLive,
-  parseCursorResume,
-  resolveCursorPermissionOptionId,
-} from "./CursorAdapter.ts";
+import { makeCursorAdapterLive, parseCursorResume } from "./CursorAdapter.ts";
+
+vi.mock("@cursor/sdk", () => ({
+  Agent: {
+    create: vi.fn(),
+    resume: vi.fn(),
+  },
+}));
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-cursor-test");
 
-class FakeCursorAcpRuntime {
-  private askQuestionHandler:
-    | ((params: unknown) => Effect.Effect<unknown, EffectAcpErrors.AcpError>)
-    | undefined;
-  private updateTodosHandler:
-    | ((params: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
-    | undefined;
-  readonly setModelCalls: Array<string> = [];
-  readonly cancelCalls: Array<void> = [];
-  promptEffect: Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> =
-    Effect.succeed({ stopReason: "end_turn" });
-  startTodoUpdate: unknown | undefined;
+const waitForAdapterFiber = Effect.promise(
+  () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+);
 
-  readonly shape = {
-    handleRequestPermission: () => Effect.void,
-    handleElicitation: () => Effect.void,
-    handleReadTextFile: () => Effect.void,
-    handleWriteTextFile: () => Effect.void,
-    handleCreateTerminal: () => Effect.void,
-    handleTerminalOutput: () => Effect.void,
-    handleTerminalWaitForExit: () => Effect.void,
-    handleTerminalKill: () => Effect.void,
-    handleTerminalRelease: () => Effect.void,
-    handleSessionUpdate: () => Effect.void,
-    handleElicitationComplete: () => Effect.void,
-    handleUnknownExtRequest: () => Effect.void,
-    handleUnknownExtNotification: () => Effect.void,
-    handleExtRequest: (method: string, _schema: unknown, handler: typeof this.askQuestionHandler) =>
-      Effect.sync(() => {
-        if (method === "cursor/ask_question") {
-          this.askQuestionHandler = handler;
-        }
-      }),
-    handleExtNotification: (
-      method: string,
-      _schema: unknown,
-      handler: typeof this.updateTodosHandler,
-    ) =>
-      Effect.sync(() => {
-        if (method === "cursor/update_todos") {
-          this.updateTodosHandler = handler;
-        }
-      }),
-    start: () => {
-      const result = {
-        sessionId: "cursor-session-1",
-        initializeResult: {},
-        sessionSetupResult: {},
-        modelConfigId: undefined,
-      } as unknown as import("../acp/AcpSessionRuntime.ts").AcpSessionRuntimeStartResult;
-      if (this.startTodoUpdate && this.updateTodosHandler) {
-        return this.updateTodosHandler(this.startTodoUpdate).pipe(Effect.as(result));
-      }
-      return Effect.succeed(result);
-    },
-    getEvents: () => Stream.empty,
-    getModeState: Effect.succeed(undefined),
-    getConfigOptions: Effect.succeed([]),
-    prompt: () => this.promptEffect,
-    cancel: Effect.sync(() => {
-      this.cancelCalls.push(undefined);
-    }),
-    setMode: () => Effect.succeed({}),
-    setConfigOption: () => Effect.succeed({ configOptions: [] }),
-    setModel: (model: string) =>
-      Effect.sync(() => {
-        this.setModelCalls.push(model);
-      }),
-    request: () => Effect.succeed({}),
-    notify: () => Effect.void,
-  } as unknown as AcpSessionRuntimeShape;
+class FakeCursorRun implements Run {
+  readonly id = "cursor-run-1";
+  readonly agentId = "cursor-agent-1";
+  readonly createdAt = Date.now();
+  status: RunStatus = "running";
+  cancelCalls = 0;
+  messages: SDKMessage[] = [];
+  waitResult: RunResult = { id: this.id, status: "finished" };
+  waitPromise: Promise<RunResult> | undefined;
+  private resolveWait: ((result: RunResult) => void) | undefined;
 
-  askQuestion(params: unknown) {
-    if (!this.askQuestionHandler) {
-      return Effect.die("cursor/ask_question handler was not registered");
+  supports(operation: RunOperation): boolean {
+    return operation === "stream" || operation === "wait" || operation === "cancel";
+  }
+
+  unsupportedReason(_operation: RunOperation): string | undefined {
+    return undefined;
+  }
+
+  async *stream(): AsyncGenerator<SDKMessage, void> {
+    for (const message of this.messages) {
+      yield message;
     }
-    return this.askQuestionHandler(params);
+  }
+
+  wait(): Promise<RunResult> {
+    return this.waitPromise ?? Promise.resolve(this.waitResult);
+  }
+
+  blockWaitUntilCancel(): void {
+    this.waitPromise = new Promise((resolve) => {
+      this.resolveWait = resolve;
+    });
+  }
+
+  cancel(): Promise<void> {
+    this.cancelCalls += 1;
+    this.status = "cancelled";
+    this.resolveWait?.({ id: this.id, status: "cancelled" });
+    this.resolveWait = undefined;
+    return Promise.resolve();
+  }
+
+  onDidChangeStatus(_listener: (status: RunStatus) => void): () => void {
+    return () => {};
+  }
+
+  conversation(): Promise<[]> {
+    return Promise.resolve([]);
   }
 }
 
-function makeHarness(fake: FakeCursorAcpRuntime) {
+class FakeCursorAgent implements SDKAgent {
+  readonly agentId = "cursor-agent-1";
+  model = { id: "auto" };
+  readonly sendCalls: Array<{ message: string | SDKUserMessage; options?: SendOptions }> = [];
+  closeCalls = 0;
+  nextRun = new FakeCursorRun();
+
+  send(message: string | SDKUserMessage, options?: SendOptions): Promise<Run> {
+    this.sendCalls.push({ message, ...(options ? { options } : {}) });
+    return Promise.resolve(this.nextRun);
+  }
+
+  close(): void {
+    this.closeCalls += 1;
+  }
+
+  reload(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    this.close();
+    return Promise.resolve();
+  }
+
+  listArtifacts(): Promise<[]> {
+    return Promise.resolve([]);
+  }
+
+  downloadArtifact(_path: string): Promise<Buffer> {
+    return Promise.resolve(Buffer.alloc(0));
+  }
+}
+
+function makeHarness(input?: {
+  readonly agent?: FakeCursorAgent;
+  readonly events?: Array<ProviderRuntimeEvent>;
+  readonly settings?: Parameters<typeof ServerSettingsService.layerTest>[0];
+  readonly createAgent?: (options: AgentOptions) => Promise<SDKAgent>;
+  readonly resumeAgent?: (agentId: string, options?: Partial<AgentOptions>) => Promise<SDKAgent>;
+}) {
+  const agent = input?.agent ?? new FakeCursorAgent();
   return makeCursorAdapterLive({
-    makeRuntime: () => Effect.succeed(fake.shape),
+    ...(input?.events
+      ? {
+          runtimeEventObserver: (event: ProviderRuntimeEvent) =>
+            Effect.sync(() => {
+              input.events?.push(event);
+            }),
+        }
+      : {}),
+    createAgent: input?.createAgent ?? (() => Promise.resolve(agent)),
+    resumeAgent: input?.resumeAgent ?? (() => Promise.resolve(agent)),
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest("/tmp/cursor-adapter-test", { prefix: "cursor" })),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettingsService.layerTest(input?.settings ?? {})),
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(
-      Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.die("unused child process spawner")),
-      ),
-    ),
   );
 }
 
 describe("CursorAdapterLive", () => {
-  it.effect("uses nonstandard ACP option ids for approval decisions", () =>
-    Effect.sync(() => {
-      const options: ReadonlyArray<EffectAcpSchema.PermissionOption> = [
-        { optionId: "session-yes", name: "Accept for session", kind: "allow_always" },
-        { optionId: "once-yes", name: "Accept", kind: "allow_once" },
-        { optionId: "nope", name: "Decline", kind: "reject_once" },
-      ];
-
-      assert.deepStrictEqual(resolveCursorPermissionOptionId(options, "acceptForSession"), {
-        optionId: "session-yes",
-      });
-      assert.deepStrictEqual(resolveCursorPermissionOptionId(options, "accept"), {
-        optionId: "once-yes",
-      });
-      assert.deepStrictEqual(resolveCursorPermissionOptionId(options, "decline"), {
-        optionId: "nope",
-      });
-    }),
-  );
-
-  it.effect("emits a cancelled turn when interrupting a never-resolving prompt", () => {
-    const fake = new FakeCursorAcpRuntime();
-    fake.promptEffect = Effect.never;
+  it.effect("starts a Cursor SDK session and persists an agent resume cursor", () => {
+    const agent = new FakeCursorAgent();
+    const createCalls: AgentOptions[] = [];
     return Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
-      const completedFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.type === "turn.completed"),
-        Stream.runHead,
-        Effect.forkScoped,
-      );
-      yield* Effect.yieldNow;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
 
+      assert.equal(session.provider, "cursor");
+      assert.deepInclude(session.resumeCursor as Record<string, unknown>, {
+        provider: "cursor",
+        agentId: agent.agentId,
+      });
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          agent,
+          createAgent: (options) => {
+            createCalls.push(options);
+            return Promise.resolve(agent);
+          },
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("passes built-in Computer Use MCP to Cursor when approvals are not required", () => {
+    const agent = new FakeCursorAgent();
+    const createCalls: AgentOptions[] = [];
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
+
+      const computerServer = createCalls[0]?.mcpServers?.["shioricode-computer"];
+      assert.ok(computerServer);
+      assert.equal(computerServer.type, "stdio");
+      if (computerServer.type !== "stdio") {
+        assert.fail(`Expected stdio computer MCP server, got ${computerServer.type}`);
+      }
+      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_ENABLED, "1");
+      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL, "0");
+      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS, "[]");
+      assert.equal(computerServer.args?.includes("computer-use-mcp"), true);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          agent,
+          settings: {
+            browserUse: { enabled: false },
+            computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
+            mcpServers: { servers: [] },
+          },
+          createAgent: (options) => {
+            createCalls.push(options);
+            return Promise.resolve(agent);
+          },
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("passes approval-required Computer Use MCP to Cursor approval runtimes", () => {
+    const agent = new FakeCursorAgent();
+    const createCalls: AgentOptions[] = [];
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "cursor",
         cwd: "/tmp/cursor-adapter-test",
         runtimeMode: "approval-required",
       });
-      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "hello" });
+
+      const computerServer = createCalls[0]?.mcpServers?.["shioricode-computer"];
+      assert.ok(computerServer);
+      assert.equal(computerServer.type, "stdio");
+      if (computerServer.type !== "stdio") {
+        assert.fail(`Expected stdio computer MCP server, got ${computerServer.type}`);
+      }
+      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_ENABLED, "1");
+      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL, "1");
+      assert.equal(computerServer.args?.includes("computer-use-mcp"), true);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          agent,
+          settings: {
+            browserUse: { enabled: false },
+            computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
+            mcpServers: { servers: [] },
+          },
+          createAgent: (options) => {
+            createCalls.push(options);
+            return Promise.resolve(agent);
+          },
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("streams SDK assistant messages into content deltas and completes the turn", () => {
+    const agent = new FakeCursorAgent();
+    const events: ProviderRuntimeEvent[] = [];
+    agent.nextRun.messages = [
+      {
+        type: "assistant",
+        agent_id: agent.agentId,
+        run_id: agent.nextRun.id,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hello from cursor" }],
+        },
+      },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const started = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "cursor",
+          cwd: "/tmp/cursor-adapter-test",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.timeoutOption("2 seconds"));
+      if (Option.isNone(started)) {
+        assert.fail("startSession hung");
+      }
+      const sent = yield* adapter
+        .sendTurn({ threadId: THREAD_ID, input: "hello" })
+        .pipe(Effect.timeoutOption("2 seconds"));
+      if (Option.isNone(sent)) {
+        assert.fail("sendTurn hung");
+      }
+
+      yield* waitForAdapterFiber;
+      const delta = events.find((event) => event.type === "content.delta");
+      const completed = events.find((event) => event.type === "turn.completed");
+      if (!delta || !completed) {
+        assert.fail("Expected content.delta and turn.completed events");
+      }
+      assert.equal(delta.payload.delta, "hello from cursor");
+      assert.deepInclude(completed.payload, { state: "completed" });
+    }).pipe(Effect.provide(makeHarness({ agent, events })), Effect.scoped);
+  });
+
+  it.effect("cancels the active SDK run when interrupted", () => {
+    const agent = new FakeCursorAgent();
+    const events: ProviderRuntimeEvent[] = [];
+    agent.nextRun.blockWaitUntilCancel();
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const started = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "cursor",
+          cwd: "/tmp/cursor-adapter-test",
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.timeoutOption("2 seconds"));
+      if (Option.isNone(started)) {
+        assert.fail("startSession hung");
+      }
+      const sent = yield* adapter
+        .sendTurn({ threadId: THREAD_ID, input: "hello" })
+        .pipe(Effect.timeoutOption("2 seconds"));
+      if (Option.isNone(sent)) {
+        assert.fail("sendTurn hung");
+      }
       yield* adapter.interruptTurn(THREAD_ID);
 
-      const completed = yield* Fiber.join(completedFiber);
-      if (Option.isNone(completed)) {
+      yield* waitForAdapterFiber;
+      const completed = events.find((event) => event.type === "turn.completed");
+      if (!completed) {
         assert.fail("Expected a turn.completed event");
       }
-      assert.deepInclude(completed.value.payload, {
-        state: "cancelled",
-      });
-      assert.lengthOf(fake.cancelCalls, 1);
-    }).pipe(Effect.provide(makeHarness(fake)), Effect.scoped);
+      assert.deepInclude(completed.payload, { state: "cancelled" });
+      assert.equal(agent.nextRun.cancelCalls, 1);
+    }).pipe(Effect.provide(makeHarness({ agent, events })), Effect.scoped);
   });
 
-  it.effect("resolves pending ask_question requests when interrupted", () => {
-    const fake = new FakeCursorAcpRuntime();
+  it.effect("resumes existing Cursor SDK agents from v1 and v2 cursors", () => {
+    const agent = new FakeCursorAgent();
+    const resumedAgentIds: string[] = [];
     return Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "cursor",
         cwd: "/tmp/cursor-adapter-test",
-        runtimeMode: "approval-required",
-      });
-      const requestedFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.type === "user-input.requested"),
-        Stream.runHead,
-        Effect.forkScoped,
-      );
-
-      const responseFiber = yield* fake
-        .askQuestion({
-          toolCallId: "tool-1",
-          questions: [
-            {
-              id: "mode",
-              prompt: "Which mode?",
-              options: [{ id: "agent", label: "Agent" }],
-            },
-          ],
-        })
-        .pipe(Effect.forkScoped);
-      yield* Fiber.join(requestedFiber);
-      yield* adapter.interruptTurn(THREAD_ID);
-
-      const response = yield* Fiber.join(responseFiber);
-      assert.deepStrictEqual(response, { outcome: { outcome: "cancelled" } });
-    }).pipe(Effect.provide(makeHarness(fake)), Effect.scoped);
-  });
-
-  it.effect("flushes update_todos notifications emitted before context assignment", () => {
-    const fake = new FakeCursorAcpRuntime();
-    fake.startTodoUpdate = {
-      toolCallId: "todos-1",
-      merge: false,
-      todos: [{ id: "a", content: "Flush startup todos", status: "in_progress" }],
-    };
-    return Effect.gen(function* () {
-      const adapter = yield* CursorAdapter;
-      const planFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.type === "turn.plan.updated"),
-        Stream.runHead,
-        Effect.forkScoped,
-      );
-      yield* Effect.yieldNow;
-
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "cursor",
-        cwd: "/tmp/cursor-adapter-test",
-        runtimeMode: "approval-required",
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: "old-agent" },
       });
 
-      const plan = yield* Fiber.join(planFiber);
-      if (Option.isNone(plan)) {
-        assert.fail("Expected a turn.plan.updated event");
-      }
-      assert.deepStrictEqual(plan.value.payload.plan, [
-        { step: "Flush startup todos", status: "inProgress" },
-      ]);
-    }).pipe(Effect.provide(makeHarness(fake)), Effect.scoped);
+      assert.deepEqual(resumedAgentIds, ["old-agent"]);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          agent,
+          resumeAgent: (agentId) => {
+            resumedAgentIds.push(agentId);
+            return Promise.resolve(agent);
+          },
+        }),
+      ),
+      Effect.scoped,
+    );
   });
 
   it("parses v1 and v2 resume cursors and returns diagnostics for invalid input", () => {
     assert.deepStrictEqual(parseCursorResume({ schemaVersion: 1, sessionId: "old" }), {
+      agentId: "old",
       sessionId: "old",
     });
     assert.deepStrictEqual(
-      parseCursorResume({ schemaVersion: 2, provider: "cursor", sessionId: "new" }),
+      parseCursorResume({ schemaVersion: 2, provider: "cursor", agentId: "new" }),
       {
+        agentId: "new",
         sessionId: "new",
       },
     );
     assert.match(
-      parseCursorResume({ schemaVersion: 99, sessionId: "future" })?.diagnostic ?? "",
+      parseCursorResume({ schemaVersion: 99, agentId: "future" })?.diagnostic ?? "",
       /unsupported/u,
     );
   });

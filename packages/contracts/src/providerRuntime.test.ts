@@ -77,6 +77,31 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.planMarkdown).toBe("# Ship it");
   });
 
+  it("decodes command output deltas with stream metadata", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "content.delta",
+      eventId: "event-command-output-1",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "process-1",
+      payload: {
+        streamKind: "command_output",
+        outputStream: "stderr",
+        delta: "warning\n",
+        capReached: true,
+      },
+    });
+
+    expect(parsed.type).toBe("content.delta");
+    if (parsed.type !== "content.delta") {
+      throw new Error("expected content.delta");
+    }
+    expect(parsed.payload.outputStream).toBe("stderr");
+    expect(parsed.payload.capReached).toBe(true);
+  });
+
   it("decodes user-input.requested with structured questions", () => {
     const parsed = decodeRuntimeEvent({
       type: "user-input.requested",
@@ -138,6 +163,28 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.answers.sandbox_mode).toBe("workspace-write");
   });
 
+  it("decodes attestation request lifecycle events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "request.opened",
+      eventId: "event-attestation-1",
+      provider: "codex",
+      sessionId: "runtime-session-attestation",
+      createdAt: "2026-02-28T00:00:03.000Z",
+      threadId: "thread-attestation",
+      requestId: "request-attestation-1",
+      payload: {
+        requestType: "attestation_generate",
+        args: {},
+      },
+    });
+
+    expect(parsed.type).toBe("request.opened");
+    if (parsed.type !== "request.opened") {
+      throw new Error("expected request.opened");
+    }
+    expect(parsed.payload.requestType).toBe("attestation_generate");
+  });
+
   it("rejects legacy message.delta type", () => {
     expect(() =>
       decodeRuntimeEvent({
@@ -188,5 +235,274 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
+  });
+
+  it("decodes thread goal update and clear events", () => {
+    const updated = decodeRuntimeEvent({
+      type: "thread.goal.updated",
+      eventId: "event-thread-goal-updated",
+      provider: "codex",
+      createdAt: "2026-06-04T09:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        goal: {
+          threadId: "thread-1",
+          objective: "Improve Codex compatibility",
+          status: "active",
+          tokenBudget: 200000,
+          tokensUsed: 12000,
+          timeUsedSeconds: 90,
+          createdAt: "2026-04-15T17:00:00.000Z",
+          updatedAt: "2026-04-15T17:01:00.000Z",
+        },
+      },
+    });
+
+    expect(updated.type).toBe("thread.goal.updated");
+    if (updated.type !== "thread.goal.updated") {
+      throw new Error("expected thread.goal.updated");
+    }
+    expect(updated.payload.goal.tokensUsed).toBe(12000);
+
+    const cleared = decodeRuntimeEvent({
+      type: "thread.goal.cleared",
+      eventId: "event-thread-goal-cleared",
+      provider: "codex",
+      createdAt: "2026-06-04T09:02:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        clearedAt: "2026-06-04T09:02:00.000Z",
+      },
+    });
+
+    expect(cleared.type).toBe("thread.goal.cleared");
+    if (cleared.type !== "thread.goal.cleared") {
+      throw new Error("expected thread.goal.cleared");
+    }
+    expect(cleared.payload.clearedAt).toBe("2026-06-04T09:02:00.000Z");
+  });
+
+  it("decodes structured turn completion errors", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "turn.completed",
+      eventId: "event-turn-completed-failed",
+      provider: "codex",
+      createdAt: "2026-06-04T09:02:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        state: "failed",
+        errorMessage: "Responses stream disconnected.",
+        error: {
+          message: "Responses stream disconnected.",
+          codexErrorInfo: {
+            type: "ResponseStreamDisconnected",
+            httpStatusCode: 502,
+          },
+          additionalDetails: {
+            retryable: true,
+          },
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("turn.completed");
+    if (parsed.type !== "turn.completed") {
+      throw new Error("expected turn.completed");
+    }
+    expect(parsed.payload.errorMessage).toBe("Responses stream disconnected.");
+    expect(parsed.payload.error).toEqual({
+      message: "Responses stream disconnected.",
+      codexErrorInfo: {
+        type: "ResponseStreamDisconnected",
+        httpStatusCode: 502,
+      },
+      additionalDetails: {
+        retryable: true,
+      },
+    });
+  });
+
+  it("decodes realtime SDP answer events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "thread.realtime.sdp",
+      eventId: "event-realtime-sdp",
+      provider: "codex",
+      createdAt: "2026-06-04T09:03:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        sdp: "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\n",
+      },
+    });
+
+    expect(parsed.type).toBe("thread.realtime.sdp");
+    if (parsed.type !== "thread.realtime.sdp") {
+      throw new Error("expected thread.realtime.sdp");
+    }
+    expect(parsed.payload.sdp).toContain("v=0");
+  });
+
+  it("decodes filesystem change notifications", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "files.changed",
+      eventId: "event-files-changed",
+      provider: "codex",
+      createdAt: "2026-06-04T09:04:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        watchId: "watch-1",
+        changedPaths: ["/Users/me/project/.git/HEAD", "/Users/me/project/package.json"],
+      },
+    });
+
+    expect(parsed.type).toBe("files.changed");
+    if (parsed.type !== "files.changed") {
+      throw new Error("expected files.changed");
+    }
+    expect(parsed.payload.changedPaths).toHaveLength(2);
+  });
+
+  it("decodes skills and app list update notifications", () => {
+    const skillsChanged = decodeRuntimeEvent({
+      type: "skills.changed",
+      eventId: "event-skills-changed",
+      provider: "codex",
+      createdAt: "2026-06-04T09:05:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        detail: {},
+      },
+    });
+
+    expect(skillsChanged.type).toBe("skills.changed");
+    if (skillsChanged.type !== "skills.changed") {
+      throw new Error("expected skills.changed");
+    }
+    expect(skillsChanged.payload.detail).toEqual({});
+
+    const appsUpdated = decodeRuntimeEvent({
+      type: "apps.list.updated",
+      eventId: "event-app-list-updated",
+      provider: "codex",
+      createdAt: "2026-06-04T09:06:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        apps: [
+          {
+            id: "demo-app",
+            name: "Demo App",
+          },
+        ],
+        detail: {
+          data: [
+            {
+              id: "demo-app",
+              name: "Demo App",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(appsUpdated.type).toBe("apps.list.updated");
+    if (appsUpdated.type !== "apps.list.updated") {
+      throw new Error("expected apps.list.updated");
+    }
+    expect(appsUpdated.payload.apps).toHaveLength(1);
+  });
+
+  it("decodes remote-control and external-agent import notifications", () => {
+    const remoteStatus = decodeRuntimeEvent({
+      type: "remote-control.status.changed",
+      eventId: "event-remote-control-status",
+      provider: "codex",
+      createdAt: "2026-06-04T09:07:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        status: "disabled",
+        serverName: "Choki MacBook",
+        environmentId: null,
+        detail: {
+          status: "disabled",
+          serverName: "Choki MacBook",
+          environmentId: null,
+        },
+      },
+    });
+
+    expect(remoteStatus.type).toBe("remote-control.status.changed");
+    if (remoteStatus.type !== "remote-control.status.changed") {
+      throw new Error("expected remote-control.status.changed");
+    }
+    expect(remoteStatus.payload.environmentId).toBeNull();
+
+    const importCompleted = decodeRuntimeEvent({
+      type: "external-agent-config.import.completed",
+      eventId: "event-external-agent-import-completed",
+      provider: "codex",
+      createdAt: "2026-06-04T09:08:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        detail: {
+          imported: [
+            {
+              cwd: null,
+              kind: "session",
+              count: 1,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(importCompleted.type).toBe("external-agent-config.import.completed");
+    if (importCompleted.type !== "external-agent-config.import.completed") {
+      throw new Error("expected external-agent-config.import.completed");
+    }
+    expect(importCompleted.payload.detail).toEqual({
+      imported: [
+        {
+          cwd: null,
+          kind: "session",
+          count: 1,
+        },
+      ],
+    });
+  });
+
+  it("decodes raw response item notifications", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "raw-response.item",
+      eventId: "event-raw-response-item",
+      provider: "codex",
+      createdAt: "2026-06-04T09:09:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "raw_item_1",
+      payload: {
+        method: "rawResponseItem/added",
+        item: {
+          id: "raw_item_1",
+          type: "reasoning",
+          summary: [],
+        },
+        detail: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            id: "raw_item_1",
+            type: "reasoning",
+            summary: [],
+          },
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("raw-response.item");
+    if (parsed.type !== "raw-response.item") {
+      throw new Error("expected raw-response.item");
+    }
+    expect(parsed.payload.method).toBe("rawResponseItem/added");
+    expect(parsed.itemId).toBe("raw_item_1");
   });
 });

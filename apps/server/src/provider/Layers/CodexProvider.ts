@@ -239,7 +239,10 @@ function modelCapabilitiesFromCodexModelListEntry(
 
   return {
     reasoningEffortLevels,
-    supportsFastMode: model.additionalSpeedTiers.includes("fast"),
+    supportsFastMode:
+      model.serviceTiers.some((serviceTier) => serviceTier.id === "fast") ||
+      model.additionalSpeedTiers.includes("fast") ||
+      model.defaultServiceTier === "fast",
     supportsThinkingToggle: false,
     contextWindowOptions: [],
     promptInjectedEffortLevels: [],

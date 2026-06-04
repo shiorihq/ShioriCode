@@ -12,12 +12,16 @@ import {
   evaluateKimiToolLoopGuard,
   findKimiResumeFingerprintMismatch,
   kimiAssistantDeltaFromContentPart,
+  kimiMcpToolNeedsShioriApproval,
+  mapKimiRequestKindToCanonical,
+  rememberKimiShioriApprovalDecision,
   normalizeKimiQuestionAnswers,
   resolveKimiExternalToolTimeoutMsFromEnv,
   resolveKimiLoopControlFromEnv,
   resolveKimiThinking,
   resolveKimiTurnWatchdogTimeoutMsFromEnv,
   runKimiExternalToolWithTimeout,
+  shouldRequestKimiShioriApproval,
   shouldFlushKimiPendingTextAsAssistantAnswer,
   shouldAvoidKimiToolsForUserInput,
   shouldOmitKimiCompletedToolData,
@@ -92,6 +96,67 @@ describe("KimiCodeAdapter helpers", () => {
     expect(shouldOmitKimiCompletedToolData({ toolName: "read", isError: false })).toBe(true);
     expect(shouldOmitKimiCompletedToolData({ toolName: "ReadFile", isError: true })).toBe(false);
     expect(shouldOmitKimiCompletedToolData({ toolName: "Search", isError: false })).toBe(false);
+  });
+
+  it("maps Computer Use approval request kinds to canonical runtime requests", () => {
+    expect(mapKimiRequestKindToCanonical("computer-use")).toBe("computer_use_approval");
+  });
+
+  it("detects MCP tools that need ShioriCode-side approval wrapping", () => {
+    expect(
+      kimiMcpToolNeedsShioriApproval({
+        name: "mcp__shioricode-computer__computer_click",
+        description: "Click.",
+        inputSchema: {
+          type: "object",
+          "x-shioricode-needs-approval": true,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      kimiMcpToolNeedsShioriApproval({
+        name: "mcp__shioricode-computer__computer_permissions",
+        description: "Inspect permissions.",
+        inputSchema: {
+          type: "object",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("remembers accept-for-session for ShioriCode-wrapped Kimi approvals", () => {
+    const approvedRequestTypes = new Set<"computer_use_approval">();
+
+    expect(
+      shouldRequestKimiShioriApproval({
+        requestType: "computer_use_approval",
+        approvedRequestTypes,
+      }),
+    ).toBe(true);
+
+    rememberKimiShioriApprovalDecision({
+      requestType: "computer_use_approval",
+      approvedRequestTypes,
+      decision: "accept",
+    });
+    expect(
+      shouldRequestKimiShioriApproval({
+        requestType: "computer_use_approval",
+        approvedRequestTypes,
+      }),
+    ).toBe(true);
+
+    rememberKimiShioriApprovalDecision({
+      requestType: "computer_use_approval",
+      approvedRequestTypes,
+      decision: "acceptForSession",
+    });
+    expect(
+      shouldRequestKimiShioriApproval({
+        requestType: "computer_use_approval",
+        approvedRequestTypes,
+      }),
+    ).toBe(false);
   });
 
   it("wraps the Kimi executable with ShioriCode loop-control flags", () => {

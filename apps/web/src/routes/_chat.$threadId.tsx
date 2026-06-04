@@ -5,6 +5,7 @@ import {
   Suspense,
   lazy,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -13,9 +14,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { IconXmarkOutline24 as XIcon } from "nucleo-core-outline-24";
+import {
+  IconBranchMergeOutline24 as DiffIcon,
+  IconFileOutline24 as FileIcon,
+  IconGlobeOutline24 as GlobeIcon,
+  IconXmarkOutline24 as XIcon,
+} from "nucleo-core-outline-24";
 
 import ChatView from "../components/ChatView";
+import BrowserPanel from "../components/browser/BrowserPanel";
 import { DockedSidebarResizeHandle } from "../components/DockedSidebarResizeHandle";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
@@ -33,18 +40,22 @@ import {
   parseDiffRouteSearch,
   parseThreadPaneSearchValue,
   readThreadPaneDragData,
+  resolveActiveThreadPanel,
   resolveDroppedThreadPaneIds,
   resolveVisibleThreadPaneIds,
-  stripArtifactSearchParams,
-  stripDiffSearchParams,
+  type RightPanelId,
+  stripRightSidebarSearchParams,
 } from "../diffRouteSearch";
 import { useActiveThreadLeases } from "../hooks/useActiveThreadLease";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { useHostedShioriState } from "../convex/HostedShioriProvider";
+import { isSessionActivelyRunningTurn } from "../session-logic";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
+import { Button } from "../components/ui/button";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { cn } from "~/lib/utils";
 
@@ -102,7 +113,7 @@ const SidePanelSheet = (props: {
         side="right"
         showCloseButton={false}
         keepMounted
-        className="w-[min(88vw,820px)] max-w-[820px] p-0"
+        className="w-[min(92vw,920px)] max-w-[920px] p-0"
       >
         {props.children}
       </SheetPopup>
@@ -143,6 +154,108 @@ const LazyArtifactPanel = (props: {
         onClose={props.onClose}
       />
     </Suspense>
+  );
+};
+
+interface RightSidebarTab {
+  id: RightPanelId;
+  label: string;
+  icon: ReactNode;
+}
+
+function rightPanelLabel(panel: RightPanelId): string {
+  switch (panel) {
+    case "artifact":
+      return "artifact";
+    case "browser":
+      return "browser";
+    case "diff":
+      return "diff";
+  }
+}
+
+const RightSidebarFrame = (props: {
+  activePanel: RightPanelId;
+  children: ReactNode;
+  onClosePanel: () => void;
+  onSelectPanel: (panel: RightPanelId) => void;
+  tabs: ReadonlyArray<RightSidebarTab>;
+}) => {
+  const handleClosePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    props.onClosePanel();
+  };
+  const handleCloseClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.detail === 0) {
+      props.onClosePanel();
+    }
+  };
+
+  return (
+    <div className="isolate flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div className="drag-region relative z-20 flex h-11 shrink-0 items-center gap-1 border-b border-border bg-card px-2">
+        <div className="no-drag flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {props.tabs.map((tab) => {
+            const active = tab.id === props.activePanel;
+            return (
+              <Button
+                key={tab.id}
+                type="button"
+                variant={active ? "secondary" : "ghost"}
+                size="xs"
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "min-w-0 gap-1.5 px-2.5",
+                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => props.onSelectPanel(tab.id)}
+              >
+                {tab.icon}
+                <span className="truncate">{tab.label}</span>
+              </Button>
+            );
+          })}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="no-drag shrink-0 text-muted-foreground hover:text-foreground"
+          onPointerDown={handleClosePointerDown}
+          onClick={handleCloseClick}
+          aria-label={`Close ${rightPanelLabel(props.activePanel)} panel`}
+          title={`Close ${rightPanelLabel(props.activePanel)} panel`}
+        >
+          <XIcon />
+        </Button>
+      </div>
+      <div className="relative z-0 min-h-0 min-w-0 flex-1 overflow-hidden">{props.children}</div>
+    </div>
+  );
+};
+
+const RightSidebarTabPanel = (props: {
+  active: boolean;
+  children: ReactNode;
+  panel: RightPanelId;
+}) => {
+  return (
+    <div
+      aria-hidden={props.active ? undefined : true}
+      data-right-sidebar-panel={props.panel}
+      className={cn(
+        "absolute inset-0 min-h-0 min-w-0 overflow-hidden",
+        props.active ? "visible" : "pointer-events-none invisible",
+      )}
+    >
+      {props.children}
+    </div>
   );
 };
 
@@ -392,10 +505,17 @@ function ChatThreadRouteView() {
   const draftThreadExists = Object.hasOwn(draftThreadsByThreadId, threadId);
   const routeThreadExists = threadExists || draftThreadExists;
   const shouldPrewarmSession = shouldPrewarmThreadSession(routeThread);
+  const { browserUseEnabled } = useHostedShioriState();
   const diffOpen = search.diff === "1";
   const artifactOpen = search.artifact === "1" && Boolean(search.artifactPath);
-  const sidePanelOpen = diffOpen || artifactOpen;
+  const browserOpen = browserUseEnabled && search.browser === "1";
+  const activeRightPanel = resolveActiveThreadPanel(search, { browserEnabled: browserUseEnabled });
+  const sidePanelOpen = activeRightPanel !== null;
   const activeCwd = routeProject ? (routeThread?.worktreePath ?? routeProject.cwd) : null;
+  const isAgentWorking = isSessionActivelyRunningTurn(
+    routeThread?.latestTurn ?? null,
+    routeThread?.session ?? null,
+  );
   const shouldUseDiffSheet = useMediaQuery(DIFF_DOCKED_LAYOUT_MEDIA_QUERY);
   const missingThreadSinceRef = useRef<number | null>(null);
   const threadDropDepthRef = useRef(0);
@@ -444,21 +564,14 @@ function ChatThreadRouteView() {
   }, [threadId]);
   const [hasOpenedDiff, setHasOpenedDiff] = useState(diffOpen);
   const [hasOpenedArtifact, setHasOpenedArtifact] = useState(artifactOpen);
-  const closeDiff = useCallback(() => {
+  const [hasOpenedBrowser, setHasOpenedBrowser] = useState(browserOpen);
+  const closeSidePanel = useCallback(() => {
     void navigate({
       to: "/$threadId",
       params: { threadId },
-      search: (previous) => ({ ...stripDiffSearchParams(previous), diff: undefined }),
+      search: (previous) => stripRightSidebarSearchParams(previous),
     });
   }, [navigate, threadId]);
-  const closeArtifact = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      search: (previous) => ({ ...stripArtifactSearchParams(previous), artifact: undefined }),
-    });
-  }, [navigate, threadId]);
-  const closeSidePanel = artifactOpen ? closeArtifact : closeDiff;
   useEffect(() => {
     if (diffOpen) {
       setHasOpenedDiff(true);
@@ -469,6 +582,11 @@ function ChatThreadRouteView() {
       setHasOpenedArtifact(true);
     }
   }, [artifactOpen]);
+  useEffect(() => {
+    if (browserOpen) {
+      setHasOpenedBrowser(true);
+    }
+  }, [browserOpen]);
 
   useEffect(() => {
     if (!bootstrapComplete) {
@@ -603,20 +721,135 @@ function ChatThreadRouteView() {
       }),
     });
   };
+  const activateRightPanel = (panel: RightPanelId) => {
+    if (panel === "browser") {
+      if (!browserUseEnabled) {
+        return;
+      }
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => ({
+          ...previous,
+          browser: "1",
+          panel: "browser",
+        }),
+      });
+      return;
+    }
+
+    if (panel === "artifact") {
+      if (!artifactOpen) {
+        return;
+      }
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => ({
+          ...previous,
+          panel: "artifact",
+        }),
+      });
+      return;
+    }
+
+    if (!activeCwd) {
+      return;
+    }
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      search: (previous) => ({
+        ...previous,
+        diff: "1",
+        panel: "diff",
+      }),
+    });
+  };
+  const interruptActiveThread = () => {
+    if (!routeThread) {
+      return;
+    }
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    void api.orchestration.dispatchCommand({
+      type: "thread.turn.interrupt",
+      commandId: newCommandId(),
+      threadId: routeThread.id,
+      ...(routeThread.latestTurn?.turnId ? { turnId: routeThread.latestTurn.turnId } : {}),
+      createdAt: new Date().toISOString(),
+    });
+  };
+  const rightSidebarTabs = [
+    ...(activeCwd
+      ? [
+          {
+            id: "diff" as const,
+            label: "Diff",
+            icon: <DiffIcon className="size-3.5" />,
+          },
+        ]
+      : []),
+    ...(browserUseEnabled
+      ? [
+          {
+            id: "browser" as const,
+            label: "Browser",
+            icon: <GlobeIcon className="size-3.5" />,
+          },
+        ]
+      : []),
+    ...(artifactOpen
+      ? [
+          {
+            id: "artifact" as const,
+            label: "Artifact",
+            icon: <FileIcon className="size-3.5" />,
+          },
+        ]
+      : []),
+  ] satisfies RightSidebarTab[];
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
   const shouldRenderArtifactContent = artifactOpen || hasOpenedArtifact;
+  const shouldRenderBrowserContent = browserOpen || hasOpenedBrowser;
   const renderSidePanelContent = (mode: DiffPanelMode) => {
-    if (artifactOpen) {
-      return shouldRenderArtifactContent ? (
-        <LazyArtifactPanel
-          cwd={activeCwd}
-          mode={mode}
-          relativePath={search.artifactPath ?? null}
-          onClose={closeArtifact}
-        />
-      ) : null;
+    if (!activeRightPanel) {
+      return null;
     }
-    return shouldRenderDiffContent ? <LazyDiffPanel mode={mode} onClose={closeDiff} /> : null;
+    return (
+      <RightSidebarFrame
+        activePanel={activeRightPanel}
+        tabs={rightSidebarTabs}
+        onClosePanel={closeSidePanel}
+        onSelectPanel={activateRightPanel}
+      >
+        <RightSidebarTabPanel panel="diff" active={activeRightPanel === "diff"}>
+          {shouldRenderDiffContent ? <LazyDiffPanel mode={mode} /> : null}
+        </RightSidebarTabPanel>
+        <RightSidebarTabPanel panel="browser" active={activeRightPanel === "browser"}>
+          {shouldRenderBrowserContent && browserUseEnabled ? (
+            <BrowserPanel
+              threadId={threadId}
+              active={activeRightPanel === "browser"}
+              cwd={activeCwd}
+              isAgentWorking={isAgentWorking}
+              onStopAgent={interruptActiveThread}
+            />
+          ) : null}
+        </RightSidebarTabPanel>
+        <RightSidebarTabPanel panel="artifact" active={activeRightPanel === "artifact"}>
+          {shouldRenderArtifactContent ? (
+            <LazyArtifactPanel
+              cwd={activeCwd}
+              mode={mode}
+              relativePath={search.artifactPath ?? null}
+            />
+          ) : null}
+        </RightSidebarTabPanel>
+      </RightSidebarFrame>
+    );
   };
   const renderChatPanes = () =>
     visibleThreadIds.map((visibleThreadId) => (
@@ -691,7 +924,7 @@ function ChatThreadRouteView() {
           {paneStrip}
           <SidePanelDockedSidebar
             open={sidePanelOpen}
-            ariaLabel={artifactOpen ? "Resize artifact panel" : "Resize diff panel"}
+            ariaLabel={`Resize ${activeRightPanel ? rightPanelLabel(activeRightPanel) : "right"} panel`}
           >
             {renderSidePanelContent("sidebar")}
           </SidePanelDockedSidebar>
@@ -744,6 +977,7 @@ export const Route = createFileRoute("/_chat/$threadId")({
         "artifact",
         "artifactPath",
         "browser",
+        "panel",
         "panes",
       ]),
     ],

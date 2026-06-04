@@ -681,6 +681,156 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "adds the built-in Computer Use MCP server to Claude when enabled without approvals",
+    () => {
+      const harness = makeHarness({
+        serverSettings: {
+          computerUse: {
+            enabled: true,
+            requireApproval: false,
+            shareWithProviders: true,
+            approvedApps: [],
+          },
+          mcpServers: { servers: [] },
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), [
+          "shioricode-computer",
+        ]);
+        const computerServer = createInput?.options.mcpServers?.["shioricode-computer"];
+        if (!computerServer || computerServer.type !== "stdio") {
+          assert.fail("Expected the built-in Computer Use server to use stdio transport.");
+        }
+        assert.equal(computerServer.command, process.execPath);
+        const computerServerArgs = computerServer.args;
+        if (!computerServerArgs) {
+          assert.fail("Expected the built-in Computer Use server to include args.");
+        }
+        assert.equal(computerServerArgs.includes("computer-use-mcp"), true);
+        assert.deepEqual(computerServer.env, {
+          SHIORICODE_COMPUTER_USE_ENABLED: "1",
+          SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+          SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+        });
+        assert.deepEqual(computerServer, {
+          type: "stdio",
+          command: process.execPath,
+          args: computerServerArgs,
+          env: {
+            SHIORICODE_COMPUTER_USE_ENABLED: "1",
+            SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
+            SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+          },
+        });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("opens computer-use approvals for Claude built-in Computer Use MCP tools", () => {
+    const harness = makeHarness({
+      serverSettings: {
+        computerUse: {
+          enabled: true,
+          requireApproval: true,
+          shareWithProviders: true,
+          approvedApps: [],
+        },
+        mcpServers: { servers: [] },
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "approval-required",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const createInput = harness.getLastCreateQueryInput();
+      const computerServer = createInput?.options.mcpServers?.["shioricode-computer"];
+      if (!computerServer || computerServer.type !== "stdio") {
+        assert.fail("Expected the built-in Computer Use server to use stdio transport.");
+      }
+      assert.deepEqual(computerServer.env, {
+        SHIORICODE_COMPUTER_USE_ENABLED: "1",
+        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
+        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
+      });
+
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionPromise = canUseTool(
+        "mcp__shioricode-computer__computer_click",
+        { x: 12, y: 34 },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "computer-tool-use-1",
+        },
+      );
+
+      const requested = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(requested._tag, "Some");
+      if (requested._tag !== "Some" || requested.value.type !== "request.opened") {
+        return;
+      }
+      assert.equal(requested.value.payload.requestType, "computer_use_approval");
+      assert.equal(requested.value.payload.detail, 'Computer click: {"x":12,"y":34}');
+      assert.deepEqual(requested.value.payload.args, {
+        toolName: "mcp__shioricode-computer__computer_click",
+        input: { x: 12, y: 34 },
+        toolUseId: "computer-tool-use-1",
+      });
+
+      const runtimeRequestId = requested.value.requestId;
+      assert.equal(typeof runtimeRequestId, "string");
+      if (runtimeRequestId === undefined) {
+        return;
+      }
+
+      yield* adapter.respondToRequest(
+        session.threadId,
+        ApprovalRequestId.makeUnsafe(runtimeRequestId),
+        "accept",
+      );
+
+      const resolved = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(resolved._tag, "Some");
+      if (resolved._tag !== "Some" || resolved.value.type !== "request.resolved") {
+        return;
+      }
+      assert.equal(resolved.value.payload.requestType, "computer_use_approval");
+      assert.equal(resolved.value.payload.decision, "accept");
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.deepEqual(permissionResult, {
+        behavior: "allow",
+        updatedInput: { x: 12, y: 34 },
+      } satisfies PermissionResult);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the first duplicate Claude MCP server deterministically", () => {
     const harness = makeHarness({
       serverSettings: {

@@ -113,6 +113,82 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
+  it("preserves structured provider approval request data", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-structured-data",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-structured-data",
+          requestType: "command_execution_approval",
+          detail: "Need temporary network access",
+          data: {
+            availableDecisions: ["accept", "applyNetworkPolicyAmendment", "decline"],
+            networkApprovalContext: {
+              host: "example.com",
+            },
+            proposedNetworkPolicyAmendments: [
+              {
+                host: "example.com",
+                action: "allow",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-structured-data",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "Need temporary network access",
+        data: {
+          availableDecisions: ["accept", "applyNetworkPolicyAmendment", "decline"],
+          networkApprovalContext: {
+            host: "example.com",
+          },
+          proposedNetworkPolicyAmendments: [
+            {
+              host: "example.com",
+              action: "allow",
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("maps Computer Use requestType payloads into pending approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-computer-use",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Computer Use approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-computer-use",
+          requestType: "computer_use_approval",
+          detail: "computer_click",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-computer-use",
+        requestKind: "computer-use",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "computer_click",
+      },
+    ]);
+  });
+
   it("clears stale pending approvals when provider reports unknown pending request", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

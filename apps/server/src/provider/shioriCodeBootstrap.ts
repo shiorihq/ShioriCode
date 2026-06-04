@@ -18,6 +18,12 @@ export interface ShioriCodeBootstrapToolProfile {
 
 export interface ShioriCodeBootstrapFeatureGate {
   readonly enabled: boolean;
+  readonly requireApproval?: boolean;
+  readonly approvedApps?: ReadonlyArray<{
+    readonly bundleIdentifier: string;
+    readonly name: string;
+    readonly approvedAt: string;
+  }>;
 }
 
 export interface ShioriCodeBootstrapConfig {
@@ -115,8 +121,33 @@ function normalizeToolProfile(value: unknown): ShioriCodeBootstrapToolProfile | 
 }
 
 function normalizeFeatureGate(value: unknown): ShioriCodeBootstrapFeatureGate {
+  const approvedApps =
+    isRecord(value) && Array.isArray(value.approvedApps)
+      ? value.approvedApps.flatMap((app) => {
+          if (
+            !isRecord(app) ||
+            typeof app.bundleIdentifier !== "string" ||
+            typeof app.name !== "string" ||
+            typeof app.approvedAt !== "string"
+          ) {
+            return [];
+          }
+          return [
+            {
+              bundleIdentifier: app.bundleIdentifier,
+              name: app.name,
+              approvedAt: app.approvedAt,
+            },
+          ];
+        })
+      : undefined;
+
   return {
     enabled: isRecord(value) && value.enabled === true,
+    ...(isRecord(value) && typeof value.requireApproval === "boolean"
+      ? { requireApproval: value.requireApproval }
+      : {}),
+    ...(approvedApps ? { approvedApps } : {}),
   };
 }
 

@@ -275,7 +275,16 @@ it.layer(
                 ],
                 defaultReasoningEffort: "medium",
                 inputModalities: ["text", "image"],
-                additionalSpeedTiers: ["fast"],
+                additionalSpeedTiers: [],
+                serviceTiers: [
+                  {
+                    id: "fast",
+                    name: "Fast",
+                    description: "Lower-latency responses",
+                  },
+                ],
+                defaultServiceTier: "fast",
+                supportsPersonality: true,
                 isDefault: true,
               },
               {
@@ -288,6 +297,9 @@ it.layer(
                 defaultReasoningEffort: "medium",
                 inputModalities: ["text", "image"],
                 additionalSpeedTiers: [],
+                serviceTiers: [],
+                defaultServiceTier: "fast",
+                supportsPersonality: false,
                 isDefault: false,
               },
               {
@@ -300,6 +312,9 @@ it.layer(
                 defaultReasoningEffort: "medium",
                 inputModalities: ["text", "image"],
                 additionalSpeedTiers: [],
+                serviceTiers: [],
+                defaultServiceTier: null,
+                supportsPersonality: null,
                 isDefault: false,
               },
               {
@@ -312,6 +327,9 @@ it.layer(
                 defaultReasoningEffort: null,
                 inputModalities: ["text"],
                 additionalSpeedTiers: [],
+                serviceTiers: [],
+                defaultServiceTier: null,
+                supportsPersonality: null,
                 isDefault: false,
               },
             ],
@@ -323,6 +341,7 @@ it.layer(
         assert.strictEqual(status.models[0]?.multiModal, true);
         assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
         assert.strictEqual(status.models[1]?.name, "GPT-5.4 Mini");
+        assert.strictEqual(status.models[1]?.capabilities?.supportsFastMode, true);
         assert.strictEqual(status.models[2]?.name, "GPT-5.3 Codex");
         assert.deepStrictEqual(
           status.models[0]?.capabilities?.reasoningEffortLevels.find((level) => level.isDefault),

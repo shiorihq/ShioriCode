@@ -147,6 +147,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ],
     proposedPlans: [],
     error: null,
+    goal: null,
     createdAt: "2026-04-17T10:00:00.000Z",
     archivedAt: null,
     pinnedAt: null,

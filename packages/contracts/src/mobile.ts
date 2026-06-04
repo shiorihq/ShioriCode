@@ -98,7 +98,7 @@ export type MobileMessage = typeof MobileMessage.Type;
 
 export const MobilePendingApproval = Schema.Struct({
   requestId: ApprovalRequestId,
-  requestKind: Schema.Literals(["command", "file-read", "file-change"]),
+  requestKind: Schema.Literals(["command", "file-read", "file-change", "computer-use"]),
   detail: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });

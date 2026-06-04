@@ -12,7 +12,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
-import { ProviderKind } from "./orchestration";
+import { ProviderKind, ThreadGoal } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -23,11 +23,14 @@ const RuntimeEventRawSource = Schema.Literals([
   "codex.eventmsg",
   "claude.sdk.message",
   "claude.sdk.permission",
+  "cursor.sdk.message",
   "codex.sdk.thread-event",
   "kimi.sdk.wire",
+  "antigravity.sdk.step",
+  "antigravity.sdk.hook",
+  "shiori.hosted",
   "acp.jsonrpc",
   "acp.cursor.extension",
-  "shiori.hosted",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
 
@@ -147,9 +150,11 @@ export const CanonicalRequestType = Schema.Literals([
   "file_change_approval",
   "apply_patch_approval",
   "exec_command_approval",
+  "computer_use_approval",
   "tool_user_input",
   "dynamic_tool_call",
   "auth_tokens_refresh",
+  "attestation_generate",
   "unknown",
 ]);
 export type CanonicalRequestType = typeof CanonicalRequestType.Type;
@@ -162,9 +167,14 @@ const ProviderRuntimeEventType = Schema.Literals([
   "thread.started",
   "thread.state.changed",
   "thread.metadata.updated",
+  "thread.goal.updated",
+  "thread.goal.cleared",
   "thread.token-usage.updated",
   "thread.realtime.started",
+  "thread.realtime.sdp",
   "thread.realtime.item-added",
+  "thread.realtime.transcript.delta",
+  "thread.realtime.transcript.done",
   "thread.realtime.audio.delta",
   "thread.realtime.error",
   "thread.realtime.closed",
@@ -182,6 +192,9 @@ const ProviderRuntimeEventType = Schema.Literals([
   "content.delta",
   "request.opened",
   "request.resolved",
+  "raw-response.item",
+  "approval.review.started",
+  "approval.review.completed",
   "user-input.requested",
   "user-input.resolved",
   "task.started",
@@ -198,8 +211,16 @@ const ProviderRuntimeEventType = Schema.Literals([
   "mcp.status.updated",
   "mcp.oauth.completed",
   "model.rerouted",
+  "model.verification",
+  "fuzzy-file-search.session.updated",
+  "fuzzy-file-search.session.completed",
+  "skills.changed",
+  "apps.list.updated",
+  "remote-control.status.changed",
+  "external-agent-config.import.completed",
   "config.warning",
   "deprecation.notice",
+  "files.changed",
   "files.persisted",
   "runtime.warning",
   "runtime.error",
@@ -213,9 +234,14 @@ const SessionExitedType = Schema.Literal("session.exited");
 const ThreadStartedType = Schema.Literal("thread.started");
 const ThreadStateChangedType = Schema.Literal("thread.state.changed");
 const ThreadMetadataUpdatedType = Schema.Literal("thread.metadata.updated");
+const ThreadGoalUpdatedType = Schema.Literal("thread.goal.updated");
+const ThreadGoalClearedType = Schema.Literal("thread.goal.cleared");
 const ThreadTokenUsageUpdatedType = Schema.Literal("thread.token-usage.updated");
 const ThreadRealtimeStartedType = Schema.Literal("thread.realtime.started");
+const ThreadRealtimeSdpType = Schema.Literal("thread.realtime.sdp");
 const ThreadRealtimeItemAddedType = Schema.Literal("thread.realtime.item-added");
+const ThreadRealtimeTranscriptDeltaType = Schema.Literal("thread.realtime.transcript.delta");
+const ThreadRealtimeTranscriptDoneType = Schema.Literal("thread.realtime.transcript.done");
 const ThreadRealtimeAudioDeltaType = Schema.Literal("thread.realtime.audio.delta");
 const ThreadRealtimeErrorType = Schema.Literal("thread.realtime.error");
 const ThreadRealtimeClosedType = Schema.Literal("thread.realtime.closed");
@@ -233,6 +259,9 @@ const ItemCompletedType = Schema.Literal("item.completed");
 const ContentDeltaType = Schema.Literal("content.delta");
 const RequestOpenedType = Schema.Literal("request.opened");
 const RequestResolvedType = Schema.Literal("request.resolved");
+const RawResponseItemType = Schema.Literal("raw-response.item");
+const ApprovalReviewStartedType = Schema.Literal("approval.review.started");
+const ApprovalReviewCompletedType = Schema.Literal("approval.review.completed");
 const UserInputRequestedType = Schema.Literal("user-input.requested");
 const UserInputResolvedType = Schema.Literal("user-input.resolved");
 const TaskStartedType = Schema.Literal("task.started");
@@ -249,8 +278,18 @@ const AccountRateLimitsUpdatedType = Schema.Literal("account.rate-limits.updated
 const McpStatusUpdatedType = Schema.Literal("mcp.status.updated");
 const McpOauthCompletedType = Schema.Literal("mcp.oauth.completed");
 const ModelReroutedType = Schema.Literal("model.rerouted");
+const ModelVerificationType = Schema.Literal("model.verification");
+const FuzzyFileSearchSessionUpdatedType = Schema.Literal("fuzzy-file-search.session.updated");
+const FuzzyFileSearchSessionCompletedType = Schema.Literal("fuzzy-file-search.session.completed");
+const SkillsChangedType = Schema.Literal("skills.changed");
+const AppsListUpdatedType = Schema.Literal("apps.list.updated");
+const RemoteControlStatusChangedType = Schema.Literal("remote-control.status.changed");
+const ExternalAgentConfigImportCompletedType = Schema.Literal(
+  "external-agent-config.import.completed",
+);
 const ConfigWarningType = Schema.Literal("config.warning");
 const DeprecationNoticeType = Schema.Literal("deprecation.notice");
+const FilesChangedType = Schema.Literal("files.changed");
 const FilesPersistedType = Schema.Literal("files.persisted");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
@@ -310,6 +349,16 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 
+const ThreadGoalUpdatedRuntimePayload = Schema.Struct({
+  goal: ThreadGoal,
+});
+export type ThreadGoalUpdatedRuntimePayload = typeof ThreadGoalUpdatedRuntimePayload.Type;
+
+const ThreadGoalClearedRuntimePayload = Schema.Struct({
+  clearedAt: Schema.optional(IsoDateTime),
+});
+export type ThreadGoalClearedRuntimePayload = typeof ThreadGoalClearedRuntimePayload.Type;
+
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
@@ -336,13 +385,31 @@ export type ThreadTokenUsageUpdatedPayload = typeof ThreadTokenUsageUpdatedPaylo
 
 const ThreadRealtimeStartedPayload = Schema.Struct({
   realtimeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
+  version: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadRealtimeStartedPayload = typeof ThreadRealtimeStartedPayload.Type;
+
+const ThreadRealtimeSdpPayload = Schema.Struct({
+  sdp: TrimmedNonEmptyStringSchema,
+});
+export type ThreadRealtimeSdpPayload = typeof ThreadRealtimeSdpPayload.Type;
 
 const ThreadRealtimeItemAddedPayload = Schema.Struct({
   item: Schema.Unknown,
 });
 export type ThreadRealtimeItemAddedPayload = typeof ThreadRealtimeItemAddedPayload.Type;
+
+const ThreadRealtimeTranscriptDeltaPayload = Schema.Struct({
+  role: Schema.optional(TrimmedNonEmptyStringSchema),
+  delta: Schema.String,
+});
+export type ThreadRealtimeTranscriptDeltaPayload = typeof ThreadRealtimeTranscriptDeltaPayload.Type;
+
+const ThreadRealtimeTranscriptDonePayload = Schema.Struct({
+  role: Schema.optional(TrimmedNonEmptyStringSchema),
+  text: Schema.String,
+});
+export type ThreadRealtimeTranscriptDonePayload = typeof ThreadRealtimeTranscriptDonePayload.Type;
 
 const ThreadRealtimeAudioDeltaPayload = Schema.Struct({
   audio: Schema.Unknown,
@@ -372,6 +439,7 @@ const TurnCompletedPayload = Schema.Struct({
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  error: Schema.optional(UnknownRecordSchema),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
 
@@ -436,6 +504,8 @@ const ContentDeltaPayload = Schema.Struct({
   delta: Schema.String,
   contentIndex: Schema.optional(Schema.Int),
   summaryIndex: Schema.optional(Schema.Int),
+  outputStream: Schema.optional(Schema.Literals(["stdout", "stderr"])),
+  capReached: Schema.optional(Schema.Boolean),
 });
 export type ContentDeltaPayload = typeof ContentDeltaPayload.Type;
 
@@ -452,6 +522,25 @@ const RequestResolvedPayload = Schema.Struct({
   resolution: Schema.optional(Schema.Unknown),
 });
 export type RequestResolvedPayload = typeof RequestResolvedPayload.Type;
+
+const RawResponseItemPayload = Schema.Struct({
+  method: TrimmedNonEmptyStringSchema,
+  item: Schema.optional(Schema.Unknown),
+  detail: Schema.optional(Schema.Unknown),
+});
+export type RawResponseItemPayload = typeof RawResponseItemPayload.Type;
+
+const ApprovalReviewPayload = Schema.Struct({
+  targetItemId: Schema.optional(RuntimeItemId),
+  reviewId: Schema.optional(TrimmedNonEmptyStringSchema),
+  status: Schema.optional(Schema.Literals(["inProgress", "approved", "denied", "aborted"])),
+  riskLevel: Schema.optional(Schema.Literals(["low", "medium", "high", "critical"])),
+  userAuthorization: Schema.optional(Schema.Literals(["unknown", "low", "medium", "high"])),
+  rationale: Schema.optional(TrimmedNonEmptyStringSchema),
+  review: Schema.optional(Schema.Unknown),
+  action: Schema.optional(Schema.Unknown),
+});
+export type ApprovalReviewPayload = typeof ApprovalReviewPayload.Type;
 
 const UserInputQuestionOption = Schema.Struct({
   label: TrimmedNonEmptyStringSchema,
@@ -580,6 +669,50 @@ const ModelReroutedPayload = Schema.Struct({
 });
 export type ModelReroutedPayload = typeof ModelReroutedPayload.Type;
 
+const ModelVerificationPayload = Schema.Struct({
+  verifications: Schema.Array(Schema.Unknown),
+});
+export type ModelVerificationPayload = typeof ModelVerificationPayload.Type;
+
+const FuzzyFileSearchSessionUpdatedPayload = Schema.Struct({
+  sessionId: TrimmedNonEmptyStringSchema,
+  query: Schema.optional(Schema.String),
+  files: Schema.Array(Schema.Unknown),
+});
+export type FuzzyFileSearchSessionUpdatedPayload = typeof FuzzyFileSearchSessionUpdatedPayload.Type;
+
+const FuzzyFileSearchSessionCompletedPayload = Schema.Struct({
+  sessionId: TrimmedNonEmptyStringSchema,
+  query: Schema.optional(Schema.String),
+});
+export type FuzzyFileSearchSessionCompletedPayload =
+  typeof FuzzyFileSearchSessionCompletedPayload.Type;
+
+const SkillsChangedPayload = Schema.Struct({
+  detail: Schema.optional(Schema.Unknown),
+});
+export type SkillsChangedPayload = typeof SkillsChangedPayload.Type;
+
+const AppsListUpdatedPayload = Schema.Struct({
+  apps: Schema.Array(Schema.Unknown),
+  detail: Schema.optional(Schema.Unknown),
+});
+export type AppsListUpdatedPayload = typeof AppsListUpdatedPayload.Type;
+
+const RemoteControlStatusChangedPayload = Schema.Struct({
+  status: TrimmedNonEmptyStringSchema,
+  serverName: Schema.optional(TrimmedNonEmptyStringSchema),
+  environmentId: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
+  detail: Schema.optional(Schema.Unknown),
+});
+export type RemoteControlStatusChangedPayload = typeof RemoteControlStatusChangedPayload.Type;
+
+const ExternalAgentConfigImportCompletedPayload = Schema.Struct({
+  detail: Schema.optional(Schema.Unknown),
+});
+export type ExternalAgentConfigImportCompletedPayload =
+  typeof ExternalAgentConfigImportCompletedPayload.Type;
+
 const ConfigWarningPayload = Schema.Struct({
   summary: TrimmedNonEmptyStringSchema,
   details: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -593,6 +726,12 @@ const DeprecationNoticePayload = Schema.Struct({
   details: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type DeprecationNoticePayload = typeof DeprecationNoticePayload.Type;
+
+const FilesChangedPayload = Schema.Struct({
+  watchId: TrimmedNonEmptyStringSchema,
+  changedPaths: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type FilesChangedPayload = typeof FilesChangedPayload.Type;
 
 const FilesPersistedPayload = Schema.Struct({
   files: Schema.Array(
@@ -678,6 +817,22 @@ const ProviderRuntimeThreadMetadataUpdatedEvent = Schema.Struct({
 export type ProviderRuntimeThreadMetadataUpdatedEvent =
   typeof ProviderRuntimeThreadMetadataUpdatedEvent.Type;
 
+const ProviderRuntimeThreadGoalUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadGoalUpdatedType,
+  payload: ThreadGoalUpdatedRuntimePayload,
+});
+export type ProviderRuntimeThreadGoalUpdatedEvent =
+  typeof ProviderRuntimeThreadGoalUpdatedEvent.Type;
+
+const ProviderRuntimeThreadGoalClearedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadGoalClearedType,
+  payload: ThreadGoalClearedRuntimePayload,
+});
+export type ProviderRuntimeThreadGoalClearedEvent =
+  typeof ProviderRuntimeThreadGoalClearedEvent.Type;
+
 const ProviderRuntimeThreadTokenUsageUpdatedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadTokenUsageUpdatedType,
@@ -694,6 +849,14 @@ const ProviderRuntimeThreadRealtimeStartedEvent = Schema.Struct({
 export type ProviderRuntimeThreadRealtimeStartedEvent =
   typeof ProviderRuntimeThreadRealtimeStartedEvent.Type;
 
+const ProviderRuntimeThreadRealtimeSdpEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadRealtimeSdpType,
+  payload: ThreadRealtimeSdpPayload,
+});
+export type ProviderRuntimeThreadRealtimeSdpEvent =
+  typeof ProviderRuntimeThreadRealtimeSdpEvent.Type;
+
 const ProviderRuntimeThreadRealtimeItemAddedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadRealtimeItemAddedType,
@@ -701,6 +864,22 @@ const ProviderRuntimeThreadRealtimeItemAddedEvent = Schema.Struct({
 });
 export type ProviderRuntimeThreadRealtimeItemAddedEvent =
   typeof ProviderRuntimeThreadRealtimeItemAddedEvent.Type;
+
+const ProviderRuntimeThreadRealtimeTranscriptDeltaEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadRealtimeTranscriptDeltaType,
+  payload: ThreadRealtimeTranscriptDeltaPayload,
+});
+export type ProviderRuntimeThreadRealtimeTranscriptDeltaEvent =
+  typeof ProviderRuntimeThreadRealtimeTranscriptDeltaEvent.Type;
+
+const ProviderRuntimeThreadRealtimeTranscriptDoneEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ThreadRealtimeTranscriptDoneType,
+  payload: ThreadRealtimeTranscriptDonePayload,
+});
+export type ProviderRuntimeThreadRealtimeTranscriptDoneEvent =
+  typeof ProviderRuntimeThreadRealtimeTranscriptDoneEvent.Type;
 
 const ProviderRuntimeThreadRealtimeAudioDeltaEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -826,6 +1005,29 @@ const ProviderRuntimeRequestResolvedEvent = Schema.Struct({
 });
 export type ProviderRuntimeRequestResolvedEvent = typeof ProviderRuntimeRequestResolvedEvent.Type;
 
+const ProviderRuntimeRawResponseItemEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: RawResponseItemType,
+  payload: RawResponseItemPayload,
+});
+export type ProviderRuntimeRawResponseItemEvent = typeof ProviderRuntimeRawResponseItemEvent.Type;
+
+const ProviderRuntimeApprovalReviewStartedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ApprovalReviewStartedType,
+  payload: ApprovalReviewPayload,
+});
+export type ProviderRuntimeApprovalReviewStartedEvent =
+  typeof ProviderRuntimeApprovalReviewStartedEvent.Type;
+
+const ProviderRuntimeApprovalReviewCompletedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ApprovalReviewCompletedType,
+  payload: ApprovalReviewPayload,
+});
+export type ProviderRuntimeApprovalReviewCompletedEvent =
+  typeof ProviderRuntimeApprovalReviewCompletedEvent.Type;
+
 const ProviderRuntimeUserInputRequestedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: UserInputRequestedType,
@@ -942,6 +1144,60 @@ const ProviderRuntimeModelReroutedEvent = Schema.Struct({
 });
 export type ProviderRuntimeModelReroutedEvent = typeof ProviderRuntimeModelReroutedEvent.Type;
 
+const ProviderRuntimeModelVerificationEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ModelVerificationType,
+  payload: ModelVerificationPayload,
+});
+export type ProviderRuntimeModelVerificationEvent =
+  typeof ProviderRuntimeModelVerificationEvent.Type;
+
+const ProviderRuntimeFuzzyFileSearchSessionUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: FuzzyFileSearchSessionUpdatedType,
+  payload: FuzzyFileSearchSessionUpdatedPayload,
+});
+export type ProviderRuntimeFuzzyFileSearchSessionUpdatedEvent =
+  typeof ProviderRuntimeFuzzyFileSearchSessionUpdatedEvent.Type;
+
+const ProviderRuntimeFuzzyFileSearchSessionCompletedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: FuzzyFileSearchSessionCompletedType,
+  payload: FuzzyFileSearchSessionCompletedPayload,
+});
+export type ProviderRuntimeFuzzyFileSearchSessionCompletedEvent =
+  typeof ProviderRuntimeFuzzyFileSearchSessionCompletedEvent.Type;
+
+const ProviderRuntimeSkillsChangedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: SkillsChangedType,
+  payload: SkillsChangedPayload,
+});
+export type ProviderRuntimeSkillsChangedEvent = typeof ProviderRuntimeSkillsChangedEvent.Type;
+
+const ProviderRuntimeAppsListUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: AppsListUpdatedType,
+  payload: AppsListUpdatedPayload,
+});
+export type ProviderRuntimeAppsListUpdatedEvent = typeof ProviderRuntimeAppsListUpdatedEvent.Type;
+
+const ProviderRuntimeRemoteControlStatusChangedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: RemoteControlStatusChangedType,
+  payload: RemoteControlStatusChangedPayload,
+});
+export type ProviderRuntimeRemoteControlStatusChangedEvent =
+  typeof ProviderRuntimeRemoteControlStatusChangedEvent.Type;
+
+const ProviderRuntimeExternalAgentConfigImportCompletedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ExternalAgentConfigImportCompletedType,
+  payload: ExternalAgentConfigImportCompletedPayload,
+});
+export type ProviderRuntimeExternalAgentConfigImportCompletedEvent =
+  typeof ProviderRuntimeExternalAgentConfigImportCompletedEvent.Type;
+
 const ProviderRuntimeConfigWarningEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ConfigWarningType,
@@ -956,6 +1212,13 @@ const ProviderRuntimeDeprecationNoticeEvent = Schema.Struct({
 });
 export type ProviderRuntimeDeprecationNoticeEvent =
   typeof ProviderRuntimeDeprecationNoticeEvent.Type;
+
+const ProviderRuntimeFilesChangedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: FilesChangedType,
+  payload: FilesChangedPayload,
+});
+export type ProviderRuntimeFilesChangedEvent = typeof ProviderRuntimeFilesChangedEvent.Type;
 
 const ProviderRuntimeFilesPersistedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
@@ -986,9 +1249,14 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeThreadStartedEvent,
   ProviderRuntimeThreadStateChangedEvent,
   ProviderRuntimeThreadMetadataUpdatedEvent,
+  ProviderRuntimeThreadGoalUpdatedEvent,
+  ProviderRuntimeThreadGoalClearedEvent,
   ProviderRuntimeThreadTokenUsageUpdatedEvent,
   ProviderRuntimeThreadRealtimeStartedEvent,
+  ProviderRuntimeThreadRealtimeSdpEvent,
   ProviderRuntimeThreadRealtimeItemAddedEvent,
+  ProviderRuntimeThreadRealtimeTranscriptDeltaEvent,
+  ProviderRuntimeThreadRealtimeTranscriptDoneEvent,
   ProviderRuntimeThreadRealtimeAudioDeltaEvent,
   ProviderRuntimeThreadRealtimeErrorEvent,
   ProviderRuntimeThreadRealtimeClosedEvent,
@@ -1006,6 +1274,9 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeContentDeltaEvent,
   ProviderRuntimeRequestOpenedEvent,
   ProviderRuntimeRequestResolvedEvent,
+  ProviderRuntimeRawResponseItemEvent,
+  ProviderRuntimeApprovalReviewStartedEvent,
+  ProviderRuntimeApprovalReviewCompletedEvent,
   ProviderRuntimeUserInputRequestedEvent,
   ProviderRuntimeUserInputResolvedEvent,
   ProviderRuntimeTaskStartedEvent,
@@ -1022,8 +1293,16 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeMcpStatusUpdatedEvent,
   ProviderRuntimeMcpOauthCompletedEvent,
   ProviderRuntimeModelReroutedEvent,
+  ProviderRuntimeModelVerificationEvent,
+  ProviderRuntimeFuzzyFileSearchSessionUpdatedEvent,
+  ProviderRuntimeFuzzyFileSearchSessionCompletedEvent,
+  ProviderRuntimeSkillsChangedEvent,
+  ProviderRuntimeAppsListUpdatedEvent,
+  ProviderRuntimeRemoteControlStatusChangedEvent,
+  ProviderRuntimeExternalAgentConfigImportCompletedEvent,
   ProviderRuntimeConfigWarningEvent,
   ProviderRuntimeDeprecationNoticeEvent,
+  ProviderRuntimeFilesChangedEvent,
   ProviderRuntimeFilesPersistedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
@@ -1048,7 +1327,13 @@ const ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolvedEvent
 export type ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolvedEvent;
 
 // Legacy helper aliases retained for adapters/tests.
-const ProviderRuntimeToolKind = Schema.Literals(["command", "file-read", "file-change", "other"]);
+const ProviderRuntimeToolKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "computer-use",
+  "other",
+]);
 export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;
 
 export const ProviderRuntimeTurnStatus = RuntimeTurnState;

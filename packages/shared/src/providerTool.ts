@@ -1,6 +1,6 @@
 import type { ToolLifecycleItemType } from "contracts";
 
-export type ProviderToolRequestKind = "command" | "file-read" | "file-change";
+export type ProviderToolRequestKind = "command" | "file-read" | "file-change" | "computer-use";
 
 const COMMAND_TOOL_NAMES = new Set([
   "bash",
@@ -68,6 +68,57 @@ const TODO_LIST_TOOL_NAMES = new Set([
   "update todo list",
   "update todos",
 ]);
+const COMPUTER_USE_TOOL_ALIASES = new Map<string, string>([
+  ["computer", "computer"],
+  ["computer permissions", "computer permissions"],
+  ["computer request permission", "computer request permission"],
+  ["computer open permission guide", "computer open permission guide"],
+  ["computer focus app", "computer focus app"],
+  ["computer list apps", "computer list apps"],
+  ["computer screenshot", "computer screenshot"],
+  ["computer click", "computer click"],
+  ["computer double click", "computer double click"],
+  ["computer right click", "computer right click"],
+  ["computer move", "computer move"],
+  ["computer drag", "computer drag"],
+  ["computer type", "computer type"],
+  ["computer key", "computer key"],
+  ["computer scroll", "computer scroll"],
+  ["computer wait", "computer wait"],
+  ["screenshot", "computer screenshot"],
+  ["screen shot", "computer screenshot"],
+  ["take screenshot", "computer screenshot"],
+  ["get screenshot", "computer screenshot"],
+  ["click", "computer click"],
+  ["left click", "computer click"],
+  ["mouse click", "computer click"],
+  ["double click", "computer double click"],
+  ["left double click", "computer double click"],
+  ["right click", "computer right click"],
+  ["secondary click", "computer right click"],
+  ["mouse move", "computer move"],
+  ["move mouse", "computer move"],
+  ["cursor position", "computer move"],
+  ["mouse position", "computer move"],
+  ["drag", "computer drag"],
+  ["mouse drag", "computer drag"],
+  ["left click drag", "computer drag"],
+  ["drag mouse", "computer drag"],
+  ["type", "computer type"],
+  ["type text", "computer type"],
+  ["input text", "computer type"],
+  ["key", "computer key"],
+  ["key press", "computer key"],
+  ["keypress", "computer key"],
+  ["press key", "computer key"],
+  ["hotkey", "computer key"],
+  ["scroll", "computer scroll"],
+  ["mouse scroll", "computer scroll"],
+  ["scroll wheel", "computer scroll"],
+  ["wheel", "computer scroll"],
+  ["wait for screen", "computer wait"],
+  ["wait screen", "computer wait"],
+] satisfies ReadonlyArray<readonly [string, string]>);
 const MAX_SNAPSHOT_STRING_LENGTH = 20_000;
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -236,6 +287,45 @@ export function normalizeProviderToolName(value: string | null | undefined): str
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeMcpLeafToolName(value: string | null | undefined): string | null {
+  if (!value?.startsWith("mcp__")) {
+    return null;
+  }
+  const parts = value.split("__");
+  if (parts.length < 3) {
+    return null;
+  }
+  return normalizeProviderToolName(parts.slice(2).join("__"));
+}
+
+function normalizeComputerUseToolName(value: string | null | undefined): string | null {
+  const normalized = normalizeProviderToolName(value);
+  if (normalized) {
+    const direct = COMPUTER_USE_TOOL_ALIASES.get(normalized);
+    if (direct) {
+      return direct;
+    }
+  }
+  const mcpLeaf = normalizeMcpLeafToolName(value);
+  if (mcpLeaf) {
+    const direct = COMPUTER_USE_TOOL_ALIASES.get(mcpLeaf);
+    if (direct) {
+      return direct;
+    }
+  }
+  const raw = value?.trim();
+  if (!raw?.startsWith("mcp_")) {
+    return null;
+  }
+  for (const [alias, canonical] of COMPUTER_USE_TOOL_ALIASES) {
+    const snakeToolName = alias.replaceAll(" ", "_");
+    if (raw.endsWith(`_${snakeToolName}`) || raw.endsWith(`__${snakeToolName}`)) {
+      return canonical;
+    }
+  }
+  return null;
+}
+
 export function isSubagentToolName(toolName: string | null | undefined): boolean {
   const normalized = normalizeProviderToolName(toolName);
   if (!normalized) {
@@ -377,6 +467,9 @@ export function classifyProviderToolRequestKind(
     return undefined;
   }
 
+  if (normalizeComputerUseToolName(toolName)) {
+    return "computer-use";
+  }
   if (COMMAND_TOOL_NAMES.has(normalized)) {
     return "command";
   }
@@ -394,12 +487,14 @@ export function classifyProviderToolRequestKind(
 }
 
 export function providerToolTitle(toolName: string | null | undefined): string {
-  const normalized = normalizeProviderToolName(toolName);
+  const normalized = normalizeComputerUseToolName(toolName) ?? normalizeProviderToolName(toolName);
   if (!normalized) {
     return "Tool call";
   }
 
   switch (normalized) {
+    case "computer":
+      return "Computer use";
     case "close agent":
       return "Close subagent";
     case "resume agent":
@@ -417,6 +512,34 @@ export function providerToolTitle(toolName: string | null | undefined): string {
     case "exec command":
     case "execute command":
       return "Run command";
+    case "computer list apps":
+      return "Computer app list";
+    case "computer focus app":
+      return "Computer focus app";
+    case "computer request permission":
+      return "Computer permission request";
+    case "computer open permission guide":
+      return "Computer permission guide";
+    case "computer screenshot":
+      return "Computer screenshot";
+    case "computer click":
+      return "Computer click";
+    case "computer double click":
+      return "Computer double click";
+    case "computer right click":
+      return "Computer right click";
+    case "computer move":
+      return "Computer move";
+    case "computer drag":
+      return "Computer drag";
+    case "computer type":
+      return "Computer type";
+    case "computer key":
+      return "Computer key";
+    case "computer scroll":
+      return "Computer scroll";
+    case "computer wait":
+      return "Computer wait";
     case "list directory":
       return "List directory";
     case "multi edit":
@@ -461,7 +584,7 @@ export function summarizeProviderToolInvocation(
   toolName: string | null | undefined,
   input: Record<string, unknown> | null,
 ): string | undefined {
-  const normalized = normalizeProviderToolName(toolName);
+  const normalized = normalizeComputerUseToolName(toolName) ?? normalizeProviderToolName(toolName);
   if (!normalized) {
     return undefined;
   }

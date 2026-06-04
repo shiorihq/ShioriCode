@@ -282,7 +282,7 @@ function orchestrationSessionStatusFromProviderSessionStatus(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-read" | "file-change" | undefined {
+): "command" | "file-read" | "file-change" | "computer-use" | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -292,6 +292,8 @@ function requestKindFromCanonicalRequestType(
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "computer_use_approval":
+      return "computer-use";
     default:
       return undefined;
   }
@@ -313,6 +315,27 @@ function isReasoningTaskProgress(
   event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
 ): boolean {
   return event.provider === "codex";
+}
+
+function approvalReviewSummary(
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "approval.review.started" | "approval.review.completed" }
+  >,
+): string {
+  if (event.type === "approval.review.started") {
+    return "Auto-approval review started";
+  }
+  switch (event.payload.status) {
+    case "approved":
+      return "Auto-approval approved";
+    case "denied":
+      return "Auto-approval denied";
+    case "aborted":
+      return "Auto-approval aborted";
+    default:
+      return "Auto-approval review completed";
+  }
 }
 
 function runtimeEventToActivities(
@@ -343,12 +366,15 @@ function runtimeEventToActivities(
                 ? "File-read approval requested"
                 : requestKind === "file-change"
                   ? "File-change approval requested"
-                  : "Approval requested",
+                  : requestKind === "computer-use"
+                    ? "Computer Use approval requested"
+                    : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.args !== undefined ? { data: event.payload.args } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -380,6 +406,40 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "approval.review.started":
+    case "approval.review.completed": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "approval",
+          kind: event.type,
+          summary: approvalReviewSummary(event),
+          payload: {
+            ...(event.itemId ? { itemId: event.itemId } : {}),
+            ...(event.payload.targetItemId ? { targetItemId: event.payload.targetItemId } : {}),
+            ...(event.payload.reviewId ? { reviewId: event.payload.reviewId } : {}),
+            ...(event.payload.status ? { status: event.payload.status } : {}),
+            ...(event.payload.riskLevel ? { riskLevel: event.payload.riskLevel } : {}),
+            ...(event.payload.userAuthorization
+              ? { userAuthorization: event.payload.userAuthorization }
+              : {}),
+            ...(event.payload.rationale
+              ? { rationale: truncateDetail(event.payload.rationale) }
+              : {}),
+            ...(event.payload.action !== undefined
+              ? { action: snapshotActivityToolData(event.payload.action) }
+              : {}),
+            ...(event.payload.review !== undefined
+              ? { review: snapshotActivityToolData(event.payload.review) }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "runtime.error": {
       return [
         {
@@ -399,6 +459,23 @@ function runtimeEventToActivities(
 
     case "runtime.warning": {
       return [];
+    }
+
+    case "model.verification": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "model.verification",
+          summary: "Model verification required",
+          payload: {
+            verifications: event.payload.verifications,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
     }
 
     case "turn.plan.updated": {
@@ -1818,6 +1895,31 @@ const make = Effect.fn("make")(function* () {
         commandId: providerCommandId(event, "thread-meta-update"),
         threadId: thread.id,
         title: event.payload.name,
+      });
+    }
+
+    if (event.type === "thread.goal.updated") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.goal.set",
+        commandId: providerCommandId(event, "thread-goal-set"),
+        threadId: thread.id,
+        objective: event.payload.goal.objective,
+        status: event.payload.goal.status,
+        tokenBudget: event.payload.goal.tokenBudget,
+        tokensUsed: event.payload.goal.tokensUsed,
+        timeUsedSeconds: event.payload.goal.timeUsedSeconds,
+        goalCreatedAt: event.payload.goal.createdAt,
+        goalUpdatedAt: event.payload.goal.updatedAt,
+        createdAt: event.createdAt,
+      });
+    }
+
+    if (event.type === "thread.goal.cleared") {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.goal.clear",
+        commandId: providerCommandId(event, "thread-goal-clear"),
+        threadId: thread.id,
+        createdAt: event.payload.clearedAt ?? event.createdAt,
       });
     }
 

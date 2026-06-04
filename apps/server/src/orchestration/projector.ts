@@ -29,6 +29,8 @@ import {
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadGoalClearedPayload,
+  ThreadGoalUpdatedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -447,6 +449,7 @@ export function projectEvent(
             tag: payload.tag ?? null,
             resumeState: "resumed",
             latestTurn: null,
+            goal: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             pinnedAt: payload.pinnedAt,
@@ -543,6 +546,28 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             interactionMode: payload.interactionMode,
             updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.goal-updated":
+      return decodeForEvent(ThreadGoalUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            goal: payload.goal,
+            updatedAt: payload.goal.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.goal-cleared":
+      return decodeForEvent(ThreadGoalClearedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            goal: null,
+            updatedAt: payload.clearedAt,
           }),
         })),
       );

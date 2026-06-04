@@ -21,6 +21,32 @@ const makeServerSettingsLayer = () =>
     ),
   );
 
+const withEnvVar = <A, E, R>(
+  name: string,
+  value: string | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+      return previous;
+    }),
+    () => effect,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = previous;
+        }
+      }),
+  );
+
 it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("decodes nested settings patches", () =>
     Effect.sync(() => {
@@ -67,6 +93,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         {
           onboarding: {
             completedStepIds: ["connect-provider"],
+          },
+        },
+      );
+
+      assert.deepEqual(
+        decodePatch({
+          computerUse: {
+            shareWithProviders: true,
+            approvedApps: [
+              {
+                bundleIdentifier: "com.apple.finder",
+                name: "Finder",
+                approvedAt: "2026-06-04T14:00:00.000Z",
+              },
+            ],
+          },
+        }),
+        {
+          computerUse: {
+            shareWithProviders: true,
+            approvedApps: [
+              {
+                bundleIdentifier: "com.apple.finder",
+                name: "Finder",
+                approvedAt: "2026-06-04T14:00:00.000Z",
+              },
+            ],
           },
         },
       );
@@ -199,6 +252,32 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         model: "openai/gpt-5.4",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps the default Shiori API base URL on hosted production", () =>
+    withEnvVar(
+      "SHIORICODE_SHIORI_API_BASE_URL",
+      undefined,
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const settings = yield* serverSettings.getSettings;
+
+        assert.equal(settings.providers.shiori.apiBaseUrl, "https://shiori.ai");
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
+  );
+
+  it.effect("honors explicit Shiori API base URL overrides", () =>
+    withEnvVar(
+      "SHIORICODE_SHIORI_API_BASE_URL",
+      "http://127.0.0.1:3000",
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const settings = yield* serverSettings.getSettings;
+
+        assert.equal(settings.providers.shiori.apiBaseUrl, "http://127.0.0.1:3000");
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    ),
   );
 
   it.effect("trims provider path settings when updates are applied", () =>

@@ -31,6 +31,7 @@ import {
   buildHostedToolDescriptors,
   buildInterruptedTurnEvents,
   makeShioriAdapterLive,
+  runtimePromptFeatureGates,
   toolRequestKind,
 } from "./ShioriAdapter.ts";
 
@@ -4509,6 +4510,61 @@ describe("hosted tools", () => {
         ),
       ),
     );
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_create_session")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_close_session")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_permissions")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_list_apps")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_focus_app")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_focus_window")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_double_click")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_right_click")));
+    assert.ok(enabledRules.some((rule) => rule.includes("computer_wait")));
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("Use computer_create_session before multi-step desktop workflows"),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("Use computer_focus_app with a bundleIdentifier or processIdentifier"),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("Use computer_focus_window with a bundleIdentifier plus windowIndex"),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes(
+          "computer_list_apps may be filtered by the user's local approved-app settings",
+        ),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("do not use shell commands or other tools to discover or control unlisted"),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes(
+          "computer_screenshot may include the full visible desktop. Approved-app settings limit which apps you may focus or act on; they do not redact screenshots.",
+        ),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes(
+          "computer_click, computer_double_click, computer_right_click, computer_move, computer_drag, and computer_scroll with x/y default",
+        ),
+      ),
+    );
+    assert.ok(
+      enabledRules.some((rule) =>
+        rule.includes("Use computer_wait after actions that may trigger UI transitions"),
+      ),
+    );
     assert.ok(
       enabledRules.some((rule) => rule.includes("Do not substitute shell commands such as open")),
     );
@@ -4516,6 +4572,76 @@ describe("hosted tools", () => {
       enabledRules.some((rule) =>
         rule.includes("Computer Use is unavailable or gated in this session"),
       ),
+    );
+  });
+
+  it("keeps Computer Use prompt gating local-first and provider-sharing gated", () => {
+    assert.deepEqual(
+      runtimePromptFeatureGates({
+        bootstrap: {
+          ...CONSERVATIVE_SHIORI_BOOTSTRAP,
+          browserUse: { enabled: true },
+          computerUse: { enabled: false },
+        },
+        settings: {
+          browserUse: { enabled: false },
+          computerUse: {
+            enabled: true,
+            requireApproval: true,
+            shareWithProviders: true,
+            approvedApps: [],
+          },
+        } as never,
+      }),
+      {
+        browserUseEnabled: true,
+        computerUseEnabled: true,
+      },
+    );
+
+    assert.deepEqual(
+      runtimePromptFeatureGates({
+        bootstrap: {
+          ...CONSERVATIVE_SHIORI_BOOTSTRAP,
+          browserUse: { enabled: false },
+          computerUse: { enabled: true },
+        },
+        settings: {
+          browserUse: { enabled: true },
+          computerUse: {
+            enabled: false,
+            requireApproval: true,
+            shareWithProviders: true,
+            approvedApps: [],
+          },
+        } as never,
+      }),
+      {
+        browserUseEnabled: false,
+        computerUseEnabled: false,
+      },
+    );
+
+    assert.deepEqual(
+      runtimePromptFeatureGates({
+        bootstrap: {
+          ...CONSERVATIVE_SHIORI_BOOTSTRAP,
+          computerUse: { enabled: true },
+        },
+        settings: {
+          browserUse: { enabled: false },
+          computerUse: {
+            enabled: true,
+            requireApproval: true,
+            shareWithProviders: false,
+            approvedApps: [],
+          },
+        } as never,
+      }),
+      {
+        browserUseEnabled: false,
+        computerUseEnabled: false,
+      },
     );
   });
 
@@ -4795,6 +4921,34 @@ describe("hosted tools", () => {
     const descriptor = tools.find((tool) => tool.name === "mcp__demo__mutate");
     assert.ok(descriptor);
     assert.equal(descriptor.inputSchema["x-shioricode-request-kind"], "mcp-side-effect");
+    assert.equal(descriptor.inputSchema["x-shioricode-needs-approval"], true);
+  });
+
+  it("preserves Computer Use request kind on approved MCP descriptors", () => {
+    const tools = buildHostedToolDescriptors({
+      allowedRequestKinds: new Set(),
+      session: {
+        runtimeMode: "full-access",
+      } satisfies Pick<ProviderSession, "runtimeMode">,
+      hostedBootstrap: CONSERVATIVE_SHIORI_BOOTSTRAP,
+      mcpToolDescriptors: [
+        {
+          name: "computer_click",
+          title: "Computer click",
+          description: "Click the desktop.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            "x-shioricode-request-kind": "computer-use",
+            "x-shioricode-needs-approval": true,
+          },
+        },
+      ],
+    });
+
+    const descriptor = tools.find((tool) => tool.name === "computer_click");
+    assert.ok(descriptor);
+    assert.equal(descriptor.inputSchema["x-shioricode-request-kind"], "computer-use");
     assert.equal(descriptor.inputSchema["x-shioricode-needs-approval"], true);
   });
 });

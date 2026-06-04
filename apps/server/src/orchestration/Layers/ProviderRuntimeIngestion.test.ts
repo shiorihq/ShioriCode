@@ -94,6 +94,7 @@ function createProviderServiceHarness() {
   const service: ProviderServiceShape = {
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
+    steerTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
@@ -2256,6 +2257,19 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         requestType: "command_execution_approval",
         detail: "pwd",
+        args: {
+          reason: "Need temporary network access",
+          availableDecisions: ["accept", "decline"],
+          networkApprovalContext: {
+            host: "example.com",
+          },
+          proposedNetworkPolicyAmendments: [
+            {
+              host: "example.com",
+              action: "allow",
+            },
+          ],
+        },
       },
     });
 
@@ -2296,6 +2310,19 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(requestedPayload?.requestKind).toBe("command");
     expect(requestedPayload?.requestType).toBe("command_execution_approval");
+    expect(requestedPayload?.data).toEqual({
+      reason: "Need temporary network access",
+      availableDecisions: ["accept", "decline"],
+      networkApprovalContext: {
+        host: "example.com",
+      },
+      proposedNetworkPolicyAmendments: [
+        {
+          host: "example.com",
+          action: "allow",
+        },
+      ],
+    });
 
     const resolved = thread?.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-resolved",
@@ -2306,6 +2333,44 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(resolvedPayload?.requestKind).toBe("command");
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
+  });
+
+  it("maps Computer Use request events into approval activities with requestKind", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-computer-request-opened"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      requestId: ApprovalRequestId.makeUnsafe("req-computer-open"),
+      payload: {
+        requestType: "computer_use_approval",
+        detail: "computer_click",
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-computer-request-opened",
+      ),
+    );
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    const requested = thread?.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-computer-request-opened",
+    );
+    const requestedPayload =
+      requested?.payload && typeof requested.payload === "object"
+        ? (requested.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(requested?.summary).toBe("Computer Use approval requested");
+    expect(requestedPayload?.requestKind).toBe("computer-use");
+    expect(requestedPayload?.requestType).toBe("computer_use_approval");
   });
 
   it("maps runtime.error into errored session state", async () => {
@@ -2404,6 +2469,131 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.activities.some((activity) => activity.id === "evt-warning-runtime")).toBe(
       false,
     );
+  });
+
+  it("records model verification events as visible thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "model.verification",
+      eventId: asEventId("evt-model-verification"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-model-verification"),
+      payload: {
+        verifications: ["trustedAccessForCyber"],
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-model-verification",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-model-verification",
+    );
+    const activityPayload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("model.verification");
+    expect(activity?.summary).toBe("Model verification required");
+    expect(activity?.tone).toBe("info");
+    expect(activity?.turnId).toBe("turn-model-verification");
+    expect(activityPayload?.verifications).toEqual(["trustedAccessForCyber"]);
+  });
+
+  it("records auto-approval review events as visible approval activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "approval.review.started",
+      eventId: asEventId("evt-approval-review-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-approval-review"),
+      itemId: "cmd_1",
+      payload: {
+        targetItemId: "cmd_1",
+        reviewId: "review_1",
+        status: "inProgress",
+        riskLevel: "low",
+        userAuthorization: "unknown",
+        rationale: "Checking command risk.",
+        review: {
+          status: "inProgress",
+          riskLevel: "low",
+        },
+        action: {
+          type: "command",
+          source: "shell",
+          command: "bun run lint",
+        },
+      },
+    });
+
+    harness.emit({
+      type: "approval.review.completed",
+      eventId: asEventId("evt-approval-review-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-approval-review"),
+      itemId: "cmd_1",
+      payload: {
+        targetItemId: "cmd_1",
+        reviewId: "review_1",
+        status: "approved",
+        riskLevel: "medium",
+        userAuthorization: "high",
+        rationale: "Command is bounded to validation.",
+        review: {
+          status: "approved",
+          riskLevel: "medium",
+        },
+        action: {
+          type: "command",
+          source: "shell",
+          command: "bun run lint",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-approval-review-completed",
+      ),
+    );
+    const started = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-approval-review-started",
+    );
+    const completed = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-approval-review-completed",
+    );
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(started?.kind).toBe("approval.review.started");
+    expect(started?.summary).toBe("Auto-approval review started");
+    expect(started?.tone).toBe("approval");
+    expect(completed?.kind).toBe("approval.review.completed");
+    expect(completed?.summary).toBe("Auto-approval approved");
+    expect(completed?.tone).toBe("approval");
+    expect(completed?.turnId).toBe("turn-approval-review");
+    expect(completedPayload?.targetItemId).toBe("cmd_1");
+    expect(completedPayload?.reviewId).toBe("review_1");
+    expect(completedPayload?.status).toBe("approved");
+    expect(completedPayload?.riskLevel).toBe("medium");
+    expect(completedPayload?.userAuthorization).toBe("high");
+    expect(completedPayload?.rationale).toBe("Command is bounded to validation.");
   });
 
   it("suppresses MCP refresh-token runtime warnings from thread activities", async () => {
@@ -2519,6 +2709,58 @@ describe("ProviderRuntimeIngestion", () => {
         path: "/tmp/file.ts",
       },
     });
+  });
+
+  it("consumes provider thread goal updates and clears into projected goal state", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "thread.goal.updated",
+      eventId: asEventId("evt-thread-goal-updated"),
+      provider: "codex",
+      createdAt: "2026-06-04T09:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        goal: {
+          threadId: asThreadId("thread-1"),
+          objective: "Improve Codex compatibility",
+          status: "active",
+          tokenBudget: 200000,
+          tokensUsed: 12000,
+          timeUsedSeconds: 90,
+          createdAt: "2026-04-15T19:40:00.000Z",
+          updatedAt: "2026-04-15T19:41:00.000Z",
+        },
+      },
+    });
+
+    let thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 12000);
+
+    expect(thread.goal).toEqual({
+      threadId: asThreadId("thread-1"),
+      objective: "Improve Codex compatibility",
+      status: "active",
+      tokenBudget: 200000,
+      tokensUsed: 12000,
+      timeUsedSeconds: 90,
+      createdAt: "2026-04-15T19:40:00.000Z",
+      updatedAt: "2026-04-15T19:41:00.000Z",
+    });
+
+    harness.emit({
+      type: "thread.goal.cleared",
+      eventId: asEventId("evt-thread-goal-cleared"),
+      provider: "codex",
+      createdAt: "2026-06-04T09:02:00.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        clearedAt: "2026-06-04T09:02:00.000Z",
+      },
+    });
+
+    thread = await waitForThread(harness.engine, (entry) => entry.goal === null);
+
+    expect(thread.goal).toBeNull();
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

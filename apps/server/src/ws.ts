@@ -129,6 +129,15 @@ function toServerProviderUsageSnapshot(
                 : {}),
             }
           : null,
+        ...(usage.rateLimits?.planType !== undefined
+          ? { planType: usage.rateLimits.planType }
+          : {}),
+        ...(usage.rateLimits?.individualLimit !== undefined
+          ? { individualLimit: usage.rateLimits.individualLimit }
+          : {}),
+        ...(usage.rateLimits?.rateLimitReachedType !== undefined
+          ? { rateLimitReachedType: usage.rateLimits.rateLimitReachedType }
+          : {}),
       }
     : {
         provider: "claudeAgent",
@@ -397,11 +406,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.computerCloseSession]: (input) =>
         computer.closeSession(input).pipe(Effect.as({})),
       [WS_METHODS.computerScreenshot]: (input) => computer.screenshot(input),
+      [WS_METHODS.computerListApps]: (input) => computer.listApps(input),
+      [WS_METHODS.computerFocusApp]: (input) => computer.focusApp(input),
+      [WS_METHODS.computerFocusWindow]: (input) => computer.focusWindow(input),
       [WS_METHODS.computerClick]: (input) => computer.click(input),
+      [WS_METHODS.computerDoubleClick]: (input) => computer.doubleClick(input),
+      [WS_METHODS.computerRightClick]: (input) => computer.rightClick(input),
       [WS_METHODS.computerMove]: (input) => computer.move(input),
+      [WS_METHODS.computerDrag]: (input) => computer.drag(input),
       [WS_METHODS.computerType]: (input) => computer.type(input),
       [WS_METHODS.computerKey]: (input) => computer.key(input),
       [WS_METHODS.computerScroll]: (input) => computer.scroll(input),
+      [WS_METHODS.computerWait]: (input) => computer.wait(input),
       [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig,
       [WS_METHODS.serverRefreshProviders]: (_input) =>
         providerRegistry.refresh().pipe(

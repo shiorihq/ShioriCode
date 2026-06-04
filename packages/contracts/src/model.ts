@@ -178,7 +178,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   shiori: "Shiori",
   kimiCode: "Kimi Code",
-  gemini: "Gemini",
+  gemini: "Antigravity",
   cursor: "Cursor",
   codex: "Codex",
   claudeAgent: "Claude",

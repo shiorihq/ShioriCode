@@ -18,6 +18,7 @@ describe("ComposerPrimaryActions", () => {
         isConnecting={false}
         isPreparingWorktree={false}
         hasSendableContent={false}
+        canSteerRunningTurn={false}
         onPreviousPendingQuestion={() => {}}
         onInterrupt={() => {}}
         onImplementPlanInNewThread={() => {}}
@@ -42,6 +43,7 @@ describe("ComposerPrimaryActions", () => {
         isConnecting={false}
         isPreparingWorktree={false}
         hasSendableContent={false}
+        canSteerRunningTurn={false}
         onPreviousPendingQuestion={() => {}}
         onInterrupt={() => {}}
         onImplementPlanInNewThread={() => {}}
@@ -50,5 +52,30 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain("Stop generation");
     expect(markup).not.toContain("Waiting for response");
+  });
+
+  it("labels the running submit action as steering when live steering is available", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPrimaryActions
+        compact={false}
+        pendingAction={null}
+        isRunning
+        awaitingSendAck={false}
+        queuedTurnCount={0}
+        showPlanFollowUpPrompt={false}
+        promptHasText
+        isSendBusy={false}
+        isConnecting={false}
+        isPreparingWorktree={false}
+        hasSendableContent
+        canSteerRunningTurn
+        onPreviousPendingQuestion={() => {}}
+        onInterrupt={() => {}}
+        onImplementPlanInNewThread={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Steer");
+    expect(markup).not.toContain("Queue");
   });
 });

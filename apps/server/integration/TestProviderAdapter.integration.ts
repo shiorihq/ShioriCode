@@ -75,12 +75,15 @@ function normalizeTurnState(value: unknown): "completed" | "failed" | "interrupt
 
 function mapRequestType(
   requestKind: unknown,
-): "command_execution_approval" | "file_change_approval" | "unknown" {
+): "command_execution_approval" | "file_change_approval" | "computer_use_approval" | "unknown" {
   if (requestKind === "command") {
     return "command_execution_approval";
   }
   if (requestKind === "file-change") {
     return "file_change_approval";
+  }
+  if (requestKind === "computer-use") {
+    return "computer_use_approval";
   }
   return "unknown";
 }

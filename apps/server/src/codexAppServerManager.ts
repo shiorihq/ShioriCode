@@ -47,6 +47,7 @@ import {
   type CodexStderrStreamState,
 } from "./provider/codexStderr";
 import { toCodexUserInputAnswers } from "./provider/codexUserInput";
+import { isProviderApprovalAccepted } from "./provider/providerApprovalDecision";
 import {
   CODEX_SPARK_MODEL,
   readCodexAccountSnapshot,
@@ -98,14 +99,54 @@ function isUserInputRequestMethod(method: string): method is CodexUserInputReque
   return CODEX_SERVER_REQUEST_HANDLERS[method as CodexServerRequestMethod] === "user-input";
 }
 
+const CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_METHODS = new Set<string>([
+  "thread/started",
+  "thread/status/changed",
+  "thread/archived",
+  "thread/unarchived",
+  "thread/closed",
+  "thread/compacted",
+  "thread/name/updated",
+  "thread/settings/updated",
+  "thread/goal/updated",
+  "thread/goal/cleared",
+  "thread/tokenUsage/updated",
+  "thread/realtime/started",
+  "thread/realtime/sdp",
+  "thread/realtime/itemAdded",
+  "thread/realtime/transcript/delta",
+  "thread/realtime/transcript/done",
+  "thread/realtime/outputAudio/delta",
+  "thread/realtime/error",
+  "thread/realtime/closed",
+  "turn/started",
+  "turn/completed",
+  "turn/aborted",
+  "turn/diff/updated",
+  "turn/plan/updated",
+  "model/rerouted",
+  "model/verification",
+  "item/plan/delta",
+]);
+
+const CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_PREFIXES = ["rawResponseItem/"] as const;
+
 export interface CodexAppServerSendTurnInput {
   readonly threadId: ThreadId;
+  readonly messageId?: string;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
   readonly serviceTier?: string | null;
   readonly effort?: string;
   readonly interactionMode?: ProviderInteractionMode;
+}
+
+export interface CodexAppServerSteerTurnInput {
+  readonly threadId: ThreadId;
+  readonly turnId?: TurnId;
+  readonly messageId?: string;
+  readonly input: string;
 }
 
 export interface CodexAppServerStartSessionInput {
@@ -136,9 +177,13 @@ const CODEX_SESSION_METADATA_TIMEOUT_MS = 4_000;
 
 const CODEX_SERVER_REQUEST_HANDLERS = {
   "account/chatgptAuthTokens/refresh": "unsupported",
+  "attestation/generate": "unsupported",
+  applyPatchApproval: "approval",
+  execCommandApproval: "approval",
   "item/commandExecution/requestApproval": "approval",
   "item/fileChange/requestApproval": "approval",
   "item/fileRead/requestApproval": "approval",
+  "item/permissions/requestApproval": "approval",
   "item/tool/call": "unsupported",
   "item/tool/requestUserInput": "user-input",
   "mcpServer/elicitation/request": "user-input",
@@ -152,6 +197,27 @@ type CodexUserInputRequestMethod = Extract<
   CodexServerRequestMethod,
   "item/tool/requestUserInput" | "tool/requestUserInput" | "mcpServer/elicitation/request"
 >;
+
+type CodexMcpElicitationAction = "accept" | "decline" | "cancel";
+
+const CODEX_MCP_ELICITATION_ACTION_KEY = "__codexElicitationAction";
+
+type ResolvedPendingServerRequest =
+  | {
+      readonly type: "approval";
+      readonly requestId: ApprovalRequestId;
+      readonly requestKind: ProviderRequestKind;
+      readonly turnId?: TurnId;
+      readonly itemId?: ProviderItemId;
+      readonly requestMethod: PendingApprovalRequest["method"];
+    }
+  | {
+      readonly type: "user-input";
+      readonly requestId: ApprovalRequestId;
+      readonly turnId?: TurnId;
+      readonly itemId?: ProviderItemId;
+      readonly requestMethod: PendingUserInputRequest["requestMethod"];
+    };
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: "on-request" | "never";
@@ -384,7 +450,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const threadStartParams = {
         ...sessionOverrides,
-        experimentalRawEvents: false,
       };
       const resumeThreadId = readResumeThreadId(input);
       this.emitLifecycleEvent(
@@ -533,6 +598,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     const turnStartParams: {
       threadId: string;
+      clientUserMessageId?: string;
       input: Array<
         { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
       >;
@@ -552,6 +618,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: providerThreadId,
       input: turnInput,
     };
+    if (input.messageId !== undefined) {
+      turnStartParams.clientUserMessageId = input.messageId;
+    }
     const normalizedModel = resolveCodexModelForAccount(
       normalizeCodexModelSlug(input.model ?? context.session.model),
       context.account,
@@ -606,6 +675,31 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       turnId,
       resumeCursor,
     };
+  }
+
+  async steerTurn(input: CodexAppServerSteerTurnInput): Promise<void> {
+    const context = this.requireSession(input.threadId);
+    const providerThreadId = this.readProviderThreadId(context);
+    const effectiveTurnId = input.turnId ?? context.session.activeTurnId;
+    if (!providerThreadId) {
+      throw new Error("Session is missing provider resume thread id.");
+    }
+    if (!effectiveTurnId) {
+      throw new Error("Session has no active turn to steer.");
+    }
+
+    await this.sendRequest(context, "turn/steer", {
+      threadId: providerThreadId,
+      ...(input.messageId !== undefined ? { clientUserMessageId: input.messageId } : {}),
+      input: [
+        {
+          type: "text",
+          text: input.input,
+          text_elements: [],
+        },
+      ],
+      expectedTurnId: effectiveTurnId,
+    });
   }
 
   async interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
@@ -678,9 +772,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context.pendingApprovals.delete(requestId);
     this.writeMessage(context, {
       id: pendingRequest.jsonRpcId,
-      result: {
-        decision,
-      },
+      result: this.approvalResponseResult(pendingRequest, decision),
     });
 
     this.emitEvent({
@@ -715,11 +807,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     context.pendingUserInputs.delete(requestId);
     const codexAnswers = toCodexUserInputAnswers(answers);
+    const mcpElicitationAction = this.mcpElicitationActionForAnswers(answers);
     const result =
       pendingRequest.requestMethod === "mcpServer/elicitation/request"
         ? {
-            action: "accept",
-            content: this.toPlainUserInputAnswers(answers),
+            action: mcpElicitationAction,
+            content:
+              mcpElicitationAction === "accept" ? this.toPlainUserInputAnswers(answers) : null,
           }
         : {
             answers: codexAnswers,
@@ -745,6 +839,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           pendingRequest.requestMethod === "mcpServer/elicitation/request"
             ? this.toPlainUserInputAnswers(answers)
             : codexAnswers,
+        ...(pendingRequest.requestMethod === "mcpServer/elicitation/request"
+          ? { action: mcpElicitationAction }
+          : {}),
       },
     });
   }
@@ -916,6 +1013,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     notification: JsonRpcNotification,
   ): void {
     const rawRoute = this.readRouteFields(notification.params);
+    const resolvedPendingRequest =
+      notification.method === "serverRequest/resolved"
+        ? this.resolvePendingServerRequestNotification(context, notification.params)
+        : undefined;
+    if (resolvedPendingRequest?.type === "user-input") {
+      this.emitUserInputCancelledByServerRequestResolved(context, resolvedPendingRequest);
+    }
     this.rememberCollabReceiverTurns(context, notification.params, rawRoute.turnId);
     const childRoute = this.readChildRoute(context, notification.params);
     const childParentTurnId = childRoute?.parentTurnId;
@@ -938,12 +1042,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: notification.method,
-      ...((childParentTurnId ?? rawRoute.turnId)
-        ? { turnId: childParentTurnId ?? rawRoute.turnId }
+      ...((childParentTurnId ?? rawRoute.turnId ?? resolvedPendingRequest?.turnId)
+        ? { turnId: childParentTurnId ?? rawRoute.turnId ?? resolvedPendingRequest?.turnId }
         : {}),
-      ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+      ...((rawRoute.itemId ?? resolvedPendingRequest?.itemId)
+        ? { itemId: rawRoute.itemId ?? resolvedPendingRequest?.itemId }
+        : {}),
+      ...(resolvedPendingRequest?.requestId ? { requestId: resolvedPendingRequest.requestId } : {}),
+      ...(resolvedPendingRequest?.type === "approval"
+        ? { requestKind: resolvedPendingRequest.requestKind }
+        : {}),
       textDelta,
-      payload: this.attachChildParentItemId(notification.params, childRoute?.parentItemId),
+      payload: this.attachChildParentItemId(
+        this.payloadForServerNotification(notification, resolvedPendingRequest),
+        childRoute?.parentItemId,
+      ),
     });
 
     if (notification.method === "thread/started") {
@@ -1001,6 +1114,101 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
   }
 
+  private resolvePendingServerRequestNotification(
+    context: CodexSessionContext,
+    params: unknown,
+  ): ResolvedPendingServerRequest | undefined {
+    const requestId = this.readJsonRpcId(params, "requestId") ?? this.readJsonRpcId(params, "id");
+    if (requestId === undefined) {
+      return undefined;
+    }
+
+    for (const [key, pendingRequest] of context.pendingApprovals.entries()) {
+      if (!this.pendingRequestMatchesResolvedId(pendingRequest, requestId)) {
+        continue;
+      }
+      context.pendingApprovals.delete(key);
+      return {
+        type: "approval",
+        requestId: pendingRequest.requestId,
+        requestKind: pendingRequest.requestKind,
+        ...(pendingRequest.turnId ? { turnId: pendingRequest.turnId } : {}),
+        ...(pendingRequest.itemId ? { itemId: pendingRequest.itemId } : {}),
+        requestMethod: pendingRequest.method,
+      };
+    }
+
+    for (const [key, pendingRequest] of context.pendingUserInputs.entries()) {
+      if (!this.pendingRequestMatchesResolvedId(pendingRequest, requestId)) {
+        continue;
+      }
+      context.pendingUserInputs.delete(key);
+      return {
+        type: "user-input",
+        requestId: pendingRequest.requestId,
+        ...(pendingRequest.turnId ? { turnId: pendingRequest.turnId } : {}),
+        ...(pendingRequest.itemId ? { itemId: pendingRequest.itemId } : {}),
+        requestMethod: pendingRequest.requestMethod,
+      };
+    }
+
+    return undefined;
+  }
+
+  private pendingRequestMatchesResolvedId(
+    pendingRequest: PendingApprovalRequest | PendingUserInputRequest,
+    requestId: string | number,
+  ): boolean {
+    return (
+      String(pendingRequest.requestId) === String(requestId) ||
+      String(pendingRequest.jsonRpcId) === String(requestId)
+    );
+  }
+
+  private payloadForServerNotification(
+    notification: JsonRpcNotification,
+    resolvedPendingRequest: ResolvedPendingServerRequest | undefined,
+  ): unknown {
+    if (notification.method !== "serverRequest/resolved" || !resolvedPendingRequest) {
+      return notification.params;
+    }
+
+    const payload = this.readObject(notification.params) ?? {};
+    const request = this.readObject(payload, "request") ?? {};
+    return {
+      ...payload,
+      request: {
+        ...request,
+        method: this.readString(request, "method") ?? resolvedPendingRequest.requestMethod,
+        ...(resolvedPendingRequest.type === "approval"
+          ? { kind: this.readString(request, "kind") ?? resolvedPendingRequest.requestKind }
+          : {}),
+      },
+    };
+  }
+
+  private emitUserInputCancelledByServerRequestResolved(
+    context: CodexSessionContext,
+    pendingRequest: Extract<ResolvedPendingServerRequest, { readonly type: "user-input" }>,
+  ): void {
+    this.emitEvent({
+      id: EventId.makeUnsafe(randomUUID()),
+      kind: "notification",
+      provider: "codex",
+      threadId: context.session.threadId,
+      createdAt: new Date().toISOString(),
+      method: this.userInputResolvedMethod(pendingRequest.requestMethod),
+      ...(pendingRequest.turnId ? { turnId: pendingRequest.turnId } : {}),
+      ...(pendingRequest.itemId ? { itemId: pendingRequest.itemId } : {}),
+      requestId: pendingRequest.requestId,
+      payload: {
+        requestId: pendingRequest.requestId,
+        status: "cancelled",
+        answers: {},
+      },
+    });
+  }
+
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
     const handler = CODEX_SERVER_REQUEST_HANDLERS[request.method as CodexServerRequestMethod];
     const rawRoute = this.readRouteFields(request.params);
@@ -1020,6 +1228,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         threadId: context.session.threadId,
         ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
         ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+        ...(this.isPermissionsApprovalRequest(request.method)
+          ? { requestedPermissions: this.readObject(request.params, "permissions") }
+          : {}),
       };
       context.pendingApprovals.set(requestId, pendingRequest);
     }
@@ -1056,6 +1267,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     if (isUserInputRequestMethod(request.method)) {
+      return;
+    }
+
+    if (request.method === "item/tool/call") {
+      this.respondUnsupportedDynamicToolCall(context, request);
       return;
     }
 
@@ -1304,11 +1520,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private requestKindForMethod(method: string): ProviderRequestKind | undefined {
-    if (method === "item/commandExecution/requestApproval") {
+    if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
       return "command";
     }
 
-    if (method === "permissions/requestApproval") {
+    if (this.isPermissionsApprovalRequest(method)) {
       return "command";
     }
 
@@ -1316,7 +1532,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return "file-read";
     }
 
-    if (method === "item/fileChange/requestApproval") {
+    if (method === "item/fileChange/requestApproval" || method === "applyPatchApproval") {
       return "file-change";
     }
 
@@ -1327,11 +1543,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     method: string,
     requestKind: ProviderRequestKind,
   ): PendingApprovalRequest["method"] {
-    if (method === "permissions/requestApproval") {
-      return "permissions/requestApproval";
+    if (this.isPermissionsApprovalRequest(method)) {
+      return method === "item/permissions/requestApproval"
+        ? "item/permissions/requestApproval"
+        : "permissions/requestApproval";
+    }
+
+    if (method === "execCommandApproval" || method === "applyPatchApproval") {
+      return method;
     }
 
     if (requestKind === "command") {
+      return "item/commandExecution/requestApproval";
+    }
+
+    if (requestKind === "computer-use") {
       return "item/commandExecution/requestApproval";
     }
 
@@ -1340,6 +1566,44 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return "item/fileChange/requestApproval";
+  }
+
+  private isPermissionsApprovalRequest(method: string): boolean {
+    return (
+      method === "item/permissions/requestApproval" || method === "permissions/requestApproval"
+    );
+  }
+
+  private approvalResponseResult(
+    pendingRequest: PendingApprovalRequest,
+    decision: ProviderApprovalDecision,
+  ): unknown {
+    if (!this.isPermissionsApprovalRequest(pendingRequest.method)) {
+      return {
+        decision,
+      };
+    }
+
+    return {
+      permissions: isProviderApprovalAccepted(decision)
+        ? this.grantedPermissionsForRequest(pendingRequest.requestedPermissions)
+        : {},
+      scope: decision === "acceptForSession" ? "session" : "turn",
+    };
+  }
+
+  private grantedPermissionsForRequest(requestedPermissions: unknown): Record<string, unknown> {
+    const permissions = this.readObject(requestedPermissions);
+    const granted: Record<string, unknown> = {};
+    const network = permissions?.network;
+    const fileSystem = permissions?.fileSystem;
+    if (network && typeof network === "object") {
+      granted.network = network;
+    }
+    if (fileSystem && typeof fileSystem === "object") {
+      granted.fileSystem = fileSystem;
+    }
+    return granted;
   }
 
   private payloadForServerRequest(method: string, params: unknown): unknown {
@@ -1382,6 +1646,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             {
               label: "Accept",
               description: "Provide a custom response for this MCP request.",
+            },
+            {
+              label: "Decline",
+              description: "Decline this MCP request.",
+            },
+            {
+              label: "Cancel",
+              description: "Cancel this MCP request.",
             },
           ],
         },
@@ -1461,6 +1733,47 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
+  private respondUnsupportedDynamicToolCall(
+    context: CodexSessionContext,
+    request: JsonRpcRequest,
+  ): void {
+    const params = this.readObject(request.params);
+    const toolName = this.readString(params, "tool") ?? this.readString(params, "name");
+    const callId = this.readString(params, "callId");
+    const message = toolName
+      ? `Dynamic tool '${toolName}' is not registered in ShioriCode.`
+      : "Dynamic tool calls are not registered in ShioriCode.";
+    this.writeMessage(context, {
+      id: request.id,
+      result: {
+        contentItems: [
+          {
+            type: "inputText",
+            text: message,
+          },
+        ],
+        success: false,
+      },
+    });
+    this.emitEvent({
+      id: EventId.makeUnsafe(randomUUID()),
+      kind: "notification",
+      provider: "codex",
+      threadId: context.session.threadId,
+      createdAt: new Date().toISOString(),
+      method: "serverRequest/resolved",
+      payload: {
+        status: "unsupported",
+        reason: message,
+        request: {
+          method: request.method,
+          ...(toolName ? { tool: toolName } : {}),
+          ...(callId ? { callId } : {}),
+        },
+      },
+    });
+  }
+
   private userInputResolvedMethod(
     method: PendingUserInputRequest["requestMethod"] | undefined,
   ): "item/tool/requestUserInput/answered" | "tool/requestUserInput/answered" {
@@ -1471,18 +1784,75 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private toPlainUserInputAnswers(answers: ProviderUserInputAnswers): Record<string, unknown> {
     return Object.fromEntries(
-      Object.entries(answers).map(([key, value]) => {
+      Object.entries(answers).flatMap(([key, value]) => {
+        if (key === CODEX_MCP_ELICITATION_ACTION_KEY) {
+          return [];
+        }
         const answerObject = this.readObject(value);
         const answerList = this.readArray(answerObject, "answers");
         if (answerList?.length === 1) {
-          return [key, answerList[0]] as const;
+          return [[key, answerList[0]] as const];
         }
         if (answerList) {
-          return [key, answerList] as const;
+          return [[key, answerList] as const];
         }
-        return [key, value] as const;
+        return [[key, value] as const];
       }),
     );
+  }
+
+  private mcpElicitationActionForAnswers(
+    answers: ProviderUserInputAnswers,
+  ): CodexMcpElicitationAction {
+    const explicitAction = this.normalizeMcpElicitationAction(
+      this.readString(answers, CODEX_MCP_ELICITATION_ACTION_KEY),
+    );
+    if (explicitAction) {
+      return explicitAction;
+    }
+
+    const contentEntries = Object.entries(answers).filter(
+      ([key]) => key !== CODEX_MCP_ELICITATION_ACTION_KEY,
+    );
+    if (contentEntries.length !== 1 || contentEntries[0]?.[0] !== "response") {
+      return "accept";
+    }
+
+    return (
+      this.normalizeMcpElicitationAction(this.singleUserInputAnswer(contentEntries[0][1])) ??
+      "accept"
+    );
+  }
+
+  private normalizeMcpElicitationAction(
+    value: string | undefined,
+  ): CodexMcpElicitationAction | null {
+    switch (value?.trim().toLowerCase()) {
+      case "accept":
+        return "accept";
+      case "decline":
+      case "declined":
+      case "reject":
+      case "rejected":
+        return "decline";
+      case "cancel":
+      case "cancelled":
+      case "canceled":
+        return "cancel";
+      default:
+        return null;
+    }
+  }
+
+  private singleUserInputAnswer(value: unknown): string | undefined {
+    if (typeof value === "string") {
+      return value;
+    }
+    const answerObject = this.readObject(value);
+    const answerList = this.readArray(answerObject, "answers");
+    return answerList?.length === 1 && typeof answerList[0] === "string"
+      ? answerList[0]
+      : undefined;
   }
 
   private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {
@@ -1639,19 +2009,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private shouldSuppressChildConversationNotification(method: string): boolean {
     return (
-      method === "thread/started" ||
-      method === "thread/status/changed" ||
-      method === "thread/archived" ||
-      method === "thread/unarchived" ||
-      method === "thread/closed" ||
-      method === "thread/compacted" ||
-      method === "thread/name/updated" ||
-      method === "thread/tokenUsage/updated" ||
-      method === "turn/started" ||
-      method === "turn/completed" ||
-      method === "turn/aborted" ||
-      method === "turn/plan/updated" ||
-      method === "item/plan/delta"
+      CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_METHODS.has(method) ||
+      CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_PREFIXES.some((prefix) =>
+        method.startsWith(prefix),
+      )
     );
   }
 
@@ -1687,6 +2048,15 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     const candidate = (value as Record<string, unknown>)[key];
     return typeof candidate === "string" ? candidate : undefined;
+  }
+
+  private readJsonRpcId(value: unknown, key: string): string | number | undefined {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === "string" || typeof candidate === "number" ? candidate : undefined;
   }
 
   private readBoolean(value: unknown, key: string): boolean | undefined {

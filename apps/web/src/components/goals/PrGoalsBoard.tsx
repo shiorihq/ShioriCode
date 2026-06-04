@@ -102,7 +102,6 @@ export function PrGoalsBoard({
   const [draftProjectId, setDraftProjectId] = useState<ProjectId | null>(projectId);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
-  const [draftPrompt, setDraftPrompt] = useState("");
 
   const newGoalOpen = composerOpen ?? internalComposerOpen;
   const setNewGoalOpen = onComposerOpenChange ?? setInternalComposerOpen;
@@ -164,15 +163,9 @@ export function PrGoalsBoard({
   }, [selectedGoal, selectedGoalId]);
 
   const createGoal = useCallback(
-    (input: {
-      title: string;
-      description?: string;
-      prompt?: string;
-      projectId?: ProjectId | null;
-    }) => {
+    (input: { title: string; description?: string; projectId?: ProjectId | null }) => {
       const targetProjectId = input.projectId ?? projectId ?? draftProjectId;
       if (!targetProjectId) return;
-      const plan = input.prompt?.trim() ?? "";
       const now = new Date().toISOString();
       const goalId = newId("goal_item") as GoalItemId;
       void dispatchGoalCommand({
@@ -183,10 +176,10 @@ export function PrGoalsBoard({
         pullRequest,
         title: input.title.trim(),
         description: input.description?.trim() ?? "",
-        prompt: plan,
-        generatedPrompt: plan.length > 0 ? plan : null,
-        promptStatus: plan.length > 0 ? "ready" : "idle",
-        status: plan.length > 0 ? "todo" : "backlog",
+        prompt: "",
+        generatedPrompt: null,
+        promptStatus: "idle",
+        status: "backlog",
         sortKey: newSortKey(),
         createdAt: now,
       });
@@ -200,14 +193,12 @@ export function PrGoalsBoard({
     createGoal({
       title: draftTitle,
       description: draftDescription,
-      prompt: draftPrompt,
       projectId: draftProjectId,
     });
     setDraftTitle("");
     setDraftDescription("");
-    setDraftPrompt("");
     setNewGoalOpen(false);
-  }, [createGoal, draftDescription, draftProjectId, draftPrompt, draftTitle, setNewGoalOpen]);
+  }, [createGoal, draftDescription, draftProjectId, draftTitle, setNewGoalOpen]);
 
   if (!bootstrapComplete) {
     return (
@@ -271,13 +262,11 @@ export function PrGoalsBoard({
         onOpenChange={setNewGoalOpen}
         title={draftTitle}
         description={draftDescription}
-        prompt={draftPrompt}
         projectId={draftProjectId}
         projects={projects.map((project) => ({ id: project.id, name: project.name }))}
         projectLocked={projectId !== null || pullRequest !== null}
         onTitleChange={setDraftTitle}
         onDescriptionChange={setDraftDescription}
-        onPromptChange={setDraftPrompt}
         onProjectIdChange={setDraftProjectId}
         onSubmit={submitDialog}
         isCreating={false}

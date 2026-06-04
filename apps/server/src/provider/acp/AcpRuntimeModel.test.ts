@@ -39,6 +39,42 @@ describe("parseSessionUpdateEvent", () => {
     }
   });
 
+  it("maps agent_message_chunk text to an assistant_text content delta", () => {
+    const parsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "hello" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(parsed.events).toHaveLength(1);
+    const [event] = parsed.events;
+    expect(event?._tag).toBe("ContentDelta");
+    if (event?._tag === "ContentDelta") {
+      expect(event.text).toBe("hello");
+      expect(event.streamKind).toBe("assistant_text");
+    }
+  });
+
+  it("maps agent_thought_chunk text to a reasoning_text content delta", () => {
+    const parsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "let me think" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(parsed.events).toHaveLength(1);
+    const [event] = parsed.events;
+    expect(event?._tag).toBe("ContentDelta");
+    if (event?._tag === "ContentDelta") {
+      expect(event.text).toBe("let me think");
+      expect(event.streamKind).toBe("reasoning_text");
+    }
+  });
+
   it("copies object rawInput/rawOutput into normalized input/result aliases", () => {
     const parsed = parseSessionUpdateEvent({
       sessionId: "session-1",

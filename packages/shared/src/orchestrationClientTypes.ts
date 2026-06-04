@@ -2,6 +2,7 @@ import type {
   GoalItem,
   ModelSelection,
   OrchestrationLatestTurn,
+  ThreadGoal,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
@@ -111,6 +112,7 @@ export interface Thread {
   pinnedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  goal?: ThreadGoal | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   parentThreadId: ThreadId | null;
   branchSourceTurnId: TurnId | null;
@@ -136,6 +138,7 @@ export interface SidebarThreadSummary {
   pinnedAt?: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  goal?: ThreadGoal | null;
   parentThreadId: ThreadId | null;
   branch: string | null;
   worktreePath: string | null;

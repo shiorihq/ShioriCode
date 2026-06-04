@@ -1,6 +1,10 @@
-import type { ThreadGoal, ThreadGoalStatus, ThreadId } from "contracts";
+import type { ThreadId } from "contracts";
 import { memo, useEffect, useMemo, useState } from "react";
-import { IconChequeredFlagOutline24 as GoalIcon } from "nucleo-core-outline-24";
+import {
+  IconChequeredFlagOutline24 as GoalIcon,
+  IconChevronDownOutline24 as ChevronDownIcon,
+  IconChevronRightOutline24 as ChevronRightIcon,
+} from "nucleo-core-outline-24";
 
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
@@ -28,6 +32,21 @@ interface GoalModeMenuProps {
     tokenBudget?: number | null;
   }) => Promise<void>;
   onClearGoal: () => Promise<void>;
+}
+
+type ThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+interface ThreadGoal {
+  objective: string;
+  status: ThreadGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
 }
 
 const STATUS_LABELS: Record<ThreadGoalStatus, string> = {
@@ -75,16 +94,18 @@ export const GoalModeMenu = memo(function GoalModeMenu({
   const [tokenBudget, setTokenBudget] = useState(
     goal?.tokenBudget !== null && goal?.tokenBudget !== undefined ? String(goal.tokenBudget) : "",
   );
+  const [budgetOpen, setBudgetOpen] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   useEffect(() => {
     if (!dialogOpen) {
       return;
     }
+    const nextBudget =
+      goal?.tokenBudget !== null && goal?.tokenBudget !== undefined ? String(goal.tokenBudget) : "";
     setObjective(goal?.objective ?? "");
-    setTokenBudget(
-      goal?.tokenBudget !== null && goal?.tokenBudget !== undefined ? String(goal.tokenBudget) : "",
-    );
+    setTokenBudget(nextBudget);
+    setBudgetOpen(nextBudget.length > 0);
   }, [dialogOpen, goal]);
 
   const trimmedObjective = objective.trim();
@@ -205,31 +226,56 @@ export const GoalModeMenu = memo(function GoalModeMenu({
               Goal mode keeps a long-running objective attached to this thread.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-4">
+          <DialogPanel className="space-y-3">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">Objective</span>
               <Textarea
+                autoFocus
                 value={objective}
                 onChange={(event) => setObjective(event.target.value)}
                 placeholder="Ship the feature, including tests and a clean handoff."
               />
             </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">Token budget</span>
-              <Input
-                nativeInput
-                inputMode="numeric"
-                value={tokenBudget}
-                onChange={(event) => setTokenBudget(event.target.value)}
-                placeholder="Optional"
-                aria-invalid={tokenBudgetInvalid}
-              />
-              {tokenBudgetInvalid ? (
-                <span className="text-[11px] text-destructive">
-                  Enter a whole number or leave this blank.
-                </span>
-              ) : null}
-            </label>
+            {budgetOpen ? (
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">Token budget</span>
+                <Input
+                  nativeInput
+                  inputMode="numeric"
+                  value={tokenBudget}
+                  onChange={(event) => setTokenBudget(event.target.value)}
+                  placeholder="Optional"
+                  aria-invalid={tokenBudgetInvalid}
+                />
+                {tokenBudgetInvalid ? (
+                  <span className="text-[11px] text-destructive">
+                    Enter a whole number or leave this blank.
+                  </span>
+                ) : null}
+              </label>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setBudgetOpen(true)}
+                className="-ml-1 inline-flex w-fit items-center gap-1 rounded px-1 py-0.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronRightIcon className="size-3.5" aria-hidden />
+                Set token budget
+              </button>
+            )}
+            {budgetOpen ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setBudgetOpen(false);
+                  setTokenBudget("");
+                }}
+                className="-ml-1 inline-flex w-fit items-center gap-1 rounded px-1 py-0.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronDownIcon className="size-3.5" aria-hidden />
+                Remove token budget
+              </button>
+            ) : null}
           </DialogPanel>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>

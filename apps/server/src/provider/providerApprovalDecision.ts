@@ -1,4 +1,5 @@
 import {
+  ProviderApplyNetworkPolicyAmendmentDecision,
   ProviderAcceptWithExecpolicyAmendmentDecision,
   ProviderSimpleApprovalDecision,
   type ProviderApprovalDecision,
@@ -9,6 +10,9 @@ import { Schema } from "effect";
 const isSimpleProviderApprovalDecision = Schema.is(ProviderSimpleApprovalDecision);
 const isProviderAcceptWithExecpolicyAmendmentDecision = Schema.is(
   ProviderAcceptWithExecpolicyAmendmentDecision,
+);
+const isProviderApplyNetworkPolicyAmendmentDecision = Schema.is(
+  ProviderApplyNetworkPolicyAmendmentDecision,
 );
 
 export function isSimpleApprovalDecision(
@@ -26,5 +30,13 @@ export function normalizeProviderApprovalDecision(
   if (isProviderAcceptWithExecpolicyAmendmentDecision(decision)) {
     return "accept";
   }
+  if (isProviderApplyNetworkPolicyAmendmentDecision(decision)) {
+    return "accept";
+  }
   return null;
+}
+
+export function isProviderApprovalAccepted(decision: ProviderApprovalDecision | unknown): boolean {
+  const normalizedDecision = normalizeProviderApprovalDecision(decision);
+  return normalizedDecision === "accept" || normalizedDecision === "acceptForSession";
 }

@@ -3,7 +3,9 @@ import {
   IconArchiveOutline24 as ArchiveIcon,
   IconArrowLeftOutline24 as ArrowLeftIcon,
   IconChartBarTrendUpOutline24 as BarChart3Icon,
-  IconGrid3Outline24 as BlocksIcon,
+  IconBoltOutline24 as McpIcon,
+  IconBoxOutline24 as PluginsIcon,
+  IconSparkleOutline24 as SkillsIcon,
   IconMonitorOutline24 as MonitorIcon,
   IconMessageOutline24 as MessageSquareIcon,
   IconPaletteOutline24 as PaletteIcon,
@@ -21,6 +23,7 @@ import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import {
   SidebarContent,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -30,6 +33,8 @@ export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/skills"
+  | "/settings/mcp"
+  | "/settings/plugins"
   | "/settings/account"
   | "/settings/archived"
   | "/settings/computer-use"
@@ -37,49 +42,77 @@ export type SettingsSectionPath =
   | "/settings/usage"
   | "/settings/feedback";
 
-type SettingsFeature = "computerUse" | "mobileApp";
+type SettingsFeature = "mobileApp";
 
-export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+type SettingsNavItem = {
   label: string;
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
   feature?: SettingsFeature;
+};
+
+export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
+  label: string;
+  items: ReadonlyArray<SettingsNavItem>;
 }> = [
-  { label: "General", to: "/settings/general", icon: Settings2Icon },
-  { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
-  { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
-  { label: "Account", to: "/settings/account", icon: UserIcon },
-  { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
   {
-    label: "Mobile App",
-    to: "/settings/mobile",
-    icon: SmartphoneIcon,
-    feature: "mobileApp",
+    label: "Personal",
+    items: [
+      { label: "General", to: "/settings/general", icon: Settings2Icon },
+      { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
+      { label: "Account", to: "/settings/account", icon: UserIcon },
+    ],
   },
   {
-    label: "Computer Use",
-    to: "/settings/computer-use",
-    icon: MonitorIcon,
-    feature: "computerUse",
+    label: "Coding",
+    items: [
+      { label: "Skills", to: "/settings/skills", icon: SkillsIcon },
+      { label: "MCP", to: "/settings/mcp", icon: McpIcon },
+      {
+        label: "Computer Use",
+        to: "/settings/computer-use",
+        icon: MonitorIcon,
+      },
+    ],
   },
-  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
-  { label: "Feedback", to: "/settings/feedback", icon: MessageSquareIcon },
+  {
+    label: "Integrations",
+    items: [
+      { label: "Plugins", to: "/settings/plugins", icon: PluginsIcon },
+      {
+        label: "Mobile App",
+        to: "/settings/mobile",
+        icon: SmartphoneIcon,
+        feature: "mobileApp",
+      },
+    ],
+  },
+  {
+    label: "Workspace",
+    items: [
+      { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
+      { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
+      { label: "Feedback", to: "/settings/feedback", icon: MessageSquareIcon },
+    ],
+  },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const { computerUseEnabled, mobileAppEnabled } = useHostedShioriState();
+  const { mobileAppEnabled } = useHostedShioriState();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };
   const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
   const enabledFeatures = {
-    computerUse: computerUseEnabled,
     mobileApp: mobileAppEnabled,
   } satisfies Record<SettingsFeature, boolean>;
-  const visibleItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.feature === undefined || enabledFeatures[item.feature],
-  );
+  const visibleSections = SETTINGS_NAV_SECTIONS.map((section) => ({
+    label: section.label,
+    items: section.items.filter(
+      (item) => item.feature === undefined || enabledFeatures[item.feature],
+    ),
+  })).filter((section) => section.items.length > 0);
 
   return (
     <SidebarContent className="overflow-x-hidden">
@@ -93,27 +126,32 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
-      <SidebarGroup className="px-2 py-3">
-        <SidebarMenu>
-          {visibleItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.to;
-            return (
-              <SidebarMenuItem key={item.to}>
-                <SidebarMenuButton
-                  size="sm"
-                  isActive={isActive}
-                  className={itemClassName}
-                  onClick={() => void navigate({ to: item.to, replace: true })}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroup>
+      {visibleSections.map((section) => (
+        <SidebarGroup key={section.label} className="px-2 pt-3 pb-0 last:pb-3">
+          <SidebarGroupLabel className="h-7 px-2 font-medium text-muted-foreground text-xs">
+            {section.label}
+          </SidebarGroupLabel>
+          <SidebarMenu>
+            {section.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.to;
+              return (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarMenuButton
+                    size="sm"
+                    isActive={isActive}
+                    className={itemClassName}
+                    onClick={() => void navigate({ to: item.to, replace: true })}
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
+      ))}
     </SidebarContent>
   );
 }
