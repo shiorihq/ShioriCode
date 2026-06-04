@@ -32,7 +32,7 @@
     "@pierre/diffs": "^1.1.0-beta.16",
     "ai": "^6.0.141",
     "effect": "catalog:",
-    "google-antigravity": "file:../../../playground/antigravity-sdk-typescript",
+    "google-antigravity": "workspace:*",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",
     "smol-toml": "^1.6.0",

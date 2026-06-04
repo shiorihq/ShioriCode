@@ -3898,7 +3898,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("navigates to skills and MCP from the slash-command menu", async () => {
+  it("navigates to MCP settings from the slash-command menu", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -3915,8 +3915,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await waitForURL(
         mounted.router,
-        (pathname) => pathname === "/settings/skills",
-        "Route should navigate to Skills & MCP from the slash-command menu.",
+        (pathname) => pathname === "/settings/mcp",
+        "Route should navigate to MCP settings from the slash-command menu.",
       );
       await waitForElement(
         () =>

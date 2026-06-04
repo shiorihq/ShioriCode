@@ -2813,7 +2813,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     setComposerDraftProviderModelOptions,
   ]);
   const openSettingsRoute = useCallback(
-    (to: "/settings/skills") => {
+    (to: "/settings/skills" | "/settings/mcp") => {
       void navigate({ to });
     },
     [navigate],
@@ -3884,7 +3884,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         setComposerTrigger(null);
         return;
       } else if (standaloneSlashCommand.command === "mcp") {
-        openSettingsRoute("/settings/skills");
+        openSettingsRoute("/settings/mcp");
         promptRef.current = "";
         clearComposerDraftContent(activeThread.id);
         setComposerHighlightedItemId(null);
@@ -5162,7 +5162,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         } else if (item.command === "fork") {
           void handleForkThread(item.value === "worktree" ? "worktree" : "local");
         } else if (item.command === "mcp") {
-          openSettingsRoute("/settings/skills");
+          openSettingsRoute("/settings/mcp");
         } else if (item.command === "memories") {
           toggleMemoriesGeneration();
         } else if (item.command === "personality" && item.value) {

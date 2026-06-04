@@ -14,6 +14,7 @@ const workspaceFiles = [
   "apps/web/package.json",
   "apps/marketing/package.json",
   "packages/contracts/package.json",
+  "packages/google-antigravity/package.json",
   "packages/shared/package.json",
   "scripts/package.json",
 ] as const;

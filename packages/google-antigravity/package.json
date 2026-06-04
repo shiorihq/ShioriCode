@@ -1,0 +1,170 @@
+{
+  "name": "google-antigravity",
+  "version": "0.1.1-ts.0",
+  "description": "TypeScript port of the Google Antigravity SDK",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "bin",
+    "examples",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
+    },
+    "./connections/connection": {
+      "types": "./dist/connections/connection.d.ts",
+      "import": "./dist/connections/connection.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks/index.d.ts",
+      "import": "./dist/hooks/index.js"
+    },
+    "./hooks/hooks": {
+      "types": "./dist/hooks/hooks.d.ts",
+      "import": "./dist/hooks/hooks.js"
+    },
+    "./hooks/hook-runner": {
+      "types": "./dist/hooks/hook-runner.d.ts",
+      "import": "./dist/hooks/hook-runner.js"
+    },
+    "./hooks/hook_runner": {
+      "types": "./dist/hooks/hook-runner.d.ts",
+      "import": "./dist/hooks/hook-runner.js"
+    },
+    "./hooks/policy": {
+      "types": "./dist/hooks/policy.d.ts",
+      "import": "./dist/hooks/policy.js"
+    },
+    "./conversation": {
+      "types": "./dist/conversation/index.d.ts",
+      "import": "./dist/conversation/index.js"
+    },
+    "./conversation/conversation": {
+      "types": "./dist/conversation/conversation.d.ts",
+      "import": "./dist/conversation/conversation.js"
+    },
+    "./connections": {
+      "types": "./dist/connections/index.d.ts",
+      "import": "./dist/connections/index.js"
+    },
+    "./connections/local": {
+      "types": "./dist/connections/local/index.d.ts",
+      "import": "./dist/connections/local/index.js"
+    },
+    "./connections/local/local-agent-config": {
+      "types": "./dist/connections/local/local-agent-config.d.ts",
+      "import": "./dist/connections/local/local-agent-config.js"
+    },
+    "./connections/local/local_connection_config": {
+      "types": "./dist/connections/local/local-agent-config.d.ts",
+      "import": "./dist/connections/local/local-agent-config.js"
+    },
+    "./connections/local/local-connection": {
+      "types": "./dist/connections/local/local-connection.d.ts",
+      "import": "./dist/connections/local/local-connection.js"
+    },
+    "./connections/local/local_connection": {
+      "types": "./dist/connections/local/local-connection.d.ts",
+      "import": "./dist/connections/local/local-connection.js"
+    },
+    "./connections/local/test-utils": {
+      "types": "./dist/connections/local/test-utils.d.ts",
+      "import": "./dist/connections/local/test-utils.js"
+    },
+    "./connections/local/test_utils": {
+      "types": "./dist/connections/local/test-utils.d.ts",
+      "import": "./dist/connections/local/test-utils.js"
+    },
+    "./connections/local/types": {
+      "types": "./dist/connections/local/types.d.ts",
+      "import": "./dist/connections/local/types.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
+    },
+    "./mcp/bridge": {
+      "types": "./dist/mcp/bridge.d.ts",
+      "import": "./dist/mcp/bridge.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./tools/tool-context": {
+      "types": "./dist/tools/tool-context.d.ts",
+      "import": "./dist/tools/tool-context.js"
+    },
+    "./tools/tool_context": {
+      "types": "./dist/tools/tool-context.d.ts",
+      "import": "./dist/tools/tool-context.js"
+    },
+    "./tools/tool-runner": {
+      "types": "./dist/tools/tool-runner.d.ts",
+      "import": "./dist/tools/tool-runner.js"
+    },
+    "./tools/tool_runner": {
+      "types": "./dist/tools/tool-runner.d.ts",
+      "import": "./dist/tools/tool-runner.js"
+    },
+    "./triggers": {
+      "types": "./dist/triggers/index.d.ts",
+      "import": "./dist/triggers/index.js"
+    },
+    "./triggers/helpers": {
+      "types": "./dist/triggers/helpers.d.ts",
+      "import": "./dist/triggers/helpers.js"
+    },
+    "./triggers/trigger-runner": {
+      "types": "./dist/triggers/trigger-runner.d.ts",
+      "import": "./dist/triggers/trigger-runner.js"
+    },
+    "./triggers/trigger_runner": {
+      "types": "./dist/triggers/trigger-runner.d.ts",
+      "import": "./dist/triggers/trigger-runner.js"
+    },
+    "./triggers/triggers": {
+      "types": "./dist/triggers/triggers.d.ts",
+      "import": "./dist/triggers/triggers.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "import": "./dist/utils/index.js"
+    },
+    "./utils/interactive": {
+      "types": "./dist/utils/interactive.d.ts",
+      "import": "./dist/utils/interactive.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "typecheck:examples": "tsc -p examples/tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "catalog:"
+  }
+}
