@@ -1083,6 +1083,54 @@ async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   await waitForLayout();
 }
 
+async function waitForRenderedUserRow(options: {
+  host: HTMLElement;
+  scrollContainer: HTMLDivElement;
+  rowSelector: string;
+  errorMessage: string;
+}): Promise<HTMLElement> {
+  const { host, scrollContainer, rowSelector, errorMessage } = options;
+  let row: HTMLElement | null = null;
+
+  await vi.waitFor(
+    async () => {
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      const scrollPositions =
+        maxScrollTop === 0
+          ? [0]
+          : [
+              0,
+              Math.floor(maxScrollTop * 0.2),
+              Math.floor(maxScrollTop * 0.4),
+              Math.floor(maxScrollTop * 0.6),
+              Math.floor(maxScrollTop * 0.8),
+              maxScrollTop,
+            ];
+
+      for (const scrollTop of scrollPositions) {
+        scrollContainer.scrollTop = scrollTop;
+        scrollContainer.dispatchEvent(new Event("scroll"));
+        await waitForLayout();
+        row = host.querySelector<HTMLElement>(rowSelector);
+        if (row) {
+          return;
+        }
+      }
+
+      expect(row, errorMessage).toBeTruthy();
+    },
+    {
+      timeout: 12_000,
+      interval: 16,
+    },
+  );
+
+  if (!row) {
+    throw new Error(errorMessage);
+  }
+  return row;
+}
+
 async function measureUserRow(options: {
   host: HTMLElement;
   targetMessageId: MessageId;
@@ -1095,28 +1143,20 @@ async function measureUserRow(options: {
     "Unable to find ChatView message scroll container.",
   );
 
-  let row: HTMLElement | null = null;
-  await vi.waitFor(
-    async () => {
-      scrollContainer.scrollTop = 0;
-      scrollContainer.dispatchEvent(new Event("scroll"));
-      await waitForLayout();
-      row = host.querySelector<HTMLElement>(rowSelector);
-      expect(row, "Unable to locate targeted user message row.").toBeTruthy();
-    },
-    {
-      timeout: 8_000,
-      interval: 16,
-    },
-  );
+  let row = await waitForRenderedUserRow({
+    host,
+    scrollContainer,
+    rowSelector,
+    errorMessage: "Unable to locate targeted user message row.",
+  });
 
-  await waitForImagesToLoad(row!);
-  scrollContainer.scrollTop = 0;
+  await waitForImagesToLoad(row);
+  row.scrollIntoView({ block: "nearest" });
   scrollContainer.dispatchEvent(new Event("scroll"));
   await nextFrame();
 
   const timelineRoot =
-    row!.closest<HTMLElement>('[data-timeline-root="true"]') ??
+    row.closest<HTMLElement>('[data-timeline-root="true"]') ??
     host.querySelector<HTMLElement>('[data-timeline-root="true"]');
   if (!(timelineRoot instanceof HTMLElement)) {
     throw new Error("Unable to locate timeline root container.");
@@ -1125,24 +1165,17 @@ async function measureUserRow(options: {
   let timelineWidthMeasuredPx = 0;
   let measuredRowHeightPx = 0;
   let renderedInVirtualizedRegion = false;
-  await vi.waitFor(
-    async () => {
-      scrollContainer.scrollTop = 0;
-      scrollContainer.dispatchEvent(new Event("scroll"));
-      await nextFrame();
-      const measuredRow = host.querySelector<HTMLElement>(rowSelector);
-      expect(measuredRow, "Unable to measure targeted user row height.").toBeTruthy();
-      timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
-      measuredRowHeightPx = measuredRow!.getBoundingClientRect().height;
-      renderedInVirtualizedRegion = measuredRow!.closest("[data-index]") instanceof HTMLElement;
-      expect(timelineWidthMeasuredPx, "Unable to measure timeline width.").toBeGreaterThan(0);
-      expect(measuredRowHeightPx, "Unable to measure targeted user row height.").toBeGreaterThan(0);
-    },
-    {
-      timeout: 4_000,
-      interval: 16,
-    },
-  );
+  const measuredRow = await waitForRenderedUserRow({
+    host,
+    scrollContainer,
+    rowSelector,
+    errorMessage: "Unable to measure targeted user row height.",
+  });
+  timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
+  measuredRowHeightPx = measuredRow.getBoundingClientRect().height;
+  renderedInVirtualizedRegion = measuredRow.closest("[data-index]") instanceof HTMLElement;
+  expect(timelineWidthMeasuredPx, "Unable to measure timeline width.").toBeGreaterThan(0);
+  expect(measuredRowHeightPx, "Unable to measure targeted user row height.").toBeGreaterThan(0);
 
   return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
 }

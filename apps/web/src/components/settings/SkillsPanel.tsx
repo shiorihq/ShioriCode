@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   IconSparkleOutline24 as SkillsIcon,
   IconTrash2Outline24 as Trash2Icon,
-} from "../../icons/lucideNucleoFallback";
+} from "nucleo-core-outline-24";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EffectiveSkillEntry } from "contracts";
 

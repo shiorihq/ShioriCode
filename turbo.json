@@ -15,6 +15,7 @@
     "NUCLEO_LICENSE_KEY",
     "VITE_NUCLEO_LICENSE_KEY"
   ],
+  "globalPassThroughEnv": ["NUCLEO_LICENSE_KEY", "VITE_NUCLEO_LICENSE_KEY"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

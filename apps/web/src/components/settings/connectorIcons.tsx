@@ -4,7 +4,7 @@ import {
   IconFolderOutline24 as FolderIcon,
   IconGlobeOutline24 as GlobeIcon,
   IconSparkleOutline24 as BrainIcon,
-} from "../../icons/lucideNucleoFallback";
+} from "nucleo-core-outline-24";
 import { SiGithub, SiNotion, SiStripe, SiUpstash, SiVercel } from "react-icons/si";
 
 import type { MarketplaceConnectorId } from "./connectorMarketplace";

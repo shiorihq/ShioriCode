@@ -6,7 +6,7 @@ import {
   IconPlusOutline24 as PlusIcon,
   IconTrash2Outline24 as Trash2Icon,
   IconTriangleWarningOutline24 as TriangleAlertIcon,
-} from "../../icons/lucideNucleoFallback";
+} from "nucleo-core-outline-24";
 import { useQuery } from "@tanstack/react-query";
 import type {
   EffectiveMcpServerEntry,

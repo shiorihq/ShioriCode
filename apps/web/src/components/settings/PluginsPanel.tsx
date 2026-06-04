@@ -4,7 +4,7 @@ import {
   IconExternalLinkOutline24 as ExternalLinkIcon,
   IconPlusOutline24 as PlusIcon,
   IconTrash2Outline24 as Trash2Icon,
-} from "../../icons/lucideNucleoFallback";
+} from "nucleo-core-outline-24";
 import type { McpServerEntry } from "contracts";
 
 import { ensureNativeApi } from "../../nativeApi";

@@ -189,6 +189,31 @@ interface StagePackageJson {
   };
 }
 
+const STAGED_WORKSPACE_RUNTIME_PACKAGES: Readonly<Record<string, string>> = {
+  "google-antigravity": "packages/google-antigravity",
+};
+
+function resolveStagedWorkspaceDependencies(
+  dependencies: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(dependencies).map(([name, spec]) => {
+      if (typeof spec !== "string" || !spec.startsWith("workspace:")) {
+        return [name, spec];
+      }
+
+      const packagePath = STAGED_WORKSPACE_RUNTIME_PACKAGES[name];
+      if (!packagePath) {
+        throw new Error(
+          `Unable to stage workspace runtime dependency '${name}'. Add it to STAGED_WORKSPACE_RUNTIME_PACKAGES.`,
+        );
+      }
+
+      return [name, `file:${packagePath}`];
+    }),
+  );
+}
+
 const AzureTrustedSigningOptionsConfig = Config.all({
   publisherName: Config.string("AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"),
   endpoint: Config.string("AZURE_TRUSTED_SIGNING_ENDPOINT"),
@@ -838,10 +863,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const resolvedServerDependencies = yield* Effect.try({
     try: () =>
-      resolveCatalogDependencies(
-        serverDependencies,
-        rootPackageJson.workspaces.catalog,
-        "apps/server",
+      resolveStagedWorkspaceDependencies(
+        resolveCatalogDependencies(
+          serverDependencies,
+          rootPackageJson.workspaces.catalog,
+          "apps/server",
+        ),
       ),
     catch: (cause) =>
       new BuildScriptError({
@@ -914,6 +941,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  for (const packagePath of Object.values(STAGED_WORKSPACE_RUNTIME_PACKAGES)) {
+    yield* fs.copy(path.join(repoRoot, packagePath), path.join(stageAppDir, packagePath));
+  }
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
   yield* stageMacComputerUseHelper({
