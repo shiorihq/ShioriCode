@@ -49,9 +49,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install browser test runtime
-        run: |
-          cd apps/web
-          bunx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: bun run --cwd apps/web test:browser:install
 
       - name: Format
         run: bun run fmt:check

@@ -72,6 +72,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Playwright browsers
+        timeout-minutes: 5
         run: cd apps/web && bun run test:browser:install
 
       - name: Lint
