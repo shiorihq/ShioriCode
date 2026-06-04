@@ -1,6 +1,7 @@
 import * as ChildProcess from "node:child_process";
 import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
+import * as NodeNet from "node:net";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
@@ -128,6 +129,8 @@ const TOGGLE_DEVTOOLS_ACCELERATOR =
   process.platform === "darwin" ? "Command+Option+I" : "Ctrl+Shift+I";
 const COMPUTER_USE_HELPER_TIMEOUT_MS = 30_000;
 const COMPUTER_USE_HELPER_MAX_OUTPUT_BYTES = 1024 * 1024;
+const BACKEND_READY_TIMEOUT_MS = 20_000;
+const BACKEND_READY_POLL_INTERVAL_MS = 100;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -1708,13 +1711,66 @@ function scheduleBackendRestart(reason: string): void {
   }, delayMs);
 }
 
-function startBackend(): void {
-  if (isQuitting || backendProcess) return;
+function tcpPortIsReady(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = NodeNet.createConnection({ host: "127.0.0.1", port });
+    let settled = false;
+
+    const finish = (ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ready);
+    };
+
+    socket.once("connect", () => {
+      finish(true);
+    });
+    socket.once("timeout", () => {
+      finish(false);
+    });
+    socket.once("error", () => {
+      finish(false);
+    });
+    socket.setTimeout(500);
+  });
+}
+
+async function waitForBackendReady(child: ChildProcess.ChildProcess): Promise<void> {
+  const startedAt = Date.now();
+
+  for (;;) {
+    if (isQuitting) {
+      return;
+    }
+
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Backend exited before it was ready (code=${child.exitCode ?? "null"} signal=${child.signalCode ?? "null"})`,
+      );
+    }
+
+    if (await tcpPortIsReady(backendPort)) {
+      return;
+    }
+
+    if (Date.now() - startedAt >= BACKEND_READY_TIMEOUT_MS) {
+      throw new Error(`Backend did not accept loopback connections on port ${backendPort}.`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, BACKEND_READY_POLL_INTERVAL_MS));
+  }
+}
+
+function startBackend(): ChildProcess.ChildProcess | null {
+  if (isQuitting) return null;
+  if (backendProcess) return backendProcess;
 
   const backendEntry = resolveBackendEntry();
   if (!FS.existsSync(backendEntry)) {
     scheduleBackendRestart(`missing server entry at ${backendEntry}`);
-    return;
+    return null;
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
@@ -1746,7 +1802,7 @@ function startBackend(): void {
   } else {
     child.kill("SIGTERM");
     scheduleBackendRestart("missing desktop bootstrap pipe");
-    return;
+    return null;
   }
   backendProcess = child;
   let backendSessionClosed = false;
@@ -1784,6 +1840,8 @@ function startBackend(): void {
     const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
     scheduleBackendRestart(reason);
   });
+
+  return child;
 }
 
 function stopBackend(): void {
@@ -2317,8 +2375,13 @@ async function bootstrap(): Promise<void> {
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
-  startBackend();
+  const backend = startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
+  if (!backend) {
+    throw new Error("Backend process could not be started.");
+  }
+  await waitForBackendReady(backend);
+  writeDesktopLogHeader("bootstrap backend ready");
   if (mainWindow === null) {
     mainWindow = createWindow();
     writeDesktopLogHeader("bootstrap main window created");
