@@ -41,24 +41,6 @@ import { useStore } from "../store";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "contracts/settings";
-import type { ReactNode } from "react";
-
-vi.mock("../convex/HostedShioriProvider", () => ({
-  HostedShioriProvider: ({ children }: { children: ReactNode }) => children,
-  useHostedShioriState: () => ({
-    isAuthLoading: false,
-    isAuthenticated: true,
-    isSubscriptionLoading: false,
-    isPaidSubscriber: true,
-    subscriptionPlanId: "pro",
-    subscriptionPlanLabel: "Pro plan",
-    authToken: null,
-    viewer: null,
-    catalogProviders: undefined,
-    signIn: async () => ({ signingIn: false }),
-    signOut: async () => undefined,
-  }),
-}));
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -3709,7 +3691,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await waitForComposerMenuItem("slash:compact");
       await waitForComposerMenuItem("slash:fast");
-      await waitForComposerMenuItem("slash:feedback");
       await waitForComposerMenuItem("slash:fork");
       await waitForComposerMenuItem("slash:mcp");
       await waitForComposerMenuItem("slash:memories");
@@ -3911,35 +3892,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await waitForElement(
         () => document.querySelector<HTMLImageElement>('img[alt="paste.png"]'),
         "Unable to find pasted image preview.",
-      );
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it.skip("navigates to feedback from the slash-command menu", async () => {
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-command-menu-feedback" as MessageId,
-        targetText: "feedback command thread",
-      }),
-    });
-
-    try {
-      await page.getByTestId("composer-editor").fill("/");
-
-      const menuItem = await waitForComposerMenuItem("slash:feedback");
-      menuItem.click();
-
-      await waitForURL(
-        mounted.router,
-        (pathname) => pathname === "/settings/feedback",
-        "Route should navigate to feedback settings from the slash-command menu.",
-      );
-      await waitForElement(
-        () => document.querySelector<HTMLElement>("#feedback-message"),
-        "Unable to find the feedback form message field.",
       );
     } finally {
       await mounted.cleanup();

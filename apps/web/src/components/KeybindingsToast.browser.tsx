@@ -15,7 +15,6 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
-import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -25,23 +24,6 @@ import { resetServerStateForTests } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
-
-vi.mock("../convex/HostedShioriProvider", () => ({
-  HostedShioriProvider: ({ children }: { children: ReactNode }) => children,
-  useHostedShioriState: () => ({
-    isAuthLoading: false,
-    isAuthenticated: true,
-    isSubscriptionLoading: false,
-    isPaidSubscriber: true,
-    subscriptionPlanId: "pro",
-    subscriptionPlanLabel: "Pro plan",
-    authToken: null,
-    viewer: null,
-    catalogProviders: undefined,
-    signIn: async () => ({ signingIn: false }),
-    signOut: async () => undefined,
-  }),
-}));
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
@@ -97,7 +79,6 @@ function createBaseServerConfig(): ServerConfig {
       goals: { enabled: false },
       mcpServers: { servers: [] },
       providers: {
-        shiori: { enabled: true, apiBaseUrl: "https://shiori.ai", customModels: [] },
         kimiCode: { enabled: true, binaryPath: "kimi", shareDir: "", customModels: [] },
         gemini: {
           enabled: true,

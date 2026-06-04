@@ -370,7 +370,7 @@ describe("subagentDetail", () => {
     ];
 
     const rows = deriveBackgroundSubagentRows({
-      provider: "shiori",
+      provider: "codex",
       workEntries,
       activities,
     });
@@ -379,7 +379,7 @@ describe("subagentDetail", () => {
       {
         id: "shiori-root",
         rootItemId: "agent-tool-shiori",
-        provider: "shiori",
+        provider: "codex",
         displayName: "Harvey",
         mentionName: "Harvey",
         hasContents: true,

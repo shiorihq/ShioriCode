@@ -143,13 +143,6 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
               return "vendor-ui";
             }
             if (
-              nodeModulesPath.startsWith("convex") ||
-              nodeModulesPath.startsWith("@convex-dev/") ||
-              nodeModulesPath.startsWith("@auth/core")
-            ) {
-              return "vendor-auth";
-            }
-            if (
               nodeModulesPath.startsWith("react-markdown") ||
               nodeModulesPath.startsWith("remark-gfm") ||
               nodeModulesPath.startsWith("mdast") ||

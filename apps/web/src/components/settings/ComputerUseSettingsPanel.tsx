@@ -12,7 +12,7 @@ import {
 } from "nucleo-core-outline-24";
 import { useMemo, useState } from "react";
 
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useComputerUseFeatureEnabled } from "../../featureFlags";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { ensureNativeApi } from "../../nativeApi";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -174,7 +174,7 @@ function ScreenshotPreview() {
 export function ComputerUseSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const { computerUseEnabled } = useHostedShioriState();
+  const computerUseEnabled = useComputerUseFeatureEnabled();
   const queryClient = useQueryClient();
   const [guideKind, setGuideKind] = useState<ComputerUsePermissionKind | null>(null);
 
@@ -262,7 +262,7 @@ export function ComputerUseSettingsPanel() {
         />
         <SettingsRow
           title="Require approval for desktop tools"
-          description="Ask before hosted Shiori runs raw desktop actions; some external providers may hide these tools while approval is required."
+          description="Ask before an agent runs raw desktop actions; some external providers may hide these tools while approval is required."
           control={
             <Switch
               checked={settings.computerUse.requireApproval}

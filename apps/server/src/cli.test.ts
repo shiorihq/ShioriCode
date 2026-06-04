@@ -10,7 +10,6 @@ import { Command } from "effect/unstable/cli";
 import { describe, it } from "vitest";
 
 import { cli } from "./cli.ts";
-import { HostedShioriAuthTokenStore } from "./hostedShioriAuthTokenStore.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 
@@ -29,11 +28,6 @@ const CliRuntimeLayer = Layer.mergeAll(
     readEvents: () => Stream.empty,
     dispatch: () => Effect.succeed({ sequence: 0 }),
     streamDomainEvents: Stream.empty,
-  }),
-  Layer.succeed(HostedShioriAuthTokenStore, {
-    getToken: Effect.succeed(null),
-    setToken: () => Effect.void,
-    streamChanges: Stream.empty,
   }),
 );
 

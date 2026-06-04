@@ -61,7 +61,7 @@ function displayModelOptionLabel(
 }
 
 function shouldShowLockedProviderModelSearch(provider: ProviderKind): boolean {
-  return provider === "shiori" || provider === "kimiCode";
+  return provider === "kimiCode";
 }
 
 function LockedProviderModelList(props: {

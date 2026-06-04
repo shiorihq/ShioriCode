@@ -94,41 +94,12 @@ export class ServerSettingsService extends ServiceMap.Service<
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
 const PROVIDER_ORDER: readonly ProviderKind[] = [
-  "shiori",
   "kimiCode",
   "gemini",
   "cursor",
   "codex",
   "claudeAgent",
 ];
-const DEV_SHIORI_API_BASE_URL = "http://127.0.0.1:3000";
-
-function resolveShioriApiBaseUrl(settings: ServerSettings): ServerSettings {
-  const configuredOverride = process.env.SHIORICODE_SHIORI_API_BASE_URL?.trim();
-  const override =
-    configuredOverride && configuredOverride.length > 0
-      ? configuredOverride
-      : process.env.NODE_ENV !== "production" &&
-          settings.providers.shiori.apiBaseUrl ===
-            DEFAULT_SERVER_SETTINGS.providers.shiori.apiBaseUrl
-        ? DEV_SHIORI_API_BASE_URL
-        : null;
-
-  if (!override || settings.providers.shiori.apiBaseUrl === override) {
-    return settings;
-  }
-
-  return {
-    ...settings,
-    providers: {
-      ...settings.providers,
-      shiori: {
-        ...settings.providers.shiori,
-        apiBaseUrl: override,
-      },
-    },
-  };
-}
 
 function resolveModelSelectionProvider(
   settings: ServerSettings,
@@ -156,7 +127,7 @@ function resolveModelSelectionProvider(
 }
 
 function resolveEffectiveServerSettings(settings: ServerSettings): ServerSettings {
-  const nextSettings = resolveShioriApiBaseUrl(settings);
+  const nextSettings = settings;
 
   return {
     ...nextSettings,

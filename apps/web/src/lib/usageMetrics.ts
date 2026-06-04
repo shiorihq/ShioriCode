@@ -19,7 +19,6 @@ export interface LocalProviderUsageSummary {
 const LOCAL_USAGE_PROVIDERS = [
   "codex",
   "claudeAgent",
-  "shiori",
   "kimiCode",
   "gemini",
   "cursor",

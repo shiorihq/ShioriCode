@@ -2509,7 +2509,6 @@ describe("PROVIDER_OPTIONS", () => {
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
-      { value: "shiori", label: "Shiori", available: true },
       { value: "kimiCode", label: "Kimi", available: true },
       { value: "gemini", label: "Gemini", available: true },
       { value: "cursor", label: "Cursor", available: true },

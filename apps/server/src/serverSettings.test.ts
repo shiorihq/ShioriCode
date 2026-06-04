@@ -183,7 +183,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             enabled: false,
           },
-          shiori: {
+          kimiCode: {
             enabled: true,
           },
           codex: {
@@ -195,8 +195,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const next = yield* serverSettings.getSettings;
 
       assert.deepEqual(next.defaultModelSelection, {
-        provider: "shiori",
-        model: "openai/gpt-5.4",
+        provider: "kimiCode",
+        model: "kimi-code/kimi-for-coding",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

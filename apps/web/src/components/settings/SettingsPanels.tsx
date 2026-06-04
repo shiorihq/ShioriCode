@@ -45,12 +45,6 @@ import { isElectron } from "../../env";
 import { useGoalsFeatureEnabled } from "../../hooks/useGoalsFeatureEnabled";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { getPersonalDetailsBlurClass, shouldBlurEmailMention } from "../../lib/personalDetails";
-import {
-  flattenHostedShioriSettingsModels,
-  useMergedServerProviders,
-} from "../../convex/shioriProvider";
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -65,7 +59,6 @@ import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
-import { HostedShioriAuthPanel } from "../auth/HostedShioriAuthPanel";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -168,18 +161,6 @@ type ResolvedProviderSettingsTextField = ProviderSettingsTextField & {
 };
 
 const PROVIDER_SETTINGS_BY_PROVIDER = {
-  shiori: {
-    provider: "shiori",
-    title: "Shiori",
-    textFields: [
-      {
-        key: "apiBaseUrl",
-        label: "Shiori API base URL",
-        placeholder: "https://shiori.ai",
-        description: "Hosted Shiori API endpoint.",
-      },
-    ],
-  },
   kimiCode: {
     provider: "kimiCode",
     title: "Kimi Code",
@@ -358,8 +339,6 @@ function readProviderTextField(
   key: ProviderSettingsTextFieldKey,
 ): string | null {
   switch (provider) {
-    case "shiori":
-      return key === "apiBaseUrl" ? providers.shiori.apiBaseUrl : null;
     case "kimiCode":
       if (key === "binaryPath") return providers.kimiCode.binaryPath;
       return key === "shareDir" ? providers.kimiCode.shareDir : null;
@@ -384,10 +363,6 @@ function updateProviderTextField(
   value: string,
 ): UnifiedSettings["providers"] {
   switch (provider) {
-    case "shiori":
-      return key === "apiBaseUrl"
-        ? { ...providers, shiori: { ...providers.shiori, apiBaseUrl: value } }
-        : providers;
     case "kimiCode":
       if (key === "binaryPath") {
         return { ...providers, kimiCode: { ...providers.kimiCode, binaryPath: value } };
@@ -956,8 +931,7 @@ export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const goalsEnabled = useGoalsFeatureEnabled();
-  const { viewer, catalogProviders } = useHostedShioriState();
-  const canTriggerOnboarding = import.meta.env.DEV && Boolean(viewer?.isAdmin);
+  const canTriggerOnboarding = import.meta.env.DEV;
   const onboardingState = useMemo(
     () => resolveOnboardingState(settings.onboarding),
     [settings.onboarding],
@@ -969,11 +943,6 @@ export function GeneralSettingsPanel() {
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
-    shiori: Boolean(
-      settings.providers.shiori.apiBaseUrl !==
-        DEFAULT_UNIFIED_SETTINGS.providers.shiori.apiBaseUrl ||
-      settings.providers.shiori.customModels.length > 0,
-    ),
     kimiCode: Boolean(
       settings.providers.kimiCode.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.kimiCode.binaryPath ||
@@ -1063,8 +1032,7 @@ export function GeneralSettingsPanel() {
 
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
-  const baseServerProviders = useServerProviders();
-  const serverProviders = useMergedServerProviders(baseServerProviders);
+  const serverProviders = useServerProviders();
   const codexHomePath = settings.providers.codex.homePath;
 
   const defaultModelSelection = resolveConfigurableModelSelectionState(
@@ -1157,10 +1125,7 @@ export function GeneralSettingsPanel() {
       isCustom: true,
       capabilities: null,
     }));
-    const models: ReadonlyArray<ServerProviderModel> =
-      providerSettings.provider === "shiori" && catalogProviders !== undefined
-        ? flattenHostedShioriSettingsModels(catalogProviders)
-        : (liveProvider?.models ?? fallbackModels);
+    const models: ReadonlyArray<ServerProviderModel> = liveProvider?.models ?? fallbackModels;
 
     return {
       provider: providerSettings.provider,
@@ -1723,17 +1688,7 @@ export function GeneralSettingsPanel() {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      <span
-                        className={getPersonalDetailsBlurClass(
-                          shouldBlurEmailMention({
-                            blurPersonalData: settings.blurPersonalData,
-                            email: viewer?.email,
-                            text: providerCard.summary.headline,
-                          }),
-                        )}
-                      >
-                        {providerCard.summary.headline}
-                      </span>
+                      <span>{providerCard.summary.headline}</span>
                       {providerCard.summary.detail ? ` - ${providerCard.summary.detail}` : null}
                     </p>
                   </div>
@@ -1796,17 +1751,6 @@ export function GeneralSettingsPanel() {
               >
                 <CollapsibleContent>
                   <div className="space-y-0">
-                    {providerCard.provider === "shiori" ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <HostedShioriAuthPanel
-                          compact
-                          disabled={!providerCard.providerConfig.enabled}
-                          heading="Shiori account"
-                          description="Use the same Shiori auth methods here as on the main sign-in screen."
-                        />
-                      </div>
-                    ) : null}
-
                     {providerCard.textFields.map((field) => (
                       <div
                         key={`${providerCard.provider}:${field.key}`}

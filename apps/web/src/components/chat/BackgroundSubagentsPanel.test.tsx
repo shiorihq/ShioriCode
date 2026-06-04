@@ -105,10 +105,10 @@ describe("BackgroundSubagentsPanel", () => {
     expect(markup).toContain("Review the database layer");
   });
 
-  it("renders Shiori background subagents too", () => {
+  it("renders Cursor background subagents too", () => {
     const markup = renderToStaticMarkup(
       <BackgroundSubagentsPanel
-        provider="shiori"
+        provider="cursor"
         activities={[
           makeActivity({
             id: "shiori-root",

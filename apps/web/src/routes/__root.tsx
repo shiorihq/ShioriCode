@@ -26,7 +26,7 @@ import { resolveOnboardingState } from "shared/onboarding";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { isElectron } from "../env";
-import { useHostedShioriState } from "../convex/HostedShioriProvider";
+import { FeatureFlagSettingsSync } from "../featureFlags";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { OnboardingScreen } from "../components/onboarding/OnboardingScreen";
 import { TelemetryBridge } from "../components/TelemetryBridge";
@@ -93,6 +93,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <TelemetryBridge />
+        <FeatureFlagSettingsSync />
         <SettingsReturnPathTracker />
         <ServerStateBootstrap />
         <EventRouter />
@@ -116,12 +117,6 @@ function AgentWarmupMessage() {
 }
 
 function AppRouteShell({ children }: { children: ReactNode }) {
-  const pathname = useLocation({ select: (location) => location.pathname });
-
-  if (pathname === "/welcome") {
-    return <>{children}</>;
-  }
-
   return <AppSidebarLayout>{children}</AppSidebarLayout>;
 }
 
@@ -136,12 +131,9 @@ function SettingsReturnPathTracker() {
 }
 
 function OnboardingGate({ children }: { children: ReactNode }) {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const { isAuthLoading, isSubscriptionLoading } = useHostedShioriState();
   const serverConfig = useServerConfig();
   const { defaultProjectId, handleNewThread } = useHandleNewThread();
-  const canRunOnboarding = !isAuthLoading && !isSubscriptionLoading;
-  const allowWelcomeRoute = pathname === "/welcome";
+  const canRunOnboarding = true;
   const [bootstrappedOnboardingState, setBootstrappedOnboardingState] =
     useState<OnboardingState | null>(null);
   const [onboardingOverrideState, setOnboardingOverrideState] = useState<OnboardingState | null>(
@@ -160,10 +152,6 @@ function OnboardingGate({ children }: { children: ReactNode }) {
 
   const onboardingState =
     onboardingOverrideState ?? serverOnboardingState ?? bootstrappedOnboardingState;
-
-  if (allowWelcomeRoute) {
-    return <>{children}</>;
-  }
 
   const completeOnboardingStep = useCallback(async (stepId: OnboardingStepId) => {
     setPendingStepId(stepId);

@@ -27,7 +27,6 @@ const RuntimeEventRawSource = Schema.Literals([
   "kimi.sdk.wire",
   "acp.jsonrpc",
   "acp.cursor.extension",
-  "shiori.hosted",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
 

@@ -38,12 +38,11 @@ Expect sharp edges around setup, provider support, release packaging, and hosted
 
 You only need one working provider to use the app.
 
-| Provider | Requirement                                                                             | Authentication        |
-| -------- | --------------------------------------------------------------------------------------- | --------------------- |
-| Codex    | [Codex CLI](https://github.com/openai/codex)                                            | `codex login`         |
-| Claude   | [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) | `claude auth login`   |
-| Kimi     | [Kimi Code CLI](https://www.moonshot.cn/) (`kimi`)                                      | `kimi login`          |
-| Shiori   | Convex-backed hosted provider setup                                                     | Sign in from Settings |
+| Provider | Requirement                                                                             | Authentication      |
+| -------- | --------------------------------------------------------------------------------------- | ------------------- |
+| Codex    | [Codex CLI](https://github.com/openai/codex)                                            | `codex login`       |
+| Claude   | [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) | `claude auth login` |
+| Kimi     | [Kimi Code CLI](https://www.moonshot.cn/) (`kimi`)                                      | `kimi login`        |
 
 ## Requirements
 
@@ -92,15 +91,14 @@ For remote access from another device, see [REMOTE.md](./REMOTE.md).
 
 ## Development
 
-| Command                 | Description                     |
-| ----------------------- | ------------------------------- |
-| `bun run fmt`           | Format the repo                 |
-| `bun run lint`          | Run Oxlint                      |
-| `bun run typecheck`     | Type-check all packages         |
-| `bun run test`          | Run Vitest and browser tests    |
-| `bun run build`         | Build all packages              |
-| `bun run build:desktop` | Build the desktop pipeline      |
-| `bun run convex:dev`    | Start Convex development server |
+| Command                 | Description                  |
+| ----------------------- | ---------------------------- |
+| `bun run fmt`           | Format the repo              |
+| `bun run lint`          | Run Oxlint                   |
+| `bun run typecheck`     | Type-check all packages      |
+| `bun run test`          | Run Vitest and browser tests |
+| `bun run build`         | Build all packages           |
+| `bun run build:desktop` | Build the desktop pipeline   |
 
 Do not use `bun test` in this repo. Use `bun run test`.
 
@@ -130,7 +128,6 @@ apps/
   marketing/   Astro marketing site
   server/      Node.js WebSocket server and provider broker
   web/         React/Vite app
-convex/        Hosted Shiori backend schema and functions
 packages/
   contracts/   Effect schemas and TypeScript contracts
   effect-acp/  ACP protocol helpers

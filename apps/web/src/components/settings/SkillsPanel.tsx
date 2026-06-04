@@ -169,11 +169,11 @@ function serverIdentity(server: McpServerEntry): string {
 }
 
 function displayServerName(server: EffectiveMcpServerEntry): string {
-  if (server.source !== "shiori") return server.name.replace(/^(codex|claude):/, "");
-  if (!isMarketplaceServer(server)) return server.name;
-
-  const connector = getMarketplaceConnector(server.name.replace(/^marketplace-/, ""));
-  return connector?.name ?? server.name;
+  if (isMarketplaceServer(server)) {
+    const connector = getMarketplaceConnector(server.name.replace(/^marketplace-/, ""));
+    return connector?.name ?? server.name;
+  }
+  return server.name.replace(/^(codex|claude):/, "");
 }
 
 function effectiveServerIdentity(server: EffectiveMcpServerEntry): string {
@@ -290,7 +290,6 @@ const TRANSPORT_OPTIONS: { value: McpTransport; label: string }[] = [
 const PROVIDER_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "claudeAgent", label: PROVIDER_DISPLAY_NAMES.claudeAgent },
   { value: "codex", label: PROVIDER_DISPLAY_NAMES.codex },
-  { value: "shiori", label: PROVIDER_DISPLAY_NAMES.shiori },
 ];
 const EMPTY_MCP_SERVERS: readonly McpServerEntry[] = [];
 
@@ -541,7 +540,7 @@ function ClaudeInfoSection() {
 
 // ── Grouping helpers ────────────────────────────────────────────
 
-const SOURCE_ORDER: readonly string[] = ["shiori", "codex", "claude"];
+const SOURCE_ORDER: readonly string[] = ["codex", "claude"];
 
 function groupBySource<T extends { source: string }>(items: readonly T[]): Map<string, T[]> {
   const groups = new Map<string, T[]>();
@@ -913,7 +912,7 @@ export function SkillsPanel() {
   });
   const fallbackServers: EffectiveMcpServerEntry[] = servers.map((server) => ({
     ...server,
-    source: "shiori",
+    source: "codex",
     readOnly: false,
     auth: { status: "unknown" },
   }));

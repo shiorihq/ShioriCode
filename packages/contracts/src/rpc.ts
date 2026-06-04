@@ -97,17 +97,6 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
-  HostedBillingCheckoutInput,
-  HostedBillingCheckoutResult,
-  HostedBillingError,
-  HostedAuthError,
-  HostedBillingPortalInput,
-  HostedBillingPortalResult,
-  HostedOAuthStartInput,
-  HostedOAuthStartResult,
-  HostedPasswordAuthInput,
-  HostedPasswordAuthResult,
-  HostedBillingSnapshot,
   ServerLifecycleStreamEvent,
   ServerProviderUsageSnapshot,
   ServerProviderUpdatedPayload,
@@ -173,13 +162,7 @@ export const WS_METHODS = {
   serverRemoveMcpServer: "server.removeMcpServer",
   serverListSkills: "server.listSkills",
   serverRemoveSkill: "server.removeSkill",
-  serverSetShioriAuthToken: "server.setShioriAuthToken",
   serverGetProviderUsage: "server.getProviderUsage",
-  serverGetHostedBillingSnapshot: "server.getHostedBillingSnapshot",
-  serverCreateHostedBillingCheckout: "server.createHostedBillingCheckout",
-  serverCreateHostedBillingPortal: "server.createHostedBillingPortal",
-  serverHostedOAuthStart: "server.hostedOAuthStart",
-  serverHostedPasswordAuth: "server.hostedPasswordAuth",
 
   // Onboarding
   onboardingGetState: "onboarding.getState",
@@ -280,53 +263,9 @@ export const WsServerRemoveSkillRpc = Rpc.make(WS_METHODS.serverRemoveSkill, {
   error: ServerSettingsError,
 });
 
-export const WsServerSetShioriAuthTokenRpc = Rpc.make(WS_METHODS.serverSetShioriAuthToken, {
-  payload: Schema.Struct({ token: Schema.NullOr(Schema.String) }),
-  success: Schema.Struct({}),
-});
-
 export const WsServerGetProviderUsageRpc = Rpc.make(WS_METHODS.serverGetProviderUsage, {
   payload: Schema.Struct({ provider: ServerUsageProviderKind }),
   success: ServerProviderUsageSnapshot,
-});
-
-export const WsServerGetHostedBillingSnapshotRpc = Rpc.make(
-  WS_METHODS.serverGetHostedBillingSnapshot,
-  {
-    payload: Schema.Struct({}),
-    success: HostedBillingSnapshot,
-    error: HostedBillingError,
-  },
-);
-
-export const WsServerCreateHostedBillingCheckoutRpc = Rpc.make(
-  WS_METHODS.serverCreateHostedBillingCheckout,
-  {
-    payload: HostedBillingCheckoutInput,
-    success: HostedBillingCheckoutResult,
-    error: HostedBillingError,
-  },
-);
-
-export const WsServerCreateHostedBillingPortalRpc = Rpc.make(
-  WS_METHODS.serverCreateHostedBillingPortal,
-  {
-    payload: HostedBillingPortalInput,
-    success: HostedBillingPortalResult,
-    error: HostedBillingError,
-  },
-);
-
-export const WsServerHostedOAuthStartRpc = Rpc.make(WS_METHODS.serverHostedOAuthStart, {
-  payload: HostedOAuthStartInput,
-  success: HostedOAuthStartResult,
-  error: HostedAuthError,
-});
-
-export const WsServerHostedPasswordAuthRpc = Rpc.make(WS_METHODS.serverHostedPasswordAuth, {
-  payload: HostedPasswordAuthInput,
-  success: HostedPasswordAuthResult,
-  error: HostedAuthError,
 });
 
 export const WsOnboardingGetStateRpc = Rpc.make(WS_METHODS.onboardingGetState, {
@@ -683,13 +622,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveMcpServerRpc,
   WsServerListSkillsRpc,
   WsServerRemoveSkillRpc,
-  WsServerSetShioriAuthTokenRpc,
   WsServerGetProviderUsageRpc,
-  WsServerGetHostedBillingSnapshotRpc,
-  WsServerCreateHostedBillingCheckoutRpc,
-  WsServerCreateHostedBillingPortalRpc,
-  WsServerHostedOAuthStartRpc,
-  WsServerHostedPasswordAuthRpc,
   WsOnboardingGetStateRpc,
   WsOnboardingCompleteStepRpc,
   WsOnboardingResetRpc,

@@ -201,19 +201,7 @@ export interface WsRpcClient {
     readonly removeMcpServer: RpcUnaryMethod<typeof WS_METHODS.serverRemoveMcpServer>;
     readonly listSkills: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListSkills>;
     readonly removeSkill: RpcUnaryMethod<typeof WS_METHODS.serverRemoveSkill>;
-    readonly setShioriAuthToken: (token: string | null) => Promise<void>;
     readonly getProviderUsage: RpcUnaryMethod<typeof WS_METHODS.serverGetProviderUsage>;
-    readonly getHostedBillingSnapshot: RpcUnaryNoArgMethod<
-      typeof WS_METHODS.serverGetHostedBillingSnapshot
-    >;
-    readonly createHostedBillingCheckout: RpcUnaryMethod<
-      typeof WS_METHODS.serverCreateHostedBillingCheckout
-    >;
-    readonly createHostedBillingPortal: RpcUnaryMethod<
-      typeof WS_METHODS.serverCreateHostedBillingPortal
-    >;
-    readonly hostedOAuthStart: RpcUnaryMethod<typeof WS_METHODS.serverHostedOAuthStart>;
-    readonly hostedPasswordAuth: RpcUnaryMethod<typeof WS_METHODS.serverHostedPasswordAuth>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
   };
@@ -324,22 +312,8 @@ export function createWsRpcClient(options: {
       listSkills: () => transport.request((client) => client[WS_METHODS.serverListSkills]({})),
       removeSkill: (input) =>
         transport.request((client) => client[WS_METHODS.serverRemoveSkill](input)),
-      setShioriAuthToken: (token) =>
-        transport
-          .request((client) => client[WS_METHODS.serverSetShioriAuthToken]({ token }))
-          .then(() => undefined),
       getProviderUsage: (input) =>
         transport.request((client) => client[WS_METHODS.serverGetProviderUsage](input)),
-      getHostedBillingSnapshot: () =>
-        transport.request((client) => client[WS_METHODS.serverGetHostedBillingSnapshot]({})),
-      createHostedBillingCheckout: (input) =>
-        transport.request((client) => client[WS_METHODS.serverCreateHostedBillingCheckout](input)),
-      createHostedBillingPortal: (input) =>
-        transport.request((client) => client[WS_METHODS.serverCreateHostedBillingPortal](input)),
-      hostedOAuthStart: (input) =>
-        transport.request((client) => client[WS_METHODS.serverHostedOAuthStart](input)),
-      hostedPasswordAuth: (input) =>
-        transport.request((client) => client[WS_METHODS.serverHostedPasswordAuth](input)),
       subscribeConfig: (listener) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener),
       subscribeLifecycle: (listener) =>

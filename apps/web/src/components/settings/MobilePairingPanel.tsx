@@ -9,7 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MobilePairingSession, MobilePairingSessionStatus } from "contracts";
 
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useMobileAppFeatureEnabled } from "../../featureFlags";
 import { resolveServerUrl } from "../../lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -53,7 +53,7 @@ async function requestMobileApi<T>(
 }
 
 export function MobilePairingPanel() {
-  const { mobileAppEnabled } = useHostedShioriState();
+  const mobileAppEnabled = useMobileAppFeatureEnabled();
   const [session, setSession] = useState<MobilePairingSession | null>(null);
   const [status, setStatus] = useState<MobilePairingSessionStatus | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);

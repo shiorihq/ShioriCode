@@ -20,7 +20,6 @@ import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
 import { GeminiAdapter } from "../Services/GeminiAdapter.ts";
 import { KimiCodeAdapter } from "../Services/KimiCodeAdapter.ts";
-import { ShioriAdapter } from "../Services/ShioriAdapter.ts";
 
 export interface ProviderAdapterRegistryLiveOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapterShape<ProviderAdapterError>>;
@@ -33,7 +32,6 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
     options?.adapters !== undefined
       ? options.adapters
       : [
-          yield* ShioriAdapter,
           yield* KimiCodeAdapter,
           yield* GeminiAdapter,
           yield* CursorAdapter,

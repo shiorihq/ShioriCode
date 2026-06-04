@@ -148,11 +148,6 @@ describe("deriveLocalProviderUsageSummaries", () => {
         last7Days: { turns: 1, approxTokens: 340 },
       },
       {
-        provider: "shiori",
-        last5Hours: { turns: 0, approxTokens: 0 },
-        last7Days: { turns: 0, approxTokens: 0 },
-      },
-      {
         provider: "kimiCode",
         last5Hours: { turns: 1, approxTokens: 75 },
         last7Days: { turns: 1, approxTokens: 75 },

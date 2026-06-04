@@ -126,7 +126,6 @@ export interface SettingsOverlayProps {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly providerSnapshot: ServerProvider | null;
-  readonly isShiori: boolean;
   readonly isExternalLoginProvider: boolean;
 }
 
@@ -136,7 +135,6 @@ export function SettingsOverlay({
   runtimeMode,
   interactionMode,
   providerSnapshot,
-  isShiori,
   isExternalLoginProvider,
 }: SettingsOverlayProps) {
   const statusColor = providerSnapshot ? statusToneColor(providerSnapshot.status) : undefined;
@@ -169,11 +167,6 @@ export function SettingsOverlay({
             </Text>
           ) : null}
         </>
-      ) : null}
-      {isShiori ? (
-        <Box marginTop={1}>
-          <Text dimColor>e edit api url · t import token · x clear token</Text>
-        </Box>
       ) : null}
     </Panel>
   );

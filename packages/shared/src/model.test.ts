@@ -11,7 +11,6 @@ import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
-  normalizeShioriModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
   resolveContextWindow,
@@ -52,10 +51,6 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
-    expect(normalizeModelSlug("claude-sonnet-4.5", "shiori")).toBe("anthropic/claude-sonnet-4-5");
-    expect(normalizeModelSlug("anthropic/claude-sonnet-4.5", "shiori")).toBe(
-      "anthropic/claude-sonnet-4-5",
-    );
   });
 
   it("returns null for empty or missing values", () => {
@@ -288,28 +283,6 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
     });
   });
 
-  it("normalizes Shiori reasoning controls with provider defaults", () => {
-    expect(
-      normalizeShioriModelOptionsWithCapabilities(
-        {
-          reasoningEffortLevels: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium", isDefault: true },
-            { value: "high", label: "High" },
-          ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
-        undefined,
-      ),
-    ).toEqual({
-      thinking: false,
-      reasoningEffort: "medium",
-    });
-  });
-
   it("leaves omitted Kimi thinking unset so the CLI config can supply the default", () => {
     expect(
       normalizeKimiCodeModelOptionsWithCapabilities(
@@ -341,31 +314,6 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
       ),
     ).toEqual({
       thinking: false,
-    });
-  });
-
-  it("preserves explicit Shiori thinking state and supported effort", () => {
-    expect(
-      normalizeShioriModelOptionsWithCapabilities(
-        {
-          reasoningEffortLevels: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium", isDefault: true },
-            { value: "high", label: "High" },
-          ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
-        {
-          thinking: true,
-          reasoningEffort: "high",
-        },
-      ),
-    ).toEqual({
-      thinking: true,
-      reasoningEffort: "high",
     });
   });
 });

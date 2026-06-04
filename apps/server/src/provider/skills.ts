@@ -165,15 +165,12 @@ function providerUserSkillsDir(input: {
   readonly provider: EffectiveSkillSource;
   readonly codexHomePath?: string;
   readonly claudeHomePath?: string;
-  readonly shioriHomePath?: string;
 }): string {
   switch (input.provider) {
     case "codex":
       return path.join(input.codexHomePath?.trim() || path.join(homedir(), ".codex"), "skills");
     case "claude":
       return path.join(input.claudeHomePath?.trim() || path.join(homedir(), ".claude"), "skills");
-    case "shiori":
-      return path.join(input.shioriHomePath?.trim() || path.join(homedir(), ".agents"), "skills");
   }
 }
 
@@ -183,8 +180,6 @@ function providerProjectSkillsDir(provider: EffectiveSkillSource, cwd: string): 
       return path.join(cwd, ".codex", "skills");
     case "claude":
       return path.join(cwd, ".claude", "skills");
-    case "shiori":
-      return path.join(cwd, ".agents", "skills");
   }
 }
 
@@ -201,7 +196,6 @@ export async function discoverProviderSkills(input: {
   readonly cwd?: string;
   readonly codexHomePath?: string;
   readonly claudeHomePath?: string;
-  readonly shioriHomePath?: string;
 }): Promise<SkillDiscoveryResult> {
   const locations = [
     {
@@ -234,17 +228,15 @@ export async function listEffectiveSkills(input: {
   readonly cwd?: string;
   readonly codexHomePath?: string;
   readonly claudeHomePath?: string;
-  readonly shioriHomePath?: string;
 }): Promise<SkillDiscoveryResult> {
-  const [shiori, codex, claude] = await Promise.all([
-    discoverProviderSkills({ provider: "shiori", ...input }),
+  const [codex, claude] = await Promise.all([
     discoverProviderSkills({ provider: "codex", ...input }),
     discoverProviderSkills({ provider: "claude", ...input }),
   ]);
 
   return {
-    skills: [...shiori.skills, ...codex.skills, ...claude.skills],
-    warnings: [...shiori.warnings, ...codex.warnings, ...claude.warnings],
+    skills: [...codex.skills, ...claude.skills],
+    warnings: [...codex.warnings, ...claude.warnings],
   };
 }
 
@@ -253,8 +245,8 @@ function formatSkillPrompt(skills: ReadonlyArray<EffectiveSkillEntry>): string |
     return undefined;
   }
   const lines = [
-    "## Shiori Skills",
-    "Shiori-native skills are provider-neutral skills discovered from `~/.agents/skills` and workspace `.agents/skills`.",
+    "## Skills",
+    "Skills are discovered from the `.codex/skills` and `.claude/skills` directories in your home and workspace.",
     "If a user request matches a skill description, call the `skill` tool with that skill name before acting.",
     "",
     "Available skills:",
@@ -284,14 +276,11 @@ function skillLookupKeys(skill: EffectiveSkillEntry): string[] {
   return [base, path.basename(path.dirname(skill.path)).toLowerCase()];
 }
 
-export async function buildShioriSkillToolRuntime(input: {
+export async function buildSkillToolRuntime(input: {
   readonly cwd?: string;
-  readonly shioriHomePath?: string;
 }): Promise<ProviderSkillRuntime> {
-  const discovery = await discoverProviderSkills({
-    provider: "shiori",
+  const discovery = await listEffectiveSkills({
     ...(input.cwd ? { cwd: input.cwd } : {}),
-    ...(input.shioriHomePath ? { shioriHomePath: input.shioriHomePath } : {}),
   });
   const lookup = new Map<string, EffectiveSkillEntry>();
   for (const skill of discovery.skills) {
@@ -307,8 +296,7 @@ export async function buildShioriSkillToolRuntime(input: {
           {
             name: "skill",
             title: "Load skill",
-            description:
-              "Load detailed instructions for an available Shiori skill before using it.",
+            description: "Load detailed instructions for an available skill before using it.",
             inputSchema: {
               type: "object",
               properties: {

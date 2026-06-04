@@ -21,9 +21,9 @@ The ShioriCode CLI accepts the following configuration options, available either
 
 ## Hosted Feature Flag Overrides
 
-Hosted Shiori feature flags normally come from Convex. For local development or emergency
-rollouts, set `SHIORICODE_FEATURE_FLAG_<FLAG_KEY>` on the server process, using the Convex flag
-key uppercased with underscores. Browser-visible flags can also use the `VITE_` prefix.
+Hosted feature flags are driven entirely by environment variables. Set
+`SHIORICODE_FEATURE_FLAG_<FLAG_KEY>` on the server process, using the flag key uppercased with
+underscores. Browser-visible flags can also use the `VITE_` prefix.
 
 Examples:
 

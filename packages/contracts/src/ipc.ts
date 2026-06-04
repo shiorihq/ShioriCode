@@ -60,15 +60,6 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type {
-  HostedBillingCheckoutInput,
-  HostedBillingCheckoutResult,
-  HostedBillingPortalFlow,
-  HostedBillingPortalResult,
-  HostedBillingSnapshot,
-  HostedOAuthStartInput,
-  HostedOAuthStartResult,
-  HostedPasswordAuthInput,
-  HostedPasswordAuthResult,
   ServerConfig,
   ServerProviderUsageSnapshot,
   ServerProviderUpdatedPayload,
@@ -276,17 +267,7 @@ export interface NativeApi {
     removeMcpServer: (input: EffectiveMcpServerRemoveInput) => Promise<void>;
     listSkills: () => Promise<EffectiveSkillsResult>;
     removeSkill: (input: EffectiveSkillRemoveInput) => Promise<void>;
-    setShioriAuthToken: (token: string | null) => Promise<void>;
     getProviderUsage: (provider: "codex" | "claudeAgent") => Promise<ServerProviderUsageSnapshot>;
-    getHostedBillingSnapshot: () => Promise<HostedBillingSnapshot>;
-    createHostedBillingCheckout: (
-      input: HostedBillingCheckoutInput,
-    ) => Promise<HostedBillingCheckoutResult>;
-    createHostedBillingPortal: (
-      flow: HostedBillingPortalFlow,
-    ) => Promise<HostedBillingPortalResult>;
-    hostedOAuthStart: (input: HostedOAuthStartInput) => Promise<HostedOAuthStartResult>;
-    hostedPasswordAuth: (input: HostedPasswordAuthInput) => Promise<HostedPasswordAuthResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

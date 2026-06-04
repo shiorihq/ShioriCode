@@ -24,7 +24,6 @@ function decodeProviderKind(
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
   if (
-    providerName === "shiori" ||
     providerName === "kimiCode" ||
     providerName === "gemini" ||
     providerName === "cursor" ||

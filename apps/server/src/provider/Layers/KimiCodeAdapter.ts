@@ -61,7 +61,7 @@ import {
   loadEffectiveMcpServersForProvider,
   type ProviderMcpToolRuntime,
 } from "../mcpServers.ts";
-import { buildShioriSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
+import { buildSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
 import type { ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { KimiCodeAdapter, type KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
@@ -1173,7 +1173,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     };
 
     const skillRuntime = yield* Effect.tryPromise({
-      try: () => buildShioriSkillToolRuntime({ cwd: input.cwd }),
+      try: () => buildSkillToolRuntime({ cwd: input.cwd }),
       catch: (cause) =>
         new ProviderAdapterProcessError({
           provider: PROVIDER,

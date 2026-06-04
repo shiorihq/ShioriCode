@@ -10,7 +10,6 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   GeminiModelOptions,
   KimiCodeModelOptions,
-  ShioriModelOptions,
 } from "./model";
 import { OnboardingProgress, OnboardingStepId } from "./onboarding";
 import { ModelSelection, ProviderKind } from "./orchestration";
@@ -257,13 +256,6 @@ export const CodexSettings = Schema.Struct({
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
-export const ShioriSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  apiBaseUrl: TrimmedString.pipe(Schema.withDecodingDefault(() => "https://shiori.ai")),
-  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
-});
-export type ShioriSettings = typeof ShioriSettings.Type;
-
 export const KimiCodeSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   binaryPath: makeBinaryPathSetting("kimi"),
@@ -327,7 +319,7 @@ export const McpServersConfig = Schema.Struct({
 });
 export type McpServersConfig = typeof McpServersConfig.Type;
 
-export const EffectiveMcpServerSource = Schema.Literals(["shiori", "codex", "claude"]);
+export const EffectiveMcpServerSource = Schema.Literals(["codex", "claude"]);
 export type EffectiveMcpServerSource = typeof EffectiveMcpServerSource.Type;
 
 export const EffectiveMcpServerAuthStatus = Schema.Literals([
@@ -359,7 +351,7 @@ export const EffectiveMcpServersResult = Schema.Struct({
 });
 export type EffectiveMcpServersResult = typeof EffectiveMcpServersResult.Type;
 
-export const EffectiveSkillSource = Schema.Literals(["shiori", "codex", "claude"]);
+export const EffectiveSkillSource = Schema.Literals(["codex", "claude"]);
 export type EffectiveSkillSource = typeof EffectiveSkillSource.Type;
 
 export const EffectiveSkillScope = Schema.Literals(["user", "project"]);
@@ -438,7 +430,6 @@ export const ServerSettings = Schema.Struct({
 
   // Provider specific settings
   providers: Schema.Struct({
-    shiori: ShioriSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     kimiCode: KimiCodeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     gemini: GeminiSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -498,11 +489,6 @@ const ClaudeModelOptionsPatch = Schema.Struct({
 
 const ModelSelectionPatch = Schema.Union([
   Schema.Struct({
-    provider: Schema.optionalKey(Schema.Literal("shiori")),
-    model: Schema.optionalKey(TrimmedNonEmptyString),
-    options: Schema.optionalKey(ShioriModelOptions),
-  }),
-  Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("kimiCode")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(KimiCodeModelOptionsPatch),
@@ -528,12 +514,6 @@ const ModelSelectionPatch = Schema.Union([
     options: Schema.optionalKey(ClaudeModelOptionsPatch),
   }),
 ]);
-
-const ShioriSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  apiBaseUrl: Schema.optionalKey(Schema.String),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-});
 
 const KimiCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
@@ -613,7 +593,6 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   providers: Schema.optionalKey(
     Schema.Struct({
-      shiori: Schema.optionalKey(ShioriSettingsPatch),
       kimiCode: Schema.optionalKey(KimiCodeSettingsPatch),
       gemini: Schema.optionalKey(GeminiSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),

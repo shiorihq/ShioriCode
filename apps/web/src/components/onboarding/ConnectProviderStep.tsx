@@ -6,8 +6,6 @@ import { Button } from "../ui/button";
 import { LoadingText } from "../ui/loading-text";
 import { ProviderCard } from "./ProviderCard";
 import { useServerProviders } from "~/rpc/serverState";
-import { useMergedServerProviders } from "~/convex/shioriProvider";
-import { useHostedShioriState } from "~/convex/HostedShioriProvider";
 import { ensureNativeApi } from "~/nativeApi";
 import { setServerConfigSnapshot } from "~/rpc/serverState";
 
@@ -21,9 +19,7 @@ type ConnectProviderStepProps = {
 export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectProviderStepProps) {
   const shouldReduceMotion = useReducedMotion();
   const skip = !!shouldReduceMotion;
-  const serverProviders = useServerProviders();
-  const mergedProviders = useMergedServerProviders(serverProviders);
-  const { viewer } = useHostedShioriState();
+  const mergedProviders = useServerProviders();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const readyCount = useMemo(
@@ -86,7 +82,6 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
                 key={provider.provider}
                 provider={provider}
                 index={index}
-                viewerEmail={viewer?.email}
                 onRefresh={handleRefresh}
                 isRefreshing={isRefreshing}
               />

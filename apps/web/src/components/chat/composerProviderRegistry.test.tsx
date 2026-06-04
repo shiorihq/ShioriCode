@@ -22,41 +22,6 @@ const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-const SHIORI_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "openai/gpt-5.4",
-    name: "GPT-5.4",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium", isDefault: true },
-        { value: "high", label: "High" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: true,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "anthropic/claude-sonnet-4-5",
-    name: "Claude Sonnet 4.5",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium", isDefault: true },
-        { value: "high", label: "High" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: true,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-];
-
 const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-6",
@@ -247,65 +212,6 @@ describe("getComposerProviderState", () => {
         effort: "high",
       },
     });
-  });
-
-  it("returns Shiori defaults for effort-capable models", () => {
-    const state = getComposerProviderState({
-      provider: "shiori",
-      model: "openai/gpt-5.4",
-      models: SHIORI_MODELS,
-      prompt: "",
-      modelOptions: undefined,
-    });
-
-    expect(state).toEqual({
-      provider: "shiori",
-      promptEffort: "medium",
-      modelOptionsForDispatch: {
-        thinking: false,
-        reasoningEffort: "medium",
-      },
-    });
-  });
-
-  it("preserves explicit Shiori thinking and reasoning effort", () => {
-    const state = getComposerProviderState({
-      provider: "shiori",
-      model: "anthropic/claude-sonnet-4-5",
-      models: SHIORI_MODELS,
-      prompt: "",
-      modelOptions: {
-        shiori: {
-          thinking: true,
-          reasoningEffort: "high",
-        },
-      },
-    });
-
-    expect(state).toEqual({
-      provider: "shiori",
-      promptEffort: "high",
-      modelOptionsForDispatch: {
-        thinking: true,
-        reasoningEffort: "high",
-      },
-    });
-  });
-
-  it("preserves explicit Shiori thinking: false so deepMerge can disable reasoning mode", () => {
-    const state = getComposerProviderState({
-      provider: "shiori",
-      model: "anthropic/claude-sonnet-4-5",
-      models: SHIORI_MODELS,
-      prompt: "",
-      modelOptions: {
-        shiori: {
-          thinking: false,
-        },
-      },
-    });
-
-    expect(state.modelOptionsForDispatch).toHaveProperty("thinking", false);
   });
 
   it("tracks Claude ultrathink from the prompt without changing dispatch effort", () => {

@@ -43,8 +43,6 @@ function useElapsed(startIso: string | null) {
 
 function providerLabel(provider: ProviderKind | null): string {
   switch (provider) {
-    case "shiori":
-      return "shiori";
     case "kimiCode":
       return "kimi";
     case "gemini":

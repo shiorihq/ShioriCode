@@ -21,7 +21,7 @@ export const ONBOARDING_STEP_DEFINITIONS: readonly OnboardingStepDefinition[] = 
   {
     id: "connect-provider",
     title: "Connect a provider",
-    description: "Connect at least one coding agent — Codex, Claude, or Shiori.",
+    description: "Connect at least one coding agent — Codex, Claude, or Cursor.",
   },
   {
     id: "start-first-thread",

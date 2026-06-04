@@ -4,26 +4,15 @@ import type { ProviderKind } from "./orchestration";
 
 export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
-export const SHIORI_REASONING_EFFORT_OPTIONS = ["low", "medium", "high"] as const;
-export type ShioriReasoningEffort = (typeof SHIORI_REASONING_EFFORT_OPTIONS)[number];
 export const CLAUDE_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max", "ultrathink"] as const;
 export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
-export type ProviderReasoningEffort =
-  | CodexReasoningEffort
-  | ShioriReasoningEffort
-  | ClaudeCodeEffort;
+export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort;
 
 export const CodexModelOptions = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
-
-export const ShioriModelOptions = Schema.Struct({
-  thinking: Schema.optional(Schema.Boolean),
-  reasoningEffort: Schema.optional(Schema.Literals(SHIORI_REASONING_EFFORT_OPTIONS)),
-});
-export type ShioriModelOptions = typeof ShioriModelOptions.Type;
 
 export const KimiCodeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
@@ -50,7 +39,6 @@ export const ClaudeModelOptions = Schema.Struct({
 export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 
 export const ProviderModelOptions = Schema.Struct({
-  shiori: Schema.optional(ShioriModelOptions),
   kimiCode: Schema.optional(KimiCodeModelOptions),
   gemini: Schema.optional(GeminiModelOptions),
   cursor: Schema.optional(CursorModelOptions),
@@ -83,7 +71,6 @@ export const ModelCapabilities = Schema.Struct({
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  shiori: "openai/gpt-5.4",
   kimiCode: "kimi-code/kimi-for-coding",
   gemini: "auto",
   cursor: "auto",
@@ -95,7 +82,6 @@ export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 
 /** Per-provider text generation model defaults. */
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  shiori: "openai/gpt-5.4-mini",
   kimiCode: "kimi-code/kimi-for-coding",
   gemini: "auto",
   cursor: "auto",
@@ -110,22 +96,6 @@ export const TEXT_GENERATION_PROVIDER_KINDS = [
 export type TextGenerationProviderKind = (typeof TEXT_GENERATION_PROVIDER_KINDS)[number];
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
-  shiori: {
-    "5.4": "openai/gpt-5.4",
-    "gpt-5.4": "openai/gpt-5.4",
-    "5.4-mini": "openai/gpt-5.4-mini",
-    "gpt-5.4-mini": "openai/gpt-5.4-mini",
-    "claude-sonnet": "anthropic/claude-sonnet-4-5",
-    "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5",
-    "claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
-    "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4-5",
-    "gemini-flash": "google/gemini-2.5-flash",
-    qwen: "qwen/qwen3.5-plus-02-15",
-    "qwen3.5-plus": "qwen/qwen3.5-plus-02-15",
-    "qwen-3.5-plus": "qwen/qwen3.5-plus-02-15",
-    "qwen3.5-plus-thinking": "qwen/qwen3.5-plus-02-15",
-    "qwen-3.5-plus-thinking": "qwen/qwen3.5-plus-02-15",
-  },
   kimiCode: {
     kimi: "kimi-code/kimi-for-coding",
     "kimi-code": "kimi-code/kimi-for-coding",
@@ -176,7 +146,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
 // ── Provider display names ────────────────────────────────────────────
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
-  shiori: "Shiori",
   kimiCode: "Kimi Code",
   gemini: "Gemini",
   cursor: "Cursor",

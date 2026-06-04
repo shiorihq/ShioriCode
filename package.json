@@ -56,18 +56,14 @@
     "dist:desktop:linux": "node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64",
     "dist:desktop:win": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
-    "convex:dev": "bunx convex dev",
-    "convex:codegen": "bunx convex codegen",
     "clean": "trash node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "prepare": "effect-language-service patch"
   },
   "devDependencies": {
     "@auth/core": "^0.41.2",
-    "@convex-dev/auth": "^0.0.91",
     "@effect/language-service": "catalog:",
     "@types/node": "^24.12.3",
-    "convex": "^1.38.0",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.63.0",
     "turbo": "^2.9.12",

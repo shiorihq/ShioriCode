@@ -604,37 +604,6 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
         });
         return;
       }
-      if (providerSelection.provider === "shiori" && input === "e") {
-        const currentApiBaseUrl = state.serverConfig?.settings.providers.shiori.apiBaseUrl;
-        openPrompt({
-          title: "Edit Shiori API Base URL",
-          ...(currentApiBaseUrl ? { placeholder: currentApiBaseUrl } : {}),
-          onSubmit: async (value) => {
-            await controller.updateServerSettings({
-              providers: {
-                shiori: {
-                  apiBaseUrl: value.trim(),
-                },
-              },
-            });
-          },
-        });
-        return;
-      }
-      if (providerSelection.provider === "shiori" && input === "t") {
-        openPrompt({
-          title: "Import Shiori Token",
-          secret: true,
-          placeholder: "Paste hosted Shiori token",
-          onSubmit: async (value) => {
-            await controller.setShioriAuthToken(value.trim() || null);
-          },
-        });
-        return;
-      }
-      if (providerSelection.provider === "shiori" && input === "x") {
-        void runAction(() => controller.setShioriAuthToken(null));
-      }
       return;
     }
 
@@ -822,7 +791,6 @@ export function App({ controller, dimensions: dimensionsOverride }: AppProps) {
           runtimeMode={selectedThread.runtimeMode}
           interactionMode={selectedThread.interactionMode}
           providerSnapshot={providerSnapshot}
-          isShiori={providerSelection.provider === "shiori"}
           isExternalLoginProvider={
             providerSelection.provider === "codex" || providerSelection.provider === "claudeAgent"
           }
@@ -938,8 +906,6 @@ function sessionBadge(thread: Thread | null): string {
 
 function providerLabel(provider: ProviderKind): string {
   switch (provider) {
-    case "shiori":
-      return "shiori";
     case "kimiCode":
       return "kimi";
     case "gemini":

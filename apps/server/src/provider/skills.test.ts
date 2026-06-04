@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  buildShioriSkillToolRuntime,
+  buildSkillToolRuntime,
   discoverProviderSkills,
   listEffectiveSkills,
   removeEffectiveSkill,
@@ -36,11 +36,11 @@ async function writeSkill(root: string, relativeDir: string, content: string): P
 }
 
 describe("discoverProviderSkills", () => {
-  it("loads Shiori skills from ~/.agents/skills and workspace .agents/skills", async () => {
-    const shioriHome = await createTempDir("shiori-skills-home-");
-    const workspaceRoot = await createTempDir("shiori-skills-project-");
+  it("loads Codex skills from ~/.codex/skills and workspace .codex/skills", async () => {
+    const codexHome = await createTempDir("codex-skills-home-");
+    const workspaceRoot = await createTempDir("codex-skills-project-");
     await writeSkill(
-      shioriHome,
+      codexHome,
       "skills/support",
       [
         "---",
@@ -52,15 +52,15 @@ describe("discoverProviderSkills", () => {
     );
     const projectSkillPath = await writeSkill(
       workspaceRoot,
-      ".agents/skills/support",
+      ".codex/skills/support",
       ["---", "name: support", "description: Project support workflow.", "---", "# Support"].join(
         "\n",
       ),
     );
 
     const result = await discoverProviderSkills({
-      provider: "shiori",
-      shioriHomePath: shioriHome,
+      provider: "codex",
+      codexHomePath: codexHome,
       cwd: workspaceRoot,
     });
 
@@ -70,39 +70,35 @@ describe("discoverProviderSkills", () => {
       name: "support",
       description: "Project support workflow.",
       path: projectSkillPath,
-      source: "shiori",
+      source: "codex",
       scope: "project",
     });
   });
 
-  it("lists Codex, Claude, and Shiori skills by provider standards", async () => {
-    const shioriHome = await createTempDir("shiori-skills-home-");
+  it("lists Codex and Claude skills by provider standards", async () => {
     const codexHome = await createTempDir("codex-skills-home-");
     const claudeHome = await createTempDir("claude-skills-home-");
-    await writeSkill(shioriHome, "skills/shiori-skill", "# Shiori Skill\n");
     await writeSkill(codexHome, "skills/codex-skill", "# Codex Skill\n");
     await writeSkill(claudeHome, "skills/claude-skill", "# Claude Skill\n");
 
     const result = await listEffectiveSkills({
-      shioriHomePath: shioriHome,
       codexHomePath: codexHome,
       claudeHomePath: claudeHome,
     });
 
     expect(result.skills.map((skill) => `${skill.source}:${skill.name}`)).toEqual([
-      "shiori:Shiori Skill",
       "codex:Codex Skill",
       "claude:Claude Skill",
     ]);
   });
 });
 
-describe("buildShioriSkillToolRuntime", () => {
+describe("buildSkillToolRuntime", () => {
   it("exposes a skill tool that loads SKILL.md content", async () => {
-    const shioriHome = await createTempDir("shiori-skill-runtime-");
+    const workspaceRoot = await createTempDir("skill-runtime-");
     const skillPath = await writeSkill(
-      shioriHome,
-      "skills/customer-support",
+      workspaceRoot,
+      ".codex/skills/customer-support",
       [
         "---",
         "name: customer-support",
@@ -114,7 +110,7 @@ describe("buildShioriSkillToolRuntime", () => {
       ].join("\n"),
     );
 
-    const runtime = await buildShioriSkillToolRuntime({ shioriHomePath: shioriHome });
+    const runtime = await buildSkillToolRuntime({ cwd: workspaceRoot });
     assert.equal(runtime.descriptors[0]?.name, "skill");
     assert.match(runtime.skillPrompt ?? "", /customer-support/);
 
@@ -133,15 +129,15 @@ describe("buildShioriSkillToolRuntime", () => {
 
 describe("removeEffectiveSkill", () => {
   it("removes the selected skill directory", async () => {
-    const shioriHome = await createTempDir("shiori-remove-skill-");
+    const codexHome = await createTempDir("codex-remove-skill-");
     const skillPath = await writeSkill(
-      shioriHome,
+      codexHome,
       "skills/remove-me",
       ["---", "name: remove-me", "description: Temporary skill.", "---", "# Remove Me"].join("\n"),
     );
 
     await removeEffectiveSkill({
-      source: "shiori",
+      source: "codex",
       name: "remove-me",
       path: skillPath,
     });
@@ -150,14 +146,14 @@ describe("removeEffectiveSkill", () => {
   });
 
   it("refuses paths outside a skills directory", async () => {
-    const root = await createTempDir("shiori-remove-skill-refuse-");
+    const root = await createTempDir("codex-remove-skill-refuse-");
     const skillPath = path.join(root, "not-skills", "demo", "SKILL.md");
     await mkdir(path.dirname(skillPath), { recursive: true });
     await writeFile(skillPath, "# Demo\n", "utf8");
 
     await expect(
       removeEffectiveSkill({
-        source: "shiori",
+        source: "codex",
         name: "demo",
         path: skillPath,
       }),

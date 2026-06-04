@@ -126,7 +126,6 @@ function toLegacySessionStatus(
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
   if (
-    providerName === "shiori" ||
     providerName === "kimiCode" ||
     providerName === "gemini" ||
     providerName === "cursor" ||

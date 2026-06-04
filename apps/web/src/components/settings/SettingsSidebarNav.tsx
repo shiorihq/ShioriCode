@@ -2,21 +2,18 @@ import type { ComponentType } from "react";
 import {
   IconArchiveOutline24 as ArchiveIcon,
   IconArrowLeftOutline24 as ArrowLeftIcon,
-  IconChartBarTrendUpOutline24 as BarChart3Icon,
   IconGrid3Outline24 as BlocksIcon,
   IconMonitorOutline24 as MonitorIcon,
-  IconMessageOutline24 as MessageSquareIcon,
   IconPaletteOutline24 as PaletteIcon,
   IconGear2Outline24 as Settings2Icon,
   IconMobileOutline24 as SmartphoneIcon,
-  IconUserOutline24 as UserIcon,
 } from "nucleo-core-outline-24";
 import { useNavigate } from "@tanstack/react-router";
 import {
   readSettingsReturnPath,
   resolveSettingsBackNavigation,
 } from "../../lib/settingsNavigation";
-import { useHostedShioriState } from "../../convex/HostedShioriProvider";
+import { useComputerUseFeatureEnabled, useMobileAppFeatureEnabled } from "../../featureFlags";
 
 import {
   SidebarContent,
@@ -30,12 +27,9 @@ export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/skills"
-  | "/settings/account"
   | "/settings/archived"
   | "/settings/computer-use"
-  | "/settings/mobile"
-  | "/settings/usage"
-  | "/settings/feedback";
+  | "/settings/mobile";
 
 type SettingsFeature = "computerUse" | "mobileApp";
 
@@ -48,8 +42,6 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Skills & MCP", to: "/settings/skills", icon: BlocksIcon },
-  { label: "Account", to: "/settings/account", icon: UserIcon },
-  { label: "Usage", to: "/settings/usage", icon: BarChart3Icon },
   {
     label: "Mobile App",
     to: "/settings/mobile",
@@ -63,12 +55,12 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     feature: "computerUse",
   },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
-  { label: "Feedback", to: "/settings/feedback", icon: MessageSquareIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const { computerUseEnabled, mobileAppEnabled } = useHostedShioriState();
+  const computerUseEnabled = useComputerUseFeatureEnabled();
+  const mobileAppEnabled = useMobileAppFeatureEnabled();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };

@@ -75,12 +75,7 @@ const rpcClientMock = {
     removeMcpServer: vi.fn(),
     listSkills: vi.fn(),
     removeSkill: vi.fn(),
-    setShioriAuthToken: vi.fn(),
     getProviderUsage: vi.fn(),
-    getHostedBillingSnapshot: vi.fn(),
-    createHostedBillingCheckout: vi.fn(),
-    createHostedBillingPortal: vi.fn(),
-    hostedOAuthStart: vi.fn(),
     subscribeConfig: vi.fn(),
     subscribeLifecycle: vi.fn(),
   },
@@ -494,85 +489,6 @@ describe("wsNativeApi", () => {
       },
     });
     expect(rpcClientMock.server.getProviderUsage).toHaveBeenCalledWith({ provider: "codex" });
-  });
-
-  it("forwards hosted billing actions directly to the RPC client", async () => {
-    rpcClientMock.server.getHostedBillingSnapshot.mockResolvedValue({
-      plans: [
-        {
-          id: "plus",
-          name: "Plus",
-          description: "Starter paid plan",
-          monthlyPrice: 10,
-          annualPrice: 96,
-          sortOrder: 0,
-          highlighted: true,
-          buttonText: "Get Plus",
-          features: ["Feature A"],
-        },
-      ],
-    });
-    rpcClientMock.server.createHostedBillingCheckout.mockResolvedValue({
-      sessionId: "cs_test_1",
-      url: "https://checkout.stripe.test/session",
-    });
-    rpcClientMock.server.createHostedBillingPortal.mockResolvedValue({
-      url: "https://billing.stripe.test/session",
-    });
-    rpcClientMock.server.hostedOAuthStart.mockResolvedValue({
-      redirect: "https://accounts.example.test/oauth/start",
-      verifier: "desktop-verifier",
-    });
-    const { createWsNativeApi } = await import("./wsNativeApi");
-
-    const api = createWsNativeApi();
-
-    await expect(api.server.getHostedBillingSnapshot()).resolves.toEqual({
-      plans: [
-        {
-          id: "plus",
-          name: "Plus",
-          description: "Starter paid plan",
-          monthlyPrice: 10,
-          annualPrice: 96,
-          sortOrder: 0,
-          highlighted: true,
-          buttonText: "Get Plus",
-          features: ["Feature A"],
-        },
-      ],
-    });
-    await expect(
-      api.server.createHostedBillingCheckout({ planId: "pro", isAnnual: true }),
-    ).resolves.toEqual({
-      sessionId: "cs_test_1",
-      url: "https://checkout.stripe.test/session",
-    });
-    await expect(api.server.createHostedBillingPortal("manage")).resolves.toEqual({
-      url: "https://billing.stripe.test/session",
-    });
-    await expect(
-      api.server.hostedOAuthStart({
-        provider: "github",
-        redirectTo: "shioricode://app/index.html#/settings/account",
-      }),
-    ).resolves.toEqual({
-      redirect: "https://accounts.example.test/oauth/start",
-      verifier: "desktop-verifier",
-    });
-
-    expect(rpcClientMock.server.getHostedBillingSnapshot).toHaveBeenCalledWith();
-    expect(rpcClientMock.server.createHostedBillingCheckout).toHaveBeenCalledWith({
-      planId: "pro",
-      isAnnual: true,
-    });
-    expect(rpcClientMock.server.createHostedBillingPortal).toHaveBeenCalledWith({
-      flow: "manage",
-    });
-    expect(rpcClientMock.server.hostedOAuthStart).toHaveBeenCalledWith({
-      provider: "github",
-      redirectTo: "shioricode://app/index.html#/settings/account",
-    });
   });
 
   it("forwards onboarding actions directly to the RPC client", async () => {

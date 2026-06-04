@@ -90,7 +90,6 @@ export const PROVIDERS: ReadonlyArray<{ provider: ProviderKind; label: string }>
   { provider: "kimiCode", label: "Kimi" },
   { provider: "gemini", label: "Gemini" },
   { provider: "cursor", label: "Cursor" },
-  { provider: "shiori", label: "Shiori" },
 ];
 
 const ASSIGNEE_ROLE: GoalItemAssigneeRole = "owner";

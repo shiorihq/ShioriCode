@@ -3,7 +3,9 @@ import type { NativeApi } from "contracts";
 import { __resetWsNativeApiForTests, createWsNativeApi } from "./wsNativeApi";
 
 let cachedApi: NativeApi | undefined;
-let webConnectGateOpen = false;
+// The app is local/BYO-key only: there is no hosted sign-in gate, so the web
+// build is allowed to open its WebSocket native-API client immediately.
+let webConnectGateOpen = true;
 
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
@@ -32,8 +34,8 @@ export function hasDesktopNativeBridge(): boolean {
 
 /**
  * Opens (or closes) the gate that allows the web build to create the WebSocket
- * native-API client. Kept closed until the user is authenticated so we don't
- * hammer the server with 403-bound handshakes on the sign-in screen.
+ * native-API client. The local/BYO-key app leaves this open by default; the
+ * setter is retained for tests and any future connection gating.
  */
 export function setNativeApiWebConnectGate(open: boolean) {
   webConnectGateOpen = open;

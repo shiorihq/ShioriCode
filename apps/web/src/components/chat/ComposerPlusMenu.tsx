@@ -53,9 +53,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
   const caps = getProviderModelCapabilities(models, model, provider);
   const supportsImageAttachments = providerModelSupportsImageAttachments(models, model, provider);
   const thinkingEnabled = caps.supportsThinkingToggle
-    ? provider === "shiori"
-      ? ((modelOptions as { thinking?: boolean } | undefined)?.thinking ?? false)
-      : ((modelOptions as { thinking?: boolean } | undefined)?.thinking ?? true)
+    ? ((modelOptions as { thinking?: boolean } | undefined)?.thinking ?? true)
     : null;
   const fastModeEnabled =
     caps.supportsFastMode &&

@@ -3,7 +3,6 @@ import {
   type ProviderModelOptions,
   type ServerProviderModel,
   type KimiCodeModelOptions,
-  type ShioriModelOptions,
   type ThreadId,
   type ClaudeModelOptions,
   type CodexModelOptions,
@@ -18,7 +17,6 @@ import {
   normalizeCodexModelOptionsWithCapabilities,
   normalizeCursorModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
-  normalizeShioriModelOptionsWithCapabilities,
 } from "shared/model";
 
 export type ComposerProviderStateInput = {
@@ -88,29 +86,18 @@ function getProviderStateFromCapabilities(
 
   // Normalize options for dispatch
   const normalizedOptions =
-    provider === "shiori"
-      ? normalizeShioriModelOptionsWithCapabilities(caps, providerOptions as ShioriModelOptions)
-      : provider === "kimiCode"
-        ? normalizeKimiCodeModelOptionsWithCapabilities(
-            caps,
-            providerOptions as KimiCodeModelOptions,
-          )
-        : provider === "gemini"
-          ? undefined
-          : provider === "cursor"
-            ? normalizeCursorModelOptionsWithCapabilities(
+    provider === "kimiCode"
+      ? normalizeKimiCodeModelOptionsWithCapabilities(caps, providerOptions as KimiCodeModelOptions)
+      : provider === "gemini"
+        ? undefined
+        : provider === "cursor"
+          ? normalizeCursorModelOptionsWithCapabilities(caps, providerOptions as CursorModelOptions)
+          : provider === "codex"
+            ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions)
+            : normalizeClaudeModelOptionsWithCapabilities(
                 caps,
-                providerOptions as CursorModelOptions,
-              )
-            : provider === "codex"
-              ? normalizeCodexModelOptionsWithCapabilities(
-                  caps,
-                  providerOptions as CodexModelOptions,
-                )
-              : normalizeClaudeModelOptionsWithCapabilities(
-                  caps,
-                  providerOptions as ClaudeModelOptions,
-                );
+                providerOptions as ClaudeModelOptions,
+              );
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -147,49 +134,6 @@ function hasEffortControls(
 }
 
 const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
-  shiori: {
-    getState: (input) => getProviderStateFromCapabilities(input),
-    renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "shiori") ? (
-        <TraitsMenuContent
-          provider="shiori"
-          models={models}
-          threadId={threadId}
-          model={model}
-          modelOptions={modelOptions}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          includeEffort={false}
-          includeFastMode={false}
-        />
-      ) : null,
-    renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasEffortControls(models, model, "shiori") ? (
-        <EffortPicker
-          provider="shiori"
-          models={models}
-          threadId={threadId}
-          model={model}
-          modelOptions={modelOptions}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-        />
-      ) : null,
-    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "shiori") ? (
-        <TraitsPicker
-          provider="shiori"
-          models={models}
-          threadId={threadId}
-          model={model}
-          modelOptions={modelOptions}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          includeEffort={false}
-          includeFastMode={false}
-        />
-      ) : null,
-  },
   kimiCode: {
     getState: (input) => getProviderStateFromCapabilities(input),
     renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>

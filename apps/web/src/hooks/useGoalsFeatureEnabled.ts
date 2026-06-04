@@ -1,8 +1,8 @@
-import { useHostedShioriState } from "~/convex/HostedShioriProvider";
+import { useGoalsFeatureFlagEnabled } from "../featureFlags";
 import { useSettings } from "./useSettings";
 
 export function useGoalsFeatureEnabled(): boolean {
-  const goalsEnabled = useHostedShioriState().goalsEnabled;
+  const goalsEnabled = useGoalsFeatureFlagEnabled();
   const localGoalsEnabled = useSettings().goals.enabled;
 
   return goalsEnabled && localGoalsEnabled;

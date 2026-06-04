@@ -34,7 +34,6 @@ export const PROVIDER_OPTIONS: Array<{
   label: string;
   available: boolean;
 }> = [
-  { value: "shiori", label: "Shiori", available: true },
   { value: "kimiCode", label: "Kimi", available: true },
   { value: "gemini", label: "Gemini", available: true },
   { value: "cursor", label: "Cursor", available: true },

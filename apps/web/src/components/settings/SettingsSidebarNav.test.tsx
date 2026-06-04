@@ -30,8 +30,9 @@ vi.mock("../../lib/settingsNavigation", () => ({
 let computerUseEnabled = false;
 let mobileAppEnabled = false;
 
-vi.mock("../../convex/HostedShioriProvider", () => ({
-  useHostedShioriState: () => ({ computerUseEnabled, mobileAppEnabled }),
+vi.mock("../../featureFlags", () => ({
+  useComputerUseFeatureEnabled: () => computerUseEnabled,
+  useMobileAppFeatureEnabled: () => mobileAppEnabled,
 }));
 
 import { SidebarProvider } from "../ui/sidebar";

@@ -39,16 +39,16 @@ describe("providerVisibility", () => {
 
   it("falls back to all providers when every provider is hidden", () => {
     expect(
-      getVisibleProviderKinds(["shiori", "kimiCode", "gemini", "cursor", "codex", "claudeAgent"]),
+      getVisibleProviderKinds(["kimiCode", "gemini", "cursor", "codex", "claudeAgent"]),
     ).toContain("codex");
   });
 
   it("resolves to the first visible enabled provider", () => {
     expect(
       resolveVisibleSelectableProvider(
-        [provider("shiori"), provider("codex"), provider("claudeAgent")],
-        "shiori",
-        ["shiori"],
+        [provider("gemini"), provider("codex"), provider("claudeAgent")],
+        "gemini",
+        ["gemini"],
       ),
     ).toBe("codex");
   });

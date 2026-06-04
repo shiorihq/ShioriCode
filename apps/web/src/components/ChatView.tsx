@@ -128,8 +128,7 @@ import {
 import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import { buildProviderModelSelection, resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { useHostedShioriState } from "../convex/HostedShioriProvider";
-import { useMergedServerProviders } from "../convex/shioriProvider";
+import { useBrowserUseFeatureEnabled } from "../featureFlags";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1052,7 +1051,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const { authToken: hostedShioriAuthToken, browserUseEnabled } = useHostedShioriState();
+  const browserUseEnabled = useBrowserUseFeatureEnabled();
   const diffOpen = scopedSearch.diff === "1";
   const browserOpen = browserUseEnabled && scopedSearch.browser === "1";
   const shouldUseBrowserSheet = useMediaQuery(BROWSER_PANEL_SHEET_MEDIA_QUERY);
@@ -1226,10 +1225,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const serverConfig = useServerConfig();
-  const providerStatuses = useMergedServerProviders(serverConfig?.providers ?? EMPTY_PROVIDERS);
+  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const modelOptionsByProvider = useMemo(
     () => ({
-      shiori: providerStatuses.find((provider) => provider.provider === "shiori")?.models ?? [],
       kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
       gemini: providerStatuses.find((provider) => provider.provider === "gemini")?.models ?? [],
       cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
@@ -1325,31 +1323,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     });
   }, [providerStatuses]);
   const ensureProviderCanStartTurn = useCallback(
-    async (provider: ProviderKind) => {
+    (provider: ProviderKind) => {
       const unavailableReason = getProviderUnavailableReason(providerStatuses, provider);
       if (unavailableReason) {
         throw new Error(unavailableReason);
       }
-      if (provider !== "shiori") {
-        return;
-      }
-
-      const api = readNativeApi();
-      if (!api) {
-        throw new Error("Native API not found");
-      }
-      console.info("[shiori-send] synchronizing Shiori account token before turn start", {
-        provider,
-        tokenPresent: hostedShioriAuthToken !== null,
-      });
-      if (!hostedShioriAuthToken) {
-        throw new Error(
-          "Shiori account token is unavailable or invalid. Sign out and sign back in to continue.",
-        );
-      }
-      await api.server.setShioriAuthToken(hostedShioriAuthToken);
     },
-    [hostedShioriAuthToken, providerStatuses],
+    [providerStatuses],
   );
   const buildDraftThreadTitle = useCallback(
     (input: {
@@ -2151,13 +2131,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               : "Fast mode is unavailable for the current model",
         },
         {
-          id: "slash:feedback",
-          type: "slash-command",
-          command: "feedback",
-          label: "/feedback",
-          description: "Open the feedback form",
-        },
-        {
           id: "slash:fork",
           type: "slash-command",
           command: "fork",
@@ -2755,7 +2728,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     setComposerDraftProviderModelOptions,
   ]);
   const openSettingsRoute = useCallback(
-    (to: "/settings/feedback" | "/settings/skills") => {
+    (to: "/settings/skills") => {
       void navigate({ to });
     },
     [navigate],
@@ -3809,14 +3782,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         setComposerTrigger(null);
       } else if (standaloneSlashCommand.command === "fast") {
         toggleFastMode();
-        promptRef.current = "";
-        clearComposerDraftContent(activeThread.id);
-        setComposerHighlightedItemId(null);
-        setComposerCursor(0);
-        setComposerTrigger(null);
-        return;
-      } else if (standaloneSlashCommand.command === "feedback") {
-        openSettingsRoute("/settings/feedback");
         promptRef.current = "";
         clearComposerDraftContent(activeThread.id);
         setComposerHighlightedItemId(null);
@@ -5041,8 +5006,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
 
         if (item.command === "fast") {
           toggleFastMode();
-        } else if (item.command === "feedback") {
-          openSettingsRoute("/settings/feedback");
         } else if (item.command === "fork") {
           void handleForkThread(item.value === "worktree" ? "worktree" : "local");
         } else if (item.command === "mcp") {
