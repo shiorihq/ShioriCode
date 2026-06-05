@@ -1,9 +1,10 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema, Struct } from "effect";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 
-import { ModelSelection, ProjectScript } from "contracts";
+import { ProjectScript } from "contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
+import { decodeStoredNullableModelSelectionJson } from "../modelSelectionJson.ts";
 import {
   DeleteProjectionProjectInput,
   GetProjectionProjectInput,
@@ -14,11 +15,18 @@ import {
 
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
-    defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    defaultModelSelection: Schema.NullOr(Schema.String),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
+
+function rowToProjectionProject(row: ProjectionProjectDbRow): ProjectionProject {
+  return {
+    ...row,
+    defaultModelSelection: decodeStoredNullableModelSelectionJson(row.defaultModelSelection),
+  };
+}
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -113,11 +121,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
+      Effect.map(Option.map(rowToProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map(rowToProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

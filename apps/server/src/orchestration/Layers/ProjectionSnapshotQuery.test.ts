@@ -407,6 +407,86 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("normalizes legacy shiori model selections from projection rows", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-legacy-shiori',
+          'Legacy Shiori Project',
+          '/tmp/legacy-shiori',
+          '{"provider":"shiori","model":"openai/gpt-5.4","options":{"thinking":false,"reasoningEffort":"high"}}',
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-legacy-shiori',
+          'project-legacy-shiori',
+          'Legacy Shiori Thread',
+          '{"provider":"shiori","model":"openai/gpt-5.4","options":{"thinking":false,"reasoningEffort":"high"}}',
+          NULL,
+          NULL,
+          NULL,
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const project = snapshot.projects.find(
+        (item) => item.id === ProjectId.makeUnsafe("project-legacy-shiori"),
+      );
+      const thread = snapshot.threads.find(
+        (item) => item.id === ThreadId.makeUnsafe("thread-legacy-shiori"),
+      );
+
+      assert.deepStrictEqual(project?.defaultModelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "high" },
+      });
+      assert.deepStrictEqual(thread?.modelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "high" },
+      });
+    }),
+  );
+
   it.effect(
     "reads targeted project, thread, and count queries without hydrating the full snapshot",
     () =>

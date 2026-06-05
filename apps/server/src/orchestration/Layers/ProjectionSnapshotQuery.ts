@@ -20,7 +20,6 @@ import {
   type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
-  ModelSelection,
   ProjectId,
   ThreadId,
 } from "contracts";
@@ -43,6 +42,10 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import {
+  decodeStoredModelSelectionJson,
+  decodeStoredNullableModelSelectionJson,
+} from "../../persistence/modelSelectionJson.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -54,7 +57,7 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
-    defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    defaultModelSelection: Schema.NullOr(Schema.String),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -74,7 +77,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
-    modelSelection: Schema.fromJsonString(ModelSelection),
+    modelSelection: Schema.NullOr(Schema.String),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -773,7 +776,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             id: row.projectId,
             title: normalizeProjectTitle(row.title),
             workspaceRoot: row.workspaceRoot,
-            defaultModelSelection: row.defaultModelSelection,
+            defaultModelSelection: decodeStoredNullableModelSelectionJson(
+              row.defaultModelSelection,
+            ),
             scripts: row.scripts,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -785,7 +790,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             projectId: row.projectId,
             projectlessCwd: row.projectlessCwd,
             title: row.title,
-            modelSelection: row.modelSelection,
+            modelSelection: decodeStoredModelSelectionJson(row.modelSelection),
             runtimeMode: row.runtimeMode,
             interactionMode: row.interactionMode,
             parentThreadId: row.parentThreadId,
@@ -861,7 +866,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               id: row.projectId,
               title: normalizeProjectTitle(row.title),
               workspaceRoot: row.workspaceRoot,
-              defaultModelSelection: row.defaultModelSelection,
+              defaultModelSelection: decodeStoredNullableModelSelectionJson(
+                row.defaultModelSelection,
+              ),
               scripts: row.scripts,
               createdAt: row.createdAt,
               updatedAt: row.updatedAt,

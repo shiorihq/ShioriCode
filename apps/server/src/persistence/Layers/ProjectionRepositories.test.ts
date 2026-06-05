@@ -126,4 +126,100 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       });
     }),
   );
+
+  it.effect("normalizes legacy shiori model selections on read", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectionProjectRepository;
+      const threads = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-legacy-shiori',
+          'Legacy Shiori Project',
+          '/tmp/project-legacy-shiori',
+          '{"provider":"shiori","model":"openai/gpt-5.4","options":{"thinking":false,"reasoningEffort":"high"}}',
+          '[]',
+          '2026-03-24T00:00:00.000Z',
+          '2026-03-24T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          workspace_kind,
+          project_id,
+          projectless_cwd,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          parent_thread_id,
+          branch_source_turn_id,
+          branch,
+          worktree_path,
+          tag,
+          resume_state,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          pinned_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-legacy-shiori',
+          'project',
+          'project-legacy-shiori',
+          NULL,
+          'Legacy Shiori Thread',
+          '{"provider":"shiori","model":"openai/gpt-5.4","options":{"thinking":false,"reasoningEffort":"high"}}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          'resumed',
+          NULL,
+          '2026-03-24T00:00:00.000Z',
+          '2026-03-24T00:00:00.000Z',
+          NULL,
+          NULL,
+          NULL
+        )
+      `;
+
+      const project = yield* projects.getById({
+        projectId: ProjectId.makeUnsafe("project-legacy-shiori"),
+      });
+      const thread = yield* threads.getById({
+        threadId: ThreadId.makeUnsafe("thread-legacy-shiori"),
+      });
+
+      assert.deepStrictEqual(Option.getOrNull(project)?.defaultModelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "high" },
+      });
+      assert.deepStrictEqual(Option.getOrNull(thread)?.modelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "high" },
+      });
+    }),
+  );
 });
