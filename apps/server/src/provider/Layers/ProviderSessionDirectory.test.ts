@@ -187,6 +187,46 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       assert.equal(provider, "cursor");
     }));
 
+  it("rehydrates legacy shiori thread bindings as codex", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-legacy-shiori");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "shiori",
+        adapterKey: "shiori",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "codex",
+        adapterKey: "codex",
+      });
+
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "codex");
+
+      const bindings = yield* directory.listBindings();
+      assert.equal(bindings.length, 1);
+      const [listedBinding] = bindings;
+      assert.ok(listedBinding);
+      assert.equal(listedBinding.threadId, threadId);
+      assert.equal(listedBinding.provider, "codex");
+      assert.equal(listedBinding.adapterKey, "codex");
+      assert.equal(listedBinding.runtimeMode, "full-access");
+      assert.equal(listedBinding.status, "running");
+      assert.equal(listedBinding.resumeCursor, null);
+      assert.equal(listedBinding.runtimePayload, null);
+    }));
+
   it("resets adapterKey to the new provider when provider changes without an explicit adapter key", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
@@ -214,6 +254,41 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       if (Option.isSome(runtime)) {
         assert.equal(runtime.value.providerName, "codex");
         assert.equal(runtime.value.adapterKey, "codex");
+      }
+    }));
+
+  it("normalizes legacy shiori runtime rows on upsert", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-legacy-upsert");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "shiori",
+        adapterKey: "shiori",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: {
+          cwd: "/tmp/project",
+        },
+      });
+
+      yield* directory.upsert({
+        provider: "codex",
+        threadId,
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.providerName, "codex");
+        assert.equal(runtime.value.adapterKey, "codex");
+        assert.deepEqual(runtime.value.runtimePayload, {
+          cwd: "/tmp/project",
+        });
       }
     }));
 

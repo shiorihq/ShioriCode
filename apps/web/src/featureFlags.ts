@@ -6,7 +6,7 @@ import { readNativeApi } from "./nativeApi";
 /**
  * ShioriCode feature flags are resolved entirely from build-time/runtime env vars
  * (`import.meta.env`). There is no hosted account or remote dependency: each flag
- * defaults to `false` and is only enabled when its `VITE_*` override is set.
+ * has a local production default that can be overridden with its `VITE_*` env var.
  */
 export type ShioriFeatureFlagKey =
   | "shioricode_mobile_enabled"
@@ -14,10 +14,24 @@ export type ShioriFeatureFlagKey =
   | "shioricode_computer_use_enabled"
   | "shioricode_goals_enabled";
 
+export const DEFAULT_FEATURE_FLAGS = {
+  shioricode_mobile_enabled: false,
+  shioricode_browser_use_enabled: false,
+  shioricode_computer_use_enabled: false,
+  shioricode_goals_enabled: true,
+} satisfies Record<ShioriFeatureFlagKey, boolean>;
+
 const featureFlagEnv = import.meta.env as Record<string, unknown>;
 
+export function resolveFeatureFlagFromEnv(
+  key: ShioriFeatureFlagKey,
+  env: Record<string, unknown>,
+): boolean {
+  return readHostedShioriFeatureFlagOverride(key, env) ?? DEFAULT_FEATURE_FLAGS[key];
+}
+
 export function resolveFeatureFlag(key: ShioriFeatureFlagKey): boolean {
-  return readHostedShioriFeatureFlagOverride(key, featureFlagEnv) ?? false;
+  return resolveFeatureFlagFromEnv(key, featureFlagEnv);
 }
 
 export function useMobileAppFeatureEnabled(): boolean {

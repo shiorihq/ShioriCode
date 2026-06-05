@@ -32,12 +32,19 @@ function decodeProviderKind(
   ) {
     return Effect.succeed(providerName);
   }
+  if (providerName === "shiori") {
+    return Effect.succeed("codex");
+  }
   return Effect.fail(
     new ProviderSessionDirectoryPersistenceError({
       operation,
       detail: `Unknown persisted provider '${providerName}'.`,
     }),
   );
+}
+
+function normalizeAdapterKey(adapterKey: string, provider: ProviderKind): string {
+  return adapterKey === "shiori" ? provider : adapterKey;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,7 +71,7 @@ function runtimeToBinding(
     Effect.map((provider) => ({
       threadId: value.threadId,
       provider,
-      adapterKey: value.adapterKey,
+      adapterKey: normalizeAdapterKey(value.adapterKey, provider),
       runtimeMode: value.runtimeMode,
       status: value.status,
       lastSeenAt: value.lastSeenAt,
@@ -106,13 +113,17 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     const now = new Date().toISOString();
     const providerChanged =
       existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
+    const existingAdapterKey =
+      existingRuntime !== undefined
+        ? normalizeAdapterKey(existingRuntime.adapterKey, binding.provider)
+        : undefined;
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
         providerName: binding.provider,
         adapterKey:
           binding.adapterKey ??
-          (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
+          (providerChanged ? binding.provider : (existingAdapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,

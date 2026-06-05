@@ -240,8 +240,10 @@ export const MobileAppSettings = Schema.Struct({
 });
 export type MobileAppSettings = typeof MobileAppSettings.Type;
 
+export const DEFAULT_GOALS_ENABLED = true;
+
 export const GoalsSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => DEFAULT_GOALS_ENABLED)),
 });
 export type GoalsSettings = typeof GoalsSettings.Type;
 

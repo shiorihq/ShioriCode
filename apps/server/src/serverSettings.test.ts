@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DEFAULT_GOALS_ENABLED,
   DEFAULT_SERVER_SETTINGS,
   McpServerEntry,
   ServerSettings,
@@ -415,6 +416,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     Effect.sync(() => {
       const settings = Schema.decodeUnknownSync(ServerSettings)({});
       assert.deepEqual(settings.mcpServers, { servers: [] });
+    }),
+  );
+
+  it.effect("enables goals by default", () =>
+    Effect.sync(() => {
+      const settings = Schema.decodeUnknownSync(ServerSettings)({});
+      assert.equal(settings.goals.enabled, DEFAULT_GOALS_ENABLED);
+      assert.equal(DEFAULT_SERVER_SETTINGS.goals.enabled, DEFAULT_GOALS_ENABLED);
     }),
   );
 
