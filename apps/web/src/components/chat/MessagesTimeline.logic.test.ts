@@ -10,6 +10,7 @@ import {
   estimateMessagesTimelineRowHeight,
   formatWorkEntry,
   getDisplayedWorkEntries,
+  getTurnWorkExpansionKey,
   isWorkRowInProgress,
   shouldRenderFlatWorkRowAsGroup,
   type MessagesTimelineRow,
@@ -1879,5 +1880,187 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary(workRows[0]!.groupedEntries, false)).toBe(
       "Explored 1 file, ran 2 commands, called 1 tool, updated todo list",
     );
+  });
+});
+
+describe("deriveMessagesTimelineRows settled turn collapse", () => {
+  function makeTurnEntries(turn: number): TimelineEntry[] {
+    const minute = String(turn).padStart(2, "0");
+    return [
+      {
+        id: `user-${turn}`,
+        kind: "message",
+        createdAt: `2026-02-23T00:${minute}:00.000Z`,
+        message: {
+          id: MessageId.makeUnsafe(`user-${turn}`),
+          role: "user",
+          text: `question ${turn}`,
+          createdAt: `2026-02-23T00:${minute}:00.000Z`,
+          streaming: false,
+        },
+      },
+      {
+        id: `work-${turn}`,
+        kind: "work",
+        createdAt: `2026-02-23T00:${minute}:01.000Z`,
+        entry: {
+          id: `work-${turn}`,
+          createdAt: `2026-02-23T00:${minute}:01.000Z`,
+          label: "Read file",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          requestKind: "file-read",
+          detail: "README.md",
+        },
+      },
+      {
+        id: `assistant-${turn}`,
+        kind: "message",
+        createdAt: `2026-02-23T00:${minute}:30.000Z`,
+        message: {
+          id: MessageId.makeUnsafe(`assistant-${turn}`),
+          role: "assistant",
+          text: `answer ${turn}`,
+          createdAt: `2026-02-23T00:${minute}:30.000Z`,
+          completedAt: `2026-02-23T00:${minute}:30.000Z`,
+          streaming: false,
+        },
+      },
+    ];
+  }
+
+  it("collapses earlier turns' work behind a labeled divider by default", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [...makeTurnEntries(1), ...makeTurnEntries(2)],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "message",
+      "turn-divider",
+      "message",
+      "message",
+      "work",
+      "message",
+    ]);
+    const divider = rows[1];
+    expect(divider?.kind).toBe("turn-divider");
+    if (divider?.kind !== "turn-divider") return;
+    expect(divider.summary).toBe("Worked for 30s");
+    expect(divider.expanded).toBe(false);
+    expect(divider.expansionKey).toBe(getTurnWorkExpansionKey("user-1"));
+  });
+
+  it("keeps an earlier turn's work visible when its divider is expanded", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [...makeTurnEntries(1), ...makeTurnEntries(2)],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      expandedWorkGroups: { [getTurnWorkExpansionKey("user-1")]: true },
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "message",
+      "turn-divider",
+      "work",
+      "message",
+      "message",
+      "work",
+      "message",
+    ]);
+    const divider = rows[1];
+    if (divider?.kind !== "turn-divider") {
+      expect.unreachable("expected a turn-divider row");
+    }
+    expect(divider.expanded).toBe(true);
+  });
+
+  it("falls back to row timestamps when completedAt is missing", () => {
+    const entries = [...makeTurnEntries(1), ...makeTurnEntries(2)];
+    const firstAssistant = entries[2];
+    if (firstAssistant?.kind !== "message") {
+      expect.unreachable("expected an assistant message entry");
+    }
+    delete firstAssistant.message.completedAt;
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const divider = rows.find((row) => row.kind === "turn-divider");
+    if (divider?.kind !== "turn-divider") {
+      expect.unreachable("expected a turn-divider row");
+    }
+    expect(divider.summary).toBe("Worked for 30s");
+  });
+
+  it("measures the whole turn when it spans multiple assistant messages", () => {
+    const entries = [...makeTurnEntries(1), ...makeTurnEntries(2)];
+    const extraAssistant: TimelineEntry = {
+      id: "assistant-1b",
+      kind: "message",
+      createdAt: "2026-02-23T00:01:43.000Z",
+      message: {
+        id: MessageId.makeUnsafe("assistant-1b"),
+        role: "assistant",
+        text: "follow-up answer",
+        createdAt: "2026-02-23T00:01:43.000Z",
+        completedAt: "2026-02-23T00:01:43.000Z",
+        streaming: false,
+      },
+    };
+    entries.splice(3, 0, extraAssistant);
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    const divider = rows.find((row) => row.kind === "turn-divider");
+    if (divider?.kind !== "turn-divider") {
+      expect.unreachable("expected a turn-divider row");
+    }
+    // Elapsed must span from the user message (00:01:00) to the turn's last
+    // activity (00:01:43) — not just the final assistant message's own
+    // segment after the previous one completed (13s).
+    expect(divider.summary).toBe("Worked for 43s");
+  });
+
+  it("leaves a turn flat when no timestamps are parseable", () => {
+    const entries = [...makeTurnEntries(1), ...makeTurnEntries(2)];
+    const firstUser = entries[0];
+    if (firstUser?.kind !== "message") {
+      expect.unreachable("expected a user message entry");
+    }
+    firstUser.message.createdAt = "not-a-timestamp";
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    expect(rows.filter((row) => row.kind === "turn-divider")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "work")).toHaveLength(2);
+  });
+
+  it("never collapses the latest turn's work", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: makeTurnEntries(1),
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["message", "work", "message"]);
   });
 });

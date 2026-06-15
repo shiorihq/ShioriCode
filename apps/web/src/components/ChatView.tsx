@@ -237,6 +237,17 @@ const COMPOSER_VIM_MODE_LABELS = {
   "visual-line": "V-LINE",
 } as const satisfies Record<ComposerVimMode, string>;
 
+function ComposerVimModeIndicator({ mode }: { mode: ComposerVimMode }) {
+  return (
+    <span
+      className="pointer-events-none absolute right-3 top-2 inline-flex h-5 items-center rounded-full border border-border/50 bg-card/85 px-2 font-medium text-[9px] text-muted-foreground/65 shadow-sm backdrop-blur-sm sm:right-4 sm:top-2.5"
+      data-testid="composer-vim-mode"
+    >
+      {COMPOSER_VIM_MODE_LABELS[mode]}
+    </span>
+  );
+}
+
 function shouldBackgroundRefreshProviderStatus(provider: ServerProvider): boolean {
   return (
     provider.enabled &&
@@ -5507,7 +5518,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               {/* Messages */}
               <div
                 ref={setMessagesScrollContainerRef}
-                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 [-ms-overflow-style:none] [scrollbar-width:none] sm:px-5 sm:py-4 [&::-webkit-scrollbar]:hidden"
+                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pt-3 pb-8 [-ms-overflow-style:none] [scrollbar-width:none] sm:px-5 sm:pt-4 sm:pb-10 [&::-webkit-scrollbar]:hidden"
                 style={{
                   maskImage: `linear-gradient(to bottom, ${isScrolledFromTop ? "transparent 0%, black 5rem" : "black 0%"}, ${showScrollToBottom ? "black calc(100% - 5rem), transparent 100%" : "black 100%"})`,
                 }}
@@ -5639,10 +5650,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                     "group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
                     hasDecoratedComposerFrame
                       ? ["rounded-[22px] p-px", composerProviderState.composerFrameClassName]
-                      : [
-                          "rounded-[20px] border border-border bg-card has-focus-visible:border-ring/45",
-                          isDragOverComposer && "border-primary/70",
-                        ],
+                      : "rounded-[20px] border border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] bg-card dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
                   )}
                   onDragEnter={onComposerDragEnter}
                   onDragOver={onComposerDragOver}
@@ -5655,8 +5663,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                       "min-w-0",
                       !hasDecoratedComposerFrame && "rounded-[19px] bg-card",
                       hasDecoratedComposerFrame && [
-                        "rounded-[20px] border bg-card shadow-sm transition-colors duration-200 has-focus-visible:border-ring/45",
-                        isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+                        "rounded-[20px] border border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] bg-card shadow-sm transition-colors duration-200 dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
+                        isDragOverComposer && "bg-accent/30",
                         composerProviderState.composerSurfaceClassName,
                       ],
                     )}
@@ -5762,6 +5770,11 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             ))}
                           </div>
                         )}
+                      {settings.composerVimMode &&
+                      composerVimMode &&
+                      composerVimMode !== "insert" ? (
+                        <ComposerVimModeIndicator mode={composerVimMode} />
+                      ) : null}
                       <ComposerPromptEditor
                         ref={composerEditorRef}
                         value={
@@ -5848,15 +5861,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             onSetGoal={handleGoalSet}
                             onClearGoal={handleGoalClear}
                           />
-
-                          {settings.composerVimMode && composerVimMode ? (
-                            <span
-                              className="inline-flex h-7 shrink-0 items-center rounded border border-border/70 bg-muted/40 px-2 font-medium text-[10px] text-muted-foreground"
-                              data-testid="composer-vim-mode"
-                            >
-                              {COMPOSER_VIM_MODE_LABELS[composerVimMode]}
-                            </span>
-                          ) : null}
 
                           {isComposerFooterCompact && compactControlsMenuNeeded ? (
                             <CompactComposerControlsMenu

@@ -1,5 +1,5 @@
 import { type MessageId } from "contracts";
-import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
+import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { parseEditDiff } from "./InlineEditDiff";
@@ -134,6 +134,10 @@ export function getGroupedWorkEntryExpansionKey(entryId: string): string {
   return `work-entry:${entryId}`;
 }
 
+export function getTurnWorkExpansionKey(userMessageRowId: string): string {
+  return `turn-work:${userMessageRowId}`;
+}
+
 export type MessagesTimelineRow =
   | WorkTimelineRow
   | {
@@ -155,6 +159,18 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      /**
+       * "Worked for …" disclosure for a settled turn. Sits between the turn's
+       * user message and its (collapsed-by-default) intermediate work rows.
+       */
+      kind: "turn-divider";
+      id: string;
+      createdAt: string;
+      expansionKey: string;
+      summary: string;
+      expanded: boolean;
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
@@ -1851,6 +1867,7 @@ export function deriveMessagesTimelineRows(input: {
   completionDividerBeforeEntryId: string | null;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
+  expandedWorkGroups?: Readonly<Record<string, boolean>>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const consumedMixedEntryIds = new Set<string>();
@@ -1931,7 +1948,132 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  return nextRows;
+  return collapseSettledTurnWork(nextRows, input.expandedWorkGroups);
+}
+
+/**
+ * Collapses each settled turn's intermediate work behind a "Worked for …"
+ * divider row, collapsed by default and toggled via `expandedWorkGroups`
+ * (keyed by {@link getTurnWorkExpansionKey}). Only turns followed by another
+ * user message are processed here — the latest turn keeps its component-level
+ * animated collapse so it can settle smoothly when the turn completes.
+ */
+function collapseSettledTurnWork(
+  rows: MessagesTimelineRow[],
+  expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
+): MessagesTimelineRow[] {
+  const userRowIndexes: number[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row && row.kind === "message" && row.message.role === "user") {
+      userRowIndexes.push(index);
+    }
+  }
+  // The segment starting at the last user row is the latest turn — untouched.
+  if (userRowIndexes.length < 2) {
+    return rows;
+  }
+
+  const result: MessagesTimelineRow[] = rows.slice(0, userRowIndexes[0]);
+  for (let turn = 0; turn < userRowIndexes.length; turn += 1) {
+    const segmentStart = userRowIndexes[turn]!;
+    const segmentEnd = turn + 1 < userRowIndexes.length ? userRowIndexes[turn + 1]! : rows.length;
+    const segment = rows.slice(segmentStart, segmentEnd);
+    if (turn === userRowIndexes.length - 1) {
+      result.push(...segment);
+      continue;
+    }
+    result.push(...collapseTurnSegment(segment, expandedWorkGroups));
+  }
+  return result;
+}
+
+/**
+ * Builds the "Worked for …" label for a turn from its rows. `turnRows` must
+ * start with the turn's user message row. The elapsed time is anchored at the
+ * user message (matching the per-message footer) and ends at the latest
+ * timestamp found anywhere in the turn — providers like Codex emit several
+ * assistant messages per turn and do not reliably set `completedAt` on each,
+ * so no single message timestamp can be trusted on its own.
+ */
+export function deriveTurnWorkSummary(turnRows: ReadonlyArray<MessagesTimelineRow>): string | null {
+  const userRow = turnRows[0];
+  if (!userRow || userRow.kind !== "message" || userRow.message.role !== "user") {
+    return null;
+  }
+
+  let endIso: string | null = null;
+  let endMs = Number.NEGATIVE_INFINITY;
+  for (let index = 1; index < turnRows.length; index += 1) {
+    const row = turnRows[index];
+    if (!row) continue;
+    const candidates =
+      row.kind === "message" ? [row.message.completedAt, row.createdAt] : [row.createdAt];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const candidateMs = Date.parse(candidate);
+      if (!Number.isNaN(candidateMs) && candidateMs > endMs) {
+        endMs = candidateMs;
+        endIso = candidate;
+      }
+    }
+  }
+  if (!endIso) {
+    return null;
+  }
+
+  const elapsed = formatElapsed(userRow.message.createdAt, endIso);
+  return elapsed ? `Worked for ${elapsed}` : null;
+}
+
+function collapseTurnSegment(
+  segment: ReadonlyArray<MessagesTimelineRow>,
+  expandedWorkGroups: Readonly<Record<string, boolean>> | undefined,
+): ReadonlyArray<MessagesTimelineRow> {
+  const userRow = segment[0];
+  if (!userRow || userRow.kind !== "message" || userRow.message.role !== "user") {
+    return segment;
+  }
+
+  let finalAssistantIndex = -1;
+  for (let index = segment.length - 1; index > 0; index -= 1) {
+    const row = segment[index];
+    if (
+      row?.kind === "message" &&
+      row.message.role === "assistant" &&
+      !isWhitespaceAssistantMessage(row.message)
+    ) {
+      finalAssistantIndex = index;
+      break;
+    }
+  }
+  // Needs an assistant reply plus at least one intermediate row to collapse.
+  if (finalAssistantIndex <= 1) {
+    return segment;
+  }
+
+  const summary = deriveTurnWorkSummary(segment);
+  if (!summary) {
+    // Cannot label the divider; leave the turn's work visible instead of
+    // hiding it behind an unlabeled control.
+    return segment;
+  }
+
+  const expansionKey = getTurnWorkExpansionKey(userRow.id);
+  const expanded = expandedWorkGroups?.[expansionKey] === true;
+  return [
+    userRow,
+    {
+      kind: "turn-divider",
+      id: `turn-divider:${userRow.id}`,
+      createdAt: userRow.createdAt,
+      expansionKey,
+      summary,
+      expanded,
+    },
+    ...(expanded ? segment.slice(1, finalAssistantIndex) : []),
+    ...segment.slice(finalAssistantIndex),
+  ];
 }
 
 function isTransparentAssistantPlaceholderEntry(entry: TimelineEntry): boolean {
@@ -2174,6 +2316,8 @@ export function estimateMessagesTimelineRowHeight(
       return estimateTimelineProposedPlanHeight(row.proposedPlan);
     case "reasoning":
       return estimateReasoningRowHeight(row.reasoning.text);
+    case "turn-divider":
+      return 44;
     case "working":
       return 40;
     case "message": {

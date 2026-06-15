@@ -1,5 +1,6 @@
 import { type MessageId, type TurnId } from "contracts";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -66,6 +67,7 @@ import {
   deriveWorkGroupIconKind,
   deriveFirstUnvirtualizedTimelineRowIndex,
   deriveMessagesTimelineRows,
+  deriveTurnWorkSummary,
   estimateMessagesTimelineRowHeight,
   extractDelegatedAgentWorkflowCard,
   extractSkillWorkflowCard,
@@ -106,6 +108,9 @@ import { openInPreferredEditor } from "../../editorPreferences";
 import { readNativeApi } from "~/nativeApi";
 
 const COLLAPSED_WORK_OUTPUT_LINE_THRESHOLD = 10;
+// Covers the .shiori-expand-panel--smooth transition (240ms) plus a small
+// buffer so stick-to-bottom stays suppressed until the animation settles.
+const LATEST_TURN_WORK_TOGGLE_SUPPRESS_MS = 300;
 const MIN_ROWS_FOR_VIRTUALIZATION = 120;
 const TIMELINE_ROW_GAP_CLASS = "pb-2";
 const TIMELINE_TOP_LEVEL_CONTENT_CLASS = "min-w-0 py-0.5";
@@ -210,6 +215,30 @@ function MessagesTimelineView({
   useEffect(() => {
     setLatestTurnWorkExpanded(false);
   }, [completionDividerBeforeEntryId]);
+  // Toggling the work log resizes the timeline every animation frame; suppress
+  // the global stick-to-bottom for the duration so it cannot chase those
+  // resizes and drag the viewport around mid-animation.
+  const latestTurnWorkSuppressTimeoutRef = useRef<number | null>(null);
+  const suppressAutoScrollDuringLatestTurnToggle = useCallback(() => {
+    if (latestTurnWorkSuppressTimeoutRef.current !== null) {
+      window.clearTimeout(latestTurnWorkSuppressTimeoutRef.current);
+    } else {
+      resolvedWorkGroupAutoScrollSuppressRef.current += 1;
+    }
+    latestTurnWorkSuppressTimeoutRef.current = window.setTimeout(() => {
+      latestTurnWorkSuppressTimeoutRef.current = null;
+      resolvedWorkGroupAutoScrollSuppressRef.current -= 1;
+    }, LATEST_TURN_WORK_TOGGLE_SUPPRESS_MS);
+  }, [resolvedWorkGroupAutoScrollSuppressRef]);
+  useEffect(() => {
+    return () => {
+      if (latestTurnWorkSuppressTimeoutRef.current !== null) {
+        window.clearTimeout(latestTurnWorkSuppressTimeoutRef.current);
+        latestTurnWorkSuppressTimeoutRef.current = null;
+        resolvedWorkGroupAutoScrollSuppressRef.current -= 1;
+      }
+    };
+  }, [resolvedWorkGroupAutoScrollSuppressRef]);
   const visibleTurnDiffSummaryByAssistantMessageId = showTurnDiffActions
     ? turnDiffSummaryByAssistantMessageId
     : EMPTY_TURN_DIFF_SUMMARIES_BY_MESSAGE_ID;
@@ -246,8 +275,15 @@ function MessagesTimelineView({
         completionDividerBeforeEntryId,
         isWorking: showWorkingIndicator,
         activeTurnStartedAt,
+        expandedWorkGroups,
       }),
-    [timelineEntries, completionDividerBeforeEntryId, showWorkingIndicator, activeTurnStartedAt],
+    [
+      timelineEntries,
+      completionDividerBeforeEntryId,
+      showWorkingIndicator,
+      activeTurnStartedAt,
+      expandedWorkGroups,
+    ],
   );
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
@@ -261,37 +297,45 @@ function MessagesTimelineView({
 
   // The latest turn's intermediate work — every row between the last user
   // message and the "Worked for …" completion divider. It collapses as a
-  // single block behind the divider once the turn settles.
-  const { collapsibleRowIds, hasCollapsibleWork, firstCollapsibleRowIndex } = useMemo(() => {
-    let lastUserRowIndex = -1;
-    let dividerRowIndex = -1;
-    for (let index = rows.length - 1; index >= 0; index -= 1) {
-      const row = rows[index];
-      if (!row || row.kind !== "message") continue;
-      if (dividerRowIndex === -1 && row.showCompletionDivider) {
-        dividerRowIndex = index;
+  // single block behind the divider once the turn settles. The summary is
+  // derived from the turn's own rows so it matches the per-turn dividers and
+  // the message footer; the `completionSummary` prop is only a fallback.
+  const { collapsibleRowIds, hasCollapsibleWork, firstCollapsibleRowIndex, latestTurnSummary } =
+    useMemo(() => {
+      let lastUserRowIndex = -1;
+      let dividerRowIndex = -1;
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        const row = rows[index];
+        if (!row || row.kind !== "message") continue;
+        if (dividerRowIndex === -1 && row.showCompletionDivider) {
+          dividerRowIndex = index;
+        }
+        if (row.message.role === "user") {
+          lastUserRowIndex = index;
+          break;
+        }
       }
-      if (row.message.role === "user") {
-        lastUserRowIndex = index;
-        break;
+      const endIndex = dividerRowIndex >= 0 ? dividerRowIndex : rows.length;
+      const ids = new Set<string>();
+      let firstIndex = -1;
+      for (let index = lastUserRowIndex + 1; index < endIndex; index += 1) {
+        const row = rows[index];
+        if (!row || row.kind === "working") continue;
+        if (firstIndex === -1) firstIndex = index;
+        ids.add(row.id);
       }
-    }
-    const endIndex = dividerRowIndex >= 0 ? dividerRowIndex : rows.length;
-    const ids = new Set<string>();
-    let firstIndex = -1;
-    for (let index = lastUserRowIndex + 1; index < endIndex; index += 1) {
-      const row = rows[index];
-      if (!row || row.kind === "working") continue;
-      if (firstIndex === -1) firstIndex = index;
-      ids.add(row.id);
-    }
-    return {
-      collapsibleRowIds: ids,
-      hasCollapsibleWork: dividerRowIndex >= 0 && ids.size > 0,
-      firstCollapsibleRowIndex: firstIndex,
-    };
-  }, [rows]);
+      return {
+        collapsibleRowIds: ids,
+        hasCollapsibleWork: dividerRowIndex >= 0 && ids.size > 0,
+        firstCollapsibleRowIndex: firstIndex,
+        latestTurnSummary:
+          dividerRowIndex >= 0 && lastUserRowIndex >= 0
+            ? deriveTurnWorkSummary(rows.slice(lastUserRowIndex))
+            : null,
+      };
+    }, [rows]);
   const latestTurnWorkCollapsed = hasCollapsibleWork && !latestTurnWorkExpanded;
+  const latestTurnDividerSummary = latestTurnSummary ?? completionSummary;
 
   const shouldVirtualizeRows = rows.length >= MIN_ROWS_FOR_VIRTUALIZATION;
   // Keep the whole collapsible block out of the virtualizer so it can collapse
@@ -732,7 +776,7 @@ function MessagesTimelineView({
     );
   };
 
-  const renderRowContent = (row: TimelineRow) => {
+  const renderRowContent = (row: TimelineRow, options?: { suppressBoundaryGap?: boolean }) => {
     const isWhitespaceAssistantPlaceholder =
       row.kind === "message" && isWhitespaceAssistantMessage(row.message);
     if (isWhitespaceAssistantPlaceholder) {
@@ -750,7 +794,10 @@ function MessagesTimelineView({
 
     return (
       <div
-        className={cn(TIMELINE_ROW_GAP_CLASS, boundaryGapRowIds.has(row.id) && "mt-4")}
+        className={cn(
+          TIMELINE_ROW_GAP_CLASS,
+          !options?.suppressBoundaryGap && boundaryGapRowIds.has(row.id) && "mt-4",
+        )}
         data-timeline-row-id={row.id}
         data-timeline-row-kind={row.kind}
         data-message-id={row.kind === "message" ? row.message.id : undefined}
@@ -758,6 +805,17 @@ function MessagesTimelineView({
       >
         {row.kind === "work" && (
           <AnimatedWorkGroupShell>{renderWorkRow(row)}</AnimatedWorkGroupShell>
+        )}
+
+        {row.kind === "turn-divider" && (
+          <WorkedForDivider
+            summary={row.summary}
+            expanded={row.expanded}
+            onToggle={() => {
+              onToggleWorkGroup(row.expansionKey, row.expanded);
+              scheduleTimelineMeasure();
+            }}
+          />
         )}
 
         {row.kind === "message" &&
@@ -887,45 +945,12 @@ function MessagesTimelineView({
               row.message.text || (row.message.streaming ? "" : "(empty response)");
             return (
               <>
-                {row.showCompletionDivider && (
-                  <div
-                    className={cn(
-                      "mb-2 flex items-center gap-3",
-                      latestTurnWorkCollapsed ? "mt-4" : "mt-0.5",
-                    )}
-                  >
-                    <span className="block h-px flex-1 bg-border/60" />
-                    {completionSummary &&
-                      (hasCollapsibleWork ? (
-                        <button
-                          type="button"
-                          aria-expanded={latestTurnWorkExpanded}
-                          aria-label={
-                            latestTurnWorkExpanded
-                              ? "Hide work for this turn"
-                              : "Show work for this turn"
-                          }
-                          className="group flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent px-1 py-0.5 text-xs text-foreground/40 transition-colors duration-150 hover:text-foreground/70 focus-visible:text-foreground/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                          onClick={() => {
-                            setLatestTurnWorkExpanded((previous) => !previous);
-                            scheduleTimelineMeasure();
-                          }}
-                        >
-                          <ChevronDownIcon
-                            className={cn(
-                              "size-3 transition-transform duration-[240ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]",
-                              latestTurnWorkExpanded ? "rotate-0" : "-rotate-90",
-                            )}
-                          />
-                          {completionSummary}
-                        </button>
-                      ) : (
-                        <span className="shrink-0 text-xs text-foreground/40">
-                          {completionSummary}
-                        </span>
-                      ))}
-                    <span className="block h-px flex-1 bg-border/60" />
-                  </div>
+                {row.showCompletionDivider && !hasCollapsibleWork && (
+                  <WorkedForDivider
+                    className="mb-2 mt-0.5"
+                    summary={latestTurnDividerSummary}
+                    expanded={false}
+                  />
                 )}
                 <div className={TIMELINE_TOP_LEVEL_CONTENT_CLASS}>
                   <ChatMarkdown
@@ -1016,6 +1041,22 @@ function MessagesTimelineView({
     );
   };
 
+  // The "Worked for …" disclosure for the latest turn. It sits *above* the
+  // work log it reveals, so expanding unfolds content downward and the control
+  // the user clicked never moves.
+  const renderLatestTurnWorkDivider = () => (
+    <WorkedForDivider
+      className="mb-2 mt-4"
+      summary={latestTurnDividerSummary}
+      expanded={latestTurnWorkExpanded}
+      onToggle={() => {
+        suppressAutoScrollDuringLatestTurnToggle();
+        setLatestTurnWorkExpanded((previous) => !previous);
+        scheduleTimelineMeasure();
+      }}
+    />
+  );
+
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -1066,14 +1107,17 @@ function MessagesTimelineView({
         )}
 
         {(() => {
-          const renderMeasuredRow = (row: TimelineRow) => (
+          const renderMeasuredRow = (
+            row: TimelineRow,
+            options?: { suppressBoundaryGap?: boolean },
+          ) => (
             <MeasuredNonVirtualizedTimelineRow
               key={`non-virtual-row:${row.id}`}
               cacheKey={getRowHeightCacheKey(row)}
               rowId={row.id}
               onMeasured={recordNonVirtualizedRowHeight}
             >
-              {renderRowContent(row)}
+              {renderRowContent(row, options)}
             </MeasuredNonVirtualizedTimelineRow>
           );
 
@@ -1100,16 +1144,20 @@ function MessagesTimelineView({
               index += 1;
             }
             output.push(
-              <AnimatedExpandPanel
-                key="latest-turn-work-collapse"
-                open={!latestTurnWorkCollapsed}
-                animateOnMount={false}
-                unmountOnExit={false}
-                fade
-                className="shiori-expand-panel--smooth"
-              >
-                {groupedRows.map(renderMeasuredRow)}
-              </AnimatedExpandPanel>,
+              <Fragment key="latest-turn-work-collapse">
+                {hasCollapsibleWork && renderLatestTurnWorkDivider()}
+                <AnimatedExpandPanel
+                  open={!latestTurnWorkCollapsed}
+                  animateOnMount={false}
+                  unmountOnExit={false}
+                  fade
+                  className="shiori-expand-panel--smooth"
+                >
+                  {groupedRows.map((groupedRow) =>
+                    renderMeasuredRow(groupedRow, { suppressBoundaryGap: hasCollapsibleWork }),
+                  )}
+                </AnimatedExpandPanel>
+              </Fragment>,
             );
           }
           return output;
@@ -1253,6 +1301,8 @@ function buildTimelineRowHeightCacheKey(
       ].join(":");
     case "proposed-plan":
       return `proposed-plan:${row.id}:${fingerprintTimelineText(row.proposedPlan.planMarkdown)}`;
+    case "turn-divider":
+      return `turn-divider:${row.id}:${row.expanded ? "open" : "closed"}:${row.summary}`;
     case "working":
       return `working:${row.id}:${row.createdAt ?? ""}`;
   }
@@ -2078,6 +2128,47 @@ export const MinimalWorkEntry = memo(function MinimalWorkEntry(props: {
           <WorkEntryDetail detail={detail} monospace={detailUsesMono} />
         ))}
     </Component>
+  );
+});
+
+/**
+ * "Worked for …" turn divider. With `onToggle` it acts as the disclosure for
+ * the turn's collapsed work log (which always sits *below* the divider, so
+ * expanding never moves the clicked control); without it the summary is
+ * static text.
+ */
+const WorkedForDivider = memo(function WorkedForDivider(props: {
+  summary: string | null;
+  expanded: boolean;
+  onToggle?: (() => void) | undefined;
+  className?: string | undefined;
+}) {
+  const { summary, expanded, onToggle, className } = props;
+  return (
+    <div className={cn("flex items-center gap-3", className)}>
+      <span className="block h-px flex-1 bg-border/60" />
+      {summary &&
+        (onToggle ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Hide work for this turn" : "Show work for this turn"}
+            className="group flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent px-1 py-0.5 text-xs text-foreground/40 transition-colors duration-150 hover:text-foreground/70 focus-visible:text-foreground/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+            onClick={onToggle}
+          >
+            <ChevronDownIcon
+              className={cn(
+                "size-3 transition-transform duration-[240ms] [transition-timing-function:cubic-bezier(0.32,0.72,0,1)]",
+                expanded ? "rotate-0" : "-rotate-90",
+              )}
+            />
+            {summary}
+          </button>
+        ) : (
+          <span className="shrink-0 text-xs text-foreground/40">{summary}</span>
+        ))}
+      <span className="block h-px flex-1 bg-border/60" />
+    </div>
   );
 });
 
