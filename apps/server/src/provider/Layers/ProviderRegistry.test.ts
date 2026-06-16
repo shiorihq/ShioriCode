@@ -1168,6 +1168,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.models[0]?.slug, "claude-opus-4-8");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -1187,12 +1188,72 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
       it.effect("returns a display label for claude subscription types", () =>
         Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(() => Effect.succeed("maxplan"));
+          const status = yield* checkClaudeProviderStatus(() =>
+            Effect.succeed({ subscriptionType: "maxplan", models: [] }),
+          );
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "maxplan");
           assert.strictEqual(status.auth.label, "Claude Max Subscription");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status --json")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("uses Claude SDK models for the visible Claude model catalog", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(() =>
+            Effect.succeed({
+              subscriptionType: undefined,
+              models: [
+                {
+                  value: "claude-opus-4-8",
+                  displayName: "Opus 4.8",
+                  description: "Latest Opus model.",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "medium", "high", "max"],
+                  supportsFastMode: true,
+                },
+                {
+                  value: "claude-sonnet-4-7",
+                  displayName: "Sonnet 4.7",
+                  description: "Latest Sonnet model.",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "medium", "high"],
+                },
+              ],
+            }),
+          );
+
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            ["claude-opus-4-8", "claude-sonnet-4-7"],
+          );
+          assert.deepStrictEqual(status.models[0]?.capabilities?.reasoningEffortLevels, [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High", isDefault: true },
+            { value: "max", label: "Max" },
+            { value: "ultrathink", label: "Ultrathink" },
+          ]);
+          assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
+          assert.deepStrictEqual(status.models[0]?.capabilities?.contextWindowOptions, [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ]);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

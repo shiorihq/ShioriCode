@@ -9,7 +9,10 @@ import type {
 import { Cache, Duration, Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "shared/schemaJson";
-import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query as claudeQuery,
+  type ModelInfo as ClaudeSdkModelInfo,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import {
   buildPendingServerProvider,
@@ -30,6 +33,27 @@ import { ServerSettingsError } from "contracts";
 
 const PROVIDER = "claudeAgent" as const;
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-opus-4-8",
+    name: "Opus 4.8",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "max", label: "Max" },
+        { value: "ultrathink", label: "Ultrathink" },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: "200k", label: "200k", isDefault: true },
+        { value: "1m", label: "1M" },
+      ],
+      promptInjectedEffortLevels: ["ultrathink"],
+    } satisfies ModelCapabilities,
+  },
   {
     slug: "claude-opus-4-7",
     name: "Opus 4.7",
@@ -435,6 +459,85 @@ export function adjustModelsForSubscription(
 
 const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
 
+interface ClaudeCapabilitiesProbeResult {
+  readonly subscriptionType: string | undefined;
+  readonly models: ReadonlyArray<ClaudeSdkModelInfo>;
+}
+
+function effortLevelLabel(value: string): string {
+  return value[0] ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
+function buildSdkModelCapabilities(
+  model: ClaudeSdkModelInfo,
+  builtInCapabilities: ModelCapabilities | null,
+): ModelCapabilities {
+  const sdkEffortLevels =
+    model.supportedEffortLevels?.map((value) => ({
+      value,
+      label: effortLevelLabel(value),
+      ...(value === "high" ? { isDefault: true as const } : {}),
+    })) ?? [];
+  const reasoningEffortLevels =
+    sdkEffortLevels.length > 0
+      ? sdkEffortLevels
+      : model.supportsEffort === true
+        ? [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High", isDefault: true as const },
+            { value: "max", label: "Max" },
+          ]
+        : [];
+
+  const builtInPromptInjectedEfforts = builtInCapabilities?.promptInjectedEffortLevels ?? [];
+  const mergedEffortLevels = [
+    ...reasoningEffortLevels,
+    ...builtInPromptInjectedEfforts
+      .filter((value) => !reasoningEffortLevels.some((level) => level.value === value))
+      .map((value) => ({ value, label: effortLevelLabel(value) })),
+  ];
+
+  return {
+    reasoningEffortLevels: mergedEffortLevels,
+    supportsFastMode: model.supportsFastMode ?? builtInCapabilities?.supportsFastMode ?? false,
+    supportsThinkingToggle:
+      model.supportsAdaptiveThinking ?? builtInCapabilities?.supportsThinkingToggle ?? false,
+    contextWindowOptions: builtInCapabilities?.contextWindowOptions ?? [],
+    promptInjectedEffortLevels: builtInPromptInjectedEfforts,
+  };
+}
+
+function modelsFromClaudeSdk(
+  models: ReadonlyArray<ClaudeSdkModelInfo> | null | undefined,
+): ReadonlyArray<ServerProviderModel> | null {
+  if (!models || models.length === 0) {
+    return null;
+  }
+
+  const bySlug = new Map(BUILT_IN_MODELS.map((model) => [model.slug, model] as const));
+  const seen = new Set<string>();
+  const result: ServerProviderModel[] = [];
+
+  for (const model of models) {
+    const slug = model.value.trim();
+    if (!slug || seen.has(slug)) {
+      continue;
+    }
+
+    seen.add(slug);
+    const builtIn = bySlug.get(slug);
+    result.push({
+      slug,
+      name: model.displayName.trim() || builtIn?.name || slug,
+      isCustom: false,
+      capabilities: buildSdkModelCapabilities(model, builtIn?.capabilities ?? null),
+    });
+  }
+
+  return result.length > 0 ? result : null;
+}
+
 /**
  * Probe account information by spawning a lightweight Claude Agent SDK
  * session and reading the initialization result.
@@ -462,7 +565,10 @@ const probeClaudeCapabilities = (binaryPath: string) => {
       },
     });
     const init = await q.initializationResult();
-    return { subscriptionType: init.account?.subscriptionType };
+    return {
+      subscriptionType: init.account?.subscriptionType,
+      models: init.models,
+    } satisfies ClaudeCapabilitiesProbeResult;
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
@@ -490,10 +596,10 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (args: Readonly
 });
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
-  resolveSubscriptionType?: (
+  resolveCapabilities?: (
     binaryPath: string,
     authContext: string | undefined,
-  ) => Effect.Effect<string | undefined>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbeResult | undefined>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -504,14 +610,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     Effect.map((settings) => settings.providers.claudeAgent),
   );
   const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, claudeSettings.customModels);
+  const fallbackModels = providerModelsFromSettings(
+    BUILT_IN_MODELS,
+    PROVIDER,
+    claudeSettings.customModels,
+  );
 
   if (!claudeSettings.enabled) {
     return buildServerProvider({
       provider: PROVIDER,
       enabled: false,
       checkedAt,
-      models,
+      models: fallbackModels,
       probe: {
         installed: false,
         version: null,
@@ -533,7 +643,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       provider: PROVIDER,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: fallbackModels,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -551,7 +661,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       provider: PROVIDER,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: fallbackModels,
       probe: {
         installed: true,
         version: null,
@@ -571,7 +681,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       provider: PROVIDER,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: fallbackModels,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -591,28 +701,36 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     Effect.result,
   );
 
-  // Determine subscription type from multiple sources (cheapest first):
+  // Determine subscription/model metadata from multiple sources (cheapest first):
   // 1. `claude auth status` JSON output (may or may not contain it)
   // 2. Cached SDK probe (spawns a Claude process on miss, reads
-  //    `initializationResult()` for account metadata, then aborts
+  //    `initializationResult()` for account/model metadata, then aborts
   //    immediately — no API tokens are consumed)
 
   let subscriptionType: string | undefined;
   let authMethod: string | undefined;
+  let sdkModels: ReadonlyArray<ClaudeSdkModelInfo> | undefined;
 
   if (Result.isSuccess(authProbe) && Option.isSome(authProbe.success)) {
     subscriptionType = extractSubscriptionTypeFromOutput(authProbe.success.value);
     authMethod = extractClaudeAuthMethodFromOutput(authProbe.success.value);
   }
 
-  if (!subscriptionType && resolveSubscriptionType) {
+  if (resolveCapabilities) {
     const authContext =
       Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
         ? `${extractClaudeAuthMethodFromOutput(authProbe.success.value) ?? "unknown"}:${authProbe.success.value.stdout.trim()}`
         : undefined;
-    subscriptionType = yield* resolveSubscriptionType(claudeSettings.binaryPath, authContext);
+    const capabilities = yield* resolveCapabilities(claudeSettings.binaryPath, authContext);
+    subscriptionType = subscriptionType ?? capabilities?.subscriptionType;
+    sdkModels = capabilities?.models;
   }
 
+  const sdkBuiltInModels = modelsFromClaudeSdk(sdkModels);
+  const models =
+    sdkBuiltInModels !== null
+      ? providerModelsFromSettings(sdkBuiltInModels, PROVIDER, claudeSettings.customModels)
+      : fallbackModels;
   const resolvedModels = adjustModelsForSubscription(models, subscriptionType);
 
   // ── Handle auth results (same logic as before, adjusted models) ──
@@ -684,9 +802,7 @@ export const ClaudeProviderLive = Layer.effect(
       timeToLive: Duration.minutes(5),
       lookup: (cacheKey: string) => {
         const [binaryPath] = cacheKey.split("\u0000", 1);
-        return probeClaudeCapabilities(binaryPath ?? cacheKey).pipe(
-          Effect.map((r) => r?.subscriptionType),
-        );
+        return probeClaudeCapabilities(binaryPath ?? cacheKey);
       },
     });
 
