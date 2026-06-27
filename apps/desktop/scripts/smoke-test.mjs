@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,27 +14,33 @@ const mainJs = resolve(desktopDir, "dist-electron/main.js");
 const smokeHome = mkdtempSync(resolve(tmpdir(), "shioricode-smoke-"));
 const smokeUserData = mkdtempSync(resolve(tmpdir(), "shioricode-smoke-userdata-"));
 const serverInstancePath = resolve(smokeHome, "server-instance.json");
-const timeoutMs = 20_000;
+const timeoutMs = 30_000;
 const maxOutputBytes = 200_000;
 const smokeEnv = { ...process.env };
 delete smokeEnv.VITE_DEV_SERVER_URL;
 
 console.log("\nLaunching Electron smoke test...");
 
-const child = spawn(electronBin, [`--user-data-dir=${smokeUserData}`, mainJs], {
-  detached: process.platform !== "win32",
-  stdio: ["pipe", "pipe", "pipe"],
-  env: {
-    ...smokeEnv,
-    ELECTRON_ENABLE_LOGGING: "1",
-    SHIORICODE_HOME: smokeHome,
+const debugPort = await reserveLoopbackPort();
+const child = spawn(
+  electronBin,
+  [`--remote-debugging-port=${debugPort}`, `--user-data-dir=${smokeUserData}`, mainJs],
+  {
+    detached: process.platform !== "win32",
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...smokeEnv,
+      ELECTRON_ENABLE_LOGGING: "1",
+      SHIORICODE_HOME: smokeHome,
+    },
   },
-});
+);
 
 let output = "";
 let settled = false;
 let timeout = null;
 let poll = null;
+let rendererBridgeCheckStarted = false;
 
 const fatalPatterns = [
   "Cannot find module",
@@ -83,6 +90,118 @@ function clearTimers() {
   }
 }
 
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function reserveLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Unable to reserve renderer debug port.")));
+        return;
+      }
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function readDevToolsTargets() {
+  const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
+  if (!response.ok) {
+    throw new Error(`DevTools target list returned HTTP ${response.status}.`);
+  }
+  return response.json();
+}
+
+async function evaluateRendererExpression(webSocketDebuggerUrl, expression) {
+  const ws = new WebSocket(webSocketDebuggerUrl);
+  let nextId = 0;
+  const pending = new Map();
+
+  ws.addEventListener("message", (event) => {
+    const message = JSON.parse(event.data);
+    if (!message.id || !pending.has(message.id)) {
+      return;
+    }
+    pending.get(message.id)(message);
+    pending.delete(message.id);
+  });
+
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener(
+      "error",
+      () => reject(new Error("Unable to connect to renderer DevTools socket.")),
+      { once: true },
+    );
+  });
+
+  const send = (method, params = {}) =>
+    new Promise((resolve) => {
+      const message = { id: ++nextId, method, params };
+      pending.set(message.id, resolve);
+      ws.send(JSON.stringify(message));
+    });
+
+  try {
+    await send("Runtime.enable");
+    const response = await send("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    return response.result?.result?.value;
+  } finally {
+    ws.close();
+  }
+}
+
+async function waitForRendererBridge() {
+  const deadline = Date.now() + 10_000;
+  let lastProbe = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const targets = await readDevToolsTargets();
+      const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+      if (page) {
+        lastProbe = await evaluateRendererExpression(
+          page.webSocketDebuggerUrl,
+          `({
+            href: location.href,
+            title: document.title,
+            desktopBridge: typeof window.desktopBridge,
+            nativeApi: typeof window.nativeApi,
+            bodyText: document.body?.innerText ?? "",
+          })`,
+        );
+        if (lastProbe?.desktopBridge === "object") {
+          return;
+        }
+      }
+    } catch (error) {
+      lastProbe = { error: error instanceof Error ? error.message : String(error) };
+    }
+
+    await wait(100);
+  }
+
+  throw new Error(`desktop bridge was not exposed to renderer: ${JSON.stringify(lastProbe)}`);
+}
+
 function finishSuccess() {
   if (settled) return;
   settled = true;
@@ -128,8 +247,15 @@ poll = setInterval(() => {
   }
 
   const serverInstance = readServerInstance();
-  if (serverInstance?.wsUrl) {
-    finishSuccess();
+  if (serverInstance?.wsUrl && !rendererBridgeCheckStarted) {
+    rendererBridgeCheckStarted = true;
+    void waitForRendererBridge()
+      .then(() => {
+        finishSuccess();
+      })
+      .catch((error) => {
+        finishFailure(error instanceof Error ? error.message : String(error));
+      });
   }
 }, 100);
 

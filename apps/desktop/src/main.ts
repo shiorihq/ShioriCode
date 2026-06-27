@@ -728,8 +728,6 @@ function installStdIoCapture(): void {
     return;
   }
 
-  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-  const originalStderrWrite = process.stderr.write.bind(process.stderr);
   const handleStdoutError = (error: unknown): void => {
     logStdIoCaptureFailure("stdout", error);
   };
@@ -738,11 +736,7 @@ function installStdIoCapture(): void {
   };
 
   const patchWrite =
-    (
-      streamName: "stdout" | "stderr",
-      stream: { readonly destroyed: boolean; readonly writableEnded: boolean },
-      originalWrite: typeof process.stdout.write,
-    ) =>
+    (streamName: "stdout" | "stderr") =>
     (
       chunk: string | Uint8Array,
       encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
@@ -753,39 +747,23 @@ function installStdIoCapture(): void {
         typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
       writeDesktopStreamChunk(streamName, chunk, encoding);
 
-      if (stream.destroyed || stream.writableEnded) {
-        writeCallback?.();
-        return false;
-      }
-
-      try {
-        if (typeof encodingOrCallback === "function") {
-          return originalWrite(chunk, encodingOrCallback);
-        }
-        if (callback !== undefined) {
-          return originalWrite(chunk, encoding, callback);
-        }
-        if (encoding !== undefined) {
-          return originalWrite(chunk, encoding);
-        }
-        return originalWrite(chunk);
-      } catch (error) {
-        logStdIoCaptureFailure(streamName, error);
-        writeCallback?.(error instanceof Error ? error : new Error(String(error)));
-        return false;
-      }
+      // In packaged macOS launches, especially after Squirrel relaunches the
+      // updated app, the inherited stdio pipe may already be closed. Forwarding
+      // console output back into that pipe can raise EPIPE from inside
+      // console.error and crash the app. The rotating log sink is the durable
+      // packaged log destination, so swallow the OS stream write here.
+      writeCallback?.();
+      return true;
     };
 
   process.stdout.on("error", handleStdoutError);
   process.stderr.on("error", handleStderrError);
-  process.stdout.write = patchWrite("stdout", process.stdout, originalStdoutWrite);
-  process.stderr.write = patchWrite("stderr", process.stderr, originalStderrWrite);
+  process.stdout.write = patchWrite("stdout");
+  process.stderr.write = patchWrite("stderr");
 
   restoreStdIoCapture = () => {
-    process.stdout.write = originalStdoutWrite;
-    process.stderr.write = originalStderrWrite;
-    process.stdout.off("error", handleStdoutError);
-    process.stderr.off("error", handleStderrError);
+    // Keep stdio guarded until process exit; restoring the original streams
+    // during quit can reintroduce EPIPE if Electron or updater cleanup logs.
     restoreStdIoCapture = null;
   };
 }
