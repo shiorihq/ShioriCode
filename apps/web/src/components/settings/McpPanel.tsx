@@ -185,6 +185,7 @@ const TRANSPORT_OPTIONS: { value: McpTransport; label: string }[] = [
 
 const PROVIDER_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "claudeAgent", label: PROVIDER_DISPLAY_NAMES.claudeAgent },
+  { value: "glm", label: PROVIDER_DISPLAY_NAMES.glm },
   { value: "codex", label: PROVIDER_DISPLAY_NAMES.codex },
 ];
 

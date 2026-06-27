@@ -9,6 +9,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   GeminiModelOptions,
+  GlmModelOptions,
   KimiCodeModelOptions,
 } from "./model";
 import { OnboardingProgress, OnboardingStepId } from "./onboarding";
@@ -283,6 +284,19 @@ export const GeminiSettings = Schema.Struct({
 });
 export type GeminiSettings = typeof GeminiSettings.Type;
 
+export const GLM_DEFAULT_API_BASE_URL = "https://api.z.ai/api/anthropic";
+export const GLM_DEFAULT_API_KEY_ENV_VAR = "ZAI_API_KEY";
+
+export const GlmSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
+  binaryPath: makeBinaryPathSetting("claude"),
+  apiBaseUrl: TrimmedString.pipe(Schema.withDecodingDefault(() => GLM_DEFAULT_API_BASE_URL)),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  apiKeyEnvVar: TrimmedString.pipe(Schema.withDecodingDefault(() => GLM_DEFAULT_API_KEY_ENV_VAR)),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+});
+export type GlmSettings = typeof GlmSettings.Type;
+
 export const CursorSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   binaryPath: makeBinaryPathSetting("agent"),
@@ -442,6 +456,7 @@ export const ServerSettings = Schema.Struct({
   providers: Schema.Struct({
     kimiCode: KimiCodeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     gemini: GeminiSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+    glm: GlmSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     codex: CodexSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -509,6 +524,11 @@ const ModelSelectionPatch = Schema.Union([
     options: Schema.optionalKey(GeminiModelOptions),
   }),
   Schema.Struct({
+    provider: Schema.optionalKey(Schema.Literal("glm")),
+    model: Schema.optionalKey(TrimmedNonEmptyString),
+    options: Schema.optionalKey(GlmModelOptions),
+  }),
+  Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("cursor")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
     options: Schema.optionalKey(CursorModelOptionsPatch),
@@ -536,6 +556,15 @@ const GeminiSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(Schema.String),
   googleCloudProject: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const GlmSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(Schema.String),
+  apiBaseUrl: Schema.optionalKey(Schema.String),
+  apiKey: Schema.optionalKey(Schema.String),
+  apiKeyEnvVar: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
@@ -606,6 +635,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       kimiCode: Schema.optionalKey(KimiCodeSettingsPatch),
       gemini: Schema.optionalKey(GeminiSettingsPatch),
+      glm: Schema.optionalKey(GlmSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),

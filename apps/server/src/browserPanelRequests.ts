@@ -20,7 +20,7 @@ import {
 } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { ServerConfig } from "./config";
+import { authorizeDataRequest } from "./auth/EnvironmentAuth";
 
 class BrowserPanelRequestError extends Data.TaggedError("BrowserPanelRequestError")<{
   readonly message: string;
@@ -105,29 +105,16 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function requestToken(request: HttpServerRequest.HttpServerRequest): string | null {
-  const authorization = request.headers.authorization;
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim() || null;
-  }
-  const url = HttpServerRequest.toURL(request);
-  if (Option.isSome(url)) {
-    return url.value.searchParams.get("token");
-  }
-  return null;
-}
-
 export const browserPanelRequestRouteLayer = HttpRouter.add(
   "POST",
   "/api/browser-panel/navigate",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const config = yield* ServerConfig;
-    const browserPanelRequests = yield* BrowserPanelRequests;
-
-    if (config.authToken && requestToken(request) !== config.authToken) {
-      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    const denied = yield* authorizeDataRequest;
+    if (denied) {
+      return denied;
     }
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const browserPanelRequests = yield* BrowserPanelRequests;
 
     const body = yield* request.json.pipe(
       Effect.mapError(() => new Error("Invalid browser navigation request body.")),
@@ -158,13 +145,12 @@ export const browserPanelCommandRouteLayer = HttpRouter.add(
   "POST",
   "/api/browser-panel/command",
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const config = yield* ServerConfig;
-    const browserPanelRequests = yield* BrowserPanelRequests;
-
-    if (config.authToken && requestToken(request) !== config.authToken) {
-      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    const denied = yield* authorizeDataRequest;
+    if (denied) {
+      return denied;
     }
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const browserPanelRequests = yield* BrowserPanelRequests;
 
     const body = yield* request.json.pipe(
       Effect.mapError(() => new Error("Invalid browser command request body.")),

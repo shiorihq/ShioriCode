@@ -30,6 +30,8 @@ import {
   resolveOnboardingState,
 } from "shared/onboarding";
 
+import { EnvironmentAuth } from "./auth/EnvironmentAuth";
+import { RemoteAccess } from "./remote/RemoteAccess";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore";
@@ -146,44 +148,6 @@ function toServerProviderUsageSnapshot(
       };
 }
 
-function parseOrigin(value: string | null): URL | null {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    return new URL(value);
-  } catch {
-    return null;
-  }
-}
-
-function collectTrustedWebSocketOrigins(input: {
-  readonly requestUrl: URL;
-  readonly devUrl?: URL;
-}): ReadonlySet<string> {
-  const origins = new Set<string>([input.requestUrl.origin]);
-  if (input.devUrl) {
-    origins.add(input.devUrl.origin);
-  }
-  return origins;
-}
-
-function isTrustedWebSocketOrigin(input: {
-  readonly origin: URL;
-  readonly requestUrl: URL;
-  readonly devUrl?: URL;
-}): boolean {
-  if (input.origin.username || input.origin.password) {
-    return false;
-  }
-  if (input.origin.protocol !== "http:" && input.origin.protocol !== "https:") {
-    return false;
-  }
-
-  return collectTrustedWebSocketOrigins(input).has(input.origin.origin);
-}
-
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
@@ -206,6 +170,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const browserPanelRequests = yield* BrowserPanelRequests;
     const computer = yield* ComputerUseManager;
     const automations = yield* AutomationService;
+    const environmentAuth = yield* EnvironmentAuth;
+    const remoteAccess = yield* RemoteAccess;
     const latestProvidersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
 
     const readProvidersForConfig = Effect.gen(function* () {
@@ -456,6 +422,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         providerService
           .readUsage(provider)
           .pipe(Effect.map(toServerProviderUsageSnapshot), Effect.orDie),
+      [WS_METHODS.remoteGetStatus]: (_input) => remoteAccess.getStatus(),
+      [WS_METHODS.remoteSetCredentials]: (input) =>
+        Effect.gen(function* () {
+          environmentAuth.setCredentials(input);
+          return yield* remoteAccess.getStatus();
+        }),
+      [WS_METHODS.remoteSetExposure]: (input) => remoteAccess.setExposure(input.method),
+      [WS_METHODS.remoteRevokeSession]: (input) =>
+        Effect.gen(function* () {
+          environmentAuth.revokeSession(input.sessionId);
+          return yield* remoteAccess.getStatus();
+        }),
       [WS_METHODS.onboardingGetState]: (_input) =>
         serverSettings.getSettings.pipe(
           Effect.map((settings) => resolveOnboardingState(settings.onboarding)),
@@ -686,38 +664,26 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const config = yield* ServerConfig;
+        const auth = yield* EnvironmentAuth;
         const url = HttpServerRequest.toURL(request);
         if (Option.isNone(url)) {
           return HttpServerResponse.text("Invalid WebSocket URL", { status: 400 });
         }
 
-        if (config.authToken) {
-          const token = url.value.searchParams.get("token");
-          if (token !== config.authToken) {
-            return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
-          }
-        } else {
-          const rawOrigin = request.headers["origin"] ?? null;
-          const origin = parseOrigin(rawOrigin);
-          if (rawOrigin && !origin) {
-            return HttpServerResponse.text("Invalid WebSocket origin", {
-              status: 403,
-            });
-          }
-          if (
-            origin &&
-            !isTrustedWebSocketOrigin({
-              origin,
-              requestUrl: url.value,
-              ...(config.devUrl ? { devUrl: config.devUrl } : {}),
-            })
-          ) {
-            return HttpServerResponse.text("Cross-origin WebSocket connection rejected", {
-              status: 403,
-            });
-          }
+        // Origin/Host defense (anti-CSRF, anti-DNS-rebinding) as defense in depth.
+        if (!auth.isAllowedUpgrade({ request, url: url.value })) {
+          return HttpServerResponse.text("Cross-origin WebSocket connection rejected", {
+            status: 403,
+          });
         }
+
+        // The real boundary: when remote-reachable, a valid principal (WS ticket,
+        // session cookie, session bearer, or legacy token) is mandatory.
+        const principal = auth.authenticateUpgrade({ request, url: url.value });
+        if (auth.requireAuth && !principal) {
+          return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
+        }
+
         return yield* rpcWebSocketHttpEffect;
       }),
     );

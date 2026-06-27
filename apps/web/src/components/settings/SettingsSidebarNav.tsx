@@ -5,6 +5,7 @@ import {
   IconBoltOutline24 as McpIcon,
   IconBoxOutline24 as PluginsIcon,
   IconSparkleOutline24 as SkillsIcon,
+  IconGlobeOutline24 as RemoteIcon,
   IconMonitorOutline24 as MonitorIcon,
   IconPaletteOutline24 as PaletteIcon,
   IconGear2Outline24 as Settings2Icon,
@@ -15,7 +16,6 @@ import {
   readSettingsReturnPath,
   resolveSettingsBackNavigation,
 } from "../../lib/settingsNavigation";
-import { useMobileAppFeatureEnabled } from "../../featureFlags";
 
 import {
   SidebarContent,
@@ -34,15 +34,13 @@ export type SettingsSectionPath =
   | "/settings/plugins"
   | "/settings/archived"
   | "/settings/computer-use"
-  | "/settings/mobile";
-
-type SettingsFeature = "mobileApp";
+  | "/settings/mobile"
+  | "/settings/remote";
 
 type SettingsNavItem = {
   label: string;
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
-  feature?: SettingsFeature;
 };
 
 export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
@@ -76,7 +74,11 @@ export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
         label: "Mobile App",
         to: "/settings/mobile",
         icon: SmartphoneIcon,
-        feature: "mobileApp",
+      },
+      {
+        label: "Remote",
+        to: "/settings/remote",
+        icon: RemoteIcon,
       },
     ],
   },
@@ -88,20 +90,10 @@ export const SETTINGS_NAV_SECTIONS: ReadonlyArray<{
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const mobileAppEnabled = useMobileAppFeatureEnabled();
   const navigateBack = () => {
     void navigate(resolveSettingsBackNavigation(readSettingsReturnPath()));
   };
   const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
-  const enabledFeatures = {
-    mobileApp: mobileAppEnabled,
-  } satisfies Record<SettingsFeature, boolean>;
-  const visibleSections = SETTINGS_NAV_SECTIONS.map((section) => ({
-    label: section.label,
-    items: section.items.filter(
-      (item) => item.feature === undefined || enabledFeatures[item.feature],
-    ),
-  })).filter((section) => section.items.length > 0);
 
   return (
     <SidebarContent className="overflow-x-hidden">
@@ -115,7 +107,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
-      {visibleSections.map((section) => (
+      {SETTINGS_NAV_SECTIONS.map((section) => (
         <SidebarGroup key={section.label} className="px-2 pt-3 pb-0 last:pb-3">
           <SidebarGroupLabel className="h-7 px-2 font-medium text-muted-foreground text-xs">
             {section.label}

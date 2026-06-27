@@ -205,6 +205,12 @@ export interface WsRpcClient {
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
   };
+  readonly remote: {
+    readonly getStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.remoteGetStatus>;
+    readonly setCredentials: RpcUnaryMethod<typeof WS_METHODS.remoteSetCredentials>;
+    readonly setExposure: RpcUnaryMethod<typeof WS_METHODS.remoteSetExposure>;
+    readonly revokeSession: RpcUnaryMethod<typeof WS_METHODS.remoteRevokeSession>;
+  };
   readonly onboarding: {
     readonly getState: RpcUnaryNoArgMethod<typeof WS_METHODS.onboardingGetState>;
     readonly completeStep: (
@@ -318,6 +324,15 @@ export function createWsRpcClient(options: {
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener),
       subscribeLifecycle: (listener) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerLifecycle]({}), listener),
+    },
+    remote: {
+      getStatus: () => transport.request((client) => client[WS_METHODS.remoteGetStatus]({})),
+      setCredentials: (input) =>
+        transport.request((client) => client[WS_METHODS.remoteSetCredentials](input)),
+      setExposure: (input) =>
+        transport.request((client) => client[WS_METHODS.remoteSetExposure](input)),
+      revokeSession: (input) =>
+        transport.request((client) => client[WS_METHODS.remoteRevokeSession](input)),
     },
     onboarding: {
       getState: () => transport.request((client) => client[WS_METHODS.onboardingGetState]({})),

@@ -32,6 +32,7 @@ import { Data, Effect, Layer, Option, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { derivePendingApprovals, derivePendingUserInputs } from "shared/orchestrationSession";
 
+import { EnvironmentAuth } from "./auth/EnvironmentAuth";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
@@ -257,7 +258,13 @@ function normalizeLocalHostname(hostname: string): string | null {
 }
 
 function isLoopbackHost(host: string | undefined): boolean {
-  return host === undefined || host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const normalized = host?.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  return (
+    normalized === undefined ||
+    normalized === "127.0.0.1" ||
+    normalized === "localhost" ||
+    normalized === "::1"
+  );
 }
 
 function isWildcardHost(host: string | undefined): boolean {
@@ -276,13 +283,8 @@ export function mobilePairingCandidates(
   addCandidate(candidates, seen, `http://127.0.0.1:${port}`, "Simulator on this Mac");
 
   const requestHost = url.hostname;
-  if (
-    acceptsLanConnections &&
-    requestHost &&
-    requestHost !== "127.0.0.1" &&
-    requestHost !== "localhost"
-  ) {
-    addCandidate(candidates, seen, `http://${requestHost}:${port}`, "Current desktop address");
+  if (requestHost && !isLoopbackHost(requestHost)) {
+    addCandidate(candidates, seen, url.origin.replace(/\/+$/, ""), "Current browser address");
   }
 
   if (acceptsLanConnections) {
@@ -387,6 +389,50 @@ async function pairDevice(
 
   session.pairedAt = now;
   session.pairedDeviceName = deviceName;
+
+  return {
+    deviceId,
+    token,
+    deviceName,
+    pairedAt: now,
+    apiBaseUrls: mobilePairingCandidates(config, url).map((candidate) => candidate.apiBaseUrl),
+  };
+}
+
+const MobileLoginRequest = Schema.Struct({
+  username: Schema.String,
+  password: Schema.String,
+  deviceName: Schema.optional(Schema.String),
+});
+
+/**
+ * Register a device using owner credentials (instead of a local QR pairing
+ * secret). This is the "connect to a remote server" path: the user enters the
+ * server URL + username/password, and we mint the same opaque device token the
+ * QR pairing flow produces, so the rest of the mobile API is unchanged.
+ */
+async function loginDevice(
+  config: ServerConfigShape,
+  url: URL,
+  deviceNameInput: string,
+): Promise<MobilePairResult> {
+  const now = new Date().toISOString();
+  const deviceId = randomUUID();
+  const token = createSecret();
+  const deviceName = normalizeDeviceName(deviceNameInput);
+  const store = await readDeviceStore(config);
+
+  store.devices = [
+    ...store.devices.filter((device) => device.deviceName !== deviceName),
+    {
+      deviceId,
+      deviceName,
+      tokenHash: hashSecret(token),
+      pairedAt: now,
+      lastSeenAt: now,
+    },
+  ];
+  await writeDeviceStore(config, store);
 
   return {
     deviceId,
@@ -853,6 +899,40 @@ const mobilePairRouteLayer = HttpRouter.add(
   ),
 );
 
+const mobileLoginRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/mobile/login",
+  Effect.gen(function* () {
+    yield* requireMobileEnabled;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = requestUrl(request);
+    if (!url) {
+      return yield* Effect.fail(new Error("Invalid request URL."));
+    }
+    const config = yield* ServerConfig;
+    const auth = yield* EnvironmentAuth;
+    if (!auth.authConfigured) {
+      return errorResponse("No credentials are configured on this server.", 503);
+    }
+    const input = yield* decodeJson(request, MobileLoginRequest, "Invalid login request.");
+    if (!auth.verifyCredentials({ username: input.username, password: input.password })) {
+      return errorResponse("Invalid username or password.", 401);
+    }
+    const result = yield* Effect.promise(() =>
+      loginDevice(config, url, input.deviceName ?? "iPhone"),
+    );
+    return successResponse(result);
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.succeed(
+        error instanceof Error
+          ? errorResponse(error.message, routeErrorStatus(error, 400))
+          : errorResponse("Login failed.", 400),
+      ),
+    ),
+  ),
+);
+
 const mobileConnectionRouteLayer = HttpRouter.add(
   "GET",
   "/api/mobile/connection",
@@ -942,6 +1022,7 @@ export const mobileRoutesLayer = Layer.mergeAll(
   mobilePairingSessionStatusRouteLayer,
   mobileDeletePairingSessionRouteLayer,
   mobilePairRouteLayer,
+  mobileLoginRouteLayer,
   mobileConnectionRouteLayer,
   mobileSnapshotRouteLayer,
   mobileEventsRouteLayer,

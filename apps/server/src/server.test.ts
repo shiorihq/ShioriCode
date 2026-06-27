@@ -25,6 +25,8 @@ import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
+import { RemoteAccessLive } from "./remote/RemoteAccess";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -170,6 +172,8 @@ const buildAppUnderTest = (options?: {
       devUrl,
       noBrowser: true,
       authToken: undefined,
+      requireAuth: false,
+      unsafeNoAuth: false,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       ...options?.config,
@@ -340,6 +344,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(Layer.mergeAll(BrowserPanelRequestsLive, computerUseManagerLayer)),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(RemoteAccessLive.pipe(Layer.provideMerge(EnvironmentAuthLive))),
       Layer.provide(layerConfig),
     );
 

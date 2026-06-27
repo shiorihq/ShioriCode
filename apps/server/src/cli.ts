@@ -67,6 +67,23 @@ const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
   Flag.optional,
 );
+const remoteFlag = Flag.boolean("remote").pipe(
+  Flag.withDescription(
+    "Mark this server as remotely reachable (behind a tunnel/reverse proxy). Requires credentials and enables session auth even though the bind stays on loopback.",
+  ),
+  Flag.withAlias("expose"),
+  Flag.optional,
+);
+const requireAuthFlag = Flag.boolean("require-auth").pipe(
+  Flag.withDescription("Require credential login even on a loopback bind."),
+  Flag.optional,
+);
+const unsafeNoAuthFlag = Flag.boolean("unsafe-no-auth").pipe(
+  Flag.withDescription(
+    "Disable authentication even when remotely reachable. Dangerous: anyone who can reach the server gets full shell access.",
+  ),
+  Flag.optional,
+);
 const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
   Flag.withDescription(
     "Create a project for the current working directory on startup when missing.",
@@ -102,6 +119,18 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  remote: Config.boolean("SHIORICODE_REMOTE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  requireAuth: Config.boolean("SHIORICODE_REQUIRE_AUTH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  unsafeNoAuth: Config.boolean("SHIORICODE_UNSAFE_NO_AUTH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   bootstrapFd: Config.int("SHIORICODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -124,6 +153,9 @@ interface CliServerFlags {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly remote: Option.Option<boolean>;
+  readonly requireAuth: Option.Option<boolean>;
+  readonly unsafeNoAuth: Option.Option<boolean>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
@@ -251,6 +283,15 @@ export const resolveServerConfig = (
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
+    const remoteIntent = resolveBooleanFlag(flags.remote, env.remote ?? false);
+    const explicitRequireAuth = resolveBooleanFlag(flags.requireAuth, env.requireAuth ?? false);
+    const unsafeNoAuth = resolveBooleanFlag(flags.unsafeNoAuth, env.unsafeNoAuth ?? false);
+    const hostIsLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+    // Require auth whenever the server is (or intends to be) reachable beyond
+    // loopback. A reverse proxy keeps the bind on 127.0.0.1, so --remote is the
+    // signal for the tunnel case; a non-loopback bind also implies remote.
+    const requireAuth = !unsafeNoAuth && (remoteIntent || explicitRequireAuth || !hostIsLoopback);
+
     const config: ServerConfigShape = {
       logLevel,
       mode,
@@ -263,6 +304,8 @@ export const resolveServerConfig = (
       devUrl,
       noBrowser,
       authToken,
+      requireAuth,
+      unsafeNoAuth,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
     };
@@ -278,6 +321,9 @@ const commandFlags = {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
+  remote: remoteFlag,
+  requireAuth: requireAuthFlag,
+  unsafeNoAuth: unsafeNoAuthFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,

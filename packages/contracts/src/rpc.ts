@@ -65,6 +65,13 @@ import {
 import { KeybindingsConfigError } from "./keybindings";
 import { OnboardingCompleteStepInput, OnboardingError, OnboardingState } from "./onboarding";
 import {
+  RemoteError,
+  RemoteRevokeSessionInput,
+  RemoteSetCredentialsInput,
+  RemoteSetExposureInput,
+  RemoteStatus,
+} from "./remote";
+import {
   ClientOrchestrationCommand,
   OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
@@ -171,6 +178,12 @@ export const WS_METHODS = {
   serverListSkills: "server.listSkills",
   serverRemoveSkill: "server.removeSkill",
   serverGetProviderUsage: "server.getProviderUsage",
+
+  // Remote access
+  remoteGetStatus: "remote.getStatus",
+  remoteSetCredentials: "remote.setCredentials",
+  remoteSetExposure: "remote.setExposure",
+  remoteRevokeSession: "remote.revokeSession",
 
   // Onboarding
   onboardingGetState: "onboarding.getState",
@@ -281,6 +294,30 @@ export const WsServerRemoveSkillRpc = Rpc.make(WS_METHODS.serverRemoveSkill, {
 export const WsServerGetProviderUsageRpc = Rpc.make(WS_METHODS.serverGetProviderUsage, {
   payload: Schema.Struct({ provider: ServerUsageProviderKind }),
   success: ServerProviderUsageSnapshot,
+});
+
+export const WsRemoteGetStatusRpc = Rpc.make(WS_METHODS.remoteGetStatus, {
+  payload: Schema.Struct({}),
+  success: RemoteStatus,
+  error: RemoteError,
+});
+
+export const WsRemoteSetCredentialsRpc = Rpc.make(WS_METHODS.remoteSetCredentials, {
+  payload: RemoteSetCredentialsInput,
+  success: RemoteStatus,
+  error: RemoteError,
+});
+
+export const WsRemoteSetExposureRpc = Rpc.make(WS_METHODS.remoteSetExposure, {
+  payload: RemoteSetExposureInput,
+  success: RemoteStatus,
+  error: RemoteError,
+});
+
+export const WsRemoteRevokeSessionRpc = Rpc.make(WS_METHODS.remoteRevokeSession, {
+  payload: RemoteRevokeSessionInput,
+  success: RemoteStatus,
+  error: RemoteError,
 });
 
 export const WsOnboardingGetStateRpc = Rpc.make(WS_METHODS.onboardingGetState, {
@@ -680,6 +717,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerListSkillsRpc,
   WsServerRemoveSkillRpc,
   WsServerGetProviderUsageRpc,
+  WsRemoteGetStatusRpc,
+  WsRemoteSetCredentialsRpc,
+  WsRemoteSetExposureRpc,
+  WsRemoteRevokeSessionRpc,
   WsOnboardingGetStateRpc,
   WsOnboardingCompleteStepRpc,
   WsOnboardingResetRpc,

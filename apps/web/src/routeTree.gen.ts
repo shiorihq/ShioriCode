@@ -11,12 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
-import { Route as GoalsRouteImport } from './routes/goals'
 import { Route as AutomationsRouteImport } from './routes/automations'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsThemeBuilderRouteImport } from './routes/settings.theme-builder'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
+import { Route as SettingsRemoteRouteImport } from './routes/settings.remote'
 import { Route as SettingsPluginsRouteImport } from './routes/settings.plugins'
 import { Route as SettingsMobileRouteImport } from './routes/settings.mobile'
 import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
@@ -35,11 +35,6 @@ const SettingsRoute = SettingsRouteImport.update({
 const PullRequestsRoute = PullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GoalsRoute = GoalsRouteImport.update({
-  id: '/goals',
-  path: '/goals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AutomationsRoute = AutomationsRouteImport.update({
@@ -64,6 +59,11 @@ const SettingsThemeBuilderRoute = SettingsThemeBuilderRouteImport.update({
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsRemoteRoute = SettingsRemoteRouteImport.update({
+  id: '/remote',
+  path: '/remote',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsPluginsRoute = SettingsPluginsRouteImport.update({
@@ -115,7 +115,6 @@ const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/automations': typeof AutomationsRoute
-  '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/$threadId': typeof ChatThreadIdRoute
@@ -127,12 +126,12 @@ export interface FileRoutesByFullPath {
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
+  '/settings/remote': typeof SettingsRemoteRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
 }
 export interface FileRoutesByTo {
   '/automations': typeof AutomationsRoute
-  '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/$threadId': typeof ChatThreadIdRoute
@@ -144,6 +143,7 @@ export interface FileRoutesByTo {
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
+  '/settings/remote': typeof SettingsRemoteRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/': typeof ChatIndexRoute
@@ -152,7 +152,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/automations': typeof AutomationsRoute
-  '/goals': typeof GoalsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/_chat/$threadId': typeof ChatThreadIdRoute
@@ -164,6 +163,7 @@ export interface FileRoutesById {
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/mobile': typeof SettingsMobileRoute
   '/settings/plugins': typeof SettingsPluginsRoute
+  '/settings/remote': typeof SettingsRemoteRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/theme-builder': typeof SettingsThemeBuilderRoute
   '/_chat/': typeof ChatIndexRoute
@@ -173,7 +173,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/automations'
-    | '/goals'
     | '/pull-requests'
     | '/settings'
     | '/$threadId'
@@ -185,12 +184,12 @@ export interface FileRouteTypes {
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
+    | '/settings/remote'
     | '/settings/skills'
     | '/settings/theme-builder'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/automations'
-    | '/goals'
     | '/pull-requests'
     | '/settings'
     | '/$threadId'
@@ -202,6 +201,7 @@ export interface FileRouteTypes {
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
+    | '/settings/remote'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/'
@@ -209,7 +209,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_chat'
     | '/automations'
-    | '/goals'
     | '/pull-requests'
     | '/settings'
     | '/_chat/$threadId'
@@ -221,6 +220,7 @@ export interface FileRouteTypes {
     | '/settings/mcp'
     | '/settings/mobile'
     | '/settings/plugins'
+    | '/settings/remote'
     | '/settings/skills'
     | '/settings/theme-builder'
     | '/_chat/'
@@ -229,7 +229,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   AutomationsRoute: typeof AutomationsRoute
-  GoalsRoute: typeof GoalsRoute
   PullRequestsRoute: typeof PullRequestsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
 }
@@ -248,13 +247,6 @@ declare module '@tanstack/react-router' {
       path: '/pull-requests'
       fullPath: '/pull-requests'
       preLoaderRoute: typeof PullRequestsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/goals': {
-      id: '/goals'
-      path: '/goals'
-      fullPath: '/goals'
-      preLoaderRoute: typeof GoalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/automations': {
@@ -290,6 +282,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/settings/skills'
       preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/remote': {
+      id: '/settings/remote'
+      path: '/remote'
+      fullPath: '/settings/remote'
+      preLoaderRoute: typeof SettingsRemoteRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/plugins': {
@@ -379,6 +378,7 @@ interface SettingsRouteChildren {
   SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsMobileRoute: typeof SettingsMobileRoute
   SettingsPluginsRoute: typeof SettingsPluginsRoute
+  SettingsRemoteRoute: typeof SettingsRemoteRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsThemeBuilderRoute: typeof SettingsThemeBuilderRoute
 }
@@ -392,6 +392,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsMcpRoute: SettingsMcpRoute,
   SettingsMobileRoute: SettingsMobileRoute,
   SettingsPluginsRoute: SettingsPluginsRoute,
+  SettingsRemoteRoute: SettingsRemoteRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsThemeBuilderRoute: SettingsThemeBuilderRoute,
 }
@@ -403,7 +404,6 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   AutomationsRoute: AutomationsRoute,
-  GoalsRoute: GoalsRoute,
   PullRequestsRoute: PullRequestsRoute,
   SettingsRoute: SettingsRouteWithChildren,
 }

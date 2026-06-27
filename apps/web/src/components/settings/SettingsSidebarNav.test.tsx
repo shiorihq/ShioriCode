@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -27,12 +27,6 @@ vi.mock("../../lib/settingsNavigation", () => ({
   resolveSettingsBackNavigation: () => ({ to: "/" }),
 }));
 
-let mobileAppEnabled = false;
-
-vi.mock("../../featureFlags", () => ({
-  useMobileAppFeatureEnabled: () => mobileAppEnabled,
-}));
-
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 
@@ -45,10 +39,6 @@ function renderSettingsSidebar(pathname = "/settings/general") {
 }
 
 describe("SettingsSidebarNav", () => {
-  beforeEach(() => {
-    mobileAppEnabled = false;
-  });
-
   it("inherits the shared sidebar hover color for back and section items", () => {
     const html = renderSettingsSidebar("/settings/appearance");
     const menuButtonClassNames = [...html.matchAll(/<button\b[^>]*>/g)]
@@ -69,15 +59,7 @@ describe("SettingsSidebarNav", () => {
     expect(html).toContain('data-active="true"');
   });
 
-  it("hides Mobile App when the hosted feature flag is off", () => {
-    const html = renderSettingsSidebar();
-
-    expect(html).not.toContain("Mobile App");
-  });
-
-  it("shows Mobile App when the hosted feature flag is on", () => {
-    mobileAppEnabled = true;
-
+  it("shows Mobile App as a discoverable settings section", () => {
     const html = renderSettingsSidebar("/settings/mobile");
 
     expect(html).toContain("Mobile App");

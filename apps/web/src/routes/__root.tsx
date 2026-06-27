@@ -36,6 +36,7 @@ import { Spinner } from "../components/ui/spinner";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { ensureNativeApi, hasDesktopNativeBridge, readNativeApi } from "../nativeApi";
+import { AuthGate } from "../auth/AuthGate";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -92,16 +93,18 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
-        <TelemetryBridge />
-        <FeatureFlagSettingsSync />
-        <SettingsReturnPathTracker />
-        <ServerStateBootstrap />
-        <EventRouter />
-        <OnboardingGate>
-          <AppRouteShell>
-            <Outlet />
-          </AppRouteShell>
-        </OnboardingGate>
+        <AuthGate>
+          <TelemetryBridge />
+          <FeatureFlagSettingsSync />
+          <SettingsReturnPathTracker />
+          <ServerStateBootstrap />
+          <EventRouter />
+          <OnboardingGate>
+            <AppRouteShell>
+              <Outlet />
+            </AppRouteShell>
+          </OnboardingGate>
+        </AuthGate>
       </AnchoredToastProvider>
     </ToastProvider>
   );

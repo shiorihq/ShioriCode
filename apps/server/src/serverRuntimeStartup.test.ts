@@ -39,6 +39,8 @@ function makeServerConfig(cwd: string): ServerConfigShape {
     devUrl: undefined,
     noBrowser: true,
     authToken: undefined,
+    requireAuth: false,
+    unsafeNoAuth: false,
     autoBootstrapProjectFromCwd: true,
     logWebSocketEvents: false,
     serverInstancePath: "/tmp/shioricode-test/server-instance.json",

@@ -23,6 +23,8 @@ import {
 import {
   DEFAULT_ASSISTANT_PERSONALITY,
   DEFAULT_CODE_FONT_FAMILY,
+  GLM_DEFAULT_API_BASE_URL,
+  GLM_DEFAULT_API_KEY_ENV_VAR,
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_UNIFIED_SETTINGS,
   type UnifiedSettings,
@@ -42,7 +44,6 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
-import { useGoalsFeatureEnabled } from "../../hooks/useGoalsFeatureEnabled";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -144,6 +145,8 @@ type InstallProviderSettings = {
 type ProviderSettingsTextFieldKey =
   | "apiBaseUrl"
   | "apiEndpoint"
+  | "apiKey"
+  | "apiKeyEnvVar"
   | "binaryPath"
   | "googleCloudProject"
   | "shareDir";
@@ -152,6 +155,7 @@ type ProviderSettingsTextField = {
   key: ProviderSettingsTextFieldKey;
   label: string;
   placeholder: string;
+  inputType?: "text" | "password";
   description?: ReactNode;
 };
 
@@ -193,6 +197,37 @@ const PROVIDER_SETTINGS_BY_PROVIDER = {
         label: "Google Cloud project",
         placeholder: "GOOGLE_CLOUD_PROJECT",
         description: "Optional Vertex AI project used by the Antigravity SDK.",
+      },
+    ],
+  },
+  glm: {
+    provider: "glm",
+    title: "GLM",
+    textFields: [
+      {
+        key: "binaryPath",
+        label: "Claude Code binary path",
+        placeholder: "claude",
+        description: "Path to Claude Code used for GLM Coding Plan.",
+      },
+      {
+        key: "apiBaseUrl",
+        label: "Anthropic API base URL",
+        placeholder: GLM_DEFAULT_API_BASE_URL,
+        description: "Z.AI's Anthropic-compatible GLM Coding Plan endpoint.",
+      },
+      {
+        key: "apiKey",
+        label: "API key",
+        placeholder: "zai-...",
+        inputType: "password",
+        description: "Your Z.AI GLM Coding Plan API key. Kept in local ShioriCode settings.",
+      },
+      {
+        key: "apiKeyEnvVar",
+        label: "API key env var",
+        placeholder: GLM_DEFAULT_API_KEY_ENV_VAR,
+        description: "Optional fallback environment variable when the API key field is empty.",
       },
     ],
   },
@@ -339,6 +374,11 @@ function readProviderTextField(
       if (key === "binaryPath") return providers.gemini.binaryPath;
       if (key === "googleCloudProject") return providers.gemini.googleCloudProject;
       return null;
+    case "glm":
+      if (key === "binaryPath") return providers.glm.binaryPath;
+      if (key === "apiBaseUrl") return providers.glm.apiBaseUrl;
+      if (key === "apiKey") return providers.glm.apiKey;
+      return key === "apiKeyEnvVar" ? providers.glm.apiKeyEnvVar : null;
     case "cursor":
       if (key === "binaryPath") return providers.cursor.binaryPath;
       return key === "apiEndpoint" ? providers.cursor.apiEndpoint : null;
@@ -371,6 +411,19 @@ function updateProviderTextField(
         return { ...providers, gemini: { ...providers.gemini, googleCloudProject: value } };
       }
       return providers;
+    case "glm":
+      if (key === "binaryPath") {
+        return { ...providers, glm: { ...providers.glm, binaryPath: value } };
+      }
+      if (key === "apiBaseUrl") {
+        return { ...providers, glm: { ...providers.glm, apiBaseUrl: value } };
+      }
+      if (key === "apiKey") {
+        return { ...providers, glm: { ...providers.glm, apiKey: value } };
+      }
+      return key === "apiKeyEnvVar"
+        ? { ...providers, glm: { ...providers.glm, apiKeyEnvVar: value } }
+        : providers;
     case "cursor":
       if (key === "binaryPath") {
         return { ...providers, cursor: { ...providers.cursor, binaryPath: value } };
@@ -807,7 +860,6 @@ function CompanionCliSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
-  const goalsEnabled = useGoalsFeatureEnabled();
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -849,10 +901,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.generateMemories !== DEFAULT_UNIFIED_SETTINGS.generateMemories
         ? ["Memories"]
         : []),
-      ...(goalsEnabled &&
-      settings.autoGenerateGoalTaskPrompts !== DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts
-        ? ["Goal planning"]
-        : []),
       ...(settings.assistantPersonality !== DEFAULT_ASSISTANT_PERSONALITY
         ? ["Assistant personality"]
         : []),
@@ -884,8 +932,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
-      goalsEnabled,
-      settings.autoGenerateGoalTaskPrompts,
       settings.generateMemories,
       settings.importedThemes.length,
       settings.lightThemeId,
@@ -921,7 +967,6 @@ export function useSettingsRestore(onRestored?: () => void) {
 export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const goalsEnabled = useGoalsFeatureEnabled();
   const canTriggerOnboarding = import.meta.env.DEV;
   const onboardingState = useMemo(
     () => resolveOnboardingState(settings.onboarding),
@@ -947,6 +992,13 @@ export function GeneralSettingsPanel() {
       settings.providers.gemini.googleCloudProject !==
         DEFAULT_UNIFIED_SETTINGS.providers.gemini.googleCloudProject ||
       settings.providers.gemini.customModels.length > 0,
+    ),
+    glm: Boolean(
+      settings.providers.glm.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.glm.binaryPath ||
+      settings.providers.glm.apiBaseUrl !== DEFAULT_UNIFIED_SETTINGS.providers.glm.apiBaseUrl ||
+      settings.providers.glm.apiKey !== DEFAULT_UNIFIED_SETTINGS.providers.glm.apiKey ||
+      settings.providers.glm.apiKeyEnvVar !== DEFAULT_UNIFIED_SETTINGS.providers.glm.apiKeyEnvVar ||
+      settings.providers.glm.customModels.length > 0,
     ),
     cursor: Boolean(
       settings.providers.cursor.binaryPath !==
@@ -1295,36 +1347,6 @@ export function GeneralSettingsPanel() {
             runtimes that support persistent memories.
           </p>
         </SettingsRow>
-
-        {goalsEnabled ? (
-          <SettingsRow
-            title="Goal planning"
-            description="Generate a concise editable plan in the background when a goal is created."
-            resetAction={
-              settings.autoGenerateGoalTaskPrompts !==
-              DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts ? (
-                <SettingResetButton
-                  label="Goal planning"
-                  onClick={() =>
-                    updateSettings({
-                      autoGenerateGoalTaskPrompts:
-                        DEFAULT_UNIFIED_SETTINGS.autoGenerateGoalTaskPrompts,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={settings.autoGenerateGoalTaskPrompts}
-                onCheckedChange={(checked) =>
-                  updateSettings({ autoGenerateGoalTaskPrompts: Boolean(checked) })
-                }
-                aria-label="Generate goal plans"
-              />
-            }
-          />
-        ) : null}
 
         <SettingsRow
           title="Assistant personality"
@@ -1754,6 +1776,7 @@ export function GeneralSettingsPanel() {
                           <Input
                             id={`provider-install-${providerCard.provider}-${field.key}`}
                             className="mt-1.5"
+                            type={field.inputType ?? "text"}
                             value={field.value}
                             onChange={(event) =>
                               updateSettings({

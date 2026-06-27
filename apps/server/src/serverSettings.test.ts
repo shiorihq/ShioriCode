@@ -250,7 +250,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.deepEqual(next.defaultModelSelection, {
         provider: "kimiCode",
-        model: "kimi-code/kimi-for-coding",
+        model: "kimi2.7-code",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

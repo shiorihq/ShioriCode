@@ -8,28 +8,21 @@ import {
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
 import { resolveAttachmentPathById } from "./attachmentStore";
+import { authorizeDataRequest } from "./auth/EnvironmentAuth";
 import { ServerConfig } from "./config";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver";
-import { ServerSettingsService } from "./serverSettings";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
-function requestToken(request: HttpServerRequest.HttpServerRequest): string | null {
-  const authorization = request.headers.authorization;
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim() || null;
-  }
-  const url = HttpServerRequest.toURL(request);
-  if (Option.isSome(url)) {
-    return url.value.searchParams.get("token");
-  }
-  return null;
-}
 
 export const attachmentsRouteLayer = HttpRouter.add(
   "GET",
   `${ATTACHMENTS_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
+    const denied = yield* authorizeDataRequest;
+    if (denied) {
+      return denied;
+    }
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {
@@ -85,6 +78,10 @@ export const projectFaviconRouteLayer = HttpRouter.add(
   "GET",
   "/api/project-favicon",
   Effect.gen(function* () {
+    const denied = yield* authorizeDataRequest;
+    if (denied) {
+      return denied;
+    }
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {

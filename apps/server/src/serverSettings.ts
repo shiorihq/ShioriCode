@@ -96,6 +96,7 @@ const ServerSettingsJson = fromLenientJson(ServerSettings);
 const PROVIDER_ORDER: readonly ProviderKind[] = [
   "kimiCode",
   "gemini",
+  "glm",
   "cursor",
   "codex",
   "claudeAgent",

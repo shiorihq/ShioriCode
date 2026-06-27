@@ -1,7 +1,13 @@
+import { existsSync } from "node:fs";
+import nodePath from "node:path";
+
 import { Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/serverInstance";
 
+import { authRoutesLayer } from "./auth/authRoutes";
+import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
+import { RemoteAccessLive } from "./remote/RemoteAccess";
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
 import {
   BrowserPanelRequestsLive,
@@ -24,7 +30,7 @@ import { KimiCodeAdapterLive } from "./provider/Layers/KimiCodeAdapter";
 import { makeGeminiAdapterLive } from "./provider/Layers/GeminiAdapter";
 import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
-import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
+import { makeClaudeAdapterLive, makeGlmAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
@@ -157,6 +163,9 @@ const ProviderLayerLive = Layer.unwrap(
     const geminiAdapterLayer = makeGeminiAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
+    const glmAdapterLayer = makeGlmAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
     const cursorAdapterLayer = makeCursorAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
@@ -169,6 +178,7 @@ const ProviderLayerLive = Layer.unwrap(
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(kimiCodeAdapterLayer),
       Layer.provide(geminiAdapterLayer),
+      Layer.provide(glmAdapterLayer),
       Layer.provide(cursorAdapterLayer),
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
@@ -233,6 +243,7 @@ const RuntimeServicesLive = RuntimeServicesBaseLive.pipe(
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ComputerUseManagerLive),
   Layer.provideMerge(ServerLifecycleEventsLive),
+  Layer.provideMerge(RemoteAccessLive.pipe(Layer.provideMerge(EnvironmentAuthLive))),
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
@@ -241,6 +252,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   avatarDeleteRouteLayer,
   browserPanelRequestRouteLayer,
   browserPanelCommandRouteLayer,
+  authRoutesLayer,
   mobileRoutesLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
@@ -250,6 +262,26 @@ export const makeRoutesLayer = Layer.mergeAll(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
+
+    // Fail-closed gate: if the server is remote-reachable, it must have a way to
+    // authenticate clients. Keyed on exposure intent (config.requireAuth), not on
+    // the bind host, because a reverse proxy keeps the bind on loopback.
+    if (config.requireAuth && !config.unsafeNoAuth) {
+      const hasCredentialsFile = existsSync(nodePath.join(config.stateDir, "credentials.json"));
+      const hasEnvCredentials = Boolean(
+        process.env.SHIORICODE_USERNAME && process.env.SHIORICODE_PASSWORD,
+      );
+      const hasLegacyToken = Boolean(config.authToken);
+      if (!hasCredentialsFile && !hasEnvCredentials && !hasLegacyToken) {
+        return yield* Effect.fail(
+          new Error(
+            "Refusing to start: remote access is enabled but no credentials are configured. " +
+              "Set SHIORICODE_USERNAME and SHIORICODE_PASSWORD (persisted on first run), pass --auth-token, " +
+              "or pass --unsafe-no-auth to override (dangerous).",
+          ),
+        );
+      }
+    }
 
     fixPath();
 

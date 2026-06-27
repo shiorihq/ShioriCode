@@ -46,6 +46,15 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly devUrl: URL | undefined;
   readonly noBrowser: boolean;
   readonly authToken: string | undefined;
+  /**
+   * Whether a valid principal is mandatory on data routes and the WebSocket
+   * upgrade. Derived from exposure intent (remote/expose flag, a non-loopback
+   * bind, or an explicit require-auth flag); never keyed on the bind host alone
+   * since a reverse proxy (Tailscale Serve, nginx) keeps the bind on loopback.
+   */
+  readonly requireAuth: boolean;
+  /** Explicit escape hatch: run with auth disabled even when remote-reachable. */
+  readonly unsafeNoAuth: boolean;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
 }
@@ -128,6 +137,8 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           port: 0,
           host: undefined,
           authToken: undefined,
+          requireAuth: false,
+          unsafeNoAuth: false,
           staticDir: undefined,
           devUrl,
           noBrowser: false,

@@ -24,7 +24,7 @@ describe("mobilePairingCandidates", () => {
     });
     expect(candidates).toContainEqual({
       apiBaseUrl: "http://192.168.1.44:3773",
-      label: "Current desktop address",
+      label: "Current browser address",
     });
     expect(candidates.some((candidate) => candidate.apiBaseUrl.endsWith(".local:3773"))).toBe(true);
   });
@@ -32,13 +32,31 @@ describe("mobilePairingCandidates", () => {
   it("does not expose LAN candidates when the server only listens on loopback", () => {
     const candidates = mobilePairingCandidates(
       config({ host: "127.0.0.1" }),
-      new URL("http://192.168.1.44:3773/api/mobile/pairing-sessions"),
+      new URL("http://127.0.0.1:3773/api/mobile/pairing-sessions"),
     );
 
     expect(candidates).toEqual([
       {
         apiBaseUrl: "http://127.0.0.1:3773",
         label: "Simulator on this Mac",
+      },
+    ]);
+  });
+
+  it("preserves a reverse-proxied HTTPS origin for remote iOS pairing", () => {
+    const candidates = mobilePairingCandidates(
+      config({ host: "127.0.0.1" }),
+      new URL("https://mac.shiori.ai/api/mobile/pairing-sessions"),
+    );
+
+    expect(candidates).toEqual([
+      {
+        apiBaseUrl: "http://127.0.0.1:3773",
+        label: "Simulator on this Mac",
+      },
+      {
+        apiBaseUrl: "https://mac.shiori.ai",
+        label: "Current browser address",
       },
     ]);
   });
