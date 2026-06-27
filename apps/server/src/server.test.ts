@@ -562,6 +562,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           authToken: "secret-token",
+          requireAuth: true,
         },
       });
 

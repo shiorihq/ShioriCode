@@ -75,6 +75,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
         authToken: "env-token",
+        requireAuth: true,
+        unsafeNoAuth: false,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
       });
@@ -139,6 +141,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
         authToken: "flag-token",
+        requireAuth: false,
+        unsafeNoAuth: false,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
       });
@@ -157,6 +161,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: "http://127.0.0.1:5173",
         noBrowser: true,
         authToken: "bootstrap-token",
+        requireAuth: true,
+        unsafeNoAuth: false,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
       });
@@ -206,6 +212,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:5173"),
         noBrowser: true,
         authToken: "bootstrap-token",
+        requireAuth: true,
+        unsafeNoAuth: false,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
       });
@@ -360,6 +368,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
         authToken: "flag-token",
+        requireAuth: false,
+        unsafeNoAuth: false,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
       });
