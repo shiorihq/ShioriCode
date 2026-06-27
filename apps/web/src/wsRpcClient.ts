@@ -18,13 +18,15 @@ export async function __resetWsRpcClientForTests() {
   sharedWsRpcClient = null;
 }
 
-export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
+export function createWsRpcClient(transport?: WsTransport): WsRpcClient {
+  const url = resolveServerUrl({
+    protocol: window.location.protocol === "https:" ? "wss" : "ws",
+    pathname: "/ws",
+  });
+
   return createSharedWsRpcClient({
-    transport,
-    url: resolveServerUrl({
-      protocol: window.location.protocol === "https:" ? "wss" : "ws",
-      pathname: "/ws",
-    }),
+    transport: transport ?? new WsTransport(url),
+    url,
   });
 }
 

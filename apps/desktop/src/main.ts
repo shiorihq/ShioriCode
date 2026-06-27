@@ -2348,7 +2348,7 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
   const baseUrl = `ws://127.0.0.1:${backendPort}`;
-  backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
+  backendWsUrl = `${baseUrl}/ws?token=${encodeURIComponent(backendAuthToken)}`;
   writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
 
   registerIpcHandlers();

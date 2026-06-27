@@ -104,6 +104,10 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
+function isDesktopAppOrigin(origin: URL | null): boolean {
+  return origin?.protocol === "shioricode:" && origin.hostname === "app";
+}
+
 function sessionPrincipal(session: SessionRecord): AuthPrincipal {
   return { kind: "session", sessionId: session.id, username: session.username };
 }
@@ -206,6 +210,9 @@ export const EnvironmentAuthLive = Layer.effect(
 
       if (rawOrigin && !origin) {
         return false;
+      }
+      if (isDesktopAppOrigin(origin)) {
+        return true;
       }
       if (origin && origin.protocol !== "http:" && origin.protocol !== "https:") {
         return false;

@@ -169,7 +169,7 @@ async function evaluateRendererExpression(webSocketDebuggerUrl, expression) {
   }
 }
 
-async function waitForRendererBridge() {
+async function waitForRendererBridge(expectedWsUrl) {
   const deadline = Date.now() + 10_000;
   let lastProbe = null;
 
@@ -184,11 +184,12 @@ async function waitForRendererBridge() {
             href: location.href,
             title: document.title,
             desktopBridge: typeof window.desktopBridge,
+            wsUrl: window.desktopBridge?.getWsUrl?.() ?? null,
             nativeApi: typeof window.nativeApi,
             bodyText: document.body?.innerText ?? "",
           })`,
         );
-        if (lastProbe?.desktopBridge === "object") {
+        if (lastProbe?.desktopBridge === "object" && lastProbe.wsUrl === expectedWsUrl) {
           return;
         }
       }
@@ -199,7 +200,12 @@ async function waitForRendererBridge() {
     await wait(100);
   }
 
-  throw new Error(`desktop bridge was not exposed to renderer: ${JSON.stringify(lastProbe)}`);
+  throw new Error(
+    `desktop bridge was not exposed to renderer with expected websocket URL: ${JSON.stringify({
+      expectedWsUrl,
+      lastProbe,
+    })}`,
+  );
 }
 
 function finishSuccess() {
@@ -249,7 +255,7 @@ poll = setInterval(() => {
   const serverInstance = readServerInstance();
   if (serverInstance?.wsUrl && !rendererBridgeCheckStarted) {
     rendererBridgeCheckStarted = true;
-    void waitForRendererBridge()
+    void waitForRendererBridge(serverInstance.wsUrl)
       .then(() => {
         finishSuccess();
       })
