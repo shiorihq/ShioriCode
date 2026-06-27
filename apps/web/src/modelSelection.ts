@@ -38,8 +38,8 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     provider: "kimiCode",
     title: "Kimi Code",
     description: "Kimi Code is currently pinned to a single built-in model.",
-    placeholder: "kimi-code/kimi-for-coding",
-    example: "kimi-code/kimi-for-coding",
+    placeholder: "kimi2.7-code",
+    example: "kimi2.7-code",
     supportsCustomModels: false,
   },
   gemini: {
@@ -48,6 +48,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Gemini model slugs for the picker and `/model` command.",
     placeholder: "your-gemini-model-slug",
     example: "gemini-3-pro",
+  },
+  glm: {
+    provider: "glm",
+    title: "GLM",
+    description: "Save additional GLM model slugs for the picker and `/model` command.",
+    placeholder: "your-glm-model-slug",
+    example: "glm-5.2",
   },
   cursor: {
     provider: "cursor",
@@ -187,6 +194,10 @@ export function buildProviderModelSelection(
         : { provider, model };
     case "gemini":
       return { provider, model };
+    case "glm":
+      return options !== undefined
+        ? { provider, model, options: options as NonNullable<ProviderModelOptions["glm"]> }
+        : { provider, model };
     case "cursor":
       return options !== undefined
         ? { provider, model, options: options as NonNullable<ProviderModelOptions["cursor"]> }
@@ -224,6 +235,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "gemini",
       selectedProvider === "gemini" ? selectedModel : undefined,
+    ),
+    glm: getAppModelOptions(
+      settings,
+      providers,
+      "glm",
+      selectedProvider === "glm" ? selectedModel : undefined,
     ),
     cursor: getAppModelOptions(
       settings,

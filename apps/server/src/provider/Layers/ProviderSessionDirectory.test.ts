@@ -160,6 +160,33 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       assert.equal(provider, "gemini");
     }));
 
+  it("rehydrates glm thread bindings", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-glm");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "glm",
+        adapterKey: "glm",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "glm",
+        adapterKey: "glm",
+      });
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "glm");
+    }));
+
   it("rehydrates cursor thread bindings", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;

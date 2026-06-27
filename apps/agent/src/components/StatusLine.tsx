@@ -47,6 +47,8 @@ function providerLabel(provider: ProviderKind | null): string {
       return "kimi";
     case "gemini":
       return "gemini";
+    case "glm":
+      return "glm";
     case "cursor":
       return "cursor";
     case "claudeAgent":

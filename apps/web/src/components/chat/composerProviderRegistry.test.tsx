@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ServerProviderModel } from "contracts";
-import { getComposerProviderState } from "./composerProviderRegistry";
+import { ThreadId, type ServerProviderModel } from "contracts";
+import {
+  getComposerProviderState,
+  renderProviderTraitsMenuContent,
+} from "./composerProviderRegistry";
 
 const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -326,6 +329,35 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.modelOptionsForDispatch).toHaveProperty("fastMode", false);
+  });
+
+  it("renders Claude traits when fast mode is the only auxiliary control", () => {
+    const content = renderProviderTraitsMenuContent({
+      provider: "claudeAgent",
+      threadId: ThreadId.makeUnsafe("thread-claude-fast-traits"),
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
+      modelOptions: { fastMode: false },
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(content).not.toBeNull();
+  });
+
+  it("omits Claude fast-mode-only traits when fast mode is excluded", () => {
+    const content = renderProviderTraitsMenuContent({
+      provider: "claudeAgent",
+      threadId: ThreadId.makeUnsafe("thread-claude-fast-traits-hidden"),
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
+      modelOptions: { fastMode: false },
+      prompt: "",
+      onPromptChange: () => {},
+      includeFastMode: false,
+    });
+
+    expect(content).toBeNull();
   });
 
   it("preserves explicit thinking: true so deepMerge can overwrite a prior false", () => {

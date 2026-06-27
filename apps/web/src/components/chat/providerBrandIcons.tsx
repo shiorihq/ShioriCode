@@ -125,9 +125,27 @@ const GeminiBrandIcon: Icon = (props) => {
   );
 };
 
+const GlmBrandIcon: Icon = (props) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    preserveAspectRatio="xMidYMid meet"
+  >
+    <title>GLM</title>
+    <path
+      d="M4 6.2A3.2 3.2 0 017.2 3h9.6A3.2 3.2 0 0120 6.2v11.6a3.2 3.2 0 01-3.2 3.2H7.2A3.2 3.2 0 014 17.8V6.2z"
+      fill="#111827"
+    />
+    <path d="M8.25 16.25h7.5v-2h-3.42l3.42-4.8v-1.7h-7.5v2h3.43l-3.43 4.8v1.7z" fill="#F9FAFB" />
+  </svg>
+);
+
 export const PROVIDER_BRAND_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
   kimiCode: KimiBrandIcon,
   gemini: GeminiBrandIcon,
+  glm: GlmBrandIcon,
   codex: OpenAI,
   claudeAgent: ClaudeBrandIcon,
   cursor: CursorBrandIcon,

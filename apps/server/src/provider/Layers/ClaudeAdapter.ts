@@ -49,7 +49,12 @@ import {
   TurnId,
   type UserInputQuestion,
   ClaudeCodeEffort,
+  type ClaudeModelOptions,
+  type GlmModelOptions,
+  type ModelCapabilities,
+  type ProviderKind,
   type McpServerEntry,
+  type ServerSettings,
 } from "contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -88,6 +93,7 @@ import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { getGlmModelCapabilities } from "./GlmProvider.ts";
 import { builtInShioriMcpServers, materializeMcpServersForRuntime } from "../mcpServers.ts";
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 import {
@@ -99,12 +105,17 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { GlmAdapter, type GlmAdapterShape } from "../Services/GlmAdapter.ts";
+import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ClaudeUsageSnapshot } from "../Services/ProviderUsage.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { GLM_DEFAULT_API_BASE_URL, GLM_DEFAULT_API_KEY_ENV_VAR } from "contracts/settings";
 
-const PROVIDER = "claudeAgent" as const;
+const CLAUDE_PROVIDER = "claudeAgent" as const;
+const GLM_PROVIDER = "glm" as const;
 const CLAUDE_RESUME_CURSOR_VERSION = 1;
 const CLAUDE_CLIENT_APP = "shiori-code";
+const GLM_CLIENT_APP = "shiori-code-glm";
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -262,6 +273,55 @@ export interface ClaudeAdapterLiveOptions {
   readonly enableFileCheckpointing?: boolean;
 }
 
+interface ClaudeCompatibleProviderConfig {
+  readonly provider: Extract<ProviderKind, "claudeAgent" | "glm">;
+  readonly label: string;
+  readonly clientApp: string;
+  readonly settingSources: ReadonlyArray<SettingSource>;
+  readonly getBinaryPath: (settings: ServerSettings) => string;
+  readonly getModelCapabilities: (model: string | null | undefined) => ModelCapabilities;
+  readonly getRuntimeEnv?: (settings: ServerSettings) => Record<string, string | undefined>;
+}
+
+type ClaudeCompatibleModelSelection =
+  | Extract<NonNullable<ProviderSendTurnInput["modelSelection"]>, { provider: "claudeAgent" }>
+  | Extract<NonNullable<ProviderSendTurnInput["modelSelection"]>, { provider: "glm" }>;
+
+const CLAUDE_COMPATIBLE_CONFIG: ClaudeCompatibleProviderConfig = {
+  provider: CLAUDE_PROVIDER,
+  label: "Claude",
+  clientApp: CLAUDE_CLIENT_APP,
+  settingSources: ["user", "project", "local"],
+  getBinaryPath: (settings) => settings.providers.claudeAgent.binaryPath,
+  getModelCapabilities: getClaudeModelCapabilities,
+};
+
+function trimOrDefault(value: string | null | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+const GLM_COMPATIBLE_CONFIG: ClaudeCompatibleProviderConfig = {
+  provider: GLM_PROVIDER,
+  label: "GLM",
+  clientApp: GLM_CLIENT_APP,
+  settingSources: [],
+  getBinaryPath: (settings) => settings.providers.glm.binaryPath,
+  getModelCapabilities: getGlmModelCapabilities,
+  getRuntimeEnv: (settings) => {
+    const glmSettings = settings.providers.glm;
+    const apiKeyEnvVar = trimOrDefault(glmSettings.apiKeyEnvVar, GLM_DEFAULT_API_KEY_ENV_VAR);
+    const apiKey = trimOrNull(glmSettings.apiKey) ?? process.env[apiKeyEnvVar];
+    return {
+      ANTHROPIC_BASE_URL: trimOrDefault(glmSettings.apiBaseUrl, GLM_DEFAULT_API_BASE_URL),
+      ANTHROPIC_AUTH_TOKEN: apiKey,
+      ANTHROPIC_API_KEY: apiKey,
+      API_TIMEOUT_MS: process.env.API_TIMEOUT_MS ?? "300000",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "0.8",
+    };
+  },
+};
+
 function translateToClaudeMcpConfig(
   entry: McpServerEntry,
 ): McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig {
@@ -323,48 +383,50 @@ function isClaudeMcpServerReservedName(name: string): boolean {
 function validateClaudeMcpServers(input: {
   readonly servers: readonly McpServerEntry[];
   readonly requireMaterializedOauth?: boolean;
+  readonly provider: ProviderKind;
+  readonly label: string;
 }): { readonly servers: readonly McpServerEntry[]; readonly warnings: readonly string[] } {
   const servers: McpServerEntry[] = [];
   const warnings: string[] = [];
   const seenNames = new Set<string>();
 
   for (const server of input.servers) {
-    const appliesToClaude =
-      server.providers.length === 0 || server.providers.includes("claudeAgent");
-    if (!appliesToClaude) {
+    const appliesToProvider =
+      server.providers.length === 0 || server.providers.includes(input.provider);
+    if (!appliesToProvider) {
       continue;
     }
 
     const name = server.name.trim();
     if (!server.enabled) {
-      warnings.push(`Skipping disabled Claude MCP server '${name || "(empty name)"}'.`);
+      warnings.push(`Skipping disabled ${input.label} MCP server '${name || "(empty name)"}'.`);
       continue;
     }
     if (!name) {
-      warnings.push("Skipping Claude MCP server with an empty name.");
+      warnings.push(`Skipping ${input.label} MCP server with an empty name.`);
       continue;
     }
     if (isClaudeMcpServerReservedName(name)) {
-      warnings.push(`Skipping Claude MCP server '${name}' because the name is reserved.`);
+      warnings.push(`Skipping ${input.label} MCP server '${name}' because the name is reserved.`);
       continue;
     }
 
     const normalizedName = name.toLowerCase();
     if (seenNames.has(normalizedName)) {
-      warnings.push(`Skipping duplicate Claude MCP server '${name}'.`);
+      warnings.push(`Skipping duplicate ${input.label} MCP server '${name}'.`);
       continue;
     }
     seenNames.add(normalizedName);
 
     if (server.transport === "stdio" && !server.command?.trim()) {
       warnings.push(
-        `Skipping Claude MCP server '${name}' because stdio transport needs a command.`,
+        `Skipping ${input.label} MCP server '${name}' because stdio transport needs a command.`,
       );
       continue;
     }
     if (server.transport !== "stdio" && !server.url?.trim()) {
       warnings.push(
-        `Skipping Claude MCP server '${name}' because ${server.transport} transport needs a URL.`,
+        `Skipping ${input.label} MCP server '${name}' because ${server.transport} transport needs a URL.`,
       );
       continue;
     }
@@ -375,7 +437,7 @@ function validateClaudeMcpServers(input: {
       !hasStaticMcpAuthorization(server)
     ) {
       warnings.push(
-        `Skipping Claude MCP server '${name}' because OAuth credentials are missing or expired.`,
+        `Skipping ${input.label} MCP server '${name}' because OAuth credentials are missing or expired.`,
       );
       continue;
     }
@@ -423,33 +485,51 @@ function getEffectiveClaudeCodeEffort(
 }
 
 function resolveClaudeRuntimeConfig(
-  modelSelection:
-    | Extract<ProviderSendTurnInput["modelSelection"], { provider: "claudeAgent" }>
-    | undefined,
+  modelSelection: ClaudeCompatibleModelSelection | undefined,
+  getModelCapabilities: (model: string | null | undefined) => ModelCapabilities,
 ): ClaudeRuntimeConfig | undefined {
   if (!modelSelection) {
     return undefined;
   }
 
-  const caps = getClaudeModelCapabilities(modelSelection.model);
-  const resolvedEffort = resolveEffort(caps, modelSelection.options?.effort) ?? null;
+  const caps = getModelCapabilities(modelSelection.model);
+  const modelOptions = modelSelection.options as
+    | {
+        readonly effort?: string;
+        readonly contextWindow?: string;
+        readonly fastMode?: boolean;
+        readonly thinking?: boolean;
+      }
+    | undefined;
+  const resolvedEffort = resolveEffort(caps, modelOptions?.effort) ?? null;
   const effectiveEffort = getEffectiveClaudeCodeEffort(resolvedEffort);
-  const contextWindow = resolveContextWindow(caps, modelSelection.options?.contextWindow);
-  const apiModelId = resolveApiModelId({
-    ...modelSelection,
-    options: {
-      ...modelSelection.options,
-      ...(contextWindow ? { contextWindow } : {}),
-    },
-  });
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const apiModelId =
+    modelSelection.provider === "glm"
+      ? resolveApiModelId({
+          provider: "glm",
+          model: modelSelection.model,
+          options: {
+            ...(modelSelection.options as GlmModelOptions | undefined),
+            ...(contextWindow ? { contextWindow } : {}),
+          },
+        })
+      : resolveApiModelId({
+          provider: "claudeAgent",
+          model: modelSelection.model,
+          options: {
+            ...(modelSelection.options as ClaudeModelOptions | undefined),
+            ...(contextWindow ? { contextWindow } : {}),
+          },
+        });
 
   return {
     requestedModel: modelSelection.model,
     apiModelId,
     effort: effectiveEffort,
-    fastMode: modelSelection.options?.fastMode === true && caps.supportsFastMode,
-    ...(typeof modelSelection.options?.thinking === "boolean" && caps.supportsThinkingToggle
-      ? { thinking: modelSelection.options.thinking }
+    fastMode: modelOptions?.fastMode === true && caps.supportsFastMode,
+    ...(typeof modelOptions?.thinking === "boolean" && caps.supportsThinkingToggle
+      ? { thinking: modelOptions.thinking }
       : {}),
     ...(contextWindow ? { contextWindow } : {}),
   };
@@ -690,7 +770,10 @@ function asRuntimeRequestId(value: ApprovalRequestId): RuntimeRequestId {
   return RuntimeRequestId.makeUnsafe(value);
 }
 
-function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undefined {
+function readClaudeResumeState(
+  resumeCursor: unknown,
+  provider: ClaudeCompatibleProviderConfig["provider"],
+): ClaudeResumeState | undefined {
   if (!resumeCursor || typeof resumeCursor !== "object") {
     return undefined;
   }
@@ -704,7 +787,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     turnCount?: unknown;
   };
 
-  if (cursor.provider !== undefined && cursor.provider !== PROVIDER) {
+  if (cursor.provider !== undefined && cursor.provider !== provider) {
     return undefined;
   }
   if (cursor.version !== undefined && cursor.version !== CLAUDE_RESUME_CURSOR_VERSION) {
@@ -923,24 +1006,27 @@ const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
-const CLAUDE_SETTING_SOURCES = [
-  "user",
-  "project",
-  "local",
-] as const satisfies ReadonlyArray<SettingSource>;
 
-function buildPromptText(input: ProviderSendTurnInput): string {
+function buildPromptText(
+  input: ProviderSendTurnInput,
+  provider: ClaudeCompatibleProviderConfig["provider"],
+  getModelCapabilities: (model: string | null | undefined) => ModelCapabilities,
+): string {
   const rawEffort =
-    input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.options?.effort : null;
+    input.modelSelection?.provider === provider
+      ? (input.modelSelection.options as { readonly effort?: string } | undefined)?.effort
+      : null;
   const claudeModel =
-    input.modelSelection?.provider === "claudeAgent" ? input.modelSelection.model : undefined;
-  const caps = getClaudeModelCapabilities(claudeModel);
+    input.modelSelection?.provider === provider ? input.modelSelection.model : undefined;
+  const caps = getModelCapabilities(claudeModel);
 
   // For prompt injection, we check if the raw effort is a prompt-injected level (e.g. "ultrathink").
   // resolveEffort strips prompt-injected values (returning the default instead), so we check the raw value directly.
   const trimmedEffort = trimOrNull(rawEffort);
   const promptEffort =
-    trimmedEffort && caps.promptInjectedEffortLevels.includes(trimmedEffort) ? trimmedEffort : null;
+    trimmedEffort && caps.promptInjectedEffortLevels.includes(trimmedEffort)
+      ? (trimmedEffort as ClaudeCodeEffort)
+      : null;
   return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
 }
 
@@ -977,9 +1063,12 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
+    readonly provider: ClaudeCompatibleProviderConfig["provider"];
+    readonly label: string;
+    readonly getModelCapabilities: (model: string | null | undefined) => ModelCapabilities;
   },
 ) {
-  const text = buildPromptText(input);
+  const text = buildPromptText(input, dependencies.provider, dependencies.getModelCapabilities);
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {
@@ -993,9 +1082,9 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 
     if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
       return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
+        provider: dependencies.provider,
         method: "turn/start",
-        detail: `Unsupported Claude image attachment type '${attachment.mimeType}'.`,
+        detail: `Unsupported ${dependencies.label} image attachment type '${attachment.mimeType}'.`,
       });
     }
 
@@ -1005,7 +1094,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     });
     if (!attachmentPath) {
       return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
+        provider: dependencies.provider,
         method: "turn/start",
         detail: `Invalid attachment id '${attachment.id}'.`,
       });
@@ -1015,7 +1104,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider: dependencies.provider,
             method: "turn/start",
             detail: toMessage(cause, "Failed to read attachment file."),
             cause,
@@ -1230,20 +1319,21 @@ function toolResultBlocksFromUserMessage(message: SDKMessage): Array<{
 }
 
 function toSessionError(
+  provider: ClaudeCompatibleProviderConfig["provider"],
   threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
   const normalized = toMessage(cause, "").toLowerCase();
   if (normalized.includes("unknown session") || normalized.includes("not found")) {
     return new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause,
     });
   }
   if (normalized.includes("closed")) {
     return new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause,
     });
@@ -1251,13 +1341,18 @@ function toSessionError(
   return undefined;
 }
 
-function toRequestError(threadId: ThreadId, method: string, cause: unknown): ProviderAdapterError {
-  const sessionError = toSessionError(threadId, cause);
+function toRequestError(
+  provider: ClaudeCompatibleProviderConfig["provider"],
+  threadId: ThreadId,
+  method: string,
+  cause: unknown,
+): ProviderAdapterError {
+  const sessionError = toSessionError(provider, threadId, cause);
   if (sessionError) {
     return sessionError;
   }
   return new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method,
     detail: toMessage(cause, `${method} failed`),
     cause,
@@ -1331,7 +1426,11 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
 
 const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   options?: ClaudeAdapterLiveOptions,
+  providerConfig: ClaudeCompatibleProviderConfig = CLAUDE_COMPATIBLE_CONFIG,
 ) {
+  const provider = providerConfig.provider;
+  const PROVIDER = provider;
+  const providerLabel = providerConfig.label;
   const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig;
   const nativeEventLogger =
@@ -1736,7 +1835,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const statuses = yield* Effect.tryPromise({
       try: () => readStatus(),
-      catch: (cause) => toRequestError(context.session.threadId, "mcp/status", cause),
+      catch: (cause) => toRequestError(PROVIDER, context.session.threadId, "mcp/status", cause),
     }).pipe(
       Effect.catch((cause) =>
         Effect.gen(function* () {
@@ -3068,7 +3167,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
-      const resumeState = readClaudeResumeState(input.resumeCursor);
+      const resumeState = readClaudeResumeState(input.resumeCursor, PROVIDER);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
 
@@ -3426,10 +3525,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             }),
         ),
       );
-      const claudeSettings = serverSettings.providers.claudeAgent;
-      const claudeBinaryPath = claudeSettings.binaryPath;
+      const providerBinaryPath = providerConfig.getBinaryPath(serverSettings);
       const prevalidatedMcpServers = validateClaudeMcpServers({
         servers: serverSettings.mcpServers.servers,
+        provider: PROVIDER,
+        label: providerLabel,
       });
       const mcpWarnings: string[] = [...prevalidatedMcpServers.warnings];
       const materializeMcpServers =
@@ -3455,6 +3555,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const postvalidatedMcpServers = validateClaudeMcpServers({
         servers: runtimeMcpServers,
         requireMaterializedOauth: true,
+        provider: PROVIDER,
+        label: providerLabel,
       });
       mcpWarnings.push(...postvalidatedMcpServers.warnings);
       const claudeMcpServers = buildClaudeMcpServers([
@@ -3470,8 +3572,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         generateMemories: serverSettings.generateMemories,
       });
       const modelSelection =
-        input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-      const runtimeConfig = resolveClaudeRuntimeConfig(modelSelection);
+        input.modelSelection?.provider === PROVIDER
+          ? (input.modelSelection as ClaudeCompatibleModelSelection)
+          : undefined;
+      const runtimeConfig = resolveClaudeRuntimeConfig(
+        modelSelection,
+        providerConfig.getModelCapabilities,
+      );
       const startupSettings = startupSettingsFromClaudeRuntimeConfig(runtimeConfig);
       const apiModelId = runtimeConfig?.apiModelId;
       const effectiveEffort = runtimeConfig?.effort ?? null;
@@ -3481,8 +3588,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
-        pathToClaudeCodeExecutable: claudeBinaryPath,
-        settingSources: [...CLAUDE_SETTING_SOURCES],
+        pathToClaudeCodeExecutable: providerBinaryPath,
+        settingSources: [...providerConfig.settingSources],
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         permissionMode,
         ...(permissionMode === "bypassPermissions"
@@ -3511,7 +3618,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: CLAUDE_CLIENT_APP,
+          ...providerConfig.getRuntimeEnv?.(serverSettings),
+          CLAUDE_AGENT_SDK_CLIENT_APP: providerConfig.clientApp,
           ...(fileCheckpointingEnabled ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1" } : {}),
         },
         ...(fileCheckpointingEnabled
@@ -3662,7 +3770,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
     const modelSelection =
-      input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+      input.modelSelection?.provider === PROVIDER
+        ? (input.modelSelection as ClaudeCompatibleModelSelection)
+        : undefined;
 
     if (context.turnState) {
       // Auto-close a stale synthetic turn (from background agent responses
@@ -3673,15 +3783,21 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
+      provider: PROVIDER,
+      label: providerLabel,
+      getModelCapabilities: providerConfig.getModelCapabilities,
     });
 
-    const runtimeConfig = resolveClaudeRuntimeConfig(modelSelection);
+    const runtimeConfig = resolveClaudeRuntimeConfig(
+      modelSelection,
+      providerConfig.getModelCapabilities,
+    );
     if (runtimeConfig?.apiModelId) {
       const apiModelId = runtimeConfig.apiModelId;
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
-          catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+          catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setModel", cause),
         });
         context.currentApiModelId = apiModelId;
       }
@@ -3689,7 +3805,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (flagSettings && context.query.applyFlagSettings) {
         yield* Effect.tryPromise({
           try: () => context.query.applyFlagSettings!(flagSettings),
-          catch: (cause) => toRequestError(input.threadId, "turn/applyFlagSettings", cause),
+          catch: (cause) =>
+            toRequestError(PROVIDER, input.threadId, "turn/applyFlagSettings", cause),
         });
       } else if (flagSettings && context.query.setMaxThinkingTokens) {
         const maybeThinking = (flagSettings as { alwaysThinkingEnabled?: unknown })
@@ -3697,7 +3814,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         if (typeof maybeThinking === "boolean") {
           yield* Effect.tryPromise({
             try: () => context.query.setMaxThinkingTokens(maybeThinking ? null : 0),
-            catch: (cause) => toRequestError(input.threadId, "turn/setMaxThinkingTokens", cause),
+            catch: (cause) =>
+              toRequestError(PROVIDER, input.threadId, "turn/setMaxThinkingTokens", cause),
           });
         }
       }
@@ -3715,12 +3833,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (input.interactionMode === "plan") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),
       });
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),
       });
     }
 
@@ -3761,7 +3879,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* Queue.offer(context.promptQueue, {
       type: "message",
       message,
-    }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+    }).pipe(
+      Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
+    );
 
     return {
       threadId: context.session.threadId,
@@ -3780,7 +3900,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* drainPendingDeferreds(context, { reason: "cancel" });
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
-        catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
+        catch: (cause) => toRequestError(PROVIDER, threadId, "turn/interrupt", cause),
       });
     },
   );
@@ -3942,11 +4062,30 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     hasSession,
     stopAll,
     streamEvents: Stream.fromQueue(runtimeEventQueue),
-  } satisfies ClaudeAdapterShape;
+  } satisfies ProviderAdapterShape<ProviderAdapterError> & {
+    readonly readUsage: ClaudeAdapterShape["readUsage"];
+  };
 });
 
-export const ClaudeAdapterLive = Layer.effect(ClaudeAdapter, makeClaudeAdapter());
+export const ClaudeAdapterLive = Layer.effect(
+  ClaudeAdapter,
+  makeClaudeAdapter().pipe(Effect.map((adapter) => adapter as ClaudeAdapterShape)),
+);
 
 export function makeClaudeAdapterLive(options?: ClaudeAdapterLiveOptions) {
-  return Layer.effect(ClaudeAdapter, makeClaudeAdapter(options));
+  return Layer.effect(
+    ClaudeAdapter,
+    makeClaudeAdapter(options).pipe(Effect.map((adapter) => adapter as ClaudeAdapterShape)),
+  );
 }
+
+export function makeGlmAdapterLive(options?: ClaudeAdapterLiveOptions) {
+  return Layer.effect(
+    GlmAdapter,
+    makeClaudeAdapter(options, GLM_COMPATIBLE_CONFIG).pipe(
+      Effect.map((adapter) => adapter as GlmAdapterShape),
+    ),
+  );
+}
+
+export const GlmAdapterLive = makeGlmAdapterLive();

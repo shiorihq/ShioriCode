@@ -36,6 +36,7 @@ import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
   normalizeCursorModelOptionsWithCapabilities,
+  normalizeGlmModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
 } from "shared/model";
 import type { WsRpcClient } from "shared/wsRpc";
@@ -137,6 +138,16 @@ function normalizeSelectionWithCapabilities(
     case "claudeAgent": {
       const options = selection.options
         ? normalizeClaudeModelOptionsWithCapabilities(caps, selection.options)
+        : undefined;
+      return {
+        provider: selection.provider,
+        model: selection.model,
+        ...(options ? { options } : {}),
+      };
+    }
+    case "glm": {
+      const options = selection.options
+        ? normalizeGlmModelOptionsWithCapabilities(caps, selection.options)
         : undefined;
       return {
         provider: selection.provider,
@@ -698,6 +709,7 @@ export function cycleProvider(
   const providers = serverConfig?.providers.map((provider) => provider.provider) ?? [
     "kimiCode",
     "gemini",
+    "glm",
     "cursor",
     "codex",
     "claudeAgent",

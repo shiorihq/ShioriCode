@@ -1169,6 +1169,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.models[0]?.slug, "claude-opus-4-8");
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -1213,26 +1217,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
-      it.effect("uses Claude SDK models for the visible Claude model catalog", () =>
+      it.effect("normalizes Claude SDK aliases for the visible Claude model catalog", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(() =>
             Effect.succeed({
               subscriptionType: undefined,
               models: [
                 {
-                  value: "claude-opus-4-8",
-                  displayName: "Opus 4.8",
-                  description: "Latest Opus model.",
+                  value: "default",
+                  displayName: "Default (recommended)",
+                  description: "Claude Code default model.",
+                },
+                {
+                  value: "opus",
+                  displayName: "Opus",
+                  description: "Latest Opus alias.",
                   supportsEffort: true,
                   supportedEffortLevels: ["low", "medium", "high", "max"],
                   supportsFastMode: true,
                 },
                 {
-                  value: "claude-sonnet-4-7",
-                  displayName: "Sonnet 4.7",
-                  description: "Latest Sonnet model.",
+                  value: "sonnet",
+                  displayName: "Sonnet",
+                  description: "Latest Sonnet alias.",
                   supportsEffort: true,
                   supportedEffortLevels: ["low", "medium", "high"],
+                },
+                {
+                  value: "haiku",
+                  displayName: "Haiku",
+                  description: "Latest Haiku alias.",
+                  supportsAdaptiveThinking: true,
+                },
+                {
+                  value: "claude-sonnet-4-7",
+                  displayName: "Sonnet 4.7",
+                  description: "Unexpected future Sonnet model.",
+                  supportsEffort: true,
                 },
               ],
             }),
@@ -1240,7 +1261,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-sonnet-4-7"],
+            ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+          );
+          assert.deepStrictEqual(
+            status.models.map((model) => model.name),
+            ["Opus 4.8", "Sonnet 4.6", "Haiku 4.5"],
           );
           assert.deepStrictEqual(status.models[0]?.capabilities?.reasoningEffortLevels, [
             { value: "low", label: "Low" },
@@ -1254,6 +1279,54 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             { value: "200k", label: "200k", isDefault: true },
             { value: "1m", label: "1M" },
           ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status --json")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps fallback Claude models when the SDK returns a partial catalog", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(() =>
+            Effect.succeed({
+              subscriptionType: undefined,
+              models: [
+                {
+                  value: "sonnet",
+                  displayName: "Sonnet",
+                  description: "Latest Sonnet alias.",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "medium", "high"],
+                  supportsFastMode: true,
+                },
+                {
+                  value: "haiku",
+                  displayName: "Haiku",
+                  description: "Latest Haiku alias.",
+                  supportsAdaptiveThinking: true,
+                },
+              ],
+            }),
+          );
+
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+          );
+          assert.strictEqual(status.models[0]?.name, "Opus 4.8");
+          assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
+          assert.strictEqual(status.models[1]?.capabilities?.supportsFastMode, true);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

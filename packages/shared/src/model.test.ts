@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeGlmModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
@@ -51,6 +52,12 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("default", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-4-8");
+    expect(normalizeModelSlug("kimi-code/kimi-for-coding", "kimiCode")).toBe("kimi2.7-code");
+    expect(normalizeModelSlug("kimi-k2.6", "kimiCode")).toBe("kimi2.7-code");
+    expect(normalizeModelSlug("kimi-2.7-code", "kimiCode")).toBe("kimi2.7-code");
+    expect(normalizeModelSlug("z-ai", "glm")).toBe("glm-5.2");
   });
 
   it("returns null for empty or missing values", () => {
@@ -204,6 +211,13 @@ describe("resolveApiModelId", () => {
         options: { contextWindow: "1m" },
       }),
     ).toBe("claude-opus-4-6[1m]");
+    expect(
+      resolveApiModelId({
+        provider: "glm",
+        model: "glm-5.2",
+        options: { contextWindow: "1m" },
+      }),
+    ).toBe("glm-5.2[1m]");
   });
 
   it("returns the model as-is for 200k context window", () => {
@@ -214,6 +228,13 @@ describe("resolveApiModelId", () => {
         options: { contextWindow: "200k" },
       }),
     ).toBe("claude-opus-4-6");
+    expect(
+      resolveApiModelId({
+        provider: "glm",
+        model: "glm-5.2",
+        options: { contextWindow: "200k" },
+      }),
+    ).toBe("glm-5.2");
   });
 
   it("returns the model as-is when no context window is set", () => {
@@ -296,6 +317,27 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
         undefined,
       ),
     ).toBeUndefined();
+  });
+
+  it("normalizes GLM effort and context window options", () => {
+    expect(
+      normalizeGlmModelOptionsWithCapabilities(
+        {
+          ...claudeCaps,
+          reasoningEffortLevels: [
+            { value: "medium", label: "Medium" },
+            { value: "max", label: "Max", isDefault: true },
+          ],
+        },
+        {
+          effort: "medium",
+          contextWindow: "1m",
+        },
+      ),
+    ).toEqual({
+      effort: "medium",
+      contextWindow: "1m",
+    });
   });
 
   it("preserves explicit Kimi thinking state", () => {

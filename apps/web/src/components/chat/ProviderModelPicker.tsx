@@ -10,6 +10,7 @@ import {
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
   MenuItem,
   MenuPopup,
@@ -31,6 +32,7 @@ import {
   getProviderSnapshot,
   isProviderDisabledSnapshot,
 } from "../../providerModels";
+import { playFastModeBlitz } from "./fastModeBlitzFx";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -54,8 +56,11 @@ function displayModelOptionLabel(
   provider: ProviderKind,
   option: { slug: string; name: string },
 ): string {
-  if (provider === "kimiCode" && option.slug === "kimi-code/kimi-for-coding") {
-    return "Kimi K2.6";
+  if (provider === "kimiCode" && option.slug === "kimi2.7-code") {
+    return "Kimi 2.7 Code";
+  }
+  if (provider === "glm" && option.slug === "glm-5.2") {
+    return "GLM-5.2";
   }
   return option.name;
 }
@@ -133,6 +138,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   providers?: ReadonlyArray<ServerProvider>;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   modelOptions?: ProviderModelOptions[ProviderKind];
+  onModelOptionsChange?: (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => void;
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
@@ -157,17 +163,41 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     return selectedOption ? displayModelOptionLabel(activeProvider, selectedOption) : props.model;
   })();
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
-  const fastModeActive = useMemo(() => {
-    if (!props.providers || !props.modelOptions || !("fastMode" in props.modelOptions)) {
+  const activeProviderModels = useMemo(
+    () => (props.providers ? getProviderModels(props.providers, activeProvider) : []),
+    [activeProvider, props.providers],
+  );
+  const activeModelCapabilities = useMemo(
+    () => getProviderModelCapabilities(activeProviderModels, props.model, activeProvider),
+    [activeProvider, activeProviderModels, props.model],
+  );
+  const fastModeActive =
+    activeModelCapabilities.supportsFastMode &&
+    (props.modelOptions as { fastMode?: boolean } | undefined)?.fastMode === true;
+  const handleFastModeToggle = () => {
+    if (!props.onModelOptionsChange || !activeModelCapabilities.supportsFastMode) {
+      return;
+    }
+    const nextFastMode = !fastModeActive;
+    if (nextFastMode !== fastModeActive) {
+      playFastModeBlitz(nextFastMode);
+    }
+    props.onModelOptionsChange({
+      ...(props.modelOptions as Record<string, unknown> | undefined),
+      fastMode: nextFastMode,
+    } as ProviderModelOptions[ProviderKind]);
+  };
+  const showFastModeToggle =
+    activeModelCapabilities.supportsFastMode && props.onModelOptionsChange !== undefined;
+  const fastModeActiveIcon = useMemo(() => {
+    if (!props.modelOptions || !("fastMode" in props.modelOptions)) {
       return false;
     }
     if (props.modelOptions.fastMode !== true) {
       return false;
     }
-    const activeProviderModels = getProviderModels(props.providers, activeProvider);
-    return getProviderModelCapabilities(activeProviderModels, props.model, activeProvider)
-      .supportsFastMode;
-  }, [activeProvider, props.model, props.modelOptions, props.providers]);
+    return activeModelCapabilities.supportsFastMode;
+  }, [activeModelCapabilities.supportsFastMode, props.modelOptions]);
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
@@ -210,7 +240,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <span className="flex items-center gap-1.5">
           <span className="relative flex size-3.5 shrink-0 items-center justify-center">
-            {fastModeActive ? (
+            {fastModeActiveIcon ? (
               <>
                 <FastModeBoltIcon
                   aria-hidden="true"
@@ -259,6 +289,21 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           props.lockedProvider !== null ? "[--available-height:min(11rem,45vh)]" : undefined
         }
       >
+        {showFastModeToggle ? (
+          <>
+            <MenuCheckboxItem
+              variant="switch"
+              checked={fastModeActive}
+              onClick={(event) => {
+                event.preventDefault();
+                handleFastModeToggle();
+              }}
+            >
+              Fast mode
+            </MenuCheckboxItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         {props.effort && props.effort.levels.length > 0 && !props.effort.locked ? (
           <>
             <MenuSub>

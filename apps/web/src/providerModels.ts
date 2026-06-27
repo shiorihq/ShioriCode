@@ -21,8 +21,11 @@ function fallbackModelDisplayName(
   model: string | null | undefined,
 ): string | null {
   const slug = normalizeModelSlug(model, provider);
-  if (provider === "kimiCode" && slug === "kimi-code/kimi-for-coding") {
-    return "Kimi K2.6";
+  if (provider === "kimiCode" && slug === "kimi2.7-code") {
+    return "Kimi 2.7 Code";
+  }
+  if (provider === "glm" && slug === "glm-5.2") {
+    return "GLM-5.2";
   }
   return slug;
 }

@@ -6,7 +6,9 @@ export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"]
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
 export const CLAUDE_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max", "ultrathink"] as const;
 export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
-export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort;
+export const GLM_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max"] as const;
+export type GlmCodeEffort = (typeof GLM_CODE_EFFORT_OPTIONS)[number];
+export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort | GlmCodeEffort;
 
 export const CodexModelOptions = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
@@ -21,6 +23,12 @@ export type KimiCodeModelOptions = typeof KimiCodeModelOptions.Type;
 
 export const GeminiModelOptions = Schema.Struct({});
 export type GeminiModelOptions = typeof GeminiModelOptions.Type;
+
+export const GlmModelOptions = Schema.Struct({
+  effort: Schema.optional(Schema.Literals(GLM_CODE_EFFORT_OPTIONS)),
+  contextWindow: Schema.optional(Schema.String),
+});
+export type GlmModelOptions = typeof GlmModelOptions.Type;
 
 export const CursorModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
@@ -41,6 +49,7 @@ export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
 export const ProviderModelOptions = Schema.Struct({
   kimiCode: Schema.optional(KimiCodeModelOptions),
   gemini: Schema.optional(GeminiModelOptions),
+  glm: Schema.optional(GlmModelOptions),
   cursor: Schema.optional(CursorModelOptions),
   codex: Schema.optional(CodexModelOptions),
   claudeAgent: Schema.optional(ClaudeModelOptions),
@@ -71,8 +80,9 @@ export const ModelCapabilities = Schema.Struct({
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  kimiCode: "kimi-code/kimi-for-coding",
+  kimiCode: "kimi2.7-code",
   gemini: "auto",
+  glm: "glm-5.2",
   cursor: "auto",
   codex: "gpt-5.5",
   claudeAgent: "claude-sonnet-4-6",
@@ -82,8 +92,9 @@ export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 
 /** Per-provider text generation model defaults. */
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  kimiCode: "kimi-code/kimi-for-coding",
+  kimiCode: "kimi2.7-code",
   gemini: "auto",
+  glm: "glm-5.2",
   cursor: "auto",
   codex: "gpt-5.4-mini",
   claudeAgent: "claude-haiku-4-5",
@@ -97,17 +108,30 @@ export type TextGenerationProviderKind = (typeof TEXT_GENERATION_PROVIDER_KINDS)
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   kimiCode: {
-    kimi: "kimi-code/kimi-for-coding",
-    "kimi-code": "kimi-code/kimi-for-coding",
-    "kimi-k2.6": "kimi-code/kimi-for-coding",
-    "kimi-for-coding": "kimi-code/kimi-for-coding",
-    "kimi-code/kimi-for-coding": "kimi-code/kimi-for-coding",
-    latest: "kimi-code/kimi-for-coding",
+    kimi: "kimi2.7-code",
+    "kimi-code": "kimi2.7-code",
+    "kimi2.7": "kimi2.7-code",
+    "kimi2.7-code": "kimi2.7-code",
+    "kimi-2.7": "kimi2.7-code",
+    "kimi-2.7-code": "kimi2.7-code",
+    "kimi-k2.7": "kimi2.7-code",
+    "kimi-k2.6": "kimi2.7-code",
+    "kimi-for-coding": "kimi2.7-code",
+    "kimi-code/kimi-for-coding": "kimi2.7-code",
+    latest: "kimi2.7-code",
   },
   gemini: {
     gemini: "auto",
     auto: "auto",
     latest: "auto",
+  },
+  glm: {
+    glm: "glm-5.2",
+    "glm-code": "glm-5.2",
+    "glm-coding-plan": "glm-5.2",
+    zai: "glm-5.2",
+    "z-ai": "glm-5.2",
+    latest: "glm-5.2",
   },
   cursor: {
     cursor: "auto",
@@ -126,6 +150,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   claudeAgent: {
+    default: "claude-sonnet-4-6",
     opus: "claude-opus-4-8",
     "opus-4.8": "claude-opus-4-8",
     "claude-opus-4.8": "claude-opus-4-8",
@@ -150,6 +175,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   kimiCode: "Kimi Code",
   gemini: "Antigravity",
+  glm: "GLM",
   cursor: "Cursor",
   codex: "Codex",
   claudeAgent: "Claude",

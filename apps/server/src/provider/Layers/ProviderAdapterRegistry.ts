@@ -19,6 +19,7 @@ import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
 import { GeminiAdapter } from "../Services/GeminiAdapter.ts";
+import { GlmAdapter } from "../Services/GlmAdapter.ts";
 import { KimiCodeAdapter } from "../Services/KimiCodeAdapter.ts";
 
 export interface ProviderAdapterRegistryLiveOptions {
@@ -34,6 +35,7 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       : [
           yield* KimiCodeAdapter,
           yield* GeminiAdapter,
+          yield* GlmAdapter,
           yield* CursorAdapter,
           yield* CodexAdapter,
           yield* ClaudeAdapter,

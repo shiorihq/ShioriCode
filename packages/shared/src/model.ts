@@ -5,6 +5,7 @@ import {
   type ClaudeModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
+  type GlmModelOptions,
   type KimiCodeModelOptions,
   type ModelCapabilities,
   type ModelSelection,
@@ -146,6 +147,19 @@ export function normalizeCursorModelOptionsWithCapabilities(
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
+export function normalizeGlmModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: GlmModelOptions | null | undefined,
+): GlmModelOptions | undefined {
+  const effort = resolveEffort(caps, modelOptions?.effort);
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const nextOptions: GlmModelOptions = {
+    ...(effort ? { effort: effort as GlmModelOptions["effort"] } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
@@ -245,6 +259,15 @@ export function resolveApiModelId(modelSelection: ModelSelection): string {
         default:
           return modelSelection.model;
       }
+    }
+    case "glm": {
+      if (
+        modelSelection.options?.contextWindow === "1m" &&
+        !/\[[^\]]+\]$/u.test(modelSelection.model)
+      ) {
+        return `${modelSelection.model}[1m]`;
+      }
+      return modelSelection.model;
     }
     case "kimiCode":
     default: {

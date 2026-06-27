@@ -330,7 +330,7 @@ describe("KimiCodeAdapter helpers", () => {
         shareDir: enabledShareDir,
         modelSelection: {
           provider: "kimiCode",
-          model: "kimi-code/kimi-for-coding",
+          model: "kimi2.7-code",
         },
       }),
     ).toBe(true);
@@ -339,7 +339,7 @@ describe("KimiCodeAdapter helpers", () => {
         shareDir: disabledShareDir,
         modelSelection: {
           provider: "kimiCode",
-          model: "kimi-code/kimi-for-coding",
+          model: "kimi2.7-code",
         },
       }),
     ).toBe(false);
@@ -354,7 +354,7 @@ describe("KimiCodeAdapter helpers", () => {
         shareDir: enabledShareDir,
         modelSelection: {
           provider: "kimiCode",
-          model: "kimi-code/kimi-for-coding",
+          model: "kimi2.7-code",
           options: { thinking: false },
         },
       }),
@@ -364,7 +364,7 @@ describe("KimiCodeAdapter helpers", () => {
         shareDir: disabledShareDir,
         modelSelection: {
           provider: "kimiCode",
-          model: "kimi-code/kimi-for-coding",
+          model: "kimi2.7-code",
           options: { thinking: true },
         },
       }),

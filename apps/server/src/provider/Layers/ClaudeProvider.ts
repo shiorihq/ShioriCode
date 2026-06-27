@@ -32,108 +32,85 @@ import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "contracts";
 
 const PROVIDER = "claudeAgent" as const;
-const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+const OPUS_4_8_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  supportsFastMode: true,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [
+    { value: "200k", label: "200k", isDefault: true },
+    { value: "1m", label: "1M" },
+  ],
+  promptInjectedEffortLevels: ["ultrathink"],
+};
+
+const OPUS_4_6_CAPABILITIES: ModelCapabilities = {
+  ...OPUS_4_8_CAPABILITIES,
+  supportsFastMode: true,
+};
+
+const SONNET_4_6_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [
+    { value: "200k", label: "200k", isDefault: true },
+    { value: "1m", label: "1M" },
+  ],
+  promptInjectedEffortLevels: ["ultrathink"],
+};
+
+const HAIKU_4_5_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: true,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
+const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-8",
     name: "Opus 4.8",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "max", label: "Max" },
-        { value: "ultrathink", label: "Ultrathink" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: "200k", label: "200k", isDefault: true },
-        { value: "1m", label: "1M" },
-      ],
-      promptInjectedEffortLevels: ["ultrathink"],
-    } satisfies ModelCapabilities,
-  },
-  {
-    slug: "claude-opus-4-7",
-    name: "Opus 4.7",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "max", label: "Max" },
-        { value: "ultrathink", label: "Ultrathink" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: "200k", label: "200k", isDefault: true },
-        { value: "1m", label: "1M" },
-      ],
-      promptInjectedEffortLevels: ["ultrathink"],
-    } satisfies ModelCapabilities,
-  },
-  {
-    slug: "claude-opus-4-6",
-    name: "Opus 4.6",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "max", label: "Max" },
-        { value: "ultrathink", label: "Ultrathink" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: "200k", label: "200k", isDefault: true },
-        { value: "1m", label: "1M" },
-      ],
-      promptInjectedEffortLevels: ["ultrathink"],
-    } satisfies ModelCapabilities,
+    capabilities: OPUS_4_8_CAPABILITIES,
   },
   {
     slug: "claude-sonnet-4-6",
     name: "Sonnet 4.6",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "ultrathink", label: "Ultrathink" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: "200k", label: "200k", isDefault: true },
-        { value: "1m", label: "1M" },
-      ],
-      promptInjectedEffortLevels: ["ultrathink"],
-    } satisfies ModelCapabilities,
+    capabilities: SONNET_4_6_CAPABILITIES,
   },
   {
     slug: "claude-haiku-4-5",
     name: "Haiku 4.5",
     isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [],
-      supportsFastMode: false,
-      supportsThinkingToggle: true,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    } satisfies ModelCapabilities,
+    capabilities: HAIKU_4_5_CAPABILITIES,
   },
 ];
+
+const BUILT_IN_CAPABILITIES_BY_MODEL = new Map<string, ModelCapabilities>([
+  ["claude-opus-4-8", OPUS_4_8_CAPABILITIES],
+  ["claude-sonnet-4-6", SONNET_4_6_CAPABILITIES],
+  ["claude-haiku-4-5", HAIKU_4_5_CAPABILITIES],
+  ["claude-opus-4-7", OPUS_4_8_CAPABILITIES],
+  ["claude-opus-4-6", OPUS_4_6_CAPABILITIES],
+]);
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
   return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ?? {
+    (slug ? BUILT_IN_CAPABILITIES_BY_MODEL.get(slug) : undefined) ?? {
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: false,
@@ -145,7 +122,11 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
 
 function buildPendingClaudeProviderStatus(claudeSettings: ClaudeSettings): ServerProvider {
   const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, claudeSettings.customModels);
+  const models = providerModelsFromSettings(
+    VISIBLE_BUILT_IN_MODELS,
+    PROVIDER,
+    claudeSettings.customModels,
+  );
 
   if (!claudeSettings.enabled) {
     return buildPendingServerProvider({
@@ -508,6 +489,44 @@ function buildSdkModelCapabilities(
   };
 }
 
+function resolveClaudeSdkModelSlug(model: ClaudeSdkModelInfo): string | null {
+  const value = model.value.trim().toLowerCase();
+  const displayName = model.displayName.trim().toLowerCase();
+
+  if (!value || value === "default" || displayName.startsWith("default")) {
+    return null;
+  }
+
+  if (
+    value === "opus" ||
+    value === "opus-4-8" ||
+    value === "opus-4.8" ||
+    value === "claude-opus-4-8"
+  ) {
+    return "claude-opus-4-8";
+  }
+
+  if (
+    value === "sonnet" ||
+    value === "sonnet-4-6" ||
+    value === "sonnet-4.6" ||
+    value === "claude-sonnet-4-6"
+  ) {
+    return "claude-sonnet-4-6";
+  }
+
+  if (
+    value === "haiku" ||
+    value === "haiku-4-5" ||
+    value === "haiku-4.5" ||
+    value === "claude-haiku-4-5"
+  ) {
+    return "claude-haiku-4-5";
+  }
+
+  return null;
+}
+
 function modelsFromClaudeSdk(
   models: ReadonlyArray<ClaudeSdkModelInfo> | null | undefined,
 ): ReadonlyArray<ServerProviderModel> | null {
@@ -515,27 +534,32 @@ function modelsFromClaudeSdk(
     return null;
   }
 
-  const bySlug = new Map(BUILT_IN_MODELS.map((model) => [model.slug, model] as const));
-  const seen = new Set<string>();
-  const result: ServerProviderModel[] = [];
+  const sdkModelsBySlug = new Map<string, ClaudeSdkModelInfo>();
 
   for (const model of models) {
-    const slug = model.value.trim();
-    if (!slug || seen.has(slug)) {
+    const slug = resolveClaudeSdkModelSlug(model);
+    if (!slug || sdkModelsBySlug.has(slug)) {
       continue;
     }
 
-    seen.add(slug);
-    const builtIn = bySlug.get(slug);
-    result.push({
-      slug,
-      name: model.displayName.trim() || builtIn?.name || slug,
-      isCustom: false,
-      capabilities: buildSdkModelCapabilities(model, builtIn?.capabilities ?? null),
-    });
+    sdkModelsBySlug.set(slug, model);
   }
 
-  return result.length > 0 ? result : null;
+  if (sdkModelsBySlug.size === 0) {
+    return null;
+  }
+
+  return VISIBLE_BUILT_IN_MODELS.map((builtIn) => {
+    const sdkModel = sdkModelsBySlug.get(builtIn.slug);
+    if (!sdkModel) {
+      return builtIn;
+    }
+
+    return {
+      ...builtIn,
+      capabilities: buildSdkModelCapabilities(sdkModel, builtIn.capabilities),
+    };
+  });
 }
 
 /**
@@ -611,7 +635,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const checkedAt = new Date().toISOString();
   const fallbackModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    VISIBLE_BUILT_IN_MODELS,
     PROVIDER,
     claudeSettings.customModels,
   );

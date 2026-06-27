@@ -10,6 +10,7 @@ import { ClaudeProviderLive } from "./ClaudeProvider";
 import { CodexProviderLive } from "./CodexProvider";
 import { CursorProviderLive } from "./CursorProvider";
 import { GeminiProviderLive } from "./GeminiProvider";
+import { GlmProviderLive } from "./GlmProvider";
 import { KimiCodeProviderLive } from "./KimiCodeProvider";
 import type { ClaudeProviderShape } from "../Services/ClaudeProvider";
 import { ClaudeProvider } from "../Services/ClaudeProvider";
@@ -19,6 +20,8 @@ import type { CursorProviderShape } from "../Services/CursorProvider";
 import { CursorProvider } from "../Services/CursorProvider";
 import type { GeminiProviderShape } from "../Services/GeminiProvider";
 import { GeminiProvider } from "../Services/GeminiProvider";
+import type { GlmProviderShape } from "../Services/GlmProvider";
+import { GlmProvider } from "../Services/GlmProvider";
 import type { KimiCodeProviderShape } from "../Services/KimiCodeProvider";
 import { KimiCodeProvider } from "../Services/KimiCodeProvider";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
@@ -26,16 +29,25 @@ import { ProviderRegistry, type ProviderRegistryShape } from "../Services/Provid
 const loadProviders = (
   kimiCodeProvider: KimiCodeProviderShape,
   geminiProvider: GeminiProviderShape,
+  glmProvider: GlmProviderShape,
   cursorProvider: CursorProviderShape,
   codexProvider: CodexProviderShape,
   claudeProvider: ClaudeProviderShape,
 ): Effect.Effect<
-  readonly [ServerProvider, ServerProvider, ServerProvider, ServerProvider, ServerProvider]
+  readonly [
+    ServerProvider,
+    ServerProvider,
+    ServerProvider,
+    ServerProvider,
+    ServerProvider,
+    ServerProvider,
+  ]
 > =>
   Effect.all(
     [
       kimiCodeProvider.getSnapshot,
       geminiProvider.getSnapshot,
+      glmProvider.getSnapshot,
       cursorProvider.getSnapshot,
       codexProvider.getSnapshot,
       claudeProvider.getSnapshot,
@@ -55,6 +67,7 @@ export const ProviderRegistryLive = Layer.effect(
   Effect.gen(function* () {
     const kimiCodeProvider = yield* KimiCodeProvider;
     const geminiProvider = yield* GeminiProvider;
+    const glmProvider = yield* GlmProvider;
     const cursorProvider = yield* CursorProvider;
     const codexProvider = yield* CodexProvider;
     const claudeProvider = yield* ClaudeProvider;
@@ -66,6 +79,7 @@ export const ProviderRegistryLive = Layer.effect(
       yield* loadProviders(
         kimiCodeProvider,
         geminiProvider,
+        glmProvider,
         cursorProvider,
         codexProvider,
         claudeProvider,
@@ -79,6 +93,7 @@ export const ProviderRegistryLive = Layer.effect(
       const providers = yield* loadProviders(
         kimiCodeProvider,
         geminiProvider,
+        glmProvider,
         cursorProvider,
         codexProvider,
         claudeProvider,
@@ -96,6 +111,9 @@ export const ProviderRegistryLive = Layer.effect(
       Effect.forkScoped,
     );
     yield* Stream.runForEach(geminiProvider.streamChanges, () => syncProviders()).pipe(
+      Effect.forkScoped,
+    );
+    yield* Stream.runForEach(glmProvider.streamChanges, () => syncProviders()).pipe(
       Effect.forkScoped,
     );
     yield* Stream.runForEach(cursorProvider.streamChanges, () => syncProviders()).pipe(
@@ -116,6 +134,9 @@ export const ProviderRegistryLive = Layer.effect(
         case "gemini":
           yield* geminiProvider.refresh;
           break;
+        case "glm":
+          yield* glmProvider.refresh;
+          break;
         case "cursor":
           yield* cursorProvider.refresh;
           break;
@@ -130,6 +151,7 @@ export const ProviderRegistryLive = Layer.effect(
             [
               kimiCodeProvider.refresh,
               geminiProvider.refresh,
+              glmProvider.refresh,
               cursorProvider.refresh,
               codexProvider.refresh,
               claudeProvider.refresh,
@@ -161,6 +183,7 @@ export const ProviderRegistryLive = Layer.effect(
 ).pipe(
   Layer.provideMerge(KimiCodeProviderLive),
   Layer.provideMerge(GeminiProviderLive),
+  Layer.provideMerge(GlmProviderLive),
   Layer.provideMerge(CursorProviderLive),
   Layer.provideMerge(CodexProviderLive),
   Layer.provideMerge(ClaudeProviderLive),

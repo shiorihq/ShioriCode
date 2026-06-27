@@ -72,7 +72,7 @@ import { KimiCodeAdapter, type KimiCodeAdapterShape } from "../Services/KimiCode
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 
 const PROVIDER = "kimiCode" as const;
-const DEFAULT_MODEL = "kimi-code/kimi-for-coding";
+const DEFAULT_MODEL = "kimi2.7-code";
 const KIMI_REASONING_ITEM_TITLE = "Reasoning";
 const KIMI_ASSISTANT_ITEM_TITLE = "Assistant response";
 const DEFAULT_KIMI_MAX_STEPS_PER_TURN = 64;

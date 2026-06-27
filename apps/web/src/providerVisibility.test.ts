@@ -39,7 +39,7 @@ describe("providerVisibility", () => {
 
   it("falls back to all providers when every provider is hidden", () => {
     expect(
-      getVisibleProviderKinds(["kimiCode", "gemini", "cursor", "codex", "claudeAgent"]),
+      getVisibleProviderKinds(["kimiCode", "gemini", "glm", "cursor", "codex", "claudeAgent"]),
     ).toContain("codex");
   });
 

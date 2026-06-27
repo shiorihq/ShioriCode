@@ -19,6 +19,7 @@ const STATUS_DOT_STYLES: Record<ServerProvider["status"], string> = {
 const PROVIDER_DESCRIPTIONS: Record<ProviderKind, string> = {
   kimiCode: "Kimi Code CLI",
   gemini: "Google Antigravity SDK",
+  glm: "Z.AI GLM Coding Plan",
   cursor: "Cursor CLI",
   codex: "OpenAI Codex CLI",
   claudeAgent: "Anthropic Claude Code CLI",
@@ -27,6 +28,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderKind, string> = {
 const PROVIDER_INSTALL_INSTRUCTIONS: Partial<Record<ProviderKind, readonly string[]>> = {
   kimiCode: ["curl -LsSf https://code.kimi.com/install.sh | bash", "kimi login"],
   cursor: ["curl https://cursor.com/install -fsS | bash", "cursor-agent login"],
+  glm: ["npm install -g @anthropic-ai/claude-code", "export ZAI_API_KEY=your-zai-api-key"],
   codex: ["npm install -g @openai/codex", "codex login"],
   claudeAgent: ["npm install -g @anthropic-ai/claude-code", "claude auth login"],
 };

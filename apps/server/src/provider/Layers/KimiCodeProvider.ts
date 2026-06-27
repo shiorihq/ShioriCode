@@ -23,10 +23,12 @@ import { ServerSettingsService } from "../../serverSettings";
 
 const PROVIDER = "kimiCode" as const;
 const MIN_SUPPORTED_KIMI_WIRE_VERSION = "1.7.0";
+const KIMI_CODE_MODEL_SLUG = "kimi2.7-code";
+const KIMI_CODE_MODEL_NAME = "Kimi 2.7 Code";
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "kimi-code/kimi-for-coding",
-    name: "Kimi K2.6",
+    slug: KIMI_CODE_MODEL_SLUG,
+    name: KIMI_CODE_MODEL_NAME,
     isCustom: false,
     multiModal: false,
     capabilities: {
@@ -64,34 +66,32 @@ function buildPendingKimiCodeProviderStatus(settings: KimiCodeSettings): ServerP
 }
 
 function modelsFromConfig(_settings: KimiCodeSettings): ReadonlyArray<ServerProviderModel> {
-  // Keep Kimi pinned to a single model, but use the configured model key that
-  // the local Kimi CLI actually expects.
+  // Keep Kimi pinned to a single canonical model in ShioriCode while accepting
+  // legacy SDK/config identifiers so existing installs still resolve cleanly.
   const shareDir = _settings.shareDir.trim() || undefined;
   const config = parseConfig(shareDir);
   const selectedModel = config.models.find(
-    (model) =>
-      model.name.toLowerCase() === "kimi-k2.6" ||
-      model.id === "kimi-code/kimi-for-coding" ||
-      model.id === "kimi-for-coding",
+    (model) => isKnownKimiCodeModelKey(model.id) || isKnownKimiCodeModelKey(model.name),
   );
   if (!selectedModel) {
     return BUILT_IN_MODELS;
   }
-  return [
-    {
-      slug: selectedModel.id,
-      name: selectedModel.name,
-      isCustom: false,
-      multiModal: false,
-      capabilities: {
-        reasoningEffortLevels: [],
-        supportsFastMode: false,
-        supportsThinkingToggle: true,
-        contextWindowOptions: [],
-        promptInjectedEffortLevels: [],
-      } satisfies ModelCapabilities,
-    },
-  ];
+  return BUILT_IN_MODELS;
+}
+
+function isKnownKimiCodeModelKey(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === KIMI_CODE_MODEL_SLUG ||
+    normalized === KIMI_CODE_MODEL_NAME.toLowerCase() ||
+    normalized === "kimi-2.7-code" ||
+    normalized === "kimi2.7" ||
+    normalized === "kimi-2.7" ||
+    normalized === "kimi-k2.7" ||
+    normalized === "kimi-k2.6" ||
+    normalized === "kimi-code/kimi-for-coding" ||
+    normalized === "kimi-for-coding"
+  );
 }
 
 type KimiCliWireInfo = {

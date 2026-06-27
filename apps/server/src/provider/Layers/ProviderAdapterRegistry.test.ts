@@ -8,6 +8,7 @@ import { ClaudeAdapter, ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts"
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { CursorAdapter, CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { GeminiAdapter, GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
+import { GlmAdapter, GlmAdapterShape } from "../Services/GlmAdapter.ts";
 import { KimiCodeAdapter, KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
@@ -78,6 +79,27 @@ const fakeGeminiAdapter: GeminiAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeGlmAdapter: GlmAdapterShape = {
+  provider: "glm",
+  capabilities: {
+    sessionModelSwitch: "in-session",
+    recovery: { supportsResumeCursor: true, supportsAdoptActiveSession: true },
+    observability: { emitsStructuredSessionExit: true, emitsRuntimeDiagnostics: true },
+  },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const fakeCursorAdapter: CursorAdapterShape = {
   provider: "cursor",
   capabilities: {
@@ -128,6 +150,7 @@ const layer = it.layer(
       Layer.mergeAll(
         Layer.succeed(KimiCodeAdapter, fakeKimiCodeAdapter),
         Layer.succeed(GeminiAdapter, fakeGeminiAdapter),
+        Layer.succeed(GlmAdapter, fakeGlmAdapter),
         Layer.succeed(CursorAdapter, fakeCursorAdapter),
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
@@ -143,17 +166,19 @@ layer("ProviderAdapterRegistryLive", (it) => {
       const registry = yield* ProviderAdapterRegistry;
       const kimiCode = yield* registry.getByProvider("kimiCode");
       const gemini = yield* registry.getByProvider("gemini");
+      const glm = yield* registry.getByProvider("glm");
       const cursor = yield* registry.getByProvider("cursor");
       const codex = yield* registry.getByProvider("codex");
       const claude = yield* registry.getByProvider("claudeAgent");
       assert.equal(kimiCode, fakeKimiCodeAdapter);
       assert.equal(gemini, fakeGeminiAdapter);
+      assert.equal(glm, fakeGlmAdapter);
       assert.equal(cursor, fakeCursorAdapter);
       assert.equal(codex, fakeCodexAdapter);
       assert.equal(claude, fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["kimiCode", "gemini", "cursor", "codex", "claudeAgent"]);
+      assert.deepEqual(providers, ["kimiCode", "gemini", "glm", "cursor", "codex", "claudeAgent"]);
     }),
   );
 

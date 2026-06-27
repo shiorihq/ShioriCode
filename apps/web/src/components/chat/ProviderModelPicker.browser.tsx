@@ -1,4 +1,4 @@
-import { type ProviderKind, type ServerProvider } from "contracts";
+import { type ProviderKind, type ProviderModelOptions, type ServerProvider } from "contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -71,7 +71,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
             effort("high"),
             effort("max"),
           ],
-          supportsFastMode: false,
+          supportsFastMode: true,
           supportsThinkingToggle: true,
           contextWindowOptions: [],
           promptInjectedEffortLevels: [],
@@ -142,6 +142,14 @@ async function mountPicker(props: {
   lockedProvider: ProviderKind | null;
   providers?: ReadonlyArray<ServerProvider>;
   modelOptions?: { fastMode?: boolean };
+  onModelOptionsChange?: (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => void;
+  effort?: {
+    value: string;
+    label: string;
+    levels: ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>;
+    onChange: (value: string) => void;
+    locked?: boolean;
+  } | null;
   compact?: boolean;
   triggerVariant?: "ghost" | "outline";
 }) {
@@ -163,6 +171,10 @@ async function mountPicker(props: {
       providers={providers}
       modelOptionsByProvider={modelOptionsByProvider}
       modelOptions={props.modelOptions}
+      {...(props.effort !== undefined ? { effort: props.effort } : {})}
+      {...(props.onModelOptionsChange !== undefined
+        ? { onModelOptionsChange: props.onModelOptionsChange }
+        : {})}
       {...(props.compact !== undefined ? { compact: props.compact } : {})}
       {...(props.triggerVariant !== undefined ? { triggerVariant: props.triggerVariant } : {})}
       onProviderModelChange={onProviderModelChange}
@@ -200,6 +212,42 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude");
         expect(text).not.toContain("Claude Sonnet 4.6");
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a fast-mode switch above intelligence and updates model options", async () => {
+    const onModelOptionsChange = vi.fn();
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+      modelOptions: { fastMode: false },
+      onModelOptionsChange,
+      effort: {
+        value: "high",
+        label: "High",
+        levels: [effort("low"), effort("medium"), effort("high", true), effort("max")],
+        onChange: vi.fn(),
+      },
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        const fastModeIndex = text.indexOf("Fast mode");
+        const intelligenceIndex = text.indexOf("Intelligence");
+        expect(fastModeIndex).toBeGreaterThanOrEqual(0);
+        expect(intelligenceIndex).toBeGreaterThanOrEqual(0);
+        expect(fastModeIndex).toBeLessThan(intelligenceIndex);
+      });
+
+      await page.getByRole("menuitemcheckbox", { name: "Fast mode" }).click();
+
+      expect(onModelOptionsChange).toHaveBeenCalledWith({ fastMode: true });
     } finally {
       await mounted.cleanup();
     }

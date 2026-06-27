@@ -7,6 +7,7 @@ import {
   type ClaudeModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
+  type GlmModelOptions,
 } from "contracts";
 import { isClaudeUltrathinkPrompt, resolveEffort } from "shared/model";
 import type { ReactNode } from "react";
@@ -16,6 +17,7 @@ import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
   normalizeCursorModelOptionsWithCapabilities,
+  normalizeGlmModelOptionsWithCapabilities,
   normalizeKimiCodeModelOptionsWithCapabilities,
 } from "shared/model";
 
@@ -45,6 +47,7 @@ type ProviderRegistryEntry = {
     modelOptions: ProviderModelOptions[ProviderKind] | undefined;
     prompt: string;
     onPromptChange: (prompt: string) => void;
+    includeFastMode: boolean;
   }) => ReactNode;
   renderEffortPicker: (input: {
     threadId: ThreadId;
@@ -90,14 +93,22 @@ function getProviderStateFromCapabilities(
       ? normalizeKimiCodeModelOptionsWithCapabilities(caps, providerOptions as KimiCodeModelOptions)
       : provider === "gemini"
         ? undefined
-        : provider === "cursor"
-          ? normalizeCursorModelOptionsWithCapabilities(caps, providerOptions as CursorModelOptions)
-          : provider === "codex"
-            ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions as CodexModelOptions)
-            : normalizeClaudeModelOptionsWithCapabilities(
+        : provider === "glm"
+          ? normalizeGlmModelOptionsWithCapabilities(caps, providerOptions as GlmModelOptions)
+          : provider === "cursor"
+            ? normalizeCursorModelOptionsWithCapabilities(
                 caps,
-                providerOptions as ClaudeModelOptions,
-              );
+                providerOptions as CursorModelOptions,
+              )
+            : provider === "codex"
+              ? normalizeCodexModelOptionsWithCapabilities(
+                  caps,
+                  providerOptions as CodexModelOptions,
+                )
+              : normalizeClaudeModelOptionsWithCapabilities(
+                  caps,
+                  providerOptions as ClaudeModelOptions,
+                );
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -119,9 +130,14 @@ function hasAuxiliaryTraitControls(
   models: ReadonlyArray<ServerProviderModel>,
   model: string,
   provider: ProviderKind,
+  options?: { includeFastMode?: boolean },
 ): boolean {
   const caps = getProviderModelCapabilities(models, model, provider);
-  return caps.supportsThinkingToggle || caps.contextWindowOptions.length > 1;
+  return (
+    caps.supportsThinkingToggle ||
+    caps.contextWindowOptions.length > 1 ||
+    (options?.includeFastMode === true && caps.supportsFastMode)
+  );
 }
 
 function hasEffortControls(
@@ -137,7 +153,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
   kimiCode: {
     getState: (input) => getProviderStateFromCapabilities(input),
     renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "kimiCode") ? (
+      hasAuxiliaryTraitControls(models, model, "kimiCode", { includeFastMode: false }) ? (
         <TraitsMenuContent
           provider="kimiCode"
           models={models}
@@ -163,7 +179,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         />
       ) : null,
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "kimiCode") ? (
+      hasAuxiliaryTraitControls(models, model, "kimiCode", { includeFastMode: false }) ? (
         <TraitsPicker
           provider="kimiCode"
           models={models}
@@ -183,10 +199,61 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     renderEffortPicker: () => null,
     renderTraitsPicker: () => null,
   },
-  cursor: {
+  glm: {
     getState: (input) => getProviderStateFromCapabilities(input),
     renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "cursor") ? (
+      hasAuxiliaryTraitControls(models, model, "glm", { includeFastMode: false }) ? (
+        <TraitsMenuContent
+          provider="glm"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode={false}
+        />
+      ) : null,
+    renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasEffortControls(models, model, "glm") ? (
+        <EffortPicker
+          provider="glm"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+        />
+      ) : null,
+    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
+      hasAuxiliaryTraitControls(models, model, "glm", { includeFastMode: false }) ? (
+        <TraitsPicker
+          provider="glm"
+          models={models}
+          threadId={threadId}
+          model={model}
+          modelOptions={modelOptions}
+          prompt={prompt}
+          onPromptChange={onPromptChange}
+          includeEffort={false}
+          includeFastMode={false}
+        />
+      ) : null,
+  },
+  cursor: {
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: ({
+      threadId,
+      model,
+      models,
+      modelOptions,
+      prompt,
+      onPromptChange,
+      includeFastMode,
+    }) =>
+      hasAuxiliaryTraitControls(models, model, "cursor", { includeFastMode }) ? (
         <TraitsMenuContent
           provider="cursor"
           models={models}
@@ -196,7 +263,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
           prompt={prompt}
           onPromptChange={onPromptChange}
           includeEffort={false}
-          includeFastMode
+          includeFastMode={includeFastMode}
         />
       ) : null,
     renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
@@ -212,7 +279,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         />
       ) : null,
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "cursor") ? (
+      hasAuxiliaryTraitControls(models, model, "cursor", { includeFastMode: true }) ? (
         <TraitsPicker
           provider="cursor"
           models={models}
@@ -229,7 +296,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
   codex: {
     getState: (input) => getProviderStateFromCapabilities(input),
     renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "codex") ? (
+      hasAuxiliaryTraitControls(models, model, "codex", { includeFastMode: false }) ? (
         <TraitsMenuContent
           provider="codex"
           models={models}
@@ -255,7 +322,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         />
       ) : null,
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "codex") ? (
+      hasAuxiliaryTraitControls(models, model, "codex", { includeFastMode: false }) ? (
         <TraitsPicker
           provider="codex"
           models={models}
@@ -271,8 +338,16 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
   },
   claudeAgent: {
     getState: (input) => getProviderStateFromCapabilities(input),
-    renderTraitsMenuContent: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "claudeAgent") ? (
+    renderTraitsMenuContent: ({
+      threadId,
+      model,
+      models,
+      modelOptions,
+      prompt,
+      onPromptChange,
+      includeFastMode,
+    }) =>
+      hasAuxiliaryTraitControls(models, model, "claudeAgent", { includeFastMode }) ? (
         <TraitsMenuContent
           provider="claudeAgent"
           models={models}
@@ -282,7 +357,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
           prompt={prompt}
           onPromptChange={onPromptChange}
           includeEffort={false}
-          includeFastMode={false}
+          includeFastMode={includeFastMode}
         />
       ) : null,
     renderEffortPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
@@ -298,7 +373,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         />
       ) : null,
     renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) =>
-      hasAuxiliaryTraitControls(models, model, "claudeAgent") ? (
+      hasAuxiliaryTraitControls(models, model, "claudeAgent", { includeFastMode: true }) ? (
         <TraitsPicker
           provider="claudeAgent"
           models={models}
@@ -308,7 +383,7 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
           prompt={prompt}
           onPromptChange={onPromptChange}
           includeEffort={false}
-          includeFastMode={false}
+          includeFastMode
         />
       ) : null,
   },
@@ -326,6 +401,7 @@ export function renderProviderTraitsMenuContent(input: {
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  includeFastMode?: boolean;
 }): ReactNode {
   return composerProviderRegistry[input.provider].renderTraitsMenuContent({
     threadId: input.threadId,
@@ -334,6 +410,7 @@ export function renderProviderTraitsMenuContent(input: {
     modelOptions: input.modelOptions,
     prompt: input.prompt,
     onPromptChange: input.onPromptChange,
+    includeFastMode: input.includeFastMode ?? true,
   });
 }
 
