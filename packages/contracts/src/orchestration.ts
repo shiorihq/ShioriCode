@@ -4,6 +4,7 @@ import {
   CodexModelOptions,
   CursorModelOptions,
   GeminiModelOptions,
+  GlmModelOptions,
   KimiCodeModelOptions,
 } from "./model";
 import {
@@ -36,6 +37,7 @@ export const ORCHESTRATION_WS_METHODS = {
 export const ProviderKind = Schema.Literals([
   "kimiCode",
   "gemini",
+  "glm",
   "cursor",
   "codex",
   "claudeAgent",
@@ -71,6 +73,13 @@ export const GeminiModelSelection = Schema.Struct({
 });
 export type GeminiModelSelection = typeof GeminiModelSelection.Type;
 
+export const GlmModelSelection = Schema.Struct({
+  provider: Schema.Literal("glm"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(GlmModelOptions),
+});
+export type GlmModelSelection = typeof GlmModelSelection.Type;
+
 export const CursorModelSelection = Schema.Struct({
   provider: Schema.Literal("cursor"),
   model: TrimmedNonEmptyString,
@@ -95,6 +104,7 @@ export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 export const ModelSelection = Schema.Union([
   KimiCodeModelSelection,
   GeminiModelSelection,
+  GlmModelSelection,
   CursorModelSelection,
   CodexModelSelection,
   ClaudeModelSelection,

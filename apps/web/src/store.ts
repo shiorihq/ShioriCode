@@ -1,7 +1,5 @@
 import {
-  GoalItemEventType,
   type OrchestrationEvent,
-  type GoalItem,
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
   type ProjectId,
@@ -43,7 +41,6 @@ import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread 
 
 export interface AppState {
   projects: Project[];
-  goalItems?: GoalItem[];
   threads: Thread[];
   threadIndexById: Record<string, number>;
   sidebarThreadsById: Record<string, SidebarThreadSummary>;
@@ -54,7 +51,6 @@ export interface AppState {
 
 const initialState: AppState = {
   projects: [],
-  goalItems: [],
   threads: [],
   threadIndexById: {},
   sidebarThreadsById: {},
@@ -86,25 +82,6 @@ function updateProject(
     return updated;
   });
   return changed ? next : projects;
-}
-
-function updateGoalItem(
-  goalItems: GoalItem[],
-  itemId: GoalItem["id"],
-  updater: (item: GoalItem) => GoalItem,
-): GoalItem[] {
-  let changed = false;
-  const next = goalItems.map((item) => {
-    if (item.id !== itemId) {
-      return item;
-    }
-    const updated = updater(item);
-    if (updated !== item) {
-      changed = true;
-    }
-    return updated;
-  });
-  return changed ? next : goalItems;
 }
 
 function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
@@ -796,132 +773,6 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
     case "project.deleted": {
       const projects = state.projects.filter((project) => project.id !== event.payload.projectId);
       return projects.length === state.projects.length ? state : { ...state, projects };
-    }
-
-    case GoalItemEventType.created: {
-      const existingItems = state.goalItems ?? [];
-      const existing = existingItems.find((item) => item.id === event.payload.item.id);
-      const goalItems = existing
-        ? existingItems.map((item) =>
-            item.id === event.payload.item.id ? event.payload.item : item,
-          )
-        : [...existingItems, event.payload.item];
-      return { ...state, goalItems };
-    }
-
-    case GoalItemEventType.updated: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
-        ...(event.payload.description !== undefined
-          ? { description: event.payload.description }
-          : {}),
-        ...(event.payload.prompt !== undefined ? { prompt: event.payload.prompt } : {}),
-        ...(event.payload.generatedPrompt !== undefined
-          ? { generatedPrompt: event.payload.generatedPrompt }
-          : {}),
-        ...(event.payload.promptStatus !== undefined
-          ? { promptStatus: event.payload.promptStatus }
-          : {}),
-        ...(event.payload.promptError !== undefined
-          ? { promptError: event.payload.promptError }
-          : {}),
-        ...(event.payload.pullRequest !== undefined
-          ? { pullRequest: event.payload.pullRequest }
-          : {}),
-        updatedAt: event.payload.updatedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.moved: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        status: event.payload.status,
-        sortKey: event.payload.sortKey,
-        completedAt: event.payload.status === "done" ? event.payload.movedAt : null,
-        updatedAt: event.payload.movedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.assigned: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        assignees: [
-          ...item.assignees.filter((assignee) => assignee.id !== event.payload.assignee.id),
-          event.payload.assignee,
-        ],
-        updatedAt: event.payload.updatedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.unassigned: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        assignees: item.assignees.filter((assignee) => assignee.id !== event.payload.assigneeId),
-        updatedAt: event.payload.updatedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.blocked: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        blockedReason: event.payload.reason,
-        updatedAt: event.payload.blockedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.unblocked: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        blockedReason: null,
-        updatedAt: event.payload.unblockedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.completed: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        status: "done",
-        ...(event.payload.sortKey !== undefined ? { sortKey: event.payload.sortKey } : {}),
-        completedAt: event.payload.completedAt,
-        updatedAt: event.payload.completedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.noteAdded: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = updateGoalItem(existingItems, event.payload.itemId, (item) => ({
-        ...item,
-        notes: [
-          ...item.notes.filter((note) => note.id !== event.payload.note.id),
-          event.payload.note,
-        ].toSorted(
-          (left, right) =>
-            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-        ),
-        updatedAt: event.payload.updatedAt,
-      }));
-      return goalItems === existingItems ? state : { ...state, goalItems };
-    }
-
-    case GoalItemEventType.deleted: {
-      const existingItems = state.goalItems ?? [];
-      const goalItems = existingItems.filter((item) => item.id !== event.payload.itemId);
-      return goalItems.length === existingItems.length ? state : { ...state, goalItems };
     }
 
     case "thread.created": {

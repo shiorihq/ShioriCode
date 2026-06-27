@@ -21,6 +21,7 @@ const LOCAL_USAGE_PROVIDERS = [
   "claudeAgent",
   "kimiCode",
   "gemini",
+  "glm",
   "cursor",
 ] as const satisfies readonly ProviderKind[];
 

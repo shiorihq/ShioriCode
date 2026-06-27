@@ -57,12 +57,9 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus" },
-  { key: "meta+g", command: "search.open", when: "!goalsView" },
+  { key: "meta+g", command: "search.open" },
   { key: "mod+o", command: "project.add", when: "!terminalFocus" },
   { key: "meta+p", command: "pullRequests.open" },
-  { key: "meta+k", command: "goals.open" },
-  { key: "n", command: "goals.newTask", when: "goalsView && !inputFocus" },
-  { key: "meta+g", command: "goals.search", when: "goalsView" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },

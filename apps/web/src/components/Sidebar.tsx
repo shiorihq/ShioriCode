@@ -3,7 +3,6 @@ import {
   IconSortBottomToTopOutline24 as ArrowUpDownIcon,
   IconClockOutline24 as AutomationsIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
-  IconChequeredFlagOutline24 as GoalsIcon,
   IconResizeXOutline24 as Columns2Icon,
   IconFolderOutline24 as FolderClosedIcon,
   IconFolderOutline24 as FolderIcon,
@@ -163,7 +162,6 @@ import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useProjectAddRequest } from "./sidebar/useProjectAddRequest";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
-import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project } from "../types";
@@ -1155,7 +1153,6 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const appSettings = useSettings();
-  const goalsEnabled = useGoalsFeatureEnabled();
   const { updateSettings } = useUpdateSettings();
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
     useHandleNewThread();
@@ -1247,10 +1244,9 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
       context: {
         terminalFocus: false,
         terminalOpen: routeTerminalOpen,
-        goalsView: pathname === "/goals",
       },
     }),
-    [pathname, platform, routeTerminalOpen],
+    [platform, routeTerminalOpen],
   );
   const searchShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "search.open", sidebarShortcutLabelOptions),
@@ -2661,11 +2657,6 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
     "pullRequests.open",
     sidebarShortcutLabelOptions,
   );
-  const goalsShortcutLabel = shortcutLabelForCommand(
-    keybindings,
-    "goals.open",
-    sidebarShortcutLabelOptions,
-  );
   const projectListTopSpacingClassName = shouldShowProjectPathEntry ? "" : "mt-2";
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
@@ -2823,23 +2814,6 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
                 <span className={SIDEBAR_ROW_LABEL_CLASS}>Automations</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            {goalsEnabled ? (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  render={<Link to="/goals" />}
-                  size="sm"
-                  isActive={pathname === "/goals"}
-                  data-testid="goals-button"
-                  className="h-7 gap-2 rounded-lg px-2 text-foreground"
-                >
-                  <GoalsIcon className="size-4 shrink-0" aria-hidden />
-                  <span className={SIDEBAR_ROW_LABEL_CLASS}>Goals</span>
-                  {goalsShortcutLabel ? (
-                    <span className={SIDEBAR_ROW_META_CLASS}>{goalsShortcutLabel}</span>
-                  ) : null}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ) : null}
           </SidebarMenu>
         </SidebarGroup>
         {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (

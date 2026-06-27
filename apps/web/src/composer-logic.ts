@@ -6,6 +6,7 @@ export type ComposerSlashCommand =
   | "compact"
   | "fast"
   | "fork"
+  | "goal"
   | "mcp"
   | "memories"
   | "model"
@@ -16,7 +17,7 @@ export type ComposerSlashCommand =
 
 export type StandaloneComposerSlashCommand =
   | {
-      command: "compact" | "fast" | "mcp" | "memories" | "plan" | "default" | "review";
+      command: "compact" | "fast" | "goal" | "mcp" | "memories" | "plan" | "default" | "review";
     }
   | { command: "fork"; value?: "local" | "worktree" }
   | { command: "personality"; value: "default" | "friendly" | "sassy" | "coach" | "pragmatic" };
@@ -33,6 +34,7 @@ const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
   "compact",
   "fast",
   "fork",
+  "goal",
   "mcp",
   "memories",
   "model",
@@ -324,7 +326,7 @@ export function parseStandaloneComposerSlashCommand(
     }
   }
 
-  const match = /^\/(compact|fast|mcp|memories|plan|default|review)\s*$/i.exec(trimmed);
+  const match = /^\/(compact|fast|goal|mcp|memories|plan|default|review)\s*$/i.exec(trimmed);
   if (!match || !match[1]) {
     return null;
   }
@@ -332,6 +334,7 @@ export function parseStandaloneComposerSlashCommand(
   if (
     command === "compact" ||
     command === "fast" ||
+    command === "goal" ||
     command === "mcp" ||
     command === "memories" ||
     command === "plan" ||

@@ -158,6 +158,11 @@ describe("deriveLocalProviderUsageSummaries", () => {
         last7Days: { turns: 0, approxTokens: 0 },
       },
       {
+        provider: "glm",
+        last5Hours: { turns: 0, approxTokens: 0 },
+        last7Days: { turns: 0, approxTokens: 0 },
+      },
+      {
         provider: "cursor",
         last5Hours: { turns: 0, approxTokens: 0 },
         last7Days: { turns: 0, approxTokens: 0 },

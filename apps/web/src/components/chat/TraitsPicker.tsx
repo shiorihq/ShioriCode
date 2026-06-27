@@ -2,6 +2,7 @@ import {
   type ClaudeModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
+  type GlmModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
@@ -57,6 +58,9 @@ function getRawEffort(
   if (provider === "cursor") {
     return trimOrNull((modelOptions as CursorModelOptions | undefined)?.reasoning);
   }
+  if (provider === "glm") {
+    return trimOrNull((modelOptions as GlmModelOptions | undefined)?.effort);
+  }
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
 }
 
@@ -66,6 +70,9 @@ function getRawContextWindow(
 ): string | null {
   if (provider === "claudeAgent") {
     return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.contextWindow);
+  }
+  if (provider === "glm") {
+    return trimOrNull((modelOptions as GlmModelOptions | undefined)?.contextWindow);
   }
   if (provider === "cursor") {
     return trimOrNull((modelOptions as CursorModelOptions | undefined)?.contextWindow);
@@ -83,6 +90,9 @@ function buildNextOptions(
   }
   if (provider === "cursor") {
     return { ...(modelOptions as CursorModelOptions | undefined), ...patch } as CursorModelOptions;
+  }
+  if (provider === "glm") {
+    return { ...(modelOptions as GlmModelOptions | undefined), ...patch } as GlmModelOptions;
   }
   return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
 }
@@ -233,7 +243,7 @@ export function useResolvedTraits(input: {
         input.onPromptChange(stripped);
       }
       const effortKey =
-        input.provider === "claudeAgent"
+        input.provider === "claudeAgent" || input.provider === "glm"
           ? "effort"
           : input.provider === "cursor"
             ? "reasoning"

@@ -3,6 +3,8 @@ import {
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
   DEFAULT_MODEL_BY_PROVIDER,
+  type GlmCodeEffort,
+  type GlmModelOptions,
   type KimiCodeModelOptions,
   ModelSelection,
   ProjectId,
@@ -38,6 +40,14 @@ import { UnifiedSettings } from "contracts/settings";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "shioricode:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 3;
+const PROVIDER_MODEL_OPTION_KINDS = [
+  "kimiCode",
+  "gemini",
+  "glm",
+  "cursor",
+  "codex",
+  "claudeAgent",
+] as const satisfies readonly ProviderKind[];
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -424,6 +434,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 function normalizeProviderKind(value: unknown): ProviderKind | null {
   return value === "kimiCode" ||
     value === "gemini" ||
+    value === "glm" ||
     value === "cursor" ||
     value === "codex" ||
     value === "claudeAgent"
@@ -448,6 +459,10 @@ function normalizeProviderModelOptions(
   const kimiCodeCandidate =
     candidate?.kimiCode && typeof candidate.kimiCode === "object"
       ? (candidate.kimiCode as Record<string, unknown>)
+      : null;
+  const glmCandidate =
+    candidate?.glm && typeof candidate.glm === "object"
+      ? (candidate.glm as Record<string, unknown>)
       : null;
   const cursorCandidate =
     candidate?.cursor && typeof candidate.cursor === "object"
@@ -530,6 +545,25 @@ function normalizeProviderModelOptions(
   const kimiCode: KimiCodeModelOptions | undefined =
     kimiCodeThinking !== undefined ? { thinking: kimiCodeThinking } : undefined;
 
+  const glmEffort: GlmCodeEffort | undefined =
+    glmCandidate?.effort === "low" ||
+    glmCandidate?.effort === "medium" ||
+    glmCandidate?.effort === "high" ||
+    glmCandidate?.effort === "max"
+      ? glmCandidate.effort
+      : undefined;
+  const glmContextWindow =
+    typeof glmCandidate?.contextWindow === "string" && glmCandidate.contextWindow.length > 0
+      ? glmCandidate.contextWindow
+      : undefined;
+  const glm: GlmModelOptions | undefined =
+    glmEffort !== undefined || glmContextWindow !== undefined
+      ? {
+          ...(glmEffort !== undefined ? { effort: glmEffort } : {}),
+          ...(glmContextWindow !== undefined ? { contextWindow: glmContextWindow } : {}),
+        }
+      : undefined;
+
   const cursorReasoning =
     typeof cursorCandidate?.reasoning === "string" && cursorCandidate.reasoning.length > 0
       ? cursorCandidate.reasoning
@@ -563,11 +597,12 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  if (!kimiCode && !cursor && !codex && !claude) {
+  if (!kimiCode && !glm && !cursor && !codex && !claude) {
     return null;
   }
   return {
     ...(kimiCode ? { kimiCode } : {}),
+    ...(glm ? { glm } : {}),
     ...(cursor ? { cursor } : {}),
     ...(codex ? { codex } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
@@ -610,9 +645,11 @@ function normalizeModelSelection(
           ? modelOptions?.kimiCode
           : provider === "gemini"
             ? undefined
-            : provider === "cursor"
-              ? modelOptions?.cursor
-              : undefined;
+            : provider === "glm"
+              ? modelOptions?.glm
+              : provider === "cursor"
+                ? modelOptions?.cursor
+                : undefined;
   return buildProviderModelSelection(provider, model, options);
 }
 
@@ -670,7 +707,7 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["kimiCode", "gemini", "cursor", "codex", "claudeAgent"] as const) {
+    for (const provider of PROVIDER_MODEL_OPTION_KINDS) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
         result[provider] = buildProviderModelSelection(
@@ -1815,7 +1852,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const base = existing ?? createEmptyThreadDraft();
           const nextMap = { ...base.modelSelectionByProvider };
-          for (const provider of ["kimiCode", "gemini", "codex", "claudeAgent"] as const) {
+          for (const provider of PROVIDER_MODEL_OPTION_KINDS) {
             // Only touch providers explicitly present in the input
             if (!normalizedOpts || !(provider in normalizedOpts)) continue;
             const opts = normalizedOpts[provider];

@@ -32,10 +32,6 @@ const APP_SIDEBAR_BINDINGS = [
       altKey: false,
       modKey: false,
     },
-    whenAst: {
-      type: "not",
-      node: { type: "identifier", name: "goalsView" },
-    },
   },
   {
     command: "project.add",
@@ -179,7 +175,7 @@ describe("resolveAppSidebarShortcutCommand", () => {
     ).toBe("chat.newLocal");
   });
 
-  it("resolves global search outside Goals and leaves Command-G to Goals inside Goals", () => {
+  it("resolves the global search shortcut", () => {
     expect(
       resolveAppSidebarShortcutCommand(
         createEvent({ metaKey: true, key: "g" }),
@@ -187,24 +183,10 @@ describe("resolveAppSidebarShortcutCommand", () => {
         {
           terminalFocus: false,
           terminalOpen: false,
-          goalsView: false,
           platform: "MacIntel",
         },
       ),
     ).toBe("search.open");
-
-    expect(
-      resolveAppSidebarShortcutCommand(
-        createEvent({ metaKey: true, key: "g" }),
-        APP_SIDEBAR_BINDINGS,
-        {
-          terminalFocus: false,
-          terminalOpen: false,
-          goalsView: true,
-          platform: "MacIntel",
-        },
-      ),
-    ).toBeNull();
   });
 
   it("does not override unrelated prevented shortcuts", () => {

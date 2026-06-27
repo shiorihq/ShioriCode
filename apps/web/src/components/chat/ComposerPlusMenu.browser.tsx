@@ -136,6 +136,8 @@ async function mountMenu(props?: {
       modelOptions={modelOptions}
       planModeActive={false}
       onTogglePlanMode={vi.fn()}
+      goalModeActive={false}
+      onToggleGoalMode={vi.fn()}
       onAddFiles={vi.fn()}
     />,
     { container: host },

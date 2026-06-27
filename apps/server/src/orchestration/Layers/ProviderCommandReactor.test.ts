@@ -710,7 +710,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness({
       threadModelSelection: {
         provider: "kimiCode",
-        model: "kimi-code/kimi-for-coding",
+        model: "kimi2.7-code",
       },
       providerStatuses: [
         {
@@ -1058,7 +1058,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness({
       threadModelSelection: {
         provider: "kimiCode",
-        model: "kimi-code/kimi-for-coding",
+        model: "kimi2.7-code",
       },
     });
     const now = new Date().toISOString();

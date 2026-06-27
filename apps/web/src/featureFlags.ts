@@ -11,14 +11,12 @@ import { readNativeApi } from "./nativeApi";
 export type ShioriFeatureFlagKey =
   | "shioricode_mobile_enabled"
   | "shioricode_browser_use_enabled"
-  | "shioricode_computer_use_enabled"
-  | "shioricode_goals_enabled";
+  | "shioricode_computer_use_enabled";
 
 export const DEFAULT_FEATURE_FLAGS = {
-  shioricode_mobile_enabled: false,
+  shioricode_mobile_enabled: true,
   shioricode_browser_use_enabled: false,
   shioricode_computer_use_enabled: false,
-  shioricode_goals_enabled: true,
 } satisfies Record<ShioriFeatureFlagKey, boolean>;
 
 const featureFlagEnv = import.meta.env as Record<string, unknown>;
@@ -46,20 +44,15 @@ export function useComputerUseFeatureEnabled(): boolean {
   return resolveFeatureFlag("shioricode_computer_use_enabled");
 }
 
-export function useGoalsFeatureFlagEnabled(): boolean {
-  return resolveFeatureFlag("shioricode_goals_enabled");
-}
-
 /**
  * Pushes the env-resolved feature flags down to the server so runtime gating
- * (browser-use, mobile pairing, goals, computer-use) stays consistent with the
+ * (browser-use, mobile pairing, computer-use) stays consistent with the
  * client. Previously handled by the hosted account provider.
  */
 export function FeatureFlagSettingsSync() {
   const mobileAppEnabled = useMobileAppFeatureEnabled();
   const browserUseEnabled = useBrowserUseFeatureEnabled();
   const computerUseEnabled = useComputerUseFeatureEnabled();
-  const goalsEnabled = useGoalsFeatureFlagEnabled();
 
   useEffect(() => {
     const api = readNativeApi();
@@ -70,10 +63,9 @@ export function FeatureFlagSettingsSync() {
     void api.server.updateSettings({
       browserUse: { enabled: browserUseEnabled },
       mobileApp: { enabled: mobileAppEnabled },
-      goals: { enabled: goalsEnabled },
       ...(computerUseEnabled ? {} : { computerUse: { enabled: false } }),
     });
-  }, [browserUseEnabled, computerUseEnabled, goalsEnabled, mobileAppEnabled]);
+  }, [browserUseEnabled, computerUseEnabled, mobileAppEnabled]);
 
   return null;
 }

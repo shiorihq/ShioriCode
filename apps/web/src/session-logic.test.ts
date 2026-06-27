@@ -2587,6 +2587,7 @@ describe("PROVIDER_OPTIONS", () => {
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "kimiCode", label: "Kimi", available: true },
       { value: "gemini", label: "Gemini", available: true },
+      { value: "glm", label: "GLM", available: true },
       { value: "cursor", label: "Cursor", available: true },
       { value: "codex", label: "Codex", available: true },
       { value: "claudeAgent", label: "Claude", available: true },

@@ -6,7 +6,6 @@ const APP_SIDEBAR_SHORTCUT_COMMANDS = new Set<KeybindingCommand>([
   "search.open",
   "project.add",
   "pullRequests.open",
-  "goals.open",
   "chat.new",
   "chat.newLocal",
 ]);
@@ -17,7 +16,6 @@ export function resolveAppSidebarShortcutCommand(
   options: {
     terminalFocus: boolean;
     terminalOpen: boolean;
-    goalsView?: boolean;
     platform?: string;
   },
 ): KeybindingCommand | null {
@@ -26,7 +24,6 @@ export function resolveAppSidebarShortcutCommand(
     context: {
       terminalFocus: options.terminalFocus,
       terminalOpen: options.terminalOpen,
-      goalsView: options.goalsView ?? false,
     },
   });
 

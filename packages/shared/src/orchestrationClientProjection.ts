@@ -128,6 +128,7 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
   if (
     providerName === "kimiCode" ||
     providerName === "gemini" ||
+    providerName === "glm" ||
     providerName === "cursor" ||
     providerName === "codex" ||
     providerName === "claudeAgent"

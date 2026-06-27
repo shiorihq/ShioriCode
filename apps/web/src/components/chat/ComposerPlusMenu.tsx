@@ -4,6 +4,7 @@ import {
   IconPaperclipOutline24 as PaperclipIcon,
   IconPlusOutline24 as PlusIcon,
   IconBoltOutline24 as ZapIcon,
+  IconChequeredFlagOutline24 as GoalIcon,
 } from "nucleo-core-outline-24";
 import { Button } from "../ui/button";
 import {
@@ -34,6 +35,8 @@ export interface ComposerPlusMenuProps {
   modelOptions: ProviderModelOptions[ProviderKind] | undefined;
   planModeActive: boolean;
   onTogglePlanMode: () => void;
+  goalModeActive: boolean;
+  onToggleGoalMode: () => void;
   onAddFiles: (files: File[]) => void;
 }
 
@@ -45,6 +48,8 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
   modelOptions,
   planModeActive,
   onTogglePlanMode,
+  goalModeActive,
+  onToggleGoalMode,
   onAddFiles,
 }: ComposerPlusMenuProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -138,6 +143,20 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
           </MenuItem>
 
           <MenuDivider />
+
+          <MenuCheckboxItem
+            variant="switch"
+            checked={goalModeActive}
+            onClick={(e) => {
+              e.preventDefault();
+              onToggleGoalMode();
+            }}
+          >
+            <span className="inline-flex items-center gap-2">
+              <GoalIcon className="size-4 shrink-0" />
+              Goal
+            </span>
+          </MenuCheckboxItem>
 
           <MenuCheckboxItem
             variant="switch"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, type CSSProperties, type ReactNode } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useServerKeybindings } from "~/rpc/serverState";
 import { useDesktopWindowControlsInset } from "~/hooks/useDesktopWindowControlsInset";
 import { isTerminalFocused } from "~/lib/terminalFocus";
@@ -9,7 +9,6 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 import { useHandleNewThread } from "~/hooks/useHandleNewThread";
-import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 
 import ThreadSidebar from "./Sidebar";
 import {
@@ -28,9 +27,7 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
   const navigate = useNavigate();
-  const pathname = useLocation({ select: (loc) => loc.pathname });
   const appSettings = useSettings();
-  const goalsEnabled = useGoalsFeatureEnabled();
   const requestProjectAdd = useUiStateStore((state) => state.requestProjectAdd);
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread } =
     useHandleNewThread();
@@ -46,7 +43,6 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
       const command = resolveAppSidebarShortcutCommand(event, keybindings, {
         terminalFocus,
         terminalOpen,
-        goalsView: pathname === "/goals",
       });
       if (!command) return;
 
@@ -68,16 +64,6 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
         event.preventDefault();
         event.stopPropagation();
         void navigate({ to: "/pull-requests" });
-        return;
-      }
-
-      if (command === "goals.open") {
-        if (!goalsEnabled) {
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        void navigate({ to: "/goals", search: {} });
         return;
       }
 
@@ -128,12 +114,10 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
     activeThread,
     appSettings.defaultThreadEnvMode,
     defaultProjectId,
-    goalsEnabled,
     handleNewThread,
     keybindings,
     navigate,
     onSearchOpen,
-    pathname,
     requestProjectAdd,
     terminalOpen,
     toggleSidebar,
