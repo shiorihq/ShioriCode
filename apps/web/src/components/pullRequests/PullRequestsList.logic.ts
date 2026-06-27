@@ -8,6 +8,13 @@ export const PULL_REQUEST_FILTER_LABELS: Record<GitPullRequestListFilter, string
 
 export type PullRequestStatusTone = "open" | "draft" | "merged" | "closed";
 
+export const PULL_REQUEST_STATUS_BADGE_CLASS: Record<PullRequestStatusTone, string> = {
+  open: "bg-success/12 text-success",
+  draft: "bg-muted-foreground/10 text-muted-foreground",
+  merged: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
+  closed: "bg-destructive/12 text-destructive",
+};
+
 export function getPullRequestStatusTone(
   pullRequest: Pick<GitResolvedPullRequest, "state" | "isDraft">,
 ): PullRequestStatusTone {

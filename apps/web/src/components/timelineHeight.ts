@@ -12,8 +12,7 @@ const USER_BASE_HEIGHT_PX = 88;
 const ATTACHMENTS_PER_ROW = 2;
 // Attachment thumbnails render with `max-h-[220px]` plus ~8px row gap.
 const USER_ATTACHMENT_ROW_HEIGHT_PX = 228;
-const USER_NARROW_BUBBLE_WIDTH_RATIO = 0.8;
-const USER_NARROW_LAYOUT_BREAKPOINT_PX = 480;
+const USER_BUBBLE_WIDTH_RATIO = 0.75;
 const USER_BUBBLE_HORIZONTAL_PADDING_PX = 32;
 const ASSISTANT_MESSAGE_HORIZONTAL_PADDING_PX = 8;
 const USER_AVG_CHAR_WIDTH_PX = 6.2;
@@ -56,10 +55,7 @@ function isFinitePositiveNumber(value: number | null | undefined): value is numb
 
 function estimateCharsPerLineForUser(timelineWidthPx: number | null): number {
   if (!isFinitePositiveNumber(timelineWidthPx)) return USER_CHARS_PER_LINE_FALLBACK;
-  const bubbleWidthPx =
-    timelineWidthPx < USER_NARROW_LAYOUT_BREAKPOINT_PX
-      ? timelineWidthPx * USER_NARROW_BUBBLE_WIDTH_RATIO
-      : timelineWidthPx;
+  const bubbleWidthPx = timelineWidthPx * USER_BUBBLE_WIDTH_RATIO;
   const textWidthPx = Math.max(bubbleWidthPx - USER_BUBBLE_HORIZONTAL_PADDING_PX, 0);
   return Math.max(MIN_USER_CHARS_PER_LINE, Math.floor(textWidthPx / USER_AVG_CHAR_WIDTH_PX));
 }

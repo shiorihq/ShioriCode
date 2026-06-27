@@ -1,5 +1,6 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
+  IconArrowRightOutline24 as ArrowRightIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
   IconBranchMergeOutline24 as GitPullRequestIcon,
   IconRefreshOutline24 as RefreshCwIcon,
@@ -36,18 +37,11 @@ import {
   isPullRequestAuthError,
   isPullRequestGhMissingError,
   PULL_REQUEST_FILTER_LABELS,
+  PULL_REQUEST_STATUS_BADGE_CLASS,
   shouldExpandProjectByDefault,
-  type PullRequestStatusTone,
 } from "./PullRequestsList.logic";
 
 const FILTER_ORDER: readonly GitPullRequestListFilter[] = ["open", "draft", "closed"];
-
-const STATUS_RAIL_CLASS: Record<PullRequestStatusTone, string> = {
-  open: "bg-success",
-  draft: "bg-muted-foreground/40",
-  merged: "bg-violet-500 dark:bg-violet-400",
-  closed: "bg-destructive",
-};
 
 interface PullRequestsListProps {
   filter: GitPullRequestListFilter;
@@ -197,12 +191,12 @@ export function PullRequestsList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center border-b border-border/40">
+      <div className="flex h-12 shrink-0 items-center border-b border-border/40">
         <div className={cn(columnClass, "flex h-full items-center justify-between gap-3")}>
           <div
             role="radiogroup"
             aria-label="Pull request filter"
-            className="inline-flex items-center rounded-full border border-border/60 bg-background/60 p-[2px]"
+            className="inline-flex h-7 items-center gap-0.5 rounded-lg border border-border/60 bg-muted/40 p-0.5"
           >
             {FILTER_ORDER.map((value) => {
               const isActive = value === filter;
@@ -215,14 +209,21 @@ export function PullRequestsList({
                   aria-checked={isActive}
                   onClick={() => onFilterChange(value)}
                   className={cn(
-                    "inline-flex h-5 items-center gap-1 rounded-full px-2 text-[10.5px] font-medium leading-none transition-colors",
+                    "inline-flex h-6 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium leading-none transition-colors",
                     isActive
-                      ? "bg-foreground text-background"
+                      ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <span>{PULL_REQUEST_FILTER_LABELS[value]}</span>
-                  <span className="text-[9px] tabular-nums opacity-70">{count ?? "–"}</span>
+                  <span
+                    className={cn(
+                      "min-w-4 rounded-full px-1 text-center text-[10px] tabular-nums",
+                      isActive ? "bg-muted-foreground/15 text-foreground" : "opacity-60",
+                    )}
+                  >
+                    {count ?? "–"}
+                  </span>
                 </button>
               );
             })}
@@ -247,7 +248,7 @@ export function PullRequestsList({
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className={cn(columnClass, "flex flex-col gap-1 pt-2 pb-4")}>
+        <div className={cn(columnClass, "flex flex-col gap-1.5 pt-3 pb-4")}>
           {projectStates.map(({ project, state, visiblePullRequests }) => {
             const count = state.status === "success" ? visiblePullRequests.length : null;
             const isOpen =
@@ -265,28 +266,28 @@ export function PullRequestsList({
               >
                 <CollapsibleTrigger
                   className={cn(
-                    "group/section sticky top-0 z-10 flex w-full items-center gap-2 px-1 py-2",
+                    "group/section sticky top-0 z-10 flex w-full items-center gap-1.5 rounded-md px-1 py-2",
                     isElectron
                       ? "bg-background text-left"
-                      : "bg-background/75 backdrop-blur-md text-left",
-                    "text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70",
+                      : "bg-background/80 backdrop-blur-md text-left",
+                    "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80",
                     "transition-colors hover:text-foreground",
                   )}
                 >
                   <ChevronDownIcon
                     className={cn(
-                      "size-3 shrink-0 opacity-50 transition-transform",
+                      "size-3.5 shrink-0 opacity-50 transition-transform",
                       isOpen ? "rotate-0" : "-rotate-90",
                     )}
                     aria-hidden
                   />
                   <span className="min-w-0 flex-1 truncate">{project.name}</span>
                   {count !== null ? (
-                    <span className="shrink-0 tabular-nums text-muted-foreground/40 normal-case tracking-normal">
+                    <span className="shrink-0 rounded-full bg-muted-foreground/10 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground normal-case tracking-normal">
                       {count}
                     </span>
                   ) : state.status === "loading" ? (
-                    <Skeleton className="h-2 w-3 rounded-full" />
+                    <Skeleton className="h-3 w-5 rounded-full" />
                   ) : null}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
@@ -346,11 +347,11 @@ function ProjectPullRequestRows({
     return (
       <ul className="flex flex-col gap-1 pb-2">
         {[0, 1, 2].map((index) => (
-          <li key={index} className="flex items-stretch gap-3 py-2 pl-4 pr-2">
-            <span className="w-[3px] shrink-0 rounded-full bg-muted-foreground/15" aria-hidden />
+          <li key={index} className="flex items-center gap-2.5 py-2 pl-2 pr-2.5">
+            <Skeleton className="size-7 shrink-0 rounded-md" />
             <div className="flex min-w-0 flex-1 flex-col gap-1.5">
               <Skeleton className="h-3 w-[70%] rounded-full" />
-              <Skeleton className="h-2 w-[40%] rounded-full" />
+              <Skeleton className="h-2.5 w-[40%] rounded-full" />
             </div>
           </li>
         ))}
@@ -424,7 +425,7 @@ function PullRequestRow({
   onSelect: () => void;
 }) {
   const tone = getPullRequestStatusTone(pullRequest);
-  const railClass = STATUS_RAIL_CLASS[tone];
+  const badgeClass = PULL_REQUEST_STATUS_BADGE_CLASS[tone];
 
   return (
     <button
@@ -432,27 +433,25 @@ function PullRequestRow({
       onClick={onSelect}
       data-active={isActive || undefined}
       className={cn(
-        "group/pr flex w-full min-w-0 items-stretch gap-3 rounded-md py-2 pl-2 pr-2.5 text-left transition-colors",
-        "hover:bg-sidebar-accent/50",
+        "group/pr flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-transparent py-2 pl-2 pr-2.5 text-left",
+        "hover:bg-sidebar-accent/60 hover:border-border/50",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        "data-[active=true]:bg-sidebar-accent",
+        isActive && "border-border/60 bg-sidebar-accent",
       )}
     >
       <span
-        className={cn(
-          "w-[3px] shrink-0 self-stretch rounded-full transition-opacity",
-          railClass,
-          "opacity-80 group-hover/pr:opacity-100 group-data-[active=true]/pr:opacity-100",
-        )}
+        className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", badgeClass)}
         aria-hidden
-      />
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 items-center gap-2">
+      >
+        <GitPullRequestIcon className="size-3.5" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-foreground">
             {pullRequest.title}
           </span>
           {pullRequest.isDraft ? (
-            <span className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[9px] font-medium uppercase tracking-wider text-muted-foreground/80">
+            <span className="shrink-0 rounded border border-border/60 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
               Draft
             </span>
           ) : null}
@@ -460,10 +459,14 @@ function PullRequestRow({
             #{pullRequest.number}
           </span>
         </span>
-        <span className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground/60">
-          <span className="truncate font-mono">{pullRequest.headBranch}</span>
-          <span className="shrink-0 opacity-60">→</span>
-          <span className="truncate font-mono opacity-80">{pullRequest.baseBranch}</span>
+        <span className="flex min-w-0 items-center gap-1 text-[11px]">
+          <span className="max-w-[45%] truncate font-mono text-muted-foreground/80">
+            {pullRequest.headBranch}
+          </span>
+          <ArrowRightIcon className="size-2.5 shrink-0 text-muted-foreground/40" aria-hidden />
+          <span className="max-w-[45%] truncate font-mono text-muted-foreground/50">
+            {pullRequest.baseBranch}
+          </span>
         </span>
       </span>
     </button>

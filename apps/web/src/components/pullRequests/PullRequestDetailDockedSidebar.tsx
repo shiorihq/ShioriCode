@@ -10,10 +10,12 @@ import {
 } from "contracts";
 import { Schema } from "effect";
 import {
+  IconArrowRightOutline24 as ArrowRightIcon,
   IconCheckOutline24 as CheckIcon,
   IconChevronDownOutline24 as ChevronDownIcon,
   IconDownloadOutline24 as DownloadIcon,
   IconExternalLinkOutline24 as ExternalLinkIcon,
+  IconBranchMergeOutline24 as GitPullRequestIcon,
   IconBranchOutOutline24 as GitBranchIcon,
   IconMessageOutline24 as MessageCircleIcon,
   IconOctagonOutline24 as OctagonXIcon,
@@ -58,7 +60,6 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { useIsMobile } from "~/hooks/useMediaQuery";
-import { useGoalsFeatureEnabled } from "~/hooks/useGoalsFeatureEnabled";
 import { useRenderedDiffReady } from "~/hooks/useRenderedDiffReady";
 import { useTheme } from "~/hooks/useTheme";
 import { buildPatchCacheKey, resolveDiffThemeName } from "~/lib/diffRendering";
@@ -74,7 +75,11 @@ import { cn } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { useStore } from "~/store";
 import { Sheet, SheetPopup } from "~/components/ui/sheet";
-import { PrGoalsBoard } from "~/components/goals/PrGoalsBoard";
+
+import {
+  getPullRequestStatusTone,
+  PULL_REQUEST_STATUS_BADGE_CLASS,
+} from "./PullRequestsList.logic";
 
 const DOCKED_SIDEBAR_WIDTH_STORAGE_KEY = "pull_requests_detail_sidebar_width";
 const DOCKED_SIDEBAR_MIN_WIDTH = 28 * 16;
@@ -300,7 +305,6 @@ function PullRequestDetailContent({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
-  const goalsEnabled = useGoalsFeatureEnabled();
   const diffContentRef = useRef<HTMLDivElement | null>(null);
 
   const project = useStore(
@@ -356,14 +360,8 @@ function PullRequestDetailContent({
     gitPullRequestConversationQueryOptions({ cwd: projectCwd, number }),
   );
 
-  const [activeTab, setActiveTab] = useState<"files" | "conversation" | "goals">("files");
+  const [activeTab, setActiveTab] = useState<"files" | "conversation">("files");
   const summary = summaryQuery.data?.summary ?? null;
-
-  useEffect(() => {
-    if (!goalsEnabled && activeTab === "goals") {
-      setActiveTab("files");
-    }
-  }, [activeTab, goalsEnabled]);
 
   const preparePullRequestMutation = useMutation(
     gitPreparePullRequestThreadMutationOptions({ cwd: projectCwd, queryClient }),
@@ -441,34 +439,54 @@ function PullRequestDetailContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header>
-        <div className="flex items-start gap-2 px-4 pt-3 pb-2">
+        <div className="flex items-start gap-2.5 px-4 pt-3.5 pb-2.5">
+          {pullRequest ? (
+            <span
+              className={cn(
+                "mt-px flex size-8 shrink-0 items-center justify-center rounded-lg",
+                PULL_REQUEST_STATUS_BADGE_CLASS[getPullRequestStatusTone(pullRequest)],
+              )}
+              aria-hidden
+            >
+              <GitPullRequestIcon className="size-4" />
+            </span>
+          ) : (
+            <Skeleton className="mt-px size-8 shrink-0 rounded-lg" />
+          )}
           <div className="min-w-0 flex-1">
             {pullRequest ? (
               <>
-                <h2 className="text-balance line-clamp-2 text-sm font-semibold text-foreground">
+                <h2 className="text-balance line-clamp-2 text-base font-semibold leading-snug text-foreground">
                   {pullRequest.title}
                 </h2>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <Badge
                     variant={stateTone}
-                    className="h-4 px-1.5 text-[10px] uppercase tracking-wide"
+                    className="h-5 px-1.5 text-[10px] uppercase tracking-wide"
                   >
                     {pullRequest.state}
                   </Badge>
                   {pullRequest.isDraft ? (
                     <Badge
                       variant="outline"
-                      className="h-4 px-1.5 text-[10px] uppercase tracking-wide"
+                      className="h-5 px-1.5 text-[10px] uppercase tracking-wide"
                     >
                       Draft
                     </Badge>
                   ) : null}
                   <span className="tabular-nums">#{pullRequest.number}</span>
-                  <span className="flex min-w-0 items-center gap-1 truncate font-mono text-[11px]">
-                    <GitBranchIcon className="size-3 shrink-0" aria-hidden />
-                    <span className="truncate">
-                      {pullRequest.baseBranch} ← {pullRequest.headBranch}
-                    </span>
+                </div>
+                <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px]">
+                  <GitBranchIcon className="size-3 shrink-0 text-muted-foreground/50" aria-hidden />
+                  <span className="max-w-[45%] truncate font-mono text-muted-foreground/80">
+                    {pullRequest.headBranch}
+                  </span>
+                  <ArrowRightIcon
+                    className="size-2.5 shrink-0 text-muted-foreground/40"
+                    aria-hidden
+                  />
+                  <span className="max-w-[45%] truncate font-mono text-muted-foreground/50">
+                    {pullRequest.baseBranch}
                   </span>
                 </div>
               </>
@@ -577,7 +595,7 @@ function PullRequestDetailContent({
           value={[activeTab]}
           onValueChange={(values) => {
             const next = values[0];
-            if (next === "files" || next === "conversation" || (goalsEnabled && next === "goals")) {
+            if (next === "files" || next === "conversation") {
               setActiveTab(next);
             }
           }}
@@ -598,39 +616,10 @@ function PullRequestDetailContent({
                 })()
               : null}
           </Toggle>
-          {goalsEnabled ? (
-            <Toggle value="goals" className="h-6 px-2 text-xs">
-              Goals
-            </Toggle>
-          ) : null}
         </ToggleGroup>
       </div>
 
-      {activeTab === "goals" ? (
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {project && pullRequest ? (
-            <PrGoalsBoard
-              projectId={project.id as ProjectId}
-              pullRequest={{
-                number: pullRequest.number,
-                title: pullRequest.title,
-                url: pullRequest.url,
-              }}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center p-6">
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle className="text-pretty">Goals unavailable</EmptyTitle>
-                  <EmptyDescription className="text-pretty">
-                    Select a project pull request to manage linked goals.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            </div>
-          )}
-        </div>
-      ) : activeTab === "conversation" ? (
+      {activeTab === "conversation" ? (
         <div className="min-h-0 flex-1 overflow-hidden">
           <PullRequestConversationView
             query={conversationQuery}

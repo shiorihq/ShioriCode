@@ -170,7 +170,7 @@ import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalAc
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerRuntimeModeButton } from "./chat/ComposerRuntimeModeButton";
 import { ComposerPlusMenu } from "./chat/ComposerPlusMenu";
-import { GoalModeMenu } from "./chat/GoalModeMenu";
+import { GoalStatusMenu, GoalSendModeBadge } from "./chat/GoalStatusMenu";
 import { ComposerPlanModeSuggestion } from "./chat/ComposerPlanModeSuggestion";
 import { PlanModeIndicator } from "./chat/PlanModeIndicator";
 import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
@@ -919,6 +919,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
   );
+  const [goalSendMode, setGoalSendMode] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -1246,6 +1247,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     () => ({
       kimiCode: providerStatuses.find((provider) => provider.provider === "kimiCode")?.models ?? [],
       gemini: providerStatuses.find((provider) => provider.provider === "gemini")?.models ?? [],
+      glm: providerStatuses.find((provider) => provider.provider === "glm")?.models ?? [],
       cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
       codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
       claudeAgent:
@@ -2161,6 +2163,15 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           description: "Fork this chat into local or a new worktree",
         },
         {
+          id: "slash:goal",
+          type: "slash-command",
+          command: "goal",
+          label: "/goal",
+          description: goalSendMode
+            ? "Turn off goal mode"
+            : "Send the next message as this thread's goal",
+        },
+        {
           id: "slash:mcp",
           type: "slash-command",
           command: "mcp",
@@ -2300,6 +2311,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     backgroundSubagentRows,
     composerTrigger,
     fastModeEnabled,
+    goalSendMode,
     searchableModelOptions,
     selectedModelCapabilities.supportsFastMode,
     settings.generateMemories,
@@ -2770,6 +2782,17 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       createdAt: new Date().toISOString(),
     });
   }, [ensureThreadForGoalMode, threadId]);
+  const handleGoalStatusChange = useCallback(
+    (status: ThreadGoalStatus) => handleGoalSet({ status }),
+    [handleGoalSet],
+  );
+  const toggleGoalSendMode = useCallback(() => {
+    setGoalSendMode((prev) => !prev);
+    scheduleComposerFocus();
+  }, [scheduleComposerFocus]);
+  useEffect(() => {
+    setGoalSendMode(false);
+  }, [threadId]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -3886,6 +3909,14 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         setComposerCursor(0);
         setComposerTrigger(null);
         return;
+      } else if (standaloneSlashCommand.command === "goal") {
+        toggleGoalSendMode();
+        promptRef.current = "";
+        clearComposerDraftContent(activeThread.id);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        return;
       } else if (standaloneSlashCommand.command === "fork") {
         await handleForkThread(standaloneSlashCommand.value ?? "local");
         promptRef.current = "";
@@ -3980,6 +4011,15 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     }
 
     sendInFlightRef.current = true;
+
+    // When goal-send mode is active, the submitted prompt becomes this thread's
+    // goal objective. Capture the intent before the composer is cleared, then
+    // dispatch it once the turn is on its way (see each send path below).
+    const sendAsGoal = goalSendMode;
+    const goalObjective = sendAsGoal ? trimmed : "";
+    if (sendAsGoal) {
+      setGoalSendMode(false);
+    }
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -4093,6 +4133,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               err instanceof Error ? err.message : "Failed to steer the running turn.",
             );
           });
+        if (goalObjective) {
+          void handleGoalSet({ objective: goalObjective });
+        }
         sendInFlightRef.current = false;
         resetLocalDispatch();
         return;
@@ -4145,6 +4188,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         description: "It will send automatically when the current turn finishes.",
         data: { icon: HourglassIcon },
       });
+      if (goalObjective) {
+        void handleGoalSet({ objective: goalObjective });
+      }
       sendInFlightRef.current = false;
       resetLocalDispatch();
       return;
@@ -4290,6 +4336,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      if (goalObjective) {
+        await handleGoalSet({ objective: goalObjective }).catch(() => undefined);
+      }
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
@@ -4874,6 +4923,33 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       settings,
     ],
   );
+  const onComposerProviderModelOptionsChange = useCallback(
+    (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => {
+      if (!activeThread) return;
+      setComposerDraftProviderModelOptions(activeThread.id, selectedProvider, nextOptions, {
+        persistSticky: true,
+      });
+      scheduleComposerFocus();
+    },
+    [activeThread, scheduleComposerFocus, selectedProvider, setComposerDraftProviderModelOptions],
+  );
+  const onImplementationProviderModelOptionsChange = useCallback(
+    (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => {
+      if (!activeProposedPlan) return;
+      const nextModelSelection = buildProviderModelSelection(
+        implementationProvider,
+        implementationModel,
+        nextOptions,
+      );
+
+      setImplementationModelSelectionByPlanId((existing) => ({
+        ...existing,
+        [activeProposedPlan.id]: nextModelSelection,
+      }));
+      scheduleComposerFocus();
+    },
+    [activeProposedPlan, implementationModel, implementationProvider, scheduleComposerFocus],
+  );
   const setPromptFromTraits = useCallback(
     (nextPrompt: string) => {
       const currentPrompt = promptRef.current;
@@ -4898,6 +4974,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     modelOptions: composerModelOptions?.[selectedProvider],
     prompt,
     onPromptChange: setPromptFromTraits,
+    includeFastMode: false,
   });
   const composerEffortUpdateModelOptions = useUpdateModelOptions(selectedProvider, { threadId });
   const composerEffortTraits = useResolvedTraits({
@@ -5170,6 +5247,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
 
         if (item.command === "fast") {
           toggleFastMode();
+        } else if (item.command === "goal") {
+          toggleGoalSendMode();
         } else if (item.command === "fork") {
           void handleForkThread(item.value === "worktree" ? "worktree" : "local");
         } else if (item.command === "mcp") {
@@ -5208,6 +5287,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       onProviderModelSelect,
       resolveActiveComposerTrigger,
       toggleFastMode,
+      toggleGoalSendMode,
       toggleMemoriesGeneration,
     ],
   );
@@ -5562,7 +5642,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   resolvedTheme={resolvedTheme}
                   timestampFormat={timestampFormat}
                   workspaceRoot={activeProject?.cwd ?? undefined}
-                  isProjectThread={isProjectThread}
                   {...(isComposerApprovalState ? {} : { onAddAssistantSelectionToChat })}
                 />
               </div>
@@ -5647,7 +5726,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                 <div
                   data-chat-composer-frame="true"
                   className={cn(
-                    "group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+                    "chat-composer-depth group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
                     hasDecoratedComposerFrame
                       ? ["rounded-[22px] p-px", composerProviderState.composerFrameClassName]
                       : "rounded-[20px] border border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] bg-card dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
@@ -5851,16 +5930,19 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             modelOptions={composerModelOptions?.[selectedProvider]}
                             planModeActive={interactionMode === "plan"}
                             onTogglePlanMode={toggleInteractionMode}
+                            goalModeActive={goalSendMode}
+                            onToggleGoalMode={toggleGoalSendMode}
                             onAddFiles={addComposerImages}
                           />
 
-                          <GoalModeMenu
-                            threadId={threadId}
-                            goal={activeThread?.goal ?? null}
-                            disabled={!activeThread}
-                            onSetGoal={handleGoalSet}
-                            onClearGoal={handleGoalClear}
-                          />
+                          {activeThread?.goal ? (
+                            <GoalStatusMenu
+                              goal={activeThread.goal}
+                              disabled={!activeThread}
+                              onSetStatus={handleGoalStatusChange}
+                              onClearGoal={handleGoalClear}
+                            />
+                          ) : null}
 
                           {isComposerFooterCompact && compactControlsMenuNeeded ? (
                             <CompactComposerControlsMenu
@@ -5880,6 +5962,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               onToggle={toggleRuntimeMode}
                             />
                           )}
+
+                          {goalSendMode ? (
+                            <>
+                              <div aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
+                              <GoalSendModeBadge onDismiss={() => setGoalSendMode(false)} />
+                            </>
+                          ) : null}
 
                           {interactionMode === "plan" ? (
                             <PlanModeIndicator onDisable={toggleInteractionMode} />
@@ -5905,6 +5994,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               providers={providerStatuses}
                               modelOptionsByProvider={modelOptionsByProvider}
                               modelOptions={implementationModelSelection.options}
+                              onModelOptionsChange={onImplementationProviderModelOptionsChange}
                               {...(implementationProviderState.modelPickerIconClassName
                                 ? {
                                     activeProviderIconClassName:
@@ -5922,6 +6012,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               providers={providerStatuses}
                               modelOptionsByProvider={modelOptionsByProvider}
                               modelOptions={composerModelOptions?.[selectedProvider]}
+                              onModelOptionsChange={onComposerProviderModelOptionsChange}
                               effort={composerEffortPickerProps}
                               {...(composerProviderState.modelPickerIconClassName
                                 ? {

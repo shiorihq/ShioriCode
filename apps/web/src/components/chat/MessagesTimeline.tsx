@@ -153,7 +153,6 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  isProjectThread: boolean;
   onAddAssistantSelectionToChat?: (selectedText: string) => void;
   onVirtualizerSnapshot?: (snapshot: {
     totalSize: number;
@@ -196,7 +195,6 @@ function MessagesTimelineView({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
-  isProjectThread,
   onAddAssistantSelectionToChat,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
@@ -792,11 +790,14 @@ function MessagesTimelineView({
       );
     }
 
+    const assistantFooter = turnFooterByAnchorRowId.get(row.id);
+
     return (
       <div
         className={cn(
           TIMELINE_ROW_GAP_CLASS,
           !options?.suppressBoundaryGap && boundaryGapRowIds.has(row.id) && "mt-4",
+          assistantFooter && "group/assistant-message",
         )}
         data-timeline-row-id={row.id}
         data-timeline-row-kind={row.kind}
@@ -910,20 +911,6 @@ function MessagesTimelineView({
                 )}
               </>
             );
-            if (isProjectThread) {
-              return (
-                <div className="glass-user-message group w-full">
-                  <div className="flex w-full items-start gap-3">
-                    <div className="min-w-0 flex-1">{messageBody}</div>
-                    {actionButtons && (
-                      <div className="flex shrink-0 items-center gap-1.5 pt-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                        {actionButtons}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            }
             return (
               <div className="group ml-auto w-fit max-w-[75%]">
                 <div className="glass-user-message">
@@ -1005,28 +992,29 @@ function MessagesTimelineView({
         )}
 
         {(() => {
-          const footer = turnFooterByAnchorRowId.get(row.id);
-          if (!footer) return null;
-          const { assistantMessage, turnStart } = footer;
+          if (!assistantFooter) return null;
+          const { assistantMessage, turnStart } = assistantFooter;
           const footerMessageText =
             assistantMessage.text || (assistantMessage.streaming ? "" : "(empty response)");
           return (
-            <div className="mt-1.5 flex items-center gap-1.5">
-              {!assistantMessage.streaming && footerMessageText && (
-                <MessageCopyButton text={footerMessageText} />
-              )}
-              {!assistantMessage.streaming && !isWorking && (
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={isRevertingCheckpoint}
-                  onClick={() => onRetryAssistantMessage(assistantMessage.id)}
-                  title="Retry response"
-                >
-                  <RefreshCwIcon className="size-3" />
-                </Button>
-              )}
+            <div className="mt-1.5 flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant-message:opacity-100">
+              <div className="flex shrink-0 items-center gap-1.5">
+                {!assistantMessage.streaming && footerMessageText && (
+                  <MessageCopyButton text={footerMessageText} />
+                )}
+                {!assistantMessage.streaming && !isWorking && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={isRevertingCheckpoint}
+                    onClick={() => onRetryAssistantMessage(assistantMessage.id)}
+                    title="Retry response"
+                  >
+                    <RefreshCwIcon className="size-3" />
+                  </Button>
+                )}
+              </div>
               <AssistantMessageMeta
                 createdAt={assistantMessage.createdAt}
                 durationStart={turnStart}

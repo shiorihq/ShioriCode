@@ -1,5 +1,6 @@
 import type { GitPullRequestListFilter } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { IconBranchMergeOutline24 as GitPullRequestIcon } from "nucleo-core-outline-24";
 import { useCallback } from "react";
 
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -53,10 +54,22 @@ export function PullRequestsView({ search }: PullRequestsViewProps) {
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:paint]">
           {isElectron ? (
-            <div className="drag-region flex h-[52px] shrink-0 items-center" />
+            <div className="drag-region flex h-[52px] shrink-0 items-center">
+              <div className={cn(columnClass, "flex h-full items-center gap-2 select-none")}>
+                <GitPullRequestIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <h1 className="text-sm font-semibold tracking-tight text-foreground">
+                  Pull Requests
+                </h1>
+              </div>
+            </div>
           ) : (
             <header className="flex h-12 shrink-0 items-center">
-              <div className={cn(columnClass, "flex h-full items-center")} />
+              <div className={cn(columnClass, "flex h-full items-center gap-2")}>
+                <GitPullRequestIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <h1 className="text-sm font-semibold tracking-tight text-foreground">
+                  Pull Requests
+                </h1>
+              </div>
             </header>
           )}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

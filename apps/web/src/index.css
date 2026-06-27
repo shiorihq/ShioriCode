@@ -314,6 +314,14 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   z-index: 1;
 }
 
+.chat-composer-depth {
+  box-shadow:
+    0 -10px 22px -20px color-mix(in srgb, var(--color-black) 24%, transparent),
+    10px 0 18px -20px color-mix(in srgb, var(--color-black) 18%, transparent),
+    -10px 0 18px -20px color-mix(in srgb, var(--color-black) 18%, transparent);
+  clip-path: inset(-28px -28px 0 -28px);
+}
+
 .dark .glass-composer {
   --composer-muted-border: color-mix(in srgb, var(--color-neutral-400) 14%, transparent);
 
@@ -330,6 +338,13 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
     0 0 0 1px color-mix(in srgb, var(--color-black) 14%, transparent),
     0 0 10px 0 color-mix(in srgb, var(--color-black) 14%, transparent),
     0 0 24px 0 color-mix(in srgb, var(--color-black) 20%, transparent);
+}
+
+.dark .chat-composer-depth {
+  box-shadow:
+    0 -12px 24px -20px color-mix(in srgb, var(--color-black) 44%, transparent),
+    10px 0 18px -20px color-mix(in srgb, var(--color-black) 34%, transparent),
+    -10px 0 18px -20px color-mix(in srgb, var(--color-black) 34%, transparent);
 }
 
 .dark .glass-composer::before {

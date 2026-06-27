@@ -155,7 +155,6 @@ function createBaseTimelineProps(input: {
   turnDiffSummaryByAssistantMessageId?: Map<MessageId, TurnDiffSummary>;
   onToggleWorkGroup?: ComponentProps<typeof MessagesTimeline>["onToggleWorkGroup"];
   onVirtualizerSnapshot?: ComponentProps<typeof MessagesTimeline>["onVirtualizerSnapshot"];
-  isProjectThread?: boolean;
 }): Omit<ComponentProps<typeof MessagesTimeline>, "scrollContainer"> {
   return {
     hasMessages: true,
@@ -183,7 +182,6 @@ function createBaseTimelineProps(input: {
     resolvedTheme: "light",
     timestampFormat: "locale",
     workspaceRoot: MARKDOWN_CWD,
-    isProjectThread: input.isProjectThread ?? true,
     ...(input.onVirtualizerSnapshot ? { onVirtualizerSnapshot: input.onVirtualizerSnapshot } : {}),
   };
 }
@@ -632,6 +630,45 @@ describe("MessagesTimeline virtualization harness", () => {
 
   afterEach(() => {
     document.body.innerHTML = "";
+  });
+
+  it("renders user message bubbles right-bound in layout", async () => {
+    const targetMessage = createMessage({
+      id: "target-user-right-bound",
+      role: "user",
+      text: "Keep this message on the right.",
+      offsetSeconds: 12,
+    });
+    const props = createBaseTimelineProps({
+      messages: [targetMessage],
+    });
+    const mounted = await mountMessagesTimeline({
+      props,
+      viewport: { width: 960, height: 700 },
+    });
+
+    try {
+      const timelineRoot = await waitForElement(
+        () => mounted.host.querySelector<HTMLElement>("[data-timeline-root='true']"),
+        "Unable to locate timeline root.",
+      );
+      const userBubble = await waitForElement(
+        () =>
+          mounted.host.querySelector<HTMLElement>(
+            `[data-message-id="${targetMessage.id}"] .glass-user-message`,
+          ),
+        "Unable to locate user message bubble.",
+      );
+
+      const timelineRect = timelineRoot.getBoundingClientRect();
+      const bubbleRect = userBubble.getBoundingClientRect();
+
+      expect(Math.abs(timelineRect.right - bubbleRect.right)).toBeLessThanOrEqual(1);
+      expect(bubbleRect.width).toBeLessThan(timelineRect.width);
+      expect(bubbleRect.left).toBeGreaterThan(timelineRect.left);
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it.each(buildStaticScenarios())("keeps the $name estimate within tolerance", async (scenario) => {
@@ -1320,7 +1357,6 @@ describe("MessagesTimeline virtualization harness", () => {
     });
     const props = createBaseTimelineProps({
       messages: [targetMessage],
-      isProjectThread: false,
     });
     const mounted = await mountMessagesTimeline({
       props,
