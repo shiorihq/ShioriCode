@@ -27,6 +27,12 @@ function fallbackModelDisplayName(
   if (provider === "glm" && slug === "glm-5.2") {
     return "GLM-5.2";
   }
+  if (provider === "glm" && slug === "glm-5-turbo") {
+    return "GLM-5-Turbo";
+  }
+  if (provider === "glm" && slug === "glm-4.7") {
+    return "GLM-4.7";
+  }
   return slug;
 }
 

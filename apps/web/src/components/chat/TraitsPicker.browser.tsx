@@ -83,8 +83,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         },
       },
       {
-        slug: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6",
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
         isCustom: false,
         capabilities: {
           reasoningEffortLevels: [
@@ -251,7 +251,7 @@ describe("TraitsPicker (Claude)", () => {
   });
 
   it("hides fast mode controls for non-Opus models", async () => {
-    await using _ = await mountClaudePicker({ model: "claude-sonnet-4-6" });
+    await using _ = await mountClaudePicker({ model: "claude-sonnet-5" });
 
     await page.getByRole("button").click();
 
@@ -262,7 +262,7 @@ describe("TraitsPicker (Claude)", () => {
 
   it("shows only the provided effort options", async () => {
     await using _ = await mountClaudePicker({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
     });
 
     await page.getByRole("button").click();

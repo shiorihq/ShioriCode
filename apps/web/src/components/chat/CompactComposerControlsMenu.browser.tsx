@@ -82,8 +82,8 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
             },
           },
           {
-            slug: "claude-sonnet-4-6",
-            name: "Claude Sonnet 4.6",
+            slug: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
             isCustom: false,
             capabilities: {
               reasoningEffortLevels: [

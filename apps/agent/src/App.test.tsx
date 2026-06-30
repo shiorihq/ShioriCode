@@ -167,7 +167,7 @@ function makeServerConfig(provider: Thread["modelSelection"]["provider"] = "code
   const modelsByProvider = {
     codex: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
     claudeAgent: [
-      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", isCustom: false, capabilities: null },
+      { slug: "claude-sonnet-5", name: "Claude Sonnet 5", isCustom: false, capabilities: null },
     ],
   } as const;
 

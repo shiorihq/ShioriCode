@@ -34,7 +34,7 @@ const providers: ReadonlyArray<ServerProvider> = [
     auth: { status: "authenticated" },
     checkedAt: "2026-04-04T10:00:00.000Z",
     models: [
-      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", isCustom: false, capabilities: null },
+      { slug: "claude-sonnet-5", name: "Claude Sonnet 5", isCustom: false, capabilities: null },
     ],
   },
 ] as const;
@@ -67,7 +67,7 @@ describe("resolveConfigurableModelSelectionState", () => {
     const result = resolveConfigurableModelSelectionState(
       {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
       },
       makeSettings(),
       providers,

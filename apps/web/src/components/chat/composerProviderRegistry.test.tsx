@@ -44,8 +44,8 @@ const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
     },
   },
   {
-    slug: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6",
+    slug: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
     isCustom: false,
     capabilities: {
       reasoningEffortLevels: [
@@ -202,7 +202,7 @@ describe("getComposerProviderState", () => {
   it("returns Claude defaults for effort-capable models", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       models: CLAUDE_MODELS,
       prompt: "",
       modelOptions: undefined,
@@ -220,7 +220,7 @@ describe("getComposerProviderState", () => {
   it("tracks Claude ultrathink from the prompt without changing dispatch effort", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       models: CLAUDE_MODELS,
       prompt: "Ultrathink:\nInvestigate this failure",
       modelOptions: {
@@ -435,7 +435,7 @@ describe("getComposerProviderState", () => {
   it("omits fastMode when the model does not support it", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       models: CLAUDE_MODELS,
       prompt: "",
       modelOptions: {

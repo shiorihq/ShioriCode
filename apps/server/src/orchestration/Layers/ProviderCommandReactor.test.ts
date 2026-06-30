@@ -413,7 +413,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness({
       threadModelSelection: {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         options: {
           effort: "medium",
         },
@@ -446,7 +446,7 @@ describe("ProviderCommandReactor", () => {
         },
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "medium",
           },
@@ -463,7 +463,7 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       modelSelection: {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         options: {
           effort: "medium",
         },
@@ -1153,7 +1153,7 @@ describe("ProviderCommandReactor", () => {
 
   it("forwards claude effort options through session start and turn send", async () => {
     const harness = await createHarness({
-      threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-4-6" },
+      threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-5" },
     });
     const now = new Date().toISOString();
 
@@ -1170,7 +1170,7 @@ describe("ProviderCommandReactor", () => {
         },
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "max",
           },
@@ -1186,7 +1186,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         options: {
           effort: "max",
         },
@@ -1196,7 +1196,7 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       modelSelection: {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         options: {
           effort: "max",
         },
@@ -1448,7 +1448,7 @@ describe("ProviderCommandReactor", () => {
 
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({
-      threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-4-6" },
+      threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-5" },
     });
     const now = new Date().toISOString();
 
@@ -1465,7 +1465,7 @@ describe("ProviderCommandReactor", () => {
         },
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "medium",
           },
@@ -1492,7 +1492,7 @@ describe("ProviderCommandReactor", () => {
         },
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "max",
           },
@@ -1509,7 +1509,7 @@ describe("ProviderCommandReactor", () => {
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
         provider: "claudeAgent",
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         options: {
           effort: "max",
         },

@@ -256,7 +256,7 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.modelSelection.model).toBe("claude-sonnet-4-6");
+    expect(next.threads[0]?.modelSelection.model).toBe("claude-sonnet-5");
   });
 
   it("does not surface stopped-session lastError as an active thread error", () => {

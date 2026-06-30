@@ -208,8 +208,8 @@ function createMultiProviderConfig(): ServerConfig["providers"] {
       checkedAt: NOW_ISO,
       models: [
         {
-          slug: "claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
+          slug: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
           isCustom: false,
           capabilities: {
             reasoningEffortLevels: [
@@ -3540,7 +3540,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await selectModelFromUnlockedProviderPicker("Claude", "Claude Sonnet 4.6");
+      await selectModelFromUnlockedProviderPicker("Claude", "Claude Sonnet 5");
 
       const implementButton = await waitForButtonByText("Implement");
       implementButton.click();
@@ -3557,7 +3557,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             type: "thread.create",
             modelSelection: {
               provider: "claudeAgent",
-              model: "claude-sonnet-4-6",
+              model: "claude-sonnet-5",
             },
           });
           expect(createdThreadId).toBeTruthy();
@@ -3572,7 +3572,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             type: "thread.turn.start",
             modelSelection: {
               provider: "claudeAgent",
-              model: "claude-sonnet-4-6",
+              model: "claude-sonnet-5",
             },
             sourceProposedPlan: {
               threadId: THREAD_ID,

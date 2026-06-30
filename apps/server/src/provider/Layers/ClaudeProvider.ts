@@ -54,7 +54,7 @@ const OPUS_4_6_CAPABILITIES: ModelCapabilities = {
   supportsFastMode: true,
 };
 
-const SONNET_4_6_CAPABILITIES: ModelCapabilities = {
+const SONNET_5_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
@@ -86,10 +86,10 @@ const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: OPUS_4_8_CAPABILITIES,
   },
   {
-    slug: "claude-sonnet-4-6",
-    name: "Sonnet 4.6",
+    slug: "claude-sonnet-5",
+    name: "Sonnet 5",
     isCustom: false,
-    capabilities: SONNET_4_6_CAPABILITIES,
+    capabilities: SONNET_5_CAPABILITIES,
   },
   {
     slug: "claude-haiku-4-5",
@@ -101,10 +101,12 @@ const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 const BUILT_IN_CAPABILITIES_BY_MODEL = new Map<string, ModelCapabilities>([
   ["claude-opus-4-8", OPUS_4_8_CAPABILITIES],
-  ["claude-sonnet-4-6", SONNET_4_6_CAPABILITIES],
+  ["claude-sonnet-5", SONNET_5_CAPABILITIES],
   ["claude-haiku-4-5", HAIKU_4_5_CAPABILITIES],
   ["claude-opus-4-7", OPUS_4_8_CAPABILITIES],
   ["claude-opus-4-6", OPUS_4_6_CAPABILITIES],
+  // Legacy alias: capabilities lookup for any pre-migration stored slug.
+  ["claude-sonnet-4-6", SONNET_5_CAPABILITIES],
 ]);
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
@@ -508,11 +510,14 @@ function resolveClaudeSdkModelSlug(model: ClaudeSdkModelInfo): string | null {
 
   if (
     value === "sonnet" ||
+    value === "sonnet-5" ||
+    value === "sonnet-5.0" ||
+    value === "claude-sonnet-5" ||
     value === "sonnet-4-6" ||
     value === "sonnet-4.6" ||
     value === "claude-sonnet-4-6"
   ) {
-    return "claude-sonnet-4-6";
+    return "claude-sonnet-5";
   }
 
   if (

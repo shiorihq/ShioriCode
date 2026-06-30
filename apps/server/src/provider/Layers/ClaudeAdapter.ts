@@ -116,6 +116,10 @@ const GLM_PROVIDER = "glm" as const;
 const CLAUDE_RESUME_CURSOR_VERSION = 1;
 const CLAUDE_CLIENT_APP = "shiori-code";
 const GLM_CLIENT_APP = "shiori-code-glm";
+const GLM_DEFAULT_API_MODEL_ID = "glm-5.2[1m]";
+const GLM_LIGHTWEIGHT_MODEL_ID = "glm-4.7";
+const GLM_DEFAULT_API_TIMEOUT_MS = "3000000";
+const GLM_1M_AUTO_COMPACT_WINDOW = "1000000";
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -280,7 +284,10 @@ interface ClaudeCompatibleProviderConfig {
   readonly settingSources: ReadonlyArray<SettingSource>;
   readonly getBinaryPath: (settings: ServerSettings) => string;
   readonly getModelCapabilities: (model: string | null | undefined) => ModelCapabilities;
-  readonly getRuntimeEnv?: (settings: ServerSettings) => Record<string, string | undefined>;
+  readonly getRuntimeEnv?: (
+    settings: ServerSettings,
+    runtimeConfig: ClaudeRuntimeConfig | undefined,
+  ) => Record<string, string | undefined>;
 }
 
 type ClaudeCompatibleModelSelection =
@@ -301,6 +308,10 @@ function trimOrDefault(value: string | null | undefined, fallback: string): stri
   return trimmed ? trimmed : fallback;
 }
 
+function usesGlmOneMillionContext(config: ClaudeRuntimeConfig | undefined, apiModelId: string) {
+  return config?.contextWindow === "1m" || /\[1m\]$/u.test(apiModelId);
+}
+
 const GLM_COMPATIBLE_CONFIG: ClaudeCompatibleProviderConfig = {
   provider: GLM_PROVIDER,
   label: "GLM",
@@ -308,16 +319,29 @@ const GLM_COMPATIBLE_CONFIG: ClaudeCompatibleProviderConfig = {
   settingSources: [],
   getBinaryPath: (settings) => settings.providers.glm.binaryPath,
   getModelCapabilities: getGlmModelCapabilities,
-  getRuntimeEnv: (settings) => {
+  getRuntimeEnv: (settings, runtimeConfig) => {
     const glmSettings = settings.providers.glm;
     const apiKeyEnvVar = trimOrDefault(glmSettings.apiKeyEnvVar, GLM_DEFAULT_API_KEY_ENV_VAR);
-    const apiKey = trimOrNull(glmSettings.apiKey) ?? process.env[apiKeyEnvVar];
+    const apiKey =
+      trimOrNull(glmSettings.apiKey) ?? trimOrNull(process.env[apiKeyEnvVar]) ?? undefined;
+    const apiModelId = runtimeConfig?.apiModelId ?? GLM_DEFAULT_API_MODEL_ID;
+    const autoCompactWindow =
+      trimOrNull(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW) ??
+      (usesGlmOneMillionContext(runtimeConfig, apiModelId) ? GLM_1M_AUTO_COMPACT_WINDOW : null);
     return {
       ANTHROPIC_BASE_URL: trimOrDefault(glmSettings.apiBaseUrl, GLM_DEFAULT_API_BASE_URL),
       ANTHROPIC_AUTH_TOKEN: apiKey,
       ANTHROPIC_API_KEY: apiKey,
-      API_TIMEOUT_MS: process.env.API_TIMEOUT_MS ?? "300000",
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "0.8",
+      ANTHROPIC_MODEL: apiModelId,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: apiModelId,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: apiModelId,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: GLM_LIGHTWEIGHT_MODEL_ID,
+      ANTHROPIC_SMALL_FAST_MODEL: GLM_LIGHTWEIGHT_MODEL_ID,
+      CLAUDE_CODE_SUBAGENT_MODEL: apiModelId,
+      API_TIMEOUT_MS: trimOrNull(process.env.API_TIMEOUT_MS) ?? GLM_DEFAULT_API_TIMEOUT_MS,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:
+        trimOrNull(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) ?? "1",
+      ...(autoCompactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: autoCompactWindow } : {}),
     };
   },
 };
@@ -3618,7 +3642,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: {
           ...process.env,
-          ...providerConfig.getRuntimeEnv?.(serverSettings),
+          ...providerConfig.getRuntimeEnv?.(serverSettings, runtimeConfig),
           CLAUDE_AGENT_SDK_CLIENT_APP: providerConfig.clientApp,
           ...(fileCheckpointingEnabled ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "1" } : {}),
         },

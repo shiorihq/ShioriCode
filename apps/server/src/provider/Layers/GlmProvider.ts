@@ -24,7 +24,7 @@ import { ServerSettingsService } from "../../serverSettings";
 
 const PROVIDER = "glm" as const;
 
-const GLM_MODEL_CAPABILITIES: ModelCapabilities = {
+const GLM_BASE_MODEL_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
@@ -33,11 +33,16 @@ const GLM_MODEL_CAPABILITIES: ModelCapabilities = {
   ],
   supportsFastMode: false,
   supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
+const GLM_5_2_MODEL_CAPABILITIES: ModelCapabilities = {
+  ...GLM_BASE_MODEL_CAPABILITIES,
   contextWindowOptions: [
     { value: "200k", label: "200K" },
     { value: "1m", label: "1M", isDefault: true },
   ],
-  promptInjectedEffortLevels: [],
 };
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -47,7 +52,23 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     shortName: "5.2",
     isCustom: false,
     multiModal: true,
-    capabilities: GLM_MODEL_CAPABILITIES,
+    capabilities: GLM_5_2_MODEL_CAPABILITIES,
+  },
+  {
+    slug: "glm-5-turbo",
+    name: "GLM-5-Turbo",
+    shortName: "5 Turbo",
+    isCustom: false,
+    multiModal: true,
+    capabilities: GLM_BASE_MODEL_CAPABILITIES,
+  },
+  {
+    slug: "glm-4.7",
+    name: "GLM-4.7",
+    shortName: "4.7",
+    isCustom: false,
+    multiModal: true,
+    capabilities: GLM_BASE_MODEL_CAPABILITIES,
   },
 ];
 
@@ -61,12 +82,18 @@ function modelsFromSettings(settings: GlmSettings): ReadonlyArray<ServerProvider
     BUILT_IN_MODELS,
     PROVIDER,
     settings.customModels,
-    GLM_MODEL_CAPABILITIES,
+    GLM_BASE_MODEL_CAPABILITIES,
   ).map((model) =>
     model.name === model.slug && model.isCustom
       ? { ...model, name: formatModelSlugName(model.slug) }
       : model,
   );
+}
+
+function getGlmModelBaseSlug(model: string | null | undefined): string | null {
+  const trimmed = model?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\[[^\]]+\]$/u, "");
 }
 
 function buildInitialGlmProviderSnapshot(settings: GlmSettings): ServerProvider {
@@ -229,8 +256,10 @@ export const checkGlmProviderStatus = Effect.fn("checkGlmProviderStatus")(functi
   });
 });
 
-export function getGlmModelCapabilities(_model: string | null | undefined): ModelCapabilities {
-  return GLM_MODEL_CAPABILITIES;
+export function getGlmModelCapabilities(model: string | null | undefined): ModelCapabilities {
+  return getGlmModelBaseSlug(model) === "glm-5.2"
+    ? GLM_5_2_MODEL_CAPABILITIES
+    : GLM_BASE_MODEL_CAPABILITIES;
 }
 
 export const GlmProviderLive = Layer.effect(

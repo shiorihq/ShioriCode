@@ -945,7 +945,7 @@ it.live("starts a claudeAgent session on first turn when provider is requested",
           text: "Use Claude",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 
@@ -1002,7 +1002,7 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
           text: "Before restart",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 
@@ -1112,7 +1112,7 @@ it.live("forwards claudeAgent approval responses to the provider session", () =>
           text: "Need approval",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 
@@ -1184,7 +1184,7 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
           text: "Start long turn",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 
@@ -1257,7 +1257,7 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           text: "First Claude edit",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 

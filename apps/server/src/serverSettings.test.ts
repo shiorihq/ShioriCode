@@ -195,7 +195,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       yield* serverSettings.updateSettings({
         textGenerationModelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "high",
           },

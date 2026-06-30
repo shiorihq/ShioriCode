@@ -78,8 +78,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         },
       },
       {
-        slug: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6",
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
         isCustom: false,
         capabilities: {
           reasoningEffortLevels: [
@@ -210,7 +210,7 @@ describe("ProviderModelPicker", () => {
         const text = document.body.textContent ?? "";
         expect(text).toContain("Codex");
         expect(text).toContain("Claude");
-        expect(text).not.toContain("Claude Sonnet 4.6");
+        expect(text).not.toContain("Claude Sonnet 5");
       });
     } finally {
       await mounted.cleanup();
@@ -414,7 +414,7 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
-        expect(text).toContain("Claude Sonnet 4.6");
+        expect(text).toContain("Claude Sonnet 5");
         expect(text).toContain("Claude Haiku 4.5");
         expect(text).not.toContain("Codex");
       });
@@ -434,7 +434,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        expect(document.body.textContent ?? "").toContain("Claude Sonnet 4.6");
+        expect(document.body.textContent ?? "").toContain("Claude Sonnet 5");
       });
       expect(document.querySelector('input[placeholder="Search models…"]')).toBeNull();
     } finally {
@@ -596,12 +596,9 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
-      await page.getByRole("menuitemradio", { name: "Claude Sonnet 4.6" }).click();
+      await page.getByRole("menuitemradio", { name: "Claude Sonnet 5" }).click();
 
-      expect(mounted.onProviderModelChange).toHaveBeenCalledWith(
-        "claudeAgent",
-        "claude-sonnet-4-6",
-      );
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith("claudeAgent", "claude-sonnet-5");
     } finally {
       await mounted.cleanup();
     }
@@ -634,7 +631,7 @@ describe("ProviderModelPicker", () => {
         const text = document.body.textContent ?? "";
         expect(text).not.toContain("Claude");
         expect(text).not.toContain("Disabled");
-        expect(text).not.toContain("Claude Sonnet 4.6");
+        expect(text).not.toContain("Claude Sonnet 5");
       });
     } finally {
       await mounted.cleanup();
@@ -675,7 +672,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("menuitem", { name: /Claude/ }).hover();
 
       await vi.waitFor(() => {
-        expect(document.body.textContent ?? "").toContain("Claude Sonnet 4.6");
+        expect(document.body.textContent ?? "").toContain("Claude Sonnet 5");
       });
     } finally {
       await mounted.cleanup();

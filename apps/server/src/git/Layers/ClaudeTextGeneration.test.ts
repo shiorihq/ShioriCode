@@ -269,7 +269,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
           message: "Please investigate reconnect failures after restarting the session.",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 
@@ -299,7 +299,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
           message: "Name this thread.",
           modelSelection: {
             provider: "claudeAgent",
-            model: "claude-sonnet-4-6",
+            model: "claude-sonnet-5",
           },
         });
 

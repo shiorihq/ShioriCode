@@ -13,7 +13,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { ApprovalRequestId, ProviderItemId, ProviderRuntimeEvent, ThreadId } from "contracts";
 import { assert, describe, it, vi } from "@effect/vitest";
-import { Effect, Fiber, Layer, Random, Stream } from "effect";
+import { Effect, Fiber, Layer, Random, Scope, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { buildResponseRenderingAppendix } from "../../assistantPersonality.ts";
@@ -21,8 +21,13 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import { GlmAdapter } from "../Services/GlmAdapter.ts";
 import type { ClaudeUsageSnapshot } from "../Services/ProviderUsage.ts";
-import { makeClaudeAdapterLive, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapterLive,
+  makeGlmAdapterLive,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private readonly queue: Array<SDKMessage> = [];
@@ -197,6 +202,63 @@ function makeHarness(config?: {
   };
 }
 
+function makeGlmHarness(config?: {
+  readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+  readonly fetchUsage?: ClaudeAdapterLiveOptions["fetchUsage"];
+  readonly materializeMcpServers?: ClaudeAdapterLiveOptions["materializeMcpServers"];
+  readonly cwd?: string;
+  readonly baseDir?: string;
+  readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
+}) {
+  const query = new FakeClaudeQuery();
+  let createInput:
+    | {
+        readonly prompt: AsyncIterable<SDKUserMessage>;
+        readonly options: ClaudeQueryOptions;
+      }
+    | undefined;
+
+  const adapterOptions: ClaudeAdapterLiveOptions = {
+    createQuery: (input) => {
+      createInput = input;
+      return query;
+    },
+    ...(config?.nativeEventLogger
+      ? {
+          nativeEventLogger: config.nativeEventLogger,
+        }
+      : {}),
+    ...(config?.nativeEventLogPath
+      ? {
+          nativeEventLogPath: config.nativeEventLogPath,
+        }
+      : {}),
+    ...(config?.fetchUsage
+      ? {
+          fetchUsage: config.fetchUsage,
+        }
+      : {}),
+    ...(config?.materializeMcpServers
+      ? {
+          materializeMcpServers: config.materializeMcpServers,
+        }
+      : {}),
+  };
+
+  return {
+    layer: makeGlmAdapterLive(adapterOptions).pipe(
+      Layer.provideMerge(
+        ServerConfig.layerTest(config?.cwd ?? "/tmp/glm-adapter-test", config?.baseDir ?? "/tmp"),
+      ),
+      Layer.provideMerge(ServerSettingsService.layerTest(config?.serverSettings)),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+    query,
+    getLastCreateQueryInput: () => createInput,
+  };
+}
+
 function makeDeterministicRandomService(seed = 0x1234_5678): {
   nextIntUnsafe: () => number;
   nextDoubleUnsafe: () => number;
@@ -268,6 +330,35 @@ function emitClaudeSystemInit(query: FakeClaudeQuery, sessionId: string) {
     model: "claude-sonnet-4-5",
     permissionMode: "default",
   } as unknown as SDKMessage);
+}
+
+function withEnv(
+  overrides: Record<string, string | undefined>,
+): Effect.Effect<void, never, Scope.Scope> {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      const previous: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(overrides)) {
+        previous[key] = process.env[key];
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      return previous;
+    }),
+    (previous) =>
+      Effect.sync(() => {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+      }),
+  ).pipe(Effect.asVoid);
 }
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
@@ -434,7 +525,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
+  it.effect("falls back to default effort when unsupported max is requested for Sonnet 5", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -443,7 +534,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "max",
           },
@@ -520,7 +611,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             thinking: false,
           },
@@ -572,7 +663,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             fastMode: true,
           },
@@ -1012,7 +1103,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "ultrathink",
           },
@@ -1026,7 +1117,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "ultrathink",
           },
@@ -3378,7 +3469,7 @@ describe("ClaudeAdapterLive", () => {
         input: "switch down",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "max",
           },
@@ -3386,7 +3477,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setModelCalls, ["claude-sonnet-4-6"]);
+      assert.deepEqual(harness.query.setModelCalls, ["claude-sonnet-5"]);
       assert.deepEqual(harness.query.applyFlagSettingsCalls, [
         {
           effortLevel: "high",
@@ -3435,7 +3526,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         modelSelection: {
           provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           options: {
             effort: "xhigh" as "high",
           },
@@ -4087,6 +4178,113 @@ describe("ClaudeAdapterLive", () => {
         true,
       );
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+});
+
+describe("GlmAdapterLive", () => {
+  it.effect("starts GLM sessions with Z.AI runtime env mapped to the selected 1M model", () => {
+    const harness = makeGlmHarness({
+      serverSettings: {
+        providers: {
+          glm: {
+            apiBaseUrl: "https://example.test/api/anthropic",
+            apiKey: " saved-zai-key ",
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* withEnv({
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-6",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
+        CLAUDE_CODE_SUBAGENT_MODEL: "claude-sonnet-4-6",
+        API_TIMEOUT_MS: undefined,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: undefined,
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: undefined,
+      });
+      const adapter = yield* GlmAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "glm",
+        modelSelection: {
+          provider: "glm",
+          model: "glm-5.2",
+          options: {
+            contextWindow: "1m",
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const env = createInput?.options.env;
+      assert.equal(createInput?.options.model, "glm-5.2[1m]");
+      assert.deepEqual(createInput?.options.settingSources, []);
+      assert.equal(env?.ANTHROPIC_BASE_URL, "https://example.test/api/anthropic");
+      assert.equal(env?.ANTHROPIC_AUTH_TOKEN, "saved-zai-key");
+      assert.equal(env?.ANTHROPIC_API_KEY, "saved-zai-key");
+      assert.equal(env?.ANTHROPIC_MODEL, "glm-5.2[1m]");
+      assert.equal(env?.ANTHROPIC_DEFAULT_OPUS_MODEL, "glm-5.2[1m]");
+      assert.equal(env?.ANTHROPIC_DEFAULT_SONNET_MODEL, "glm-5.2[1m]");
+      assert.equal(env?.ANTHROPIC_DEFAULT_HAIKU_MODEL, "glm-4.7");
+      assert.equal(env?.ANTHROPIC_SMALL_FAST_MODEL, "glm-4.7");
+      assert.equal(env?.CLAUDE_CODE_SUBAGENT_MODEL, "glm-5.2[1m]");
+      assert.equal(env?.API_TIMEOUT_MS, "3000000");
+      assert.equal(env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, "1000000");
+      assert.equal(env?.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps GLM non-1M models unsuffixed and without a synthetic compact window", () => {
+    const harness = makeGlmHarness({
+      serverSettings: {
+        providers: {
+          glm: {
+            apiKeyEnvVar: "CUSTOM_ZAI_API_KEY",
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* withEnv({
+        CUSTOM_ZAI_API_KEY: " env-zai-key ",
+        API_TIMEOUT_MS: undefined,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: undefined,
+      });
+      const adapter = yield* GlmAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "glm",
+        modelSelection: {
+          provider: "glm",
+          model: "glm-5-turbo",
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const env = createInput?.options.env;
+      assert.equal(createInput?.options.model, "glm-5-turbo");
+      assert.equal(env?.ANTHROPIC_AUTH_TOKEN, "env-zai-key");
+      assert.equal(env?.ANTHROPIC_MODEL, "glm-5-turbo");
+      assert.equal(env?.CLAUDE_CODE_SUBAGENT_MODEL, "glm-5-turbo");
+      assert.equal(env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined);
+    }).pipe(
+      Effect.scoped,
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
