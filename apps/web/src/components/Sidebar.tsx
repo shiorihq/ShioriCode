@@ -537,13 +537,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadMetaClassName = !isThreadBusy
     ? "pointer-events-none group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
     : "pointer-events-none";
-  const threadActionReserveClassName = !isThreadBusy
+  const threadActionHoverReserveClassName = !isThreadBusy
     ? isConfirmingArchive
-      ? "min-w-28"
+      ? "group-hover/menu-sub-item:min-w-28 group-focus-within/menu-sub-item:min-w-28"
       : hasSubagents
-        ? "min-w-20"
-        : "min-w-16"
-    : "min-w-12";
+        ? "group-hover/menu-sub-item:min-w-20 group-focus-within/menu-sub-item:min-w-20"
+        : "group-hover/menu-sub-item:min-w-16 group-focus-within/menu-sub-item:min-w-16"
+    : "";
   const threadWorkspacePath = props.threadWorkspacePath;
   const ProviderIcon = PROVIDER_BRAND_ICON_BY_PROVIDER[thread.modelProvider];
   const actionMenuAnchor = useMemo(
@@ -716,7 +716,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </span>
             )}
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {terminalStatus && (
               <span
                 role="img"
@@ -727,7 +727,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
               </span>
             )}
-            <div className={cn("flex justify-end", threadActionReserveClassName)}>
+            <div
+              className={cn("relative flex min-w-0 justify-end", threadActionHoverReserveClassName)}
+            >
               {!isThreadBusy ? (
                 <div className="pointer-events-none absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   {hasSubagents ? (
