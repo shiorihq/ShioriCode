@@ -86,6 +86,12 @@ const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: OPUS_4_8_CAPABILITIES,
   },
   {
+    slug: "claude-fable-5",
+    name: "Fable 5",
+    isCustom: false,
+    capabilities: SONNET_5_CAPABILITIES,
+  },
+  {
     slug: "claude-sonnet-5",
     name: "Sonnet 5",
     isCustom: false,
@@ -101,6 +107,7 @@ const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 const BUILT_IN_CAPABILITIES_BY_MODEL = new Map<string, ModelCapabilities>([
   ["claude-opus-4-8", OPUS_4_8_CAPABILITIES],
+  ["claude-fable-5", SONNET_5_CAPABILITIES],
   ["claude-sonnet-5", SONNET_5_CAPABILITIES],
   ["claude-haiku-4-5", HAIKU_4_5_CAPABILITIES],
   ["claude-opus-4-7", OPUS_4_8_CAPABILITIES],
@@ -518,6 +525,10 @@ function resolveClaudeSdkModelSlug(model: ClaudeSdkModelInfo): string | null {
     value === "claude-sonnet-4-6"
   ) {
     return "claude-sonnet-5";
+  }
+
+  if (value === "fable" || value === "fable-5" || value === "claude-fable-5") {
+    return "claude-fable-5";
   }
 
   if (

@@ -174,6 +174,10 @@ describe("providerModelSupportsImageAttachments", () => {
 });
 
 describe("getProviderModelDisplayName", () => {
+  it("formats Fable 5 from its normalized fallback slug", () => {
+    expect(getProviderModelDisplayName([], "fable", "claudeAgent")).toBe("Fable 5");
+  });
+
   it("prefers the resolved model display name", () => {
     const models: ServerProviderModel[] = [
       {

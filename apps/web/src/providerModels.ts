@@ -33,6 +33,9 @@ function fallbackModelDisplayName(
   if (provider === "glm" && slug === "glm-4.7") {
     return "GLM-4.7";
   }
+  if (provider === "claudeAgent" && slug === "claude-fable-5") {
+    return "Fable 5";
+  }
   return slug;
 }
 

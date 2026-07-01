@@ -1171,7 +1171,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.models[0]?.slug, "claude-opus-4-8");
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
         }).pipe(
           Effect.provide(
@@ -1244,6 +1244,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   supportedEffortLevels: ["low", "medium", "high"],
                 },
                 {
+                  value: "fable",
+                  displayName: "Fable",
+                  description: "Latest Fable alias.",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "medium", "high"],
+                },
+                {
                   value: "haiku",
                   displayName: "Haiku",
                   description: "Latest Haiku alias.",
@@ -1261,11 +1268,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
           assert.deepStrictEqual(
             status.models.map((model) => model.name),
-            ["Opus 4.8", "Sonnet 5", "Haiku 4.5"],
+            ["Opus 4.8", "Fable 5", "Sonnet 5", "Haiku 4.5"],
           );
           assert.deepStrictEqual(status.models[0]?.capabilities?.reasoningEffortLevels, [
             { value: "low", label: "Low" },
@@ -1322,11 +1329,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
           assert.strictEqual(status.models[0]?.name, "Opus 4.8");
           assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
-          assert.strictEqual(status.models[1]?.capabilities?.supportsFastMode, true);
+          assert.strictEqual(status.models[2]?.capabilities?.supportsFastMode, true);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
