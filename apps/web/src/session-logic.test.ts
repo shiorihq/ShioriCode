@@ -7,6 +7,7 @@ import {
   deriveActivePlanState,
   deriveActiveTaskListState,
   deriveVisibleTimelineMessages,
+  shouldPreserveCompletedAssistantMessages,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -1803,6 +1804,16 @@ describe("deriveTimelineEntries", () => {
         completedAt: "2026-02-23T00:00:02.000Z",
       }),
     ).toBe("assistant-final");
+  });
+});
+
+describe("shouldPreserveCompletedAssistantMessages", () => {
+  it("preserves messages for providers backed by the Claude Code CLI", () => {
+    expect(shouldPreserveCompletedAssistantMessages("claudeAgent")).toBe(true);
+    expect(shouldPreserveCompletedAssistantMessages("glm")).toBe(true);
+    expect(shouldPreserveCompletedAssistantMessages("codex")).toBe(false);
+    expect(shouldPreserveCompletedAssistantMessages(null)).toBe(false);
+    expect(shouldPreserveCompletedAssistantMessages(undefined)).toBe(false);
   });
 });
 

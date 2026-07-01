@@ -113,6 +113,61 @@ describe("coalesceOrchestrationUiEvents", () => {
     expect(event.payload.text).toBe("complete");
     expect(event.payload.streaming).toBe(false);
   });
+
+  it("keeps an empty completion marker separate from a streaming run", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const messageId = MessageId.makeUnsafe("message-1");
+    const turnId = TurnId.makeUnsafe("turn-1");
+
+    // Deltas for text already applied in earlier batches, then the empty
+    // completion marker. Merging them would turn the tail deltas into a
+    // replace-style payload and wipe the previously applied text.
+    const events = coalesceOrchestrationUiEvents([
+      makeEvent("thread.message-sent", {
+        threadId,
+        messageId,
+        role: "assistant",
+        text: "tail ",
+        turnId,
+        streaming: true,
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      makeEvent("thread.message-sent", {
+        threadId,
+        messageId,
+        role: "assistant",
+        text: "deltas",
+        turnId,
+        streaming: true,
+        createdAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+      makeEvent("thread.message-sent", {
+        threadId,
+        messageId,
+        role: "assistant",
+        text: "",
+        turnId,
+        streaming: false,
+        createdAt: "2026-02-27T00:00:03.000Z",
+        updatedAt: "2026-02-27T00:00:03.000Z",
+      }),
+    ]);
+
+    expect(events).toHaveLength(2);
+    const [streamingEvent, completionEvent] = events;
+    if (
+      streamingEvent?.type !== "thread.message-sent" ||
+      completionEvent?.type !== "thread.message-sent"
+    ) {
+      throw new Error("Expected message events.");
+    }
+    expect(streamingEvent.payload.text).toBe("tail deltas");
+    expect(streamingEvent.payload.streaming).toBe(true);
+    expect(completionEvent.payload.text).toBe("");
+    expect(completionEvent.payload.streaming).toBe(false);
+  });
 });
 
 describe("createFrameBatcher", () => {

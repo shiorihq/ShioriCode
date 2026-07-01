@@ -16,6 +16,17 @@ export function coalesceOrchestrationUiEvents(
       previous.payload.threadId === event.payload.threadId &&
       previous.payload.messageId === event.payload.messageId
     ) {
+      // A streaming run followed by an empty completion marker must stay two
+      // events: merging would demote the run's deltas into the completion's
+      // replace-style payload and wipe text applied from earlier batches.
+      if (
+        previous.payload.streaming &&
+        !event.payload.streaming &&
+        event.payload.text.length === 0
+      ) {
+        coalesced.push(event);
+        continue;
+      }
       coalesced[coalesced.length - 1] = {
         ...event,
         payload: {

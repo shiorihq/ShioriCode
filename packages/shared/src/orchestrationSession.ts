@@ -1568,6 +1568,24 @@ function compareTimelineEntryOrder(left: TimelineEntry, right: TimelineEntry): n
   return timelineEntryOrderRank(left) - timelineEntryOrderRank(right);
 }
 
+/**
+ * Providers whose intermediate assistant messages are real answer content
+ * rather than commentary-style status updates. They run the Claude Code CLI,
+ * which splits one reply across several assistant messages per turn (text
+ * blocks around tool calls), so dropping all but the latest message would cut
+ * off parts of the reply once the turn settles.
+ */
+const PROVIDERS_WITH_DISCRETE_ASSISTANT_MESSAGES: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "glm",
+]);
+
+export function shouldPreserveCompletedAssistantMessages(
+  provider: string | null | undefined,
+): boolean {
+  return provider != null && PROVIDERS_WITH_DISCRETE_ASSISTANT_MESSAGES.has(provider);
+}
+
 export function deriveVisibleTimelineMessages(
   messages: ReadonlyArray<ChatMessage>,
   session: Pick<ThreadSession, "activeTurnId" | "orchestrationStatus"> | null,

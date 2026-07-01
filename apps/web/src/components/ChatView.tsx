@@ -65,6 +65,7 @@ import {
   isSessionActivelyRunningTurn,
   isLatestTurnSettled,
   formatElapsed,
+  shouldPreserveCompletedAssistantMessages,
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import {
@@ -1789,8 +1790,8 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   }, []);
   const serverMessages = activeThread?.messages;
   const preserveCompletedAssistantMessages =
-    activeThread?.session?.provider === "claudeAgent" ||
-    activeThread?.modelSelection.provider === "claudeAgent";
+    shouldPreserveCompletedAssistantMessages(activeThread?.session?.provider) ||
+    shouldPreserveCompletedAssistantMessages(activeThread?.modelSelection.provider);
   const timelineMessages = useMemo(() => {
     const messages = serverMessages ?? [];
     const serverMessagesWithPreviewHandoff =
