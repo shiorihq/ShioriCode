@@ -428,12 +428,13 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           environmentAuth.setCredentials(input);
           return yield* remoteAccess.getStatus();
         }),
-      [WS_METHODS.remoteSetExposure]: (input) => remoteAccess.setExposure(input.method),
+      [WS_METHODS.remoteSetExposure]: (input) => remoteAccess.setExposure(input),
       [WS_METHODS.remoteRevokeSession]: (input) =>
         Effect.gen(function* () {
           environmentAuth.revokeSession(input.sessionId);
           return yield* remoteAccess.getStatus();
         }),
+      [WS_METHODS.remoteTestConnection]: (_input) => remoteAccess.testConnection(),
       [WS_METHODS.onboardingGetState]: (_input) =>
         serverSettings.getSettings.pipe(
           Effect.map((settings) => resolveOnboardingState(settings.onboarding)),

@@ -7,7 +7,7 @@ import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/s
 
 import { authRoutesLayer } from "./auth/authRoutes";
 import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
-import { RemoteAccessLive } from "./remote/RemoteAccess";
+import { RemoteAccessLive, remoteHealthRouteLayer } from "./remote/RemoteAccess";
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
 import {
   BrowserPanelRequestsLive,
@@ -253,6 +253,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   browserPanelRequestRouteLayer,
   browserPanelCommandRouteLayer,
   authRoutesLayer,
+  remoteHealthRouteLayer,
   mobileRoutesLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,

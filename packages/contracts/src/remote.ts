@@ -5,7 +5,12 @@ import * as Schema from "effect/Schema";
  * server is exposed, the owner credential, and connected device sessions.
  */
 
-export const REMOTE_EXPOSURE_METHODS = ["off", "tailscale-serve", "tailscale-funnel"] as const;
+export const REMOTE_EXPOSURE_METHODS = [
+  "off",
+  "tailscale-serve",
+  "tailscale-funnel",
+  "custom",
+] as const;
 export const RemoteExposureMethod = Schema.Literals(REMOTE_EXPOSURE_METHODS);
 export type RemoteExposureMethod = typeof RemoteExposureMethod.Type;
 
@@ -33,6 +38,11 @@ export const RemoteTailscaleStatus = Schema.Struct({
   installed: Schema.Boolean,
   /** Whether the tailscale daemon is connected (BackendState=Running). */
   running: Schema.Boolean,
+  /**
+   * Raw daemon state when known (e.g. "Running", "NeedsLogin", "Stopped").
+   * Lets the UI distinguish "not logged in" from "logged out"/"not started".
+   */
+  backendState: Schema.NullOr(Schema.String),
   /** This node's MagicDNS name, e.g. machine.tailnet.ts.net (no trailing dot). */
   dnsName: Schema.NullOr(Schema.String),
   /** Whether the tailnet can provision TLS certs (needed for HTTPS serve). */
@@ -41,14 +51,22 @@ export const RemoteTailscaleStatus = Schema.Struct({
 export type RemoteTailscaleStatus = typeof RemoteTailscaleStatus.Type;
 
 export const RemoteStatus = Schema.Struct({
-  /** Currently active exposure method. */
+  /** Currently active exposure method (what is observably in effect). */
   method: RemoteExposureMethod,
+  /**
+   * The exposure the owner asked for (persisted across restarts). When this
+   * differs from `method` the tunnel drifted (e.g. Tailscale config was reset
+   * elsewhere) and the UI offers a one-click repair.
+   */
+  desiredMethod: RemoteExposureMethod,
   /** Whether remote access is exposed at all (method !== off). */
   enabled: Schema.Boolean,
   /** The reachable URL, when known (e.g. https://machine.tailnet.ts.net). */
   url: Schema.NullOr(Schema.String),
+  /** Owner-provided URL for the "custom" method (their own proxy/tunnel). */
+  customUrl: Schema.NullOr(Schema.String),
   reachability: RemoteReachability,
-  /** Whether a valid login is required (server started remote-reachable). */
+  /** Whether a valid login is currently required (flips live with exposure). */
   requireAuth: Schema.Boolean,
   /** Whether an owner credential has been set. */
   authConfigured: Schema.Boolean,
@@ -70,8 +88,21 @@ export type RemoteSetCredentialsInput = typeof RemoteSetCredentialsInput.Type;
 
 export const RemoteSetExposureInput = Schema.Struct({
   method: RemoteExposureMethod,
+  /** Required when method is "custom": the externally reachable base URL. */
+  customUrl: Schema.optional(Schema.String),
 });
 export type RemoteSetExposureInput = typeof RemoteSetExposureInput.Type;
+
+/** Result of probing whether a remote URL round-trips to THIS server. */
+export const RemoteProbeResult = Schema.Struct({
+  ok: Schema.Boolean,
+  /** The URL that was probed. */
+  url: Schema.NullOr(Schema.String),
+  latencyMs: Schema.NullOr(Schema.Number),
+  /** Human-readable failure reason when ok is false. */
+  error: Schema.NullOr(Schema.String),
+});
+export type RemoteProbeResult = typeof RemoteProbeResult.Type;
 
 export const RemoteRevokeSessionInput = Schema.Struct({
   sessionId: Schema.String,

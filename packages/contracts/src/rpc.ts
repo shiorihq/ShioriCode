@@ -66,6 +66,7 @@ import { KeybindingsConfigError } from "./keybindings";
 import { OnboardingCompleteStepInput, OnboardingError, OnboardingState } from "./onboarding";
 import {
   RemoteError,
+  RemoteProbeResult,
   RemoteRevokeSessionInput,
   RemoteSetCredentialsInput,
   RemoteSetExposureInput,
@@ -184,6 +185,7 @@ export const WS_METHODS = {
   remoteSetCredentials: "remote.setCredentials",
   remoteSetExposure: "remote.setExposure",
   remoteRevokeSession: "remote.revokeSession",
+  remoteTestConnection: "remote.testConnection",
 
   // Onboarding
   onboardingGetState: "onboarding.getState",
@@ -317,6 +319,12 @@ export const WsRemoteSetExposureRpc = Rpc.make(WS_METHODS.remoteSetExposure, {
 export const WsRemoteRevokeSessionRpc = Rpc.make(WS_METHODS.remoteRevokeSession, {
   payload: RemoteRevokeSessionInput,
   success: RemoteStatus,
+  error: RemoteError,
+});
+
+export const WsRemoteTestConnectionRpc = Rpc.make(WS_METHODS.remoteTestConnection, {
+  payload: Schema.Struct({}),
+  success: RemoteProbeResult,
   error: RemoteError,
 });
 
@@ -721,6 +729,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsRemoteSetCredentialsRpc,
   WsRemoteSetExposureRpc,
   WsRemoteRevokeSessionRpc,
+  WsRemoteTestConnectionRpc,
   WsOnboardingGetStateRpc,
   WsOnboardingCompleteStepRpc,
   WsOnboardingResetRpc,

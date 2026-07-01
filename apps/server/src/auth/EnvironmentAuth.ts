@@ -7,6 +7,11 @@
  * server's exposure intent: when ShioriCode is reachable beyond loopback, a
  * valid principal is mandatory on every data route and the WebSocket upgrade.
  *
+ * Exposure intent is dynamic: the CLI flags (`--remote`, `--require-auth`, a
+ * non-loopback bind) set a floor at startup, and `setRemoteExposed` flips the
+ * requirement live when the owner turns remote access on/off in Settings — no
+ * restart needed. All consumers read `requireAuth` per request.
+ *
  * The static app shell stays public so the login page can load; only data
  * routes and the RPC socket are gated.
  *
@@ -53,8 +58,17 @@ export interface LoginOutcome {
 }
 
 export interface EnvironmentAuthApi {
-  /** Whether a valid principal is mandatory (server is remote-reachable). */
+  /**
+   * Whether a valid principal is mandatory (server is remote-reachable).
+   * Dynamic: read per request, never capture at startup.
+   */
   readonly requireAuth: boolean;
+  /**
+   * Mark the server as remote-exposed (or not). Called by RemoteAccess when
+   * exposure is turned on/off so auth flips live without a restart. The CLI
+   * flags remain a floor: they can force auth on, this cannot force it off.
+   */
+  setRemoteExposed(exposed: boolean): void;
   /** Whether owner credentials have been configured. */
   readonly authConfigured: boolean;
   /** Configured owner username, if any. */
@@ -149,8 +163,13 @@ export const EnvironmentAuthLive = Layer.effect(
     });
     const sessions = new SessionStore({ stateDir: config.stateDir });
     const legacyToken = config.authToken ?? null;
-    const requireAuth = config.requireAuth;
     const allowedOrigins = resolveAllowedOrigins(config);
+
+    // Dynamic exposure state: the config flags are the floor (a `--remote`
+    // start always requires auth); RemoteAccess raises/lowers the runtime bit
+    // as the owner toggles exposure in Settings.
+    let remoteExposed = false;
+    const isAuthRequired = () => !config.unsafeNoAuth && (config.requireAuth || remoteExposed);
 
     const legacyPrincipal = (): AuthPrincipal => ({
       kind: "legacy-token",
@@ -221,7 +240,7 @@ export const EnvironmentAuthLive = Layer.effect(
       const originAllowed = (candidate: URL): boolean =>
         candidate.origin === url.origin || allowedOrigins.has(candidate.origin);
 
-      if (!requireAuth) {
+      if (!isAuthRequired()) {
         // Loopback dev: defeat DNS rebinding by requiring a loopback Host, and
         // reject clearly cross-origin browser requests.
         const hostHeader = request.headers.host ?? url.host;
@@ -250,14 +269,21 @@ export const EnvironmentAuthLive = Layer.effect(
     };
 
     return {
-      requireAuth,
+      get requireAuth() {
+        return isAuthRequired();
+      },
+      setRemoteExposed: (exposed) => {
+        remoteExposed = exposed;
+      },
       get authConfigured() {
         return credentials.isConfigured || legacyToken !== null;
       },
       get username() {
         return credentials.username;
       },
-      secureCookies: requireAuth,
+      get secureCookies() {
+        return isAuthRequired();
+      },
       cookieMaxAgeSeconds: SESSION_COOKIE_MAX_AGE_SECONDS,
       authenticateRequest: (context) => resolvePrincipal(context, { allowTicket: false }),
       authenticateUpgrade: (context) => resolvePrincipal(context, { allowTicket: true }),
@@ -283,7 +309,7 @@ export const EnvironmentAuthLive = Layer.effect(
           ? sessions.issueTicket(principal.sessionId)
           : null,
       describe: (principal) => ({
-        requireAuth,
+        requireAuth: isAuthRequired(),
         authConfigured: credentials.isConfigured || legacyToken !== null,
         authenticated: principal !== null,
         username: principal?.username ?? null,
