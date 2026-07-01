@@ -349,8 +349,8 @@ export function RemoteSettingsPanel() {
                       type="button"
                       disabled={disabled}
                       onClick={() => {
-                        // Custom needs a URL — route through the wizard.
-                        if (option.value === "custom" && status?.method !== "custom") {
+                        // Custom needs a URL — always route through the wizard.
+                        if (option.value === "custom") {
                           openWizard("custom");
                           return;
                         }

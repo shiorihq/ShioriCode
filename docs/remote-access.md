@@ -8,41 +8,65 @@ boundary, and a credential login is the authorization boundary.
 > [!IMPORTANT]
 > The server runs arbitrary shell commands and reads your provider credentials.
 > Anyone who can authenticate has full access to your machine. Never expose it
-> without credentials. The server refuses to start in a remote mode unless
+> without credentials. Exposure is refused (and torn down at startup) unless
 > credentials (or `--unsafe-no-auth`) are configured.
 
-## 1. Set credentials (once)
+## The easy way: Settings → Remote
 
-Pick a username and password. On the **first** remote launch, seed them from the
-environment; they are hashed (scrypt) into `~/shiori/userdata/credentials.json`
-(mode `0600`) and reused on later launches:
+Open **Settings → Remote** and run the setup wizard. It walks through:
+
+1. **How it's reached** — Tailscale (private tailnet), Tailscale Funnel
+   (public link), or a **custom server** (your own reverse proxy / tunnel).
+2. **Prerequisites** — live checks for Tailscale (installed, connected, tailnet
+   HTTPS for Funnel), or your proxy URL for the custom method.
+3. **Sign-in** — set the owner username/password (hashed with scrypt into
+   `~/shiori/userdata/credentials.json`, mode `0600`). The wizard signs the
+   current browser in at the same time.
+4. **Turn on** — applies the exposure, shows the URL + QR code, and can run a
+   connection test that verifies the URL round-trips to _this_ server process.
+
+No restart or flags are required: enabling exposure raises mandatory auth at
+runtime (every data route and the `/ws` socket require a valid session; the
+static app shell stays public so the login page can load). The chosen exposure
+is persisted in `~/shiori/userdata/remote.json` and **reconciled at startup** —
+after a reboot the server re-applies a drifted Tailscale config, or fails
+closed (tears exposure down) if credentials have vanished.
+
+Everything below is the manual/CLI equivalent for scripting or headless setups.
+
+## Manual setup
+
+### 1. Set credentials (once)
+
+Set them in the wizard, or seed from the environment on first launch:
 
 ```sh
 export SHIORICODE_USERNAME="sami"
 export SHIORICODE_PASSWORD="a-long-passphrase"
 ```
 
-To rotate later, delete `credentials.json` and relaunch with new env values.
+To rotate later, use the Remote settings panel, or delete `credentials.json`
+and relaunch with new env values.
 
-## 2. Start ShioriCode in remote mode
+### 2. (Optional) force remote mode from the CLI
 
 ```sh
 shioricode --remote
 ```
 
-`--remote` (alias `--expose`) marks the server as remote-reachable. It keeps the
-bind on `127.0.0.1` (a reverse proxy / tunnel terminates TLS in front) but turns
-on mandatory auth:
+`--remote` (alias `--expose`) marks the server as remote-reachable at startup.
+It keeps the bind on `127.0.0.1` (a reverse proxy / tunnel terminates TLS in
+front) but turns on mandatory auth from the first request, and **fails closed**
+at startup if no credentials are configured. Auth is also turned on
+automatically if you bind a non-loopback interface (`--host 0.0.0.0` / a
+LAN/Tailnet IP), or the moment exposure is enabled in Settings. Use
+`--require-auth` to force it on even on loopback, or `--unsafe-no-auth` to
+explicitly turn it off (dangerous).
 
-- every data route and the `/ws` socket require a valid session;
-- the static app shell stays public so the login page can load;
-- the server **fails closed** at startup if no credentials are configured.
-
-Auth is also turned on automatically if you bind a non-loopback interface
-(`--host 0.0.0.0` / a LAN/Tailnet IP). Use `--require-auth` to force it on even
-on loopback, or `--unsafe-no-auth` to explicitly turn it off (dangerous).
-
-Then pick **one** exposure option below. They are independent — pick what fits.
+Then pick **one** exposure option below. Options A and B are what the wizard's
+Tailscale methods run for you; C and D pair with the wizard's **Custom server**
+method (enter the resulting URL there so it's persisted, shown as a QR code,
+and testable).
 
 ---
 
@@ -164,8 +188,8 @@ Cloudflare prints a public `https://<random>.trycloudflare.com` URL.
   no token ever rides in a URL. The **iOS** app uses `POST /api/mobile/login`
   and stores its device token in the Keychain.
 - Sessions live in `~/shiori/userdata/sessions.json` (mode `0600`). Revoke a
-  device by deleting its entry (or the file) and restarting; rotate the password
-  via `credentials.json` as above.
+  device from **Settings → Remote → Devices**, or delete its entry (or the
+  file) and restart; rotate the password from the same panel.
 - Constant-time comparisons; scrypt password hashing; the previously
   unauthenticated attachment and project-favicon routes are now gated.
 
