@@ -724,7 +724,6 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
       const builtInMcpServers = builtInShioriMcpServers({
         provider: PROVIDER,
         settings: serverSettings,
-        exposeComputerWhenApprovalRequired: input.runtimeMode === "approval-required",
       });
       const mcpServers = [...runtimeMcpServers, ...builtInMcpServers]
         .filter(

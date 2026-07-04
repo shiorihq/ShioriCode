@@ -197,8 +197,6 @@ describe("CursorAdapterLive", () => {
         assert.fail(`Expected stdio computer MCP server, got ${computerServer.type}`);
       }
       assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_ENABLED, "1");
-      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL, "0");
-      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS, "[]");
       assert.equal(computerServer.args?.includes("computer-use-mcp"), true);
     }).pipe(
       Effect.provide(
@@ -206,7 +204,7 @@ describe("CursorAdapterLive", () => {
           agent,
           settings: {
             browserUse: { enabled: false },
-            computerUse: { enabled: true, requireApproval: false, shareWithProviders: true },
+            computerUse: { enabled: true },
             mcpServers: { servers: [] },
           },
           createAgent: (options) => {
@@ -238,7 +236,6 @@ describe("CursorAdapterLive", () => {
         assert.fail(`Expected stdio computer MCP server, got ${computerServer.type}`);
       }
       assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_ENABLED, "1");
-      assert.equal(computerServer.env?.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL, "1");
       assert.equal(computerServer.args?.includes("computer-use-mcp"), true);
     }).pipe(
       Effect.provide(
@@ -246,7 +243,7 @@ describe("CursorAdapterLive", () => {
           agent,
           settings: {
             browserUse: { enabled: false },
-            computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
+            computerUse: { enabled: true },
             mcpServers: { servers: [] },
           },
           createAgent: (options) => {

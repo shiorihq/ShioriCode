@@ -1,15 +1,11 @@
 import { IconFolderOutline24 as FolderIcon } from "nucleo-core-outline-24";
 import { useState } from "react";
-import { resolveServerUrl } from "~/lib/utils";
+import { resolveDataRouteUrl } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
 export function ProjectFavicon({ cwd, className }: { cwd: string; className?: string }) {
-  const src = resolveServerUrl({
-    protocol: "http",
-    pathname: "/api/project-favicon",
-    searchParams: { cwd },
-  });
+  const src = resolveDataRouteUrl("/api/project-favicon", { cwd });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
   );

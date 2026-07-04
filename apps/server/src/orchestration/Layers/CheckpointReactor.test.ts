@@ -776,6 +776,80 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
+  it("uses file-change activities to filter broad placeholder checkpoint summaries", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+
+    fs.mkdirSync(path.join(harness.cwd, "src"), { recursive: true });
+    fs.writeFileSync(path.join(harness.cwd, "src", "app.ts"), "export const app = true;\n", "utf8");
+    fs.writeFileSync(path.join(harness.cwd, "project-wide.txt"), "unrelated\n", "utf8");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.makeUnsafe("cmd-file-change-activity"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        activity: {
+          id: EventId.makeUnsafe("evt-file-change-activity"),
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "File change",
+          payload: {
+            itemType: "file_change",
+            data: {
+              item: {
+                changes: [{ path: "src/app.ts" }],
+              },
+            },
+          },
+          turnId: asTurnId("turn-placeholder-filtered"),
+          createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-placeholder-diff-filtered"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-placeholder-filtered"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "missing",
+        files: [
+          {
+            path: "src/app.ts",
+            kind: "modified",
+            additions: 1,
+            deletions: 0,
+          },
+          {
+            path: "project-wide.txt",
+            kind: "modified",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+        assistantMessageId: MessageId.makeUnsafe("assistant:turn-placeholder-filtered"),
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some(
+        (checkpoint) =>
+          checkpoint.checkpointTurnCount === 1 &&
+          checkpoint.turnId === "turn-placeholder-filtered" &&
+          checkpoint.status === "ready",
+      ),
+    );
+
+    expect(thread.checkpoints[0]?.files?.map((file) => file.path)).toEqual(["src/app.ts"]);
+  });
+
   it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();

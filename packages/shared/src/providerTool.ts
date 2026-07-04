@@ -68,6 +68,7 @@ const TODO_LIST_TOOL_NAMES = new Set([
   "update todo list",
   "update todos",
 ]);
+const TASK_MANAGEMENT_TOOL_NAMES = new Set(["task create", "task update", "task list", "task get"]);
 const COMPUTER_USE_TOOL_ALIASES = new Map<string, string>([
   ["computer", "computer"],
   ["list apps", "computer list apps"],
@@ -358,6 +359,29 @@ export function isTodoListToolName(toolName: string | null | undefined): boolean
   return normalized ? TODO_LIST_TOOL_NAMES.has(normalized) : false;
 }
 
+export function isTaskManagementToolName(toolName: string | null | undefined): boolean {
+  const normalized = normalizeProviderToolName(toolName);
+  return normalized ? TASK_MANAGEMENT_TOOL_NAMES.has(normalized) : false;
+}
+
+export function getTaskManagementToolTaskId(input: Record<string, unknown> | null): string | null {
+  return asTrimmedString(input?.taskId) ?? asTrimmedString(input?.task_id);
+}
+
+export function getTaskManagementToolSubject(input: Record<string, unknown> | null): string | null {
+  return (
+    asTrimmedString(input?.subject) ??
+    asTrimmedString(input?.title) ??
+    asTrimmedString(input?.activeForm) ??
+    asTrimmedString(input?.description)
+  );
+}
+
+export function getTaskManagementToolStatus(input: Record<string, unknown> | null): string | null {
+  const status = asTrimmedString(input?.status);
+  return status ? status.replaceAll("_", " ") : null;
+}
+
 export function getProviderToolInputPath(input: Record<string, unknown> | null): string | null {
   return (
     asTrimmedString(input?.file_path) ??
@@ -569,6 +593,14 @@ export function providerToolTitle(toolName: string | null | undefined): string {
     case "send input":
     case "send message":
       return "Send input";
+    case "task create":
+      return "Create task";
+    case "task get":
+      return "View task";
+    case "task list":
+      return "List tasks";
+    case "task update":
+      return "Update task";
     case "update plan":
       return "Update plan";
     case "set todo list":
@@ -641,6 +673,17 @@ export function summarizeProviderToolInvocation(
     return todoCount > 0
       ? `${providerToolTitle(normalized)}: ${todoCount} ${todoCount === 1 ? "task" : "tasks"}`
       : providerToolTitle(normalized);
+  }
+
+  if (isTaskManagementToolName(normalized)) {
+    const title = providerToolTitle(normalized);
+    const taskId = getTaskManagementToolTaskId(input);
+    const target = taskId ? `${title} #${taskId}` : title;
+    const detail =
+      normalized === "task create" || normalized === "task update"
+        ? (getTaskManagementToolStatus(input) ?? getTaskManagementToolSubject(input))
+        : null;
+    return detail ? `${target}: ${truncate(detail)}` : target;
   }
 
   if (isSubagentToolName(normalized)) {

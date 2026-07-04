@@ -196,11 +196,11 @@ describe("GeminiAdapterLive", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("exposes approval-required Computer Use MCP to Antigravity when policy can ask", () => {
+  it.effect("exposes Computer Use MCP to Antigravity when enabled", () => {
     const harness = makeHarness({
       settings: {
         browserUse: { enabled: false },
-        computerUse: { enabled: true, requireApproval: true, shareWithProviders: true },
+        computerUse: { enabled: true },
         mcpServers: { servers: [] },
       },
     });
@@ -227,38 +227,32 @@ describe("GeminiAdapterLive", () => {
         readonly args: ReadonlyArray<string>;
       };
       assert.strictEqual(stdioServer.command, "/usr/bin/env");
-      assert.deepStrictEqual(stdioServer.args.slice(0, 2), [
-        "SHIORICODE_COMPUTER_USE_ENABLED=1",
-        "SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL=1",
-      ]);
+      assert.deepStrictEqual(stdioServer.args.slice(0, 1), ["SHIORICODE_COMPUTER_USE_ENABLED=1"]);
       assert.strictEqual(stdioServer.args.includes("computer-use-mcp"), true);
       assert.strictEqual(policyNames(harness.configs[0]).includes("shiori_approval"), true);
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect(
-    "hides approval-required Computer Use MCP from Antigravity full-access sessions",
-    () => {
-      const harness = makeHarness({
-        settings: {
-          browserUse: { enabled: false },
-          computerUse: { enabled: true, requireApproval: true },
-          mcpServers: { servers: [] },
-        },
+  it.effect("exposes Computer Use MCP to Antigravity full-access sessions", () => {
+    const harness = makeHarness({
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: true },
+        mcpServers: { servers: [] },
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* GeminiAdapter;
+
+      yield* adapter.startSession({
+        threadId: ThreadId.makeUnsafe("thread-gemini-computer-full-access"),
+        provider: "gemini",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
       });
-      return Effect.gen(function* () {
-        const adapter = yield* GeminiAdapter;
 
-        yield* adapter.startSession({
-          threadId: ThreadId.makeUnsafe("thread-gemini-computer-full-access"),
-          provider: "gemini",
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-        });
-
-        assert.strictEqual(mcpServerByName(harness.configs[0], "shiori-computer-use"), undefined);
-        assert.strictEqual(policyNames(harness.configs[0]).includes("allow_all"), true);
-      }).pipe(Effect.provide(harness.layer));
-    },
-  );
+      assert.ok(mcpServerByName(harness.configs[0], "shiori-computer-use"));
+      assert.strictEqual(policyNames(harness.configs[0]).includes("allow_all"), true);
+    }).pipe(Effect.provide(harness.layer));
+  });
 });

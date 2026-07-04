@@ -3588,7 +3588,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...builtInShioriMcpServers({
           provider: PROVIDER,
           settings: serverSettings,
-          exposeComputerWhenApprovalRequired: true,
         }),
       ]);
       const assistantSettingsAppendix = buildAssistantSettingsAppendix({

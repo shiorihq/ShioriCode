@@ -40,6 +40,10 @@
       "types": "./src/providerTool.ts",
       "import": "./src/providerTool.ts"
     },
+    "./providerFileChanges": {
+      "types": "./src/providerFileChanges.ts",
+      "import": "./src/providerFileChanges.ts"
+    },
     "./shioriCodeClient": {
       "types": "./src/shioriCodeClient.ts",
       "import": "./src/shioriCodeClient.ts"

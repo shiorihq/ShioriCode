@@ -8,6 +8,8 @@ import {
   getProviderToolInputActionValue,
   getProviderToolInputPath,
   getProviderToolInputQuery,
+  isSubagentToolName,
+  isTaskManagementToolName,
   isTodoListToolName,
   providerToolTitle,
   summarizeProviderToolInvocation,
@@ -186,6 +188,36 @@ describe("providerTool", () => {
         ],
       }),
     ).toBe("Update todo list: 2 tasks");
+  });
+
+  it("recognizes Claude Code task management tools and summarizes them without raw JSON", () => {
+    expect(isTaskManagementToolName("TaskCreate")).toBe(true);
+    expect(isTaskManagementToolName("TaskUpdate")).toBe(true);
+    expect(isTaskManagementToolName("TaskList")).toBe(true);
+    expect(isTaskManagementToolName("TaskGet")).toBe(true);
+    expect(isTaskManagementToolName("Task")).toBe(false);
+    expect(isSubagentToolName("TaskCreate")).toBe(false);
+
+    expect(providerToolTitle("TaskCreate")).toBe("Create task");
+    expect(providerToolTitle("TaskUpdate")).toBe("Update task");
+    expect(providerToolTitle("TaskList")).toBe("List tasks");
+    expect(providerToolTitle("TaskGet")).toBe("View task");
+
+    expect(
+      summarizeProviderToolInvocation("TaskCreate", {
+        subject: "Build StudioComponents.kt",
+        description: "Shared primitives for the studio screen.",
+        activeForm: "Building StudioComponents.kt",
+      }),
+    ).toBe("Create task: Build StudioComponents.kt");
+    expect(
+      summarizeProviderToolInvocation("TaskUpdate", { taskId: "1", status: "completed" }),
+    ).toBe("Update task #1: completed");
+    expect(
+      summarizeProviderToolInvocation("TaskUpdate", { taskId: "2", status: "in_progress" }),
+    ).toBe("Update task #2: in progress");
+    expect(summarizeProviderToolInvocation("TaskGet", { taskId: "3" })).toBe("View task #3");
+    expect(summarizeProviderToolInvocation("TaskList", {})).toBe("List tasks");
   });
 
   it("extracts notebook paths from structured tool input", () => {

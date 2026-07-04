@@ -1790,9 +1790,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("file-1.ts");
     expect(markup).toContain("file-5.ts");
     expect(markup).toContain("file-6.ts");
+    // Long groups scroll internally through the item-clamped viewport, which
+    // derives its clamp from measured item heights — never a fixed pixel cap.
+    expect(markup).toContain("data-item-clamped-viewport");
     expect(markup).not.toContain("max-h-48");
-    expect(markup).not.toContain("overflow-y-auto");
-    expect(markup).not.toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).not.toContain("max-height");
     expect(markup).not.toContain("[scrollbar-width:none]");
     expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
     expect(markup).not.toContain("Show 1 more");
@@ -1969,8 +1971,9 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Explored 6 files");
     expect(markup).toContain("file-6.ts");
+    expect(markup).toContain("data-item-clamped-viewport");
     expect(markup).not.toContain("max-h-48");
-    expect(markup).not.toContain("overflow-y-auto");
+    expect(markup).not.toContain("max-height");
     expect(markup).not.toContain("Show 1 more");
   });
 
@@ -2039,9 +2042,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("apps/web/src/components/chat/file-1.tsx");
     expect(markup).toContain("apps/web/src/components/chat/file-4.tsx");
     expect(markup).toContain("apps/web/src/components/chat/file-8.tsx");
+    // Nested lists scroll through the item-clamped viewport instead of a
+    // fixed height cap.
+    expect(markup).toContain("data-item-clamped-viewport");
     expect(markup).not.toContain("max-h-48");
-    expect(markup).not.toContain("overflow-y-auto");
-    expect(markup).not.toContain("mask-image:linear-gradient(to bottom");
+    expect(markup).not.toContain("max-height");
     expect(markup).not.toContain("[scrollbar-width:none]");
     expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
   });

@@ -11,7 +11,11 @@ import {
   getProviderToolInputActionValue,
   getProviderToolInputPath,
   getProviderToolInputQuery,
+  getTaskManagementToolStatus,
+  getTaskManagementToolSubject,
+  getTaskManagementToolTaskId,
   isSubagentToolName,
+  isTaskManagementToolName,
   isTodoListToolName,
   isUserInputToolName,
   normalizeProviderToolName,
@@ -176,6 +180,9 @@ export type MessagesTimelineRow =
 
 export const DEFAULT_UNVIRTUALIZED_TAIL_ROW_COUNT = 8;
 export const MAX_RENDERED_WORK_GROUP_ITEMS = 80;
+// Expanded workgroups show at most this many entries at once and scroll
+// internally beyond it. Height estimates below must mirror this clamp.
+export const MAX_VISIBLE_WORK_GROUP_ITEMS = 5;
 
 export function deriveFirstUnvirtualizedTimelineRowIndex(input: {
   rows: ReadonlyArray<MessagesTimelineRow>;
@@ -861,6 +868,53 @@ function formatTodoWriteSummary(input: Record<string, unknown> | null): string |
   return `todo list (${todoCount} ${todoCount === 1 ? "task" : "tasks"})`;
 }
 
+function formatTaskToolWorkEntry(input: {
+  toolName: string;
+  providerToolInput: Record<string, unknown> | null;
+  running: boolean;
+  fallbackDetail: string | null;
+}): FormattedWorkEntry {
+  const taskId = getTaskManagementToolTaskId(input.providerToolInput);
+  const subject = getTaskManagementToolSubject(input.providerToolInput);
+  const status = getTaskManagementToolStatus(input.providerToolInput);
+  const taskRef = taskId ? `#${taskId}` : null;
+
+  let action: string;
+  let detail: string | null;
+  switch (input.toolName) {
+    case "task create":
+      action = input.running ? "Creating task" : "Created task";
+      detail = subject;
+      break;
+    case "task list":
+      return {
+        kind: "other",
+        action: input.running ? "Listing tasks" : "Listed tasks",
+        detail: null,
+        monospace: false,
+        dedupeKey: null,
+      };
+    case "task get":
+      action = input.running ? "Viewing task" : "Viewed task";
+      detail = taskRef;
+      break;
+    default: {
+      action = input.running ? "Updating task" : "Updated task";
+      const change = status ?? subject;
+      detail = taskRef && change ? `${taskRef} · ${change}` : (taskRef ?? change);
+      break;
+    }
+  }
+
+  return {
+    kind: "other",
+    action,
+    detail: detail ?? input.fallbackDetail,
+    monospace: false,
+    dedupeKey: null,
+  };
+}
+
 function formatAgentTargetDetail(input: Record<string, unknown> | null): string | null {
   if (!input) {
     return null;
@@ -1276,6 +1330,15 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     };
   }
 
+  if (providerToolName && isTaskManagementToolName(providerToolName)) {
+    return formatTaskToolWorkEntry({
+      toolName: providerToolName,
+      providerToolInput,
+      running,
+      fallbackDetail: explicitDetail,
+    });
+  }
+
   if (isTodoWriteToolName(providerToolName)) {
     return {
       kind: "other",
@@ -1591,7 +1654,7 @@ export function deriveWorkGroupIconKind(entries: ReadonlyArray<WorkLogEntry>): W
       hasSkill = true;
       continue;
     }
-    if (isTodoWriteToolName(toolName)) {
+    if (isTodoWriteToolName(toolName) || isTaskManagementToolName(toolName)) {
       hasTodo = true;
       continue;
     }
@@ -1658,6 +1721,7 @@ export function buildWorkGroupSummaryParts(
   let genericToolCallCount = 0;
   let todoWriteCount = 0;
   const todoWriteDetails: string[] = [];
+  let taskToolCount = 0;
   let webSearchCount = 0;
 
   for (const entry of getDisplayedWorkEntries(entries)) {
@@ -1715,6 +1779,11 @@ export function buildWorkGroupSummaryParts(
       if (formattedEntry.detail) {
         todoWriteDetails.push(formattedEntry.detail);
       }
+      continue;
+    }
+
+    if (isTaskManagementToolName(toolName)) {
+      taskToolCount += 1;
       continue;
     }
 
@@ -1799,6 +1868,15 @@ export function buildWorkGroupSummaryParts(
       leadingVerb: isInProgress ? "Updating" : "Updated",
       leadingRest: todoLabel,
       trailing: `${isInProgress ? "updating" : "updated"} ${todoLabel}`,
+    });
+  }
+
+  if (taskToolCount > 0) {
+    const taskLabel = taskToolCount === 1 ? "task list" : `task list (${taskToolCount} updates)`;
+    summarySegments.push({
+      leadingVerb: isInProgress ? "Updating" : "Updated",
+      leadingRest: taskLabel,
+      trailing: `${isInProgress ? "updating" : "updated"} ${taskLabel}`,
     });
   }
 
@@ -2360,7 +2438,9 @@ function estimateWorkRowHeight(
   };
 
   const nestedRowsHeight = (childRows: ReadonlyArray<WorkTimelineRow>): number =>
-    childRows.reduce((total, childRow) => total + estimateWorkRowHeight(childRow, input) + 6, 0);
+    sumTallestVisibleWorkItems(
+      childRows.map((childRow) => estimateWorkRowHeight(childRow, input) + 6),
+    );
 
   const estimateGroupedWorkListEntryHeight = (entry: WorkLogEntry): number => {
     if (entry.running) {
@@ -2377,12 +2457,13 @@ function estimateWorkRowHeight(
   const estimateGroupedInlineItemsHeight = (
     inlineEntries: NonNullable<WorkTimelineRow["inlineEntries"]>,
   ): number =>
-    inlineEntries.reduce((total, item) => {
-      if (item.kind === "reasoning") {
-        return total + estimateReasoningRowHeight(item.reasoning.text) + 6;
-      }
-      return total + estimateGroupedWorkListEntryHeight(item.entry);
-    }, 0);
+    sumTallestVisibleWorkItems(
+      inlineEntries.map((item) =>
+        item.kind === "reasoning"
+          ? estimateReasoningRowHeight(item.reasoning.text) + 6
+          : estimateGroupedWorkListEntryHeight(item.entry),
+      ),
+    );
 
   if (row.childRows.length > 0) {
     const isExpanded = isWorkRowExpanded(row, input.expandedWorkGroups);
@@ -2419,10 +2500,21 @@ function estimateWorkRowHeight(
     return 16 + 26 + estimateGroupedInlineItemsHeight(row.inlineEntries) + 8;
   }
 
-  const entriesHeight = displayedEntries.reduce((total, entry) => {
-    return total + estimateGroupedWorkListEntryHeight(entry);
-  }, 0);
+  const entriesHeight = sumTallestVisibleWorkItems(
+    displayedEntries.map(estimateGroupedWorkListEntryHeight),
+  );
   return 16 + 26 + entriesHeight + 8;
+}
+
+// Mirrors ItemClampedScrollViewport in the rendered workgroup: past
+// MAX_VISIBLE_WORK_GROUP_ITEMS the list scrolls internally, clamped to the
+// tallest items so an expanded entry always fits.
+function sumTallestVisibleWorkItems(itemHeights: ReadonlyArray<number>): number {
+  const visible =
+    itemHeights.length <= MAX_VISIBLE_WORK_GROUP_ITEMS
+      ? itemHeights
+      : itemHeights.toSorted((a, b) => b - a).slice(0, MAX_VISIBLE_WORK_GROUP_ITEMS);
+  return visible.reduce((total, height) => total + height, 0);
 }
 
 function estimateOutputLineCount(output: unknown): number {

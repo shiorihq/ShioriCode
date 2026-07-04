@@ -781,9 +781,6 @@ describe("ClaudeAdapterLive", () => {
         serverSettings: {
           computerUse: {
             enabled: true,
-            requireApproval: false,
-            shareWithProviders: true,
-            approvedApps: [],
           },
           mcpServers: { servers: [] },
         },
@@ -812,8 +809,6 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(computerServerArgs.includes("computer-use-mcp"), true);
         assert.deepEqual(computerServer.env, {
           SHIORICODE_COMPUTER_USE_ENABLED: "1",
-          SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
-          SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
         });
         assert.deepEqual(computerServer, {
           type: "stdio",
@@ -821,8 +816,6 @@ describe("ClaudeAdapterLive", () => {
           args: computerServerArgs,
           env: {
             SHIORICODE_COMPUTER_USE_ENABLED: "1",
-            SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "0",
-            SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
           },
         });
       }).pipe(
@@ -837,9 +830,6 @@ describe("ClaudeAdapterLive", () => {
       serverSettings: {
         computerUse: {
           enabled: true,
-          requireApproval: true,
-          shareWithProviders: true,
-          approvedApps: [],
         },
         mcpServers: { servers: [] },
       },
@@ -861,8 +851,6 @@ describe("ClaudeAdapterLive", () => {
       }
       assert.deepEqual(computerServer.env, {
         SHIORICODE_COMPUTER_USE_ENABLED: "1",
-        SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: "1",
-        SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: "[]",
       });
 
       const canUseTool = createInput?.options.canUseTool;

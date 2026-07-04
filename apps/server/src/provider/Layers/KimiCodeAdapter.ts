@@ -1283,7 +1283,6 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           provider: PROVIDER,
           settings,
           cwd: input.cwd,
-          exposeComputerWhenApprovalRequired: true,
         }),
       catch: (cause) =>
         new ProviderAdapterProcessError({

@@ -73,12 +73,7 @@ function createBaseServerConfig(): ServerConfig {
         ...DEFAULT_ONBOARDING_PROGRESS,
         completedStepIds: [...ONBOARDING_STEP_IDS],
       },
-      computerUse: {
-        enabled: false,
-        requireApproval: true,
-        shareWithProviders: false,
-        approvedApps: [],
-      },
+      computerUse: { enabled: false },
       browserUse: { enabled: false },
       mobileApp: { enabled: false },
       goals: { enabled: false },

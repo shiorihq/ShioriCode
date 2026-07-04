@@ -241,6 +241,53 @@ describe("deriveMessagesTimelineRows", () => {
     expect(buildWorkGroupSummary([setTodoListEntry], false)).toBe("Updated todo list (3 tasks)");
   });
 
+  it("renders Claude Code task tools with friendly summaries instead of raw JSON", () => {
+    const taskCreateEntry = {
+      id: "task-create-entry",
+      createdAt: "2026-06-28T16:57:41.836Z",
+      label: "Create task",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail: "Create task: Build StudioComponents.kt",
+      output: {
+        toolName: "TaskCreate",
+        input: {
+          subject: "Build StudioComponents.kt",
+          description: "Shared primitives for the studio screen.",
+          activeForm: "Building StudioComponents.kt",
+        },
+      },
+    };
+    const taskUpdateEntry = {
+      id: "task-update-entry",
+      createdAt: "2026-06-28T17:00:13.219Z",
+      label: "Update task",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+      detail: 'Task Update: {"taskId":"1","status":"completed"}',
+      output: {
+        toolName: "TaskUpdate",
+        input: { taskId: "1", status: "completed" },
+      },
+    };
+
+    expect(formatWorkEntry(taskCreateEntry)).toMatchObject({
+      kind: "other",
+      action: "Created task",
+      detail: "Build StudioComponents.kt",
+      monospace: false,
+    });
+    expect(formatWorkEntry(taskUpdateEntry)).toMatchObject({
+      kind: "other",
+      action: "Updated task",
+      detail: "#1 · completed",
+      monospace: false,
+    });
+    expect(buildWorkGroupSummary([taskCreateEntry, taskUpdateEntry], false)).toBe(
+      "Updated task list (2 updates)",
+    );
+  });
+
   it("dedupes repeated file reads when summarizing exploration work groups", () => {
     const entries = [
       {

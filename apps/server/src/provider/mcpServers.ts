@@ -172,22 +172,17 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function computerUseMcpEnv(computerUse: ServerSettings["computerUse"]): Record<string, string> {
-  const approvedAppBundleIds = (computerUse.approvedApps ?? [])
-    .map((app) => app.bundleIdentifier.trim())
-    .filter((bundleIdentifier) => bundleIdentifier.length > 0);
+function computerUseMcpEnv(): Record<string, string> {
   const helperBinary = process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY?.trim();
   const helperPackagePath = process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH?.trim();
   const hostAppBundlePath = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH?.trim();
   const hostAppDisplayName = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME?.trim();
   return {
     SHIORICODE_COMPUTER_USE_ENABLED: "1",
-    SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL: computerUse.requireApproval ? "1" : "0",
     ...(helperBinary ? { SHIORICODE_COMPUTER_USE_HELPER_BINARY: helperBinary } : {}),
     ...(helperPackagePath
       ? { SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH: helperPackagePath }
       : {}),
-    SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS: JSON.stringify(approvedAppBundleIds),
     ...(hostAppBundlePath
       ? { SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH: hostAppBundlePath }
       : {}),
@@ -513,16 +508,12 @@ export async function loadEffectiveMcpServersForProvider(input: {
   readonly provider: ProviderKind;
   readonly settings: ServerSettings;
   readonly cwd?: string;
-  readonly exposeComputerWhenApprovalRequired?: boolean;
 }): Promise<EffectiveMcpServersResult> {
   const servers = mergeMcpServers([
     ...input.settings.mcpServers.servers,
     ...builtInShioriMcpServers({
       provider: input.provider,
       settings: input.settings,
-      ...(input.exposeComputerWhenApprovalRequired !== undefined
-        ? { exposeComputerWhenApprovalRequired: input.exposeComputerWhenApprovalRequired }
-        : {}),
     }),
   ]);
   return {
@@ -978,17 +969,9 @@ export function toAcpMcpServers(
       }),
     );
   }
-  if (
-    settings.computerUse.enabled &&
-    settings.computerUse.shareWithProviders &&
-    !settings.computerUse.requireApproval
-  ) {
+  if (settings.computerUse.enabled) {
     acpServers.push(
-      makeBuiltInStdioMcpServer(
-        "shiori-computer-use",
-        "computer-use-mcp",
-        computerUseMcpEnv(settings.computerUse),
-      ),
+      makeBuiltInStdioMcpServer("shiori-computer-use", "computer-use-mcp", computerUseMcpEnv()),
     );
   }
   return acpServers;
@@ -1001,15 +984,10 @@ export function builtInShioriMcpServers(input: {
     readonly config: ServerConfigShape;
     readonly threadId: ThreadId;
   };
-  readonly exposeComputerWhenApprovalRequired?: boolean;
 }): McpServerEntry[] {
   const servers: McpServerEntry[] = [];
   const browserUse = input.settings.browserUse ?? { enabled: false };
-  const computerUse = input.settings.computerUse ?? {
-    enabled: false,
-    requireApproval: true,
-    approvedApps: [],
-  };
+  const computerUse = input.settings.computerUse ?? { enabled: false };
 
   if (browserUse.enabled && input.browserPanel) {
     servers.push(
@@ -1023,16 +1001,12 @@ export function builtInShioriMcpServers(input: {
     );
   }
 
-  if (
-    computerUse.enabled &&
-    computerUse.shareWithProviders &&
-    (input.exposeComputerWhenApprovalRequired || !computerUse.requireApproval)
-  ) {
+  if (computerUse.enabled) {
     servers.push(
       makeBuiltInStdioMcpServerEntry(
         "shiori-computer-use",
         "computer-use-mcp",
-        computerUseMcpEnv(computerUse),
+        computerUseMcpEnv(),
       ),
     );
   }

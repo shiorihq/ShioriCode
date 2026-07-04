@@ -930,7 +930,6 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 config: serverConfig,
                 threadId: input.threadId,
               },
-              exposeComputerWhenApprovalRequired: input.runtimeMode === "approval-required",
             }),
           ]);
           const parsedResumeCursor = parseCursorResume(input.resumeCursor);

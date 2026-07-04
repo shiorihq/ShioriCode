@@ -15,6 +15,7 @@ import {
 } from "contracts";
 import { Cause, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "shared/DrainableWorker";
+import { extractChangedFilesFromProviderData } from "shared/providerFileChanges";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -44,6 +45,99 @@ type ReactorInput =
       readonly source: "domain";
       readonly event: OrchestrationEvent;
     };
+
+interface CheckpointFileSummary {
+  readonly path: string;
+  readonly kind: string;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+interface CheckpointActivity {
+  readonly payload: unknown;
+  readonly turnId: TurnId | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function normalizeChangedFilePath(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function collectFileChangeActivityPaths(
+  activities: ReadonlyArray<CheckpointActivity>,
+  turnId: TurnId,
+): ReadonlyArray<string> {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+
+  for (const activity of activities) {
+    if (activity.turnId !== turnId) {
+      continue;
+    }
+
+    const payload = asRecord(activity.payload);
+    if (payload?.itemType !== "file_change") {
+      continue;
+    }
+
+    for (const rawPath of extractChangedFilesFromProviderData(payload.data, { maxFiles: 500 })) {
+      const filePath = normalizeChangedFilePath(rawPath);
+      if (!filePath || seen.has(filePath)) {
+        continue;
+      }
+      seen.add(filePath);
+      paths.push(filePath);
+    }
+  }
+
+  return paths;
+}
+
+function indexCheckpointFilesByPath(
+  files: ReadonlyArray<CheckpointFileSummary> | undefined,
+): ReadonlyMap<string, CheckpointFileSummary> {
+  const byPath = new Map<string, CheckpointFileSummary>();
+  for (const file of files ?? []) {
+    const filePath = normalizeChangedFilePath(file.path);
+    if (!filePath || byPath.has(filePath)) {
+      continue;
+    }
+    byPath.set(filePath, file);
+  }
+  return byPath;
+}
+
+function selectThreadScopedCheckpointFiles(input: {
+  readonly activities: ReadonlyArray<CheckpointActivity>;
+  readonly turnId: TurnId;
+  readonly derivedFiles: ReadonlyArray<CheckpointFileSummary>;
+  readonly preferredFiles?: ReadonlyArray<CheckpointFileSummary>;
+}): ReadonlyArray<CheckpointFileSummary> {
+  const activityPaths = collectFileChangeActivityPaths(input.activities, input.turnId);
+  if (activityPaths.length === 0) {
+    return input.preferredFiles && input.preferredFiles.length > 0
+      ? input.preferredFiles
+      : input.derivedFiles;
+  }
+
+  const derivedByPath = indexCheckpointFilesByPath(input.derivedFiles);
+  const preferredByPath = indexCheckpointFilesByPath(input.preferredFiles);
+  return activityPaths
+    .map((path) => {
+      const source = derivedByPath.get(path) ?? preferredByPath.get(path);
+      return {
+        path,
+        kind: source?.kind ?? "modified",
+        additions: source?.additions ?? 0,
+        deletions: source?.deletions ?? 0,
+      };
+    })
+    .toSorted((left, right) => left.path.localeCompare(right.path));
+}
 
 class RetryAttachmentCloneError extends Error {
   readonly _tag = "RetryAttachmentCloneError";
@@ -509,6 +603,7 @@ const make = Effect.gen(function* () {
         readonly role: string;
         readonly turnId: TurnId | null;
       }>;
+      readonly activities: ReadonlyArray<CheckpointActivity>;
     };
     readonly cwd: string;
     readonly turnCount: number;
@@ -580,8 +675,12 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as([])),
         ),
       );
-    const files =
-      input.preferredFiles && input.preferredFiles.length > 0 ? input.preferredFiles : derivedFiles;
+    const files = selectThreadScopedCheckpointFiles({
+      activities: input.thread.activities,
+      turnId: input.turnId,
+      derivedFiles,
+      ...(input.preferredFiles !== undefined ? { preferredFiles: input.preferredFiles } : {}),
+    });
 
     const assistantMessageId =
       input.assistantMessageId ??

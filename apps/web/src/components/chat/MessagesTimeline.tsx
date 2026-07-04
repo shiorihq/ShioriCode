@@ -59,6 +59,7 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 import { InlineEditDiff, extractBasename, parseEditDiff } from "./InlineEditDiff";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
+import { ItemClampedScrollViewport } from "../ui/item-clamped-scroll-viewport";
 import { useTheme } from "../../hooks/useTheme";
 import type { WorkGroupIconKind, WorkGroupSummaryParts } from "./MessagesTimeline.logic";
 import {
@@ -81,6 +82,7 @@ import {
   isWhitespaceAssistantMessage,
   isWorkRowExpanded,
   isWorkRowInProgress,
+  MAX_VISIBLE_WORK_GROUP_ITEMS,
   shouldRenderFlatWorkRowAsGroup,
   type DelegatedAgentWorkflowCard,
   type MessagesTimelineRow,
@@ -664,12 +666,24 @@ function MessagesTimelineView({
               </button>
             </div>
             <AnimatedExpandPanel open={isExpanded}>
-              <div id={groupItemsId} className="mt-0.5 space-y-0.5 pr-1">
-                {row.childRows.map((childRow) => (
-                  <div key={`nested-work-row:${childRow.id}`}>
-                    {renderWorkRow(childRow, depth + 1)}
+              <div id={groupItemsId} className="mt-0.5 pr-1">
+                <ItemClampedScrollViewport
+                  itemCount={row.childRows.length}
+                  maxVisibleItems={MAX_VISIBLE_WORK_GROUP_ITEMS}
+                  followBottom={isInProgress}
+                  onClampChange={scheduleTimelineMeasure}
+                >
+                  <div className="space-y-0.5">
+                    {row.childRows.map((childRow) => (
+                      <div
+                        key={`nested-work-row:${childRow.id}`}
+                        data-item-clamped-viewport-item=""
+                      >
+                        {renderWorkRow(childRow, depth + 1)}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </ItemClampedScrollViewport>
               </div>
             </AnimatedExpandPanel>
           </div>
@@ -3022,65 +3036,71 @@ const GroupedWorkEntries = memo(function GroupedWorkEntries(props: GroupedWorkEn
       <AnimatedExpandPanel open={isExpanded}>
         <div id={groupItemsId} className="mt-0.5">
           <div className={nested ? "pr-1" : undefined}>
-            <ul>
-              {renderedItems.map((item) => {
-                if (item.kind === "reasoning") {
+            <ItemClampedScrollViewport
+              itemCount={renderedItems.length}
+              maxVisibleItems={MAX_VISIBLE_WORK_GROUP_ITEMS}
+              followBottom={isInProgress}
+              onClampChange={onHeightChange}
+            >
+              <ul>
+                {renderedItems.map((item) => {
+                  if (item.kind === "reasoning") {
+                    return (
+                      <li
+                        key={`work-row:${item.id}`}
+                        className="list-none py-0.5"
+                        data-item-clamped-viewport-item=""
+                      >
+                        <ReasoningTimelineEntry
+                          reasoning={item.reasoning}
+                          markdownCwd={markdownCwd}
+                          {...(onHeightChange ? { onHeightChange } : {})}
+                        />
+                      </li>
+                    );
+                  }
+
+                  const workEntry = item.entry;
+                  const groupedEntryClassName = "list-none py-0.5";
+                  if (workEntry.running || workEntry.itemType === "web_search") {
+                    return (
+                      <li
+                        key={`work-row:${workEntry.id}`}
+                        className={groupedEntryClassName}
+                        data-item-clamped-viewport-item=""
+                      >
+                        <MinimalWorkEntry
+                          workEntry={workEntry}
+                          indented={false}
+                          cwd={markdownCwd}
+                          showMcpToolboxIcon={false}
+                        />
+                      </li>
+                    );
+                  }
+
+                  const entryExpansionKey = getGroupedWorkEntryExpansionKey(workEntry.id);
+                  const isEntryExpanded = expandedWorkGroups[entryExpansionKey] ?? false;
+
                   return (
-                    <li key={`work-row:${item.id}`} className="list-none py-0.5">
-                      <ReasoningTimelineEntry
-                        reasoning={item.reasoning}
-                        markdownCwd={markdownCwd}
+                    <li
+                      key={`work-row:${workEntry.id}`}
+                      className={groupedEntryClassName}
+                      data-item-clamped-viewport-item=""
+                    >
+                      <ExpandableWorkEntry
+                        workEntry={workEntry}
+                        isExpanded={isEntryExpanded}
+                        onToggle={() => onToggleWorkGroup(entryExpansionKey, isEntryExpanded)}
+                        cwd={markdownCwd}
+                        showMcpToolboxIcon={false}
                         {...(onHeightChange ? { onHeightChange } : {})}
                       />
                     </li>
                   );
-                }
-
-                const workEntry = item.entry;
-                const groupedEntryClassName = "list-none py-0.5";
-                if (workEntry.running) {
-                  return (
-                    <li key={`work-row:${workEntry.id}`} className={groupedEntryClassName}>
-                      <MinimalWorkEntry
-                        workEntry={workEntry}
-                        indented={false}
-                        cwd={markdownCwd}
-                        showMcpToolboxIcon={false}
-                      />
-                    </li>
-                  );
-                }
-
-                if (workEntry.itemType === "web_search") {
-                  return (
-                    <li key={`work-row:${workEntry.id}`} className={groupedEntryClassName}>
-                      <MinimalWorkEntry
-                        workEntry={workEntry}
-                        indented={false}
-                        cwd={markdownCwd}
-                        showMcpToolboxIcon={false}
-                      />
-                    </li>
-                  );
-                }
-
-                const entryExpansionKey = getGroupedWorkEntryExpansionKey(workEntry.id);
-                const isEntryExpanded = expandedWorkGroups[entryExpansionKey] ?? false;
-
-                return (
-                  <li key={`work-row:${workEntry.id}`} className={groupedEntryClassName}>
-                    <ExpandableWorkEntry
-                      workEntry={workEntry}
-                      isExpanded={isEntryExpanded}
-                      onToggle={() => onToggleWorkGroup(entryExpansionKey, isEntryExpanded)}
-                      cwd={markdownCwd}
-                      showMcpToolboxIcon={false}
-                      {...(onHeightChange ? { onHeightChange } : {})}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
+                })}
+              </ul>
+            </ItemClampedScrollViewport>
           </div>
         </div>
       </AnimatedExpandPanel>
