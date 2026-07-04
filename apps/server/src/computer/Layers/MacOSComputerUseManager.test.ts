@@ -59,192 +59,19 @@ it.layer(NodeServices.layer)("macOS computer use manager", (it) => {
     ),
   );
 
-  it.effect("passes approved app bundle identifiers to list-apps helper calls", () =>
-    Effect.gen(function* () {
-      if (process.platform !== "darwin") {
-        return;
-      }
-
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "shioricode-computer-use-manager-test-",
-      });
-      const helperPath = `${tempDir}/ShioriComputerUseHelper`;
-      const capturePath = `${tempDir}/capture.json`;
-
-      yield* fs.writeFileString(
-        helperPath,
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          "const command = process.argv[2];",
-          "let stdin = '';",
-          "process.stdin.setEncoding('utf8');",
-          "process.stdin.on('data', (chunk) => { stdin += chunk; });",
-          "process.stdin.on('end', () => {",
-          "  const input = stdin.trim() ? JSON.parse(stdin) : {};",
-          "  fs.writeFileSync(process.env.SHIORICODE_CAPTURE_PATH, JSON.stringify({ command, input }));",
-          "  process.stdout.write(JSON.stringify({",
-          "    sessionId: input.sessionId,",
-          "    checkedAt: '2026-06-04T00:00:00.000Z',",
-          "    accessibilityTrusted: true,",
-          "    filteredByApprovedApps: Array.isArray(input.approvedAppBundleIdentifiers),",
-          "    apps: []",
-          "  }));",
-          "});",
-          "",
-        ].join("\n"),
-      );
-      yield* fs.chmod(helperPath, 0o755);
-
-      yield* withEnvVar(
-        "SHIORICODE_COMPUTER_USE_HELPER_BINARY",
-        helperPath,
-        withEnvVar(
-          "SHIORICODE_CAPTURE_PATH",
-          capturePath,
-          Effect.gen(function* () {
-            const manager = yield* ComputerUseManager;
-            const result = yield* manager.listApps({});
-            const capture = JSON.parse(yield* fs.readFileString(capturePath)) as {
-              readonly command: string;
-              readonly input: {
-                readonly approvedAppBundleIdentifiers?: ReadonlyArray<string>;
-              };
-            };
-
-            assert.equal(result.filteredByApprovedApps, true);
-            assert.equal(capture.command, "list-apps");
-            assert.deepEqual(capture.input.approvedAppBundleIdentifiers, [
-              "com.apple.finder",
-              "com.apple.Terminal",
-            ]);
-          }).pipe(
-            Effect.provide(
-              ComputerUseManagerLive.pipe(
-                Layer.provide(
-                  ServerSettingsService.layerTest({
-                    computerUse: {
-                      enabled: true,
-                      approvedApps: [
-                        {
-                          bundleIdentifier: "com.apple.finder",
-                          name: "Finder",
-                          approvedAt: "2026-06-04T00:00:00.000Z",
-                        },
-                        {
-                          bundleIdentifier: "com.apple.Terminal",
-                          name: "Terminal",
-                          approvedAt: "2026-06-04T00:00:00.000Z",
-                        },
-                      ],
-                    },
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }),
-  );
-
-  it.effect("passes explicit empty approved app bundle identifiers to list-apps helper calls", () =>
-    Effect.gen(function* () {
-      if (process.platform !== "darwin") {
-        return;
-      }
-
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "shioricode-computer-use-manager-test-",
-      });
-      const helperPath = `${tempDir}/ShioriComputerUseHelper`;
-      const capturePath = `${tempDir}/capture.json`;
-
-      yield* fs.writeFileString(
-        helperPath,
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          "const command = process.argv[2];",
-          "let stdin = '';",
-          "process.stdin.setEncoding('utf8');",
-          "process.stdin.on('data', (chunk) => { stdin += chunk; });",
-          "process.stdin.on('end', () => {",
-          "  const input = stdin.trim() ? JSON.parse(stdin) : {};",
-          "  fs.writeFileSync(process.env.SHIORICODE_CAPTURE_PATH, JSON.stringify({ command, input }));",
-          "  process.stdout.write(JSON.stringify({",
-          "    sessionId: input.sessionId,",
-          "    checkedAt: '2026-06-04T00:00:00.000Z',",
-          "    accessibilityTrusted: true,",
-          "    filteredByApprovedApps: Array.isArray(input.approvedAppBundleIdentifiers),",
-          "    apps: []",
-          "  }));",
-          "});",
-          "",
-        ].join("\n"),
-      );
-      yield* fs.chmod(helperPath, 0o755);
-
-      yield* withEnvVar(
-        "SHIORICODE_COMPUTER_USE_HELPER_BINARY",
-        helperPath,
-        withEnvVar(
-          "SHIORICODE_CAPTURE_PATH",
-          capturePath,
-          Effect.gen(function* () {
-            const manager = yield* ComputerUseManager;
-            const result = yield* manager.listApps({});
-            const capture = JSON.parse(yield* fs.readFileString(capturePath)) as {
-              readonly command: string;
-              readonly input: {
-                readonly approvedAppBundleIdentifiers?: ReadonlyArray<string>;
-              };
-            };
-
-            assert.equal(result.filteredByApprovedApps, true);
-            assert.equal(capture.command, "list-apps");
-            assert.deepEqual(capture.input.approvedAppBundleIdentifiers, []);
-          }).pipe(
-            Effect.provide(
-              ComputerUseManagerLive.pipe(
-                Layer.provide(
-                  ServerSettingsService.layerTest({
-                    computerUse: {
-                      enabled: true,
-                      approvedApps: [],
-                    },
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }),
-  );
-
-  it.effect("rejects focus-app when no apps are approved before helper resolution", () =>
+  it.effect("rejects desktop actions while Computer Use is disabled", () =>
     Effect.gen(function* () {
       const manager = yield* ComputerUseManager;
-      const error = yield* manager
-        .focusApp({ bundleIdentifier: "com.apple.Safari" })
-        .pipe(Effect.flip);
+      const error = yield* manager.listApps({}).pipe(Effect.flip);
 
-      assert.equal(error.code, "permissionDenied");
-      assert.equal(
-        error.message,
-        "Computer Use focus is blocked because no apps are approved in Settings > Computer Use.",
-      );
+      assert.equal(error.code, "disabled");
     }).pipe(
       Effect.provide(
         ComputerUseManagerLive.pipe(
           Layer.provide(
             ServerSettingsService.layerTest({
               computerUse: {
-                enabled: true,
-                approvedApps: [],
+                enabled: false,
               },
             }),
           ),
@@ -253,7 +80,79 @@ it.layer(NodeServices.layer)("macOS computer use manager", (it) => {
     ),
   );
 
-  it.effect("passes approved app bundle identifiers to focus-window helper calls", () =>
+  it.effect("forwards list-apps calls to the helper without app filtering", () =>
+    Effect.gen(function* () {
+      if (process.platform !== "darwin") {
+        return;
+      }
+
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "shioricode-computer-use-manager-test-",
+      });
+      const helperPath = `${tempDir}/ShioriComputerUseHelper`;
+      const capturePath = `${tempDir}/capture.json`;
+
+      yield* fs.writeFileString(
+        helperPath,
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "const command = process.argv[2];",
+          "let stdin = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  const input = stdin.trim() ? JSON.parse(stdin) : {};",
+          "  fs.writeFileSync(process.env.SHIORICODE_CAPTURE_PATH, JSON.stringify({ command, input }));",
+          "  process.stdout.write(JSON.stringify({",
+          "    sessionId: input.sessionId,",
+          "    checkedAt: '2026-06-04T00:00:00.000Z',",
+          "    accessibilityTrusted: true,",
+          "    apps: []",
+          "  }));",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.chmod(helperPath, 0o755);
+
+      yield* withEnvVar(
+        "SHIORICODE_COMPUTER_USE_HELPER_BINARY",
+        helperPath,
+        withEnvVar(
+          "SHIORICODE_CAPTURE_PATH",
+          capturePath,
+          Effect.gen(function* () {
+            const manager = yield* ComputerUseManager;
+            const result = yield* manager.listApps({});
+            const capture = JSON.parse(yield* fs.readFileString(capturePath)) as {
+              readonly command: string;
+              readonly input: Record<string, unknown>;
+            };
+
+            assert.deepEqual(result.apps, []);
+            assert.equal(capture.command, "list-apps");
+            assert.notProperty(capture.input, "approvedAppBundleIdentifiers");
+          }).pipe(
+            Effect.provide(
+              ComputerUseManagerLive.pipe(
+                Layer.provide(
+                  ServerSettingsService.layerTest({
+                    computerUse: {
+                      enabled: true,
+                    },
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("forwards focus-window calls to the helper without approval checks", () =>
     Effect.gen(function* () {
       if (process.platform !== "darwin") {
         return;
@@ -307,7 +206,6 @@ it.layer(NodeServices.layer)("macOS computer use manager", (it) => {
               readonly input: {
                 readonly bundleIdentifier?: string;
                 readonly windowIndex?: number;
-                readonly approvedAppBundleIdentifiers?: ReadonlyArray<string>;
               };
             };
 
@@ -315,7 +213,7 @@ it.layer(NodeServices.layer)("macOS computer use manager", (it) => {
             assert.equal(capture.command, "focus-window");
             assert.equal(capture.input.bundleIdentifier, "com.apple.Safari");
             assert.equal(capture.input.windowIndex, 1);
-            assert.deepEqual(capture.input.approvedAppBundleIdentifiers, ["com.apple.Safari"]);
+            assert.notProperty(capture.input, "approvedAppBundleIdentifiers");
           }).pipe(
             Effect.provide(
               ComputerUseManagerLive.pipe(
@@ -323,13 +221,6 @@ it.layer(NodeServices.layer)("macOS computer use manager", (it) => {
                   ServerSettingsService.layerTest({
                     computerUse: {
                       enabled: true,
-                      approvedApps: [
-                        {
-                          bundleIdentifier: "com.apple.Safari",
-                          name: "Safari",
-                          approvedAt: "2026-06-04T00:00:00.000Z",
-                        },
-                      ],
                     },
                   }),
                 ),

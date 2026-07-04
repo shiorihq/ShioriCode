@@ -10,6 +10,7 @@ import {
   type MobileCommand as MobileCommandShape,
   type MobileCommandResult,
   type MobileConnectionInfo,
+  type MobileFileChange,
   type MobileProvider,
   MobilePairRequest,
   type MobilePairRequest as MobilePairRequestShape,
@@ -24,8 +25,10 @@ import {
   type ModelSelection,
   PROVIDER_DISPLAY_NAMES,
   ProjectId,
+  ProjectSearchEntriesInput,
   type ServerProvider,
   ThreadId,
+  type OrchestrationCheckpointSummary,
   type OrchestrationReadModel,
 } from "contracts";
 import { Data, Effect, Layer, Option, Schema, Stream } from "effect";
@@ -34,10 +37,13 @@ import { derivePendingApprovals, derivePendingUserInputs } from "shared/orchestr
 
 import { EnvironmentAuth } from "./auth/EnvironmentAuth";
 import { ServerConfig, type ServerConfigShape } from "./config";
+import { normalizeDispatchCommand } from "./orchestration/Normalizer";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
+import { detectTailscaleSelf, findTailscaleCli, readServe } from "./remote/tailscale";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
+import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 
 const PAIRING_SESSION_TTL_MS = 5 * 60 * 1000;
 const DEVICE_TOKEN_BYTES = 32;
@@ -271,14 +277,19 @@ function isWildcardHost(host: string | undefined): boolean {
   return host === "0.0.0.0" || host === "::" || host === "[::]";
 }
 
+function serverAcceptsNonLoopback(config: ServerConfigShape): boolean {
+  return isWildcardHost(config.host) || !isLoopbackHost(config.host);
+}
+
 export function mobilePairingCandidates(
   config: ServerConfigShape,
   url: URL,
+  extraCandidates: ReadonlyArray<MobilePairingCandidate> = [],
 ): MobilePairingCandidate[] {
   const candidates: MobilePairingCandidate[] = [];
   const seen = new Set<string>();
   const port = config.port;
-  const acceptsLanConnections = isWildcardHost(config.host) || !isLoopbackHost(config.host);
+  const acceptsLanConnections = serverAcceptsNonLoopback(config);
 
   addCandidate(candidates, seen, `http://127.0.0.1:${port}`, "Simulator on this Mac");
 
@@ -303,7 +314,101 @@ export function mobilePairingCandidates(
     }
   }
 
+  for (const extra of extraCandidates) {
+    addCandidate(candidates, seen, extra.apiBaseUrl, extra.label);
+  }
+
   return candidates;
+}
+
+const TAILSCALE_CANDIDATES_TTL_MS = 30_000;
+const TAILSCALE_CANDIDATES_WAIT_MS = 2_500;
+
+let tailscaleCandidatesCache: {
+  readonly expiresAt: number;
+  readonly candidates: MobilePairingCandidate[];
+} | null = null;
+let tailscaleCandidatesRefresh: Promise<MobilePairingCandidate[]> | null = null;
+
+/**
+ * Tailscale-reachable addresses for this server. When both devices are on the
+ * same tailnet, bundling these into the pairing QR makes a single scan work
+ * away from the LAN — no manual server URL or owner credentials:
+ * - the active Serve/Funnel URL (tailscaled proxies to loopback, so this works
+ *   regardless of the bind host), and
+ * - the machine's tailnet IPv4 when the server accepts non-loopback traffic.
+ *   An IP literal on purpose: iOS ATS blocks plain-HTTP hostnames but not IP
+ *   addresses, and MagicDNS may be disabled on the phone.
+ */
+async function detectTailscaleCandidates(
+  config: ServerConfigShape,
+): Promise<MobilePairingCandidate[]> {
+  const cli = findTailscaleCli();
+  if (!cli) {
+    return [];
+  }
+  const [self, serve] = await Promise.all([detectTailscaleSelf(cli), readServe(cli, config.port)]);
+  const candidates: MobilePairingCandidate[] = [];
+  if (serve.url) {
+    candidates.push({
+      apiBaseUrl: serve.url.replace(/\/+$/, ""),
+      label: serve.method === "tailscale-funnel" ? "Tailscale Funnel" : "Tailscale Serve",
+    });
+  }
+  if (self.running && self.tailscaleIPv4 && serverAcceptsNonLoopback(config)) {
+    candidates.push({
+      apiBaseUrl: `http://${self.tailscaleIPv4}:${config.port}`,
+      label: "Tailscale IP",
+    });
+  }
+  return candidates;
+}
+
+function refreshTailscaleCandidates(config: ServerConfigShape): Promise<MobilePairingCandidate[]> {
+  if (!tailscaleCandidatesRefresh) {
+    tailscaleCandidatesRefresh = detectTailscaleCandidates(config)
+      .catch((): MobilePairingCandidate[] => [])
+      .then((candidates) => {
+        tailscaleCandidatesCache = {
+          expiresAt: Date.now() + TAILSCALE_CANDIDATES_TTL_MS,
+          candidates,
+        };
+        tailscaleCandidatesRefresh = null;
+        return candidates;
+      });
+  }
+  return tailscaleCandidatesRefresh;
+}
+
+/**
+ * Cached tailscale candidates without blocking: the iOS app probes
+ * /api/mobile/connection with ~1s timeouts, so device-facing responses must
+ * never wait on the tailscale CLI. A stale or missing cache kicks off a
+ * background refresh for the next request.
+ */
+function cachedTailscaleCandidates(config: ServerConfigShape): MobilePairingCandidate[] {
+  if (!tailscaleCandidatesCache || Date.now() >= tailscaleCandidatesCache.expiresAt) {
+    void refreshTailscaleCandidates(config);
+  }
+  return tailscaleCandidatesCache?.candidates ?? [];
+}
+
+/**
+ * Tailscale candidates for QR creation: wait briefly for a fresh detection so
+ * a just-generated code includes the tailnet addresses, but stay bounded so
+ * the settings panel never hangs on a wedged tailscale CLI.
+ */
+async function tailscaleCandidatesForPairing(
+  config: ServerConfigShape,
+): Promise<MobilePairingCandidate[]> {
+  if (tailscaleCandidatesCache && Date.now() < tailscaleCandidatesCache.expiresAt) {
+    return tailscaleCandidatesCache.candidates;
+  }
+  const fresh = await Promise.race([
+    refreshTailscaleCandidates(config),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), TAILSCALE_CANDIDATES_WAIT_MS)),
+  ]);
+  return fresh ?? tailscaleCandidatesCache?.candidates ?? [];
 }
 
 function pruneExpiredPairingSessions(now = Date.now()) {
@@ -314,13 +419,20 @@ function pruneExpiredPairingSessions(now = Date.now()) {
   }
 }
 
-function createPairingSession(config: ServerConfigShape, url: URL): MobilePairingSession {
+async function createPairingSession(
+  config: ServerConfigShape,
+  url: URL,
+): Promise<MobilePairingSession> {
   pruneExpiredPairingSessions();
 
   const pairingId = randomUUID();
   const pairingSecret = createSecret(24);
   const expiresAt = new Date(Date.now() + PAIRING_SESSION_TTL_MS).toISOString();
-  const candidates = mobilePairingCandidates(config, url);
+  const candidates = mobilePairingCandidates(
+    config,
+    url,
+    await tailscaleCandidatesForPairing(config),
+  );
   const payload: MobilePairingPayload = {
     version: 1,
     kind: "shioricode.mobilePair",
@@ -395,7 +507,9 @@ async function pairDevice(
     token,
     deviceName,
     pairedAt: now,
-    apiBaseUrls: mobilePairingCandidates(config, url).map((candidate) => candidate.apiBaseUrl),
+    apiBaseUrls: mobilePairingCandidates(config, url, cachedTailscaleCandidates(config)).map(
+      (candidate) => candidate.apiBaseUrl,
+    ),
   };
 }
 
@@ -439,7 +553,9 @@ async function loginDevice(
     token,
     deviceName,
     pairedAt: now,
-    apiBaseUrls: mobilePairingCandidates(config, url).map((candidate) => candidate.apiBaseUrl),
+    apiBaseUrls: mobilePairingCandidates(config, url, cachedTailscaleCandidates(config)).map(
+      (candidate) => candidate.apiBaseUrl,
+    ),
   };
 }
 
@@ -448,7 +564,7 @@ function mobileConnectionInfo(
   url: URL,
   device: StoredMobileDevice,
 ): MobileConnectionInfo {
-  const candidates = mobilePairingCandidates(config, url);
+  const candidates = mobilePairingCandidates(config, url, cachedTailscaleCandidates(config));
   return {
     version: 1,
     deviceId: device.deviceId,
@@ -505,6 +621,36 @@ function toMobileProviders(
       ),
     ),
   }));
+}
+
+/**
+ * Collapse a thread's per-turn checkpoint diffs into one entry per file so the
+ * phone can show a compact "files changed" card: additions/deletions accumulate
+ * across turns and the most recent turn wins the change kind.
+ */
+function aggregateFileChanges(
+  checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
+): MobileFileChange[] {
+  const byPath = new Map<string, { kind: string; additions: number; deletions: number }>();
+  for (const checkpoint of checkpoints) {
+    for (const file of checkpoint.files) {
+      const existing = byPath.get(file.path);
+      if (existing) {
+        existing.additions += file.additions;
+        existing.deletions += file.deletions;
+        existing.kind = file.kind;
+      } else {
+        byPath.set(file.path, {
+          kind: file.kind,
+          additions: file.additions,
+          deletions: file.deletions,
+        });
+      }
+    }
+  }
+  return [...byPath.entries()]
+    .map(([path, change]) => ({ path, ...change }))
+    .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
 function resolveDefaultModelSelection(
@@ -566,6 +712,9 @@ function toMobileSnapshot(
       title: thread.title,
       status: thread.session?.status ?? null,
       activeTurnId: thread.session?.activeTurnId ?? null,
+      modelSelection: thread.modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
       messages: thread.messages.map((message) => ({
         id: message.id,
         role: message.role,
@@ -576,6 +725,7 @@ function toMobileSnapshot(
       })),
       pendingApprovals,
       pendingUserInputs,
+      fileChanges: aggregateFileChanges(thread.checkpoints),
       updatedAt: thread.updatedAt,
     };
   });
@@ -653,6 +803,8 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
       );
     }
 
+    const runtimeMode = command.runtimeMode ?? "full-access";
+    const interactionMode = command.interactionMode ?? "default";
     const threadId = ThreadId.makeUnsafe(randomUUID());
     const createResult = yield* startup.enqueueCommand(
       engine.dispatch({
@@ -662,8 +814,8 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
         projectId: project.id,
         title: normalizePromptText(command.title ?? "") || "New Thread",
         modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
+        runtimeMode,
+        interactionMode,
         branch: null,
         worktreePath: null,
         createdAt: now,
@@ -671,27 +823,27 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
     );
 
     const initialMessage = normalizePromptText(command.initialMessage ?? "");
-    if (!initialMessage) {
+    const initialAttachments = command.attachments ?? [];
+    if (!initialMessage && initialAttachments.length === 0) {
       return { sequence: createResult.sequence, threadId } satisfies MobileCommandResult;
     }
 
-    const turnResult = yield* startup.enqueueCommand(
-      engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe(`${command.requestId}:turn`),
-        threadId,
-        message: {
-          messageId: MessageId.makeUnsafe(randomUUID()),
-          role: "user",
-          text: initialMessage,
-          attachments: [],
-        },
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdAt: now,
-      }),
-    );
+    const normalizedTurnCommand = yield* normalizeDispatchCommand({
+      type: "thread.turn.start",
+      commandId: CommandId.makeUnsafe(`${command.requestId}:turn`),
+      threadId,
+      message: {
+        messageId: MessageId.makeUnsafe(randomUUID()),
+        role: "user",
+        text: initialMessage,
+        attachments: initialAttachments,
+      },
+      modelSelection,
+      runtimeMode,
+      interactionMode,
+      createdAt: now,
+    });
+    const turnResult = yield* startup.enqueueCommand(engine.dispatch(normalizedTurnCommand));
     return { sequence: turnResult.sequence, threadId } satisfies MobileCommandResult;
   }
 
@@ -704,24 +856,95 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
   switch (command.type) {
     case "thread.turn.start": {
       const text = normalizePromptText(command.text);
+      const attachments = command.attachments ?? [];
+      if (!text && attachments.length === 0) {
+        return yield* Effect.fail(new Error("Message cannot be empty."));
+      }
+      const normalizedCommand = yield* normalizeDispatchCommand({
+        type: "thread.turn.start",
+        commandId,
+        threadId: command.threadId,
+        message: {
+          messageId: MessageId.makeUnsafe(randomUUID()),
+          role: "user",
+          text,
+          attachments,
+        },
+        modelSelection: command.modelSelection ?? thread.modelSelection,
+        runtimeMode: command.runtimeMode ?? thread.runtimeMode,
+        interactionMode: command.interactionMode ?? thread.interactionMode,
+        createdAt: now,
+      });
+      const result = yield* startup.enqueueCommand(engine.dispatch(normalizedCommand));
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.turn.steer": {
+      const text = normalizePromptText(command.text);
       if (!text) {
         return yield* Effect.fail(new Error("Message cannot be empty."));
       }
       const result = yield* startup.enqueueCommand(
         engine.dispatch({
-          type: "thread.turn.start",
+          type: "thread.turn.steer",
           commandId,
           threadId: command.threadId,
           message: {
             messageId: MessageId.makeUnsafe(randomUUID()),
             role: "user",
             text,
-            attachments: [],
           },
-          modelSelection: thread.modelSelection,
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
           createdAt: now,
+        }),
+      );
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.runtime-mode.set": {
+      const result = yield* startup.enqueueCommand(
+        engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId,
+          threadId: command.threadId,
+          runtimeMode: command.runtimeMode,
+          createdAt: now,
+        }),
+      );
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.interaction-mode.set": {
+      const result = yield* startup.enqueueCommand(
+        engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId,
+          threadId: command.threadId,
+          interactionMode: command.interactionMode,
+          createdAt: now,
+        }),
+      );
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.meta.update": {
+      const result = yield* startup.enqueueCommand(
+        engine.dispatch({
+          type: "thread.meta.update",
+          commandId,
+          threadId: command.threadId,
+          modelSelection: command.modelSelection,
         }),
       );
       return {
@@ -829,7 +1052,11 @@ const mobileCreatePairingSessionRouteLayer = HttpRouter.add(
   "POST",
   "/api/mobile/pairing-sessions",
   requireDesktopAuth.pipe(
-    Effect.map(({ config, url }) => successResponse(createPairingSession(config, url))),
+    Effect.flatMap(({ config, url }) =>
+      Effect.promise(() => createPairingSession(config, url)).pipe(
+        Effect.map((session) => successResponse(session)),
+      ),
+    ),
     Effect.catch((error) =>
       Effect.succeed(errorResponse(error.message, routeErrorStatus(error, 401))),
     ),
@@ -995,6 +1222,61 @@ const mobileEventsRouteLayer = HttpRouter.add(
   ),
 );
 
+const mobileWorkspaceEntriesRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/mobile/workspace/entries",
+  requireMobileAuth.pipe(
+    Effect.flatMap(({ url }) =>
+      Effect.gen(function* () {
+        const projectIdRaw = url.searchParams.get("projectId");
+        if (!projectIdRaw) {
+          return errorResponse("Missing projectId.", 400);
+        }
+        const query = (url.searchParams.get("query") ?? "").trim();
+        const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "25", 10);
+        const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 25;
+
+        const engine = yield* OrchestrationEngineService;
+        const readModel = yield* engine.getReadModel();
+        const project = resolveProject(readModel, ProjectId.makeUnsafe(projectIdRaw));
+        if (!project) {
+          return errorResponse("Project not found.", 404);
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries;
+        if (!query) {
+          const listing = yield* workspaceEntries.listDirectory({
+            cwd: project.workspaceRoot,
+          });
+          return successResponse({
+            entries: listing.entries.slice(0, limit),
+            truncated: listing.truncated || listing.entries.length > limit,
+          });
+        }
+
+        const input = yield* Effect.try({
+          try: () =>
+            Schema.decodeUnknownSync(ProjectSearchEntriesInput)({
+              cwd: project.workspaceRoot,
+              query,
+              limit,
+            }),
+          catch: (cause) => mobileRouteError("Invalid workspace search query.", cause),
+        });
+        const result = yield* workspaceEntries.search(input);
+        return successResponse({ entries: result.entries, truncated: result.truncated });
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.succeed(
+        error instanceof Error
+          ? errorResponse(error.message, routeErrorStatus(error, 400))
+          : errorResponse("Workspace search failed.", 400),
+      ),
+    ),
+  ),
+);
+
 const mobileCommandRouteLayer = HttpRouter.add(
   "POST",
   "/api/mobile/commands",
@@ -1026,5 +1308,6 @@ export const mobileRoutesLayer = Layer.mergeAll(
   mobileConnectionRouteLayer,
   mobileSnapshotRouteLayer,
   mobileEventsRouteLayer,
+  mobileWorkspaceEntriesRouteLayer,
   mobileCommandRouteLayer,
 );

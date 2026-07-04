@@ -1,12 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  ComputerUseAppSnapshot,
-  ComputerUseAppWindowSnapshot,
   ComputerUsePermissionKind,
   ComputerUsePermissionSnapshot,
   ComputerUsePermissionsSnapshot,
 } from "contracts";
-import type { ComputerUseApprovedApp, ComputerUseSettings } from "contracts/settings";
 import {
   IconCircleCheckOutline24 as CheckCircle2Icon,
   IconEyeOutline24 as EyeIcon,
@@ -33,7 +30,6 @@ import {
 import { SettingsPageContainer, SettingsSection, SettingsRow } from "./SettingsPanels";
 
 const COMPUTER_PERMISSIONS_QUERY_KEY = ["computerUse", "permissions"] as const;
-const COMPUTER_APPS_QUERY_KEY = ["computerUse", "apps"] as const;
 
 const cardClasses =
   "relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]";
@@ -149,18 +145,6 @@ function CapabilityRail() {
   );
 }
 
-function appPrimaryIdentifier(app: ComputerUseAppSnapshot): string | null {
-  return app.bundleIdentifier?.trim() || null;
-}
-
-function approvedAppDateLabel(approvedAt: string) {
-  const date = new Date(approvedAt);
-  if (Number.isNaN(date.getTime())) {
-    return approvedAt;
-  }
-  return date.toLocaleString();
-}
-
 function permissionSubjectLabel(snapshot: ComputerUsePermissionsSnapshot | undefined) {
   const subject = snapshot?.permissionSubject;
   const displayName = subject?.displayName?.trim();
@@ -169,195 +153,6 @@ function permissionSubjectLabel(snapshot: ComputerUsePermissionsSnapshot | undef
     return `${displayName} at ${path}`;
   }
   return displayName || path || null;
-}
-
-function compactBoundsLabel(bounds: ComputerUseAppWindowSnapshot["bounds"]): string | null {
-  if (!bounds) {
-    return null;
-  }
-  return `${Math.round(bounds.width)}x${Math.round(bounds.height)} at ${Math.round(bounds.x)},${Math.round(bounds.y)}`;
-}
-
-export function computerUseWindowLabel(
-  window: ComputerUseAppWindowSnapshot,
-  fallbackIndex: number,
-): string {
-  const index = Number.isFinite(window.index)
-    ? Math.trunc(window.index ?? fallbackIndex)
-    : fallbackIndex;
-  const title = window.title?.trim() || "Untitled window";
-  const bounds = compactBoundsLabel(window.bounds);
-  return bounds ? `[${index}] ${title} (${bounds})` : `[${index}] ${title}`;
-}
-
-export function computerUseAgentVisibilityStatus(input: {
-  readonly enabled: boolean;
-  readonly shareWithProviders: boolean;
-  readonly requireApproval: boolean;
-  readonly approvedAppCount: number;
-  readonly permissionsReady: boolean;
-}): {
-  readonly title: string;
-  readonly description: string;
-  readonly variant: "info" | "warning" | "success";
-} {
-  if (!input.enabled) {
-    return {
-      title: "Agent turns cannot see Computer Use",
-      description: "Enable Computer Use to prepare the local macOS helper.",
-      variant: "info",
-    };
-  }
-  if (!input.shareWithProviders) {
-    return {
-      title: "Agent turns cannot see Computer Use yet",
-      description:
-        "Turn on provider sharing when you want chat agents to receive the Computer Use tools and their screenshot or action results.",
-      variant: "warning",
-    };
-  }
-  if (!input.permissionsReady) {
-    return {
-      title: "Computer Use is shared but permissions are not ready",
-      description:
-        "Grant Accessibility and Screen Recording before asking an agent to inspect or control the desktop.",
-      variant: "warning",
-    };
-  }
-  if (input.approvedAppCount === 0) {
-    return {
-      title: "Computer Use is shared but no apps are approved",
-      description:
-        "Approve at least one running app before testing with an agent; provider-facing screenshots and desktop actions stay blocked with an empty allowlist.",
-      variant: "warning",
-    };
-  }
-  if (input.requireApproval) {
-    return {
-      title: "Computer Use is shared with approval prompts",
-      description:
-        "Supported agents can see Computer Use tools, but some external providers may hide approval-gated desktop tools.",
-      variant: "info",
-    };
-  }
-  return {
-    title: "Computer Use is visible to supported agents",
-    description:
-      "Agent turns can receive Computer Use tools and may send screenshots, app context, and action results to the selected provider.",
-    variant: "success",
-  };
-}
-
-function approvedBundleSignature(apps: readonly ComputerUseApprovedApp[]): string {
-  return apps
-    .map((app) => app.bundleIdentifier.trim())
-    .filter(Boolean)
-    .toSorted()
-    .join("\n");
-}
-
-export function computerUseProviderToolSurfaceChanged(
-  previous: ComputerUseSettings,
-  next: ComputerUseSettings,
-): boolean {
-  return (
-    previous.enabled !== next.enabled ||
-    previous.shareWithProviders !== next.shareWithProviders ||
-    previous.requireApproval !== next.requireApproval ||
-    approvedBundleSignature(previous.approvedApps) !== approvedBundleSignature(next.approvedApps)
-  );
-}
-
-function ApprovedAppRow({
-  app,
-  onRevoke,
-}: {
-  app: ComputerUseApprovedApp;
-  onRevoke: (bundleIdentifier: string) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground">{app.name}</div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {app.bundleIdentifier} - Approved {approvedAppDateLabel(app.approvedAt)}
-        </div>
-      </div>
-      <Button size="sm" variant="outline" onClick={() => onRevoke(app.bundleIdentifier)}>
-        <ShieldAlertIcon className="size-3.5" />
-        Revoke
-      </Button>
-    </div>
-  );
-}
-
-function RunningAppRow({
-  app,
-  approved,
-  onApprove,
-  onRevoke,
-}: {
-  app: ComputerUseAppSnapshot;
-  approved: boolean;
-  onApprove: (app: ComputerUseAppSnapshot) => void;
-  onRevoke: (bundleIdentifier: string) => void;
-}) {
-  const bundleIdentifier = appPrimaryIdentifier(app);
-  const windowCount = app.windows.length;
-  const visibleWindows = app.windows.slice(0, 3);
-  const hiddenWindowCount = Math.max(0, windowCount - visibleWindows.length);
-
-  return (
-    <div className="flex items-start justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5">
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-medium text-foreground">{app.name}</div>
-          {app.isActive ? (
-            <span className="shrink-0 rounded-full border border-success/30 px-2 py-0.5 text-[11px] text-success">
-              Active
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {bundleIdentifier ?? `pid ${app.processIdentifier}`} - {windowCount} window
-          {windowCount === 1 ? "" : "s"}
-        </div>
-        {visibleWindows.length > 0 ? (
-          <div className="mt-2 space-y-1">
-            {visibleWindows.map((window, index) => (
-              <div
-                key={`${window.index ?? index}-${window.title ?? "untitled"}`}
-                className="truncate text-[11px] text-muted-foreground"
-              >
-                {computerUseWindowLabel(window, index)}
-              </div>
-            ))}
-            {hiddenWindowCount > 0 ? (
-              <div className="text-[11px] text-muted-foreground">
-                {hiddenWindowCount} more window{hiddenWindowCount === 1 ? "" : "s"}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {approved && bundleIdentifier ? (
-        <Button size="sm" variant="outline" onClick={() => onRevoke(bundleIdentifier)}>
-          <ShieldAlertIcon className="size-3.5" />
-          Revoke
-        </Button>
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!bundleIdentifier}
-          onClick={() => onApprove(app)}
-        >
-          <CheckCircle2Icon className="size-3.5" />
-          Approve
-        </Button>
-      )}
-    </div>
-  );
 }
 
 function ScreenshotPreview() {
@@ -450,20 +245,6 @@ export function ComputerUseSettingsPanel() {
     refetchOnWindowFocus: true,
   });
 
-  const appsQuery = useQuery({
-    queryKey: COMPUTER_APPS_QUERY_KEY,
-    queryFn: async () => {
-      const computer = ensureNativeApi().computer;
-      if (!computer) {
-        throw new Error("Computer Use is unavailable.");
-      }
-      return computer.listApps({});
-    },
-    enabled: settings.computerUse.enabled,
-    staleTime: 5_000,
-    refetchOnWindowFocus: true,
-  });
-
   const grantedCount = useMemo(
     () =>
       permissionsQuery.data?.permissions.filter((permission) => permission.state === "granted")
@@ -473,73 +254,19 @@ export function ComputerUseSettingsPanel() {
   const totalCount = permissionsQuery.data?.permissions.length ?? 2;
   const ready = permissionsQuery.data?.supported === true && grantedCount === totalCount;
   const permissionSubject = permissionSubjectLabel(permissionsQuery.data);
-  const approvedApps = settings.computerUse.approvedApps;
-  const agentVisibilityStatus = computerUseAgentVisibilityStatus({
-    enabled: settings.computerUse.enabled,
-    shareWithProviders: settings.computerUse.shareWithProviders,
-    requireApproval: settings.computerUse.requireApproval,
-    approvedAppCount: approvedApps.length,
-    permissionsReady: ready,
-  });
-  const approvedAppIds = useMemo(
-    () => new Set(approvedApps.map((app) => app.bundleIdentifier)),
-    [approvedApps],
-  );
-  const runningApps = useMemo(
-    () =>
-      appsQuery.data?.apps.filter((app) => app.activationPolicy === "regular").slice(0, 12) ?? [],
-    [appsQuery.data?.apps],
-  );
 
-  function updateComputerUseSettings(nextComputerUse: ComputerUseSettings) {
-    const shouldRefreshProviders = computerUseProviderToolSurfaceChanged(
-      settings.computerUse,
-      nextComputerUse,
-    );
-    updateSettings({
-      computerUse: nextComputerUse,
-    });
-    if (shouldRefreshProviders) {
-      void readNativeApi()
-        ?.server.refreshProviders()
-        .catch((error) => {
-          console.warn("[computer-use] failed to refresh providers after settings change", error);
-        });
-    }
-  }
-
-  function updateApprovedApps(nextApprovedApps: readonly ComputerUseApprovedApp[]) {
-    updateComputerUseSettings({
-      ...settings.computerUse,
-      approvedApps: [...nextApprovedApps],
-    });
-  }
-
-  function approveApp(app: ComputerUseAppSnapshot) {
-    const bundleIdentifier = appPrimaryIdentifier(app);
-    if (!bundleIdentifier) {
-      toastManager.add({
-        type: "error",
-        title: "Cannot approve app",
-        description: "This running app does not expose a stable bundle identifier.",
-      });
+  function setComputerUseEnabled(enabled: boolean) {
+    if (enabled === settings.computerUse.enabled) {
       return;
     }
-
-    updateApprovedApps([
-      ...approvedApps.filter((approvedApp) => approvedApp.bundleIdentifier !== bundleIdentifier),
-      {
-        bundleIdentifier,
-        name: app.name,
-        approvedAt: new Date().toISOString(),
-      },
-    ]);
-  }
-
-  function revokeApp(bundleIdentifier: string) {
-    updateApprovedApps(
-      approvedApps.filter((approvedApp) => approvedApp.bundleIdentifier !== bundleIdentifier),
-    );
+    updateSettings({ computerUse: { enabled } });
+    // Provider sessions cache their tool surface; refresh so the Computer Use
+    // tools appear or disappear without restarting the session.
+    void readNativeApi()
+      ?.server.refreshProviders()
+      .catch((error) => {
+        console.warn("[computer-use] failed to refresh providers after settings change", error);
+      });
   }
 
   function cancelPermissionRechecks() {
@@ -610,66 +337,23 @@ export function ComputerUseSettingsPanel() {
       <SettingsSection title="Computer Use" icon={<MonitorIcon className="size-3.5" />}>
         <SettingsRow
           title="Enable Computer Use"
-          description="Prepare local macOS desktop screenshots, app context, pointer, keyboard, and scroll tools. Agent chats need provider sharing below."
+          description="Let agents see and control this Mac: desktop screenshots, app context, pointer, keyboard, and scroll. Screenshots and action results are sent to the selected agent provider as tool results."
           control={
             <Switch
               checked={settings.computerUse.enabled}
-              onCheckedChange={(checked) =>
-                updateComputerUseSettings({
-                  ...settings.computerUse,
-                  enabled: Boolean(checked),
-                })
-              }
+              onCheckedChange={(checked) => setComputerUseEnabled(Boolean(checked))}
               aria-label="Enable Computer Use"
             />
           }
-        />
-        <SettingsRow
-          title="Require approval for desktop tools"
-          description="Ask before an agent runs raw desktop actions; some external providers may hide these tools while approval is required."
-          control={
-            <Switch
-              checked={settings.computerUse.requireApproval}
-              onCheckedChange={(checked) =>
-                updateComputerUseSettings({
-                  ...settings.computerUse,
-                  requireApproval: Boolean(checked),
-                })
-              }
-              aria-label="Gate direct Computer Use tools"
-            />
-          }
-        />
-        <SettingsRow
-          title="Share desktop results with agent providers"
-          description="Expose Computer Use tools to agent turns. Screenshots, app context, and action results may be sent to the selected provider as tool results."
-          control={
-            <Switch
-              checked={settings.computerUse.shareWithProviders}
-              onCheckedChange={(checked) =>
-                updateComputerUseSettings({
-                  ...settings.computerUse,
-                  shareWithProviders: Boolean(checked),
-                })
-              }
-              aria-label="Share Computer Use results with providers"
-            />
-          }
-        />
-        <Alert variant={agentVisibilityStatus.variant} className="m-4">
-          <MonitorIcon />
-          <AlertTitle>{agentVisibilityStatus.title}</AlertTitle>
-          <AlertDescription>{agentVisibilityStatus.description}</AlertDescription>
-        </Alert>
+        >
+          <CapabilityRail />
+        </SettingsRow>
         <Alert variant="info" className="m-4">
           <ShieldCheckIcon />
           <AlertTitle>Local desktop boundary</AlertTitle>
           <AlertDescription>
             The helper runs on this Mac and uses macOS Accessibility and Screen Recording
-            permissions. Computer Use tools stay out of agent turns until provider sharing is
-            enabled. When sharing is enabled, screenshots, app/window context, and action results
-            can be sent to the selected agent provider as tool results. Approved apps limit where
-            agents can focus and act, but desktop screenshots are not redacted.
+            permissions. While enabled, agents have full access to the visible desktop.
           </AlertDescription>
         </Alert>
       </SettingsSection>
@@ -715,83 +399,6 @@ export function ComputerUseSettingsPanel() {
             onPermissionFlow={openPermissionFlow}
           />
         ))}
-      </SettingsSection>
-
-      <SettingsSection title="Capabilities" icon={<MousePointerClickIcon className="size-3.5" />}>
-        <SettingsRow
-          title="macOS desktop controls"
-          description="The runtime can inspect visible apps and desktop screenshots, then operate the currently focused desktop target."
-        >
-          <CapabilityRail />
-        </SettingsRow>
-      </SettingsSection>
-
-      <SettingsSection title="Approved Apps" icon={<ShieldCheckIcon className="size-3.5" />}>
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-          <div className="min-w-0">
-            <h3 className="text-sm font-medium text-foreground">App target allowlist</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              This local list is used for approvals; agent-facing app lists and actions stay scoped
-              to approved bundle IDs.
-            </p>
-          </div>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={appsQuery.isFetching}
-            onClick={() =>
-              void queryClient.invalidateQueries({ queryKey: COMPUTER_APPS_QUERY_KEY })
-            }
-            aria-label="Refresh running Computer Use apps"
-          >
-            <RefreshCwIcon className={`size-3.5 ${appsQuery.isFetching ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-
-        {approvedApps.length > 0 ? (
-          <div>
-            <div className="px-4 pb-2 pt-4 text-[11px] font-medium uppercase text-muted-foreground sm:px-5">
-              Approved
-            </div>
-            {approvedApps.map((app) => (
-              <ApprovedAppRow key={app.bundleIdentifier} app={app} onRevoke={revokeApp} />
-            ))}
-          </div>
-        ) : (
-          <div className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
-            No apps approved yet.
-          </div>
-        )}
-
-        <div className="border-t border-border">
-          <div className="px-4 pb-2 pt-4 text-[11px] font-medium uppercase text-muted-foreground sm:px-5">
-            Running apps
-          </div>
-          {appsQuery.isError ? (
-            <div className="px-4 pb-4 text-sm text-destructive sm:px-5">
-              {appsQuery.error instanceof Error
-                ? appsQuery.error.message
-                : "Could not load running apps."}
-            </div>
-          ) : runningApps.length > 0 ? (
-            runningApps.map((app) => {
-              const bundleIdentifier = appPrimaryIdentifier(app);
-              return (
-                <RunningAppRow
-                  key={bundleIdentifier ?? String(app.processIdentifier)}
-                  app={app}
-                  approved={bundleIdentifier ? approvedAppIds.has(bundleIdentifier) : false}
-                  onApprove={approveApp}
-                  onRevoke={revokeApp}
-                />
-              );
-            })
-          ) : (
-            <div className="px-4 pb-4 text-sm text-muted-foreground sm:px-5">
-              {appsQuery.isFetching ? "Loading running apps..." : "No running apps reported."}
-            </div>
-          )}
-        </div>
       </SettingsSection>
 
       {settings.computerUse.enabled ? <ScreenshotPreview /> : null}

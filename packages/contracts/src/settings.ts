@@ -216,18 +216,8 @@ export const AssistantPersonality = Schema.Literals([
 export type AssistantPersonality = typeof AssistantPersonality.Type;
 export const DEFAULT_ASSISTANT_PERSONALITY: AssistantPersonality = "default";
 
-export const ComputerUseApprovedApp = Schema.Struct({
-  bundleIdentifier: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  approvedAt: TrimmedNonEmptyString,
-});
-export type ComputerUseApprovedApp = typeof ComputerUseApprovedApp.Type;
-
 export const ComputerUseSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  requireApproval: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
-  shareWithProviders: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
-  approvedApps: Schema.Array(ComputerUseApprovedApp).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type ComputerUseSettings = typeof ComputerUseSettings.Type;
 
@@ -595,9 +585,6 @@ const OnboardingProgressPatch = Schema.Struct({
 
 const ComputerUseSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  requireApproval: Schema.optionalKey(Schema.Boolean),
-  shareWithProviders: Schema.optionalKey(Schema.Boolean),
-  approvedApps: Schema.optionalKey(Schema.Array(ComputerUseApprovedApp)),
 });
 
 const BrowserUseSettingsPatch = Schema.Struct({

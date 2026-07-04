@@ -15,8 +15,12 @@ import {
   OrchestrationMessageRole,
   OrchestrationSessionStatus,
   ProviderApprovalDecision,
+  ProviderInteractionMode,
   ProviderKind,
+  RuntimeMode,
+  UploadChatAttachment,
 } from "./orchestration";
+import { ProjectEntry } from "./project";
 
 export const MobilePairingCandidate = Schema.Struct({
   apiBaseUrl: Schema.String,
@@ -139,15 +143,27 @@ export const MobileThreadSummary = Schema.Struct({
 });
 export type MobileThreadSummary = typeof MobileThreadSummary.Type;
 
+export const MobileFileChange = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  kind: Schema.String,
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type MobileFileChange = typeof MobileFileChange.Type;
+
 export const MobileThreadDetail = Schema.Struct({
   id: ThreadId,
   projectId: Schema.NullOr(ProjectId),
   title: Schema.String,
   status: Schema.NullOr(OrchestrationSessionStatus),
   activeTurnId: Schema.NullOr(Schema.String),
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
   messages: Schema.Array(MobileMessage),
   pendingApprovals: Schema.Array(MobilePendingApproval),
   pendingUserInputs: Schema.Array(MobilePendingUserInput),
+  fileChanges: Schema.Array(MobileFileChange),
   updatedAt: IsoDateTime,
 });
 export type MobileThreadDetail = typeof MobileThreadDetail.Type;
@@ -198,6 +214,9 @@ export const MobileCreateThreadCommand = Schema.Struct({
   title: Schema.optional(Schema.String),
   initialMessage: Schema.optional(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
+  attachments: Schema.optional(Schema.Array(UploadChatAttachment)),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type MobileCreateThreadCommand = typeof MobileCreateThreadCommand.Type;
 
@@ -206,8 +225,44 @@ export const MobileSendTurnCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   threadId: ThreadId,
   text: Schema.String,
+  attachments: Schema.optional(Schema.Array(UploadChatAttachment)),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type MobileSendTurnCommand = typeof MobileSendTurnCommand.Type;
+
+export const MobileSteerTurnCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.turn.steer"),
+  threadId: ThreadId,
+  text: Schema.String,
+});
+export type MobileSteerTurnCommand = typeof MobileSteerTurnCommand.Type;
+
+export const MobileSetRuntimeModeCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.runtime-mode.set"),
+  threadId: ThreadId,
+  runtimeMode: RuntimeMode,
+});
+export type MobileSetRuntimeModeCommand = typeof MobileSetRuntimeModeCommand.Type;
+
+export const MobileSetInteractionModeCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.interaction-mode.set"),
+  threadId: ThreadId,
+  interactionMode: ProviderInteractionMode,
+});
+export type MobileSetInteractionModeCommand = typeof MobileSetInteractionModeCommand.Type;
+
+export const MobileUpdateThreadModelCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.meta.update"),
+  threadId: ThreadId,
+  modelSelection: ModelSelection,
+});
+export type MobileUpdateThreadModelCommand = typeof MobileUpdateThreadModelCommand.Type;
 
 export const MobileInterruptTurnCommand = Schema.Struct({
   ...MobileCommandBase,
@@ -237,11 +292,21 @@ export type MobileUserInputRespondCommand = typeof MobileUserInputRespondCommand
 export const MobileCommand = Schema.Union([
   MobileCreateThreadCommand,
   MobileSendTurnCommand,
+  MobileSteerTurnCommand,
+  MobileUpdateThreadModelCommand,
   MobileInterruptTurnCommand,
   MobileApprovalRespondCommand,
   MobileUserInputRespondCommand,
+  MobileSetRuntimeModeCommand,
+  MobileSetInteractionModeCommand,
 ]);
 export type MobileCommand = typeof MobileCommand.Type;
+
+export const MobileWorkspaceEntriesResult = Schema.Struct({
+  entries: Schema.Array(ProjectEntry),
+  truncated: Schema.Boolean,
+});
+export type MobileWorkspaceEntriesResult = typeof MobileWorkspaceEntriesResult.Type;
 
 export const MobileCommandResult = Schema.Struct({
   sequence: NonNegativeInt,

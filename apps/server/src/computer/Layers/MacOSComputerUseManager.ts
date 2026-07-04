@@ -4,10 +4,8 @@ import { randomUUID } from "node:crypto";
 
 import {
   type ComputerUseActionResult,
-  type ComputerUseAppSnapshot,
   type ComputerUseAppStateResult,
   type ComputerUsePermissionSubject,
-  type ComputerUseSettings,
   type ComputerUseClickInput,
   type ComputerUseCloseSessionInput,
   type ComputerUseDoubleClickInput,
@@ -192,69 +190,6 @@ function helperError(input: {
     message,
     ...(input.cause !== undefined ? { cause: input.cause } : {}),
   });
-}
-
-function normalizedBundleIdentifier(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : null;
-}
-
-function approvedAppBundleIdentifiersFromSettings(
-  computerUse: Pick<ComputerUseSettings, "approvedApps">,
-): ReadonlyArray<string> {
-  return Array.from(
-    new Set(
-      computerUse.approvedApps.flatMap((app) => {
-        const bundleIdentifier = normalizedBundleIdentifier(app.bundleIdentifier);
-        return bundleIdentifier ? [bundleIdentifier] : [];
-      }),
-    ),
-  );
-}
-
-function withApprovedAppBundleIdentifiers(
-  input: Record<string, unknown>,
-  approvedAppBundleIdentifiers: ReadonlyArray<string>,
-): Record<string, unknown> {
-  return { ...input, approvedAppBundleIdentifiers };
-}
-
-function noApprovedAppsError(action: string): ComputerUseError {
-  return new ComputerUseError({
-    code: "permissionDenied",
-    message: `Computer Use ${action} is blocked because no apps are approved in Settings > Computer Use.`,
-  });
-}
-
-function focusAppTargetDescription(input: ComputerUseFocusAppInput): string {
-  const bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
-  if (bundleIdentifier) return bundleIdentifier;
-  if (typeof input.processIdentifier === "number")
-    return `pid ${Math.trunc(input.processIdentifier)}`;
-  const name = input.name?.trim();
-  return name && name.length > 0 ? name : "unknown app";
-}
-
-function resolveAppBundleIdentifierFromState(
-  input: ComputerUseFocusAppInput,
-  apps: ReadonlyArray<ComputerUseAppSnapshot>,
-): string | null {
-  const bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
-  if (bundleIdentifier) return bundleIdentifier;
-
-  if (typeof input.processIdentifier === "number") {
-    const processIdentifier = Math.trunc(input.processIdentifier);
-    return (
-      apps.find((app) => app.processIdentifier === processIdentifier)?.bundleIdentifier?.trim() ??
-      null
-    );
-  }
-
-  const name = input.name?.trim();
-  if (!name) return null;
-  const matches = apps.filter((app) => app.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-  if (matches.length !== 1) return null;
-  return matches[0]?.bundleIdentifier?.trim() ?? null;
 }
 
 export const ComputerUseManagerLive = Layer.effect(
@@ -482,21 +417,15 @@ export const ComputerUseManagerLive = Layer.effect(
       input: Record<string, unknown>,
       fallbackMessage: string,
     ) {
-      const settings = yield* ensureEnabled();
+      yield* ensureEnabled();
       const session = yield* resolveSession(sessionId);
-      const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
-        settings.computerUse,
-      );
       const latestScreenshotSizes = yield* Ref.get(latestScreenshotSizesRef);
       const actionInput = SCREENSHOT_COORDINATE_COMMANDS.has(command)
         ? enrichScreenshotCoordinateInput(input, latestScreenshotSizes.get(session.id))
         : input;
       return yield* runHelper<ComputerUseActionResult>(
         command,
-        withApprovedAppBundleIdentifiers(
-          { ...actionInput, sessionId: session.id },
-          approvedAppBundleIdentifiers,
-        ),
+        { ...actionInput, sessionId: session.id },
         fallbackMessage,
       );
     });
@@ -546,17 +475,11 @@ export const ComputerUseManagerLive = Layer.effect(
         }),
       screenshot: (input: ComputerUseScreenshotInput) =>
         Effect.gen(function* () {
-          const settings = yield* ensureEnabled();
+          yield* ensureEnabled();
           const session = yield* resolveSession(input.sessionId);
-          const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
-            settings.computerUse,
-          );
           const result = yield* runHelper<ComputerUseScreenshotResult>(
             "screenshot",
-            withApprovedAppBundleIdentifiers(
-              { sessionId: session.id },
-              approvedAppBundleIdentifiers,
-            ),
+            { sessionId: session.id },
             "Failed to capture the macOS screen.",
           );
           const remembered = screenshotSizeFromResult(result, session.id);
@@ -569,125 +492,31 @@ export const ComputerUseManagerLive = Layer.effect(
         }),
       listApps: (input: ComputerUseListAppsInput) =>
         Effect.gen(function* () {
-          const settings = yield* ensureEnabled();
+          yield* ensureEnabled();
           const session = yield* resolveSession(input.sessionId);
-          const approvedAppBundleIdentifiers = approvedAppBundleIdentifiersFromSettings(
-            settings.computerUse,
-          );
           return yield* runHelper<ComputerUseAppStateResult>(
             "list-apps",
-            withApprovedAppBundleIdentifiers(
-              { sessionId: session.id },
-              approvedAppBundleIdentifiers,
-            ),
+            { sessionId: session.id },
             "Failed to list visible macOS applications.",
           );
         }),
       focusApp: (input: ComputerUseFocusAppInput) =>
         Effect.gen(function* () {
-          const settings = yield* ensureEnabled();
+          yield* ensureEnabled();
           const session = yield* resolveSession(input.sessionId);
-          const approvedBundleIds = new Set(
-            approvedAppBundleIdentifiersFromSettings(settings.computerUse),
-          );
-
-          if (approvedBundleIds.size === 0) {
-            return yield* Effect.fail(noApprovedAppsError("focus"));
-          }
-
-          if (approvedBundleIds.size > 0) {
-            let bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
-            if (!bundleIdentifier) {
-              const appState = yield* runHelper<ComputerUseAppStateResult>(
-                "list-apps",
-                withApprovedAppBundleIdentifiers(
-                  { sessionId: session.id },
-                  Array.from(approvedBundleIds),
-                ),
-                "Failed to resolve the macOS app before focusing it.",
-              );
-              bundleIdentifier = resolveAppBundleIdentifierFromState(input, appState.apps);
-            }
-
-            if (!bundleIdentifier) {
-              return yield* Effect.fail(
-                new ComputerUseError({
-                  code: "actionFailed",
-                  message:
-                    "Computer Use can only focus approved apps. Use a bundleIdentifier from the app list.",
-                }),
-              );
-            }
-            if (!approvedBundleIds.has(bundleIdentifier)) {
-              return yield* Effect.fail(
-                new ComputerUseError({
-                  code: "permissionDenied",
-                  message: `App '${focusAppTargetDescription(input)}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing it.`,
-                }),
-              );
-            }
-          }
-
           return yield* runHelper<ComputerUseActionResult>(
             "focus-app",
-            withApprovedAppBundleIdentifiers(
-              { ...input, sessionId: session.id },
-              Array.from(approvedBundleIds),
-            ),
+            { ...input, sessionId: session.id },
             "Failed to focus a macOS application.",
           );
         }),
       focusWindow: (input: ComputerUseFocusWindowInput) =>
         Effect.gen(function* () {
-          const settings = yield* ensureEnabled();
+          yield* ensureEnabled();
           const session = yield* resolveSession(input.sessionId);
-          const approvedBundleIds = new Set(
-            approvedAppBundleIdentifiersFromSettings(settings.computerUse),
-          );
-
-          if (approvedBundleIds.size === 0) {
-            return yield* Effect.fail(noApprovedAppsError("window focus"));
-          }
-
-          if (approvedBundleIds.size > 0) {
-            let bundleIdentifier = normalizedBundleIdentifier(input.bundleIdentifier);
-            if (!bundleIdentifier) {
-              const appState = yield* runHelper<ComputerUseAppStateResult>(
-                "list-apps",
-                withApprovedAppBundleIdentifiers(
-                  { sessionId: session.id },
-                  Array.from(approvedBundleIds),
-                ),
-                "Failed to resolve the macOS app before focusing its window.",
-              );
-              bundleIdentifier = resolveAppBundleIdentifierFromState(input, appState.apps);
-            }
-
-            if (!bundleIdentifier) {
-              return yield* Effect.fail(
-                new ComputerUseError({
-                  code: "actionFailed",
-                  message:
-                    "Computer Use can only focus windows in approved apps. Use a bundleIdentifier from the app list.",
-                }),
-              );
-            }
-            if (!approvedBundleIds.has(bundleIdentifier)) {
-              return yield* Effect.fail(
-                new ComputerUseError({
-                  code: "permissionDenied",
-                  message: `App '${focusAppTargetDescription(input)}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing a window.`,
-                }),
-              );
-            }
-          }
-
           return yield* runHelper<ComputerUseActionResult>(
             "focus-window",
-            withApprovedAppBundleIdentifiers(
-              { ...input, sessionId: session.id },
-              Array.from(approvedBundleIds),
-            ),
+            { ...input, sessionId: session.id },
             "Failed to focus a macOS window.",
           );
         }),

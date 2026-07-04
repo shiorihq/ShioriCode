@@ -43,6 +43,28 @@ describe("mobilePairingCandidates", () => {
     ]);
   });
 
+  it("appends tailscale candidates and dedupes ones already present", () => {
+    const candidates = mobilePairingCandidates(
+      config({ host: "127.0.0.1" }),
+      new URL("http://127.0.0.1:3773/api/mobile/pairing-sessions"),
+      [
+        { apiBaseUrl: "https://mac.tailnet.ts.net", label: "Tailscale Serve" },
+        { apiBaseUrl: "http://127.0.0.1:3773", label: "duplicate loopback" },
+      ],
+    );
+
+    expect(candidates).toEqual([
+      {
+        apiBaseUrl: "http://127.0.0.1:3773",
+        label: "Simulator on this Mac",
+      },
+      {
+        apiBaseUrl: "https://mac.tailnet.ts.net",
+        label: "Tailscale Serve",
+      },
+    ]);
+  });
+
   it("preserves a reverse-proxied HTTPS origin for remote iOS pairing", () => {
     const candidates = mobilePairingCandidates(
       config({ host: "127.0.0.1" }),

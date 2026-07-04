@@ -247,7 +247,7 @@ describe("computer contracts", () => {
     });
   });
 
-  it("allows app listings to declare approved-app filtering", () => {
+  it("strips legacy approved-app filtering flags from app listings", () => {
     expect(
       decodeAppStateResult({
         sessionId: "computer-1",
@@ -271,7 +271,6 @@ describe("computer contracts", () => {
       sessionId: "computer-1",
       checkedAt: "2026-06-04T14:00:00.000Z",
       accessibilityTrusted: true,
-      filteredByApprovedApps: true,
       apps: [
         {
           processIdentifier: 42,

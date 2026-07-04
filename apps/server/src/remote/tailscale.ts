@@ -123,6 +123,32 @@ export async function detectTailscale(cli: string | null): Promise<RemoteTailsca
   };
 }
 
+export interface TailscaleSelfInfo {
+  readonly running: boolean;
+  readonly dnsName: string | null;
+  readonly tailscaleIPv4: string | null;
+}
+
+/** This machine's tailnet addresses, for mobile pairing candidates. */
+export async function detectTailscaleSelf(cli: string | null): Promise<TailscaleSelfInfo> {
+  if (!cli) {
+    return { running: false, dnsName: null, tailscaleIPv4: null };
+  }
+  const status = (await runJson(cli, ["status", "--json"], 8000)) as {
+    BackendState?: string;
+    Self?: { DNSName?: string; TailscaleIPs?: ReadonlyArray<string> };
+  } | null;
+  if (!status) {
+    return { running: false, dnsName: null, tailscaleIPv4: null };
+  }
+  const dnsName =
+    typeof status.Self?.DNSName === "string" ? status.Self.DNSName.replace(/\.$/, "") : null;
+  const ips = Array.isArray(status.Self?.TailscaleIPs) ? status.Self.TailscaleIPs : [];
+  const tailscaleIPv4 =
+    ips.find((ip) => typeof ip === "string" && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) ?? null;
+  return { running: status.BackendState === "Running", dnsName, tailscaleIPv4 };
+}
+
 export interface ServeObservation {
   readonly method: "off" | "tailscale-serve" | "tailscale-funnel";
   readonly url: string | null;

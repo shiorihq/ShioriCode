@@ -228,7 +228,7 @@ export function MobilePairingPanel() {
           <>
             <SettingsRow
               title="Pair your iPhone"
-              description="Keep both devices on the same network and scan this code from the ShioriCode iOS app."
+              description="Scan this code from the ShioriCode iOS app — over the same network, or from anywhere when both devices are on Tailscale."
             >
               <div className="mt-1 grid gap-4 md:grid-cols-[auto_1fr] md:items-start">
                 <div className="flex flex-col items-center gap-3">

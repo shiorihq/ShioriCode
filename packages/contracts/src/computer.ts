@@ -196,7 +196,6 @@ export const ComputerUseAppStateResult = Schema.Struct({
   sessionId: ComputerUseSessionId,
   checkedAt: TrimmedNonEmptyString,
   accessibilityTrusted: Schema.Boolean,
-  filteredByApprovedApps: Schema.optional(Schema.Boolean),
   apps: Schema.Array(ComputerUseAppSnapshot),
 });
 export type ComputerUseAppStateResult = typeof ComputerUseAppStateResult.Type;

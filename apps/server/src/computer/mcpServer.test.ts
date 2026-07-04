@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  assertComputerToolAllowed,
   clearLatestScreenshotSizesForTests,
   closeComputerUseMcpSession,
   createComputerUseMcpSession,
   enrichComputerActionInputWithLatestScreenshotSize,
   enrichComputerPermissionInput,
-  filterAppStateForApprovedApps,
   helperInputForComputerTool,
   helperCommandForTool,
   rememberLatestScreenshotSize,
@@ -15,24 +13,11 @@ import {
   toolSchemas,
 } from "./mcpServer.ts";
 
-const ORIGINAL_REQUIRE_APPROVAL = process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL;
-const ORIGINAL_APPROVED_APP_BUNDLE_IDS =
-  process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS;
 const ORIGINAL_HOST_APP_BUNDLE_PATH = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
 const ORIGINAL_HOST_APP_DISPLAY_NAME = process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME;
 
 afterEach(() => {
   clearLatestScreenshotSizesForTests();
-  if (ORIGINAL_REQUIRE_APPROVAL === undefined) {
-    delete process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL;
-  } else {
-    process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL = ORIGINAL_REQUIRE_APPROVAL;
-  }
-  if (ORIGINAL_APPROVED_APP_BUNDLE_IDS === undefined) {
-    delete process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS;
-  } else {
-    process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = ORIGINAL_APPROVED_APP_BUNDLE_IDS;
-  }
   if (ORIGINAL_HOST_APP_BUNDLE_PATH === undefined) {
     delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
   } else {
@@ -47,8 +32,6 @@ afterEach(() => {
 
 describe("computerUseMcpServer", () => {
   it("exposes the Shiori Computer Use provider tool surface", () => {
-    process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL = "1";
-
     const tools = toolSchemas();
     expect(tools.map((tool) => tool.name)).toEqual([
       "list_apps",
@@ -252,61 +235,6 @@ describe("computerUseMcpServer", () => {
     });
   });
 
-  it("requires approved bundle identifiers before focusing apps when an allowlist is configured", () => {
-    process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL = "1";
-    process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = JSON.stringify([
-      "com.apple.finder",
-    ]);
-
-    expect(() =>
-      assertComputerToolAllowed("computer_focus_app", { bundleIdentifier: "com.apple.finder" }),
-    ).not.toThrow();
-    expect(() =>
-      assertComputerToolAllowed("computer_focus_app", { bundleIdentifier: "com.apple.Terminal" }),
-    ).toThrow("not approved");
-    expect(() => assertComputerToolAllowed("computer_focus_app", { name: "Finder" })).toThrow(
-      "requires an approved app bundle identifier",
-    );
-
-    process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = "[]";
-    expect(() =>
-      assertComputerToolAllowed("computer_focus_app", { bundleIdentifier: "com.apple.finder" }),
-    ).toThrow("No apps are approved for provider-facing Computer Use");
-  });
-
-  it("filters listed apps to approved bundle identifiers when an allowlist is present", () => {
-    const result = filterAppStateForApprovedApps(
-      {
-        sessionId: "computer-1",
-        apps: [
-          { name: "Finder", bundleIdentifier: "com.apple.finder" },
-          { name: "Terminal", bundleIdentifier: "com.apple.Terminal" },
-        ],
-      },
-      new Set(["com.apple.finder"]),
-    );
-
-    expect(result).toMatchObject({
-      filteredByApprovedApps: true,
-      apps: [{ name: "Finder", bundleIdentifier: "com.apple.finder" }],
-    });
-
-    const unfilteredResult = {
-      sessionId: "computer-1",
-      apps: [
-        { name: "Finder", bundleIdentifier: "com.apple.finder" },
-        { name: "Terminal", bundleIdentifier: "com.apple.Terminal" },
-      ],
-    };
-    expect(filterAppStateForApprovedApps(unfilteredResult, new Set())).toMatchObject({
-      filteredByApprovedApps: true,
-      apps: [],
-    });
-
-    delete process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS;
-    expect(filterAppStateForApprovedApps(unfilteredResult)).toBe(unfilteredResult);
-  });
-
   it("tells the agent to use screenshot pixel coordinates for screenshots", () => {
     expect(
       toolResultContent({
@@ -334,7 +262,6 @@ describe("computerUseMcpServer", () => {
           type: "text",
           text: [
             "Captured desktop screenshot (1440x900). Use screenshot pixel coordinates with computer_click, computer_double_click, computer_right_click, computer_move, computer_drag, and targeted computer_scroll.",
-            "The image may include the full visible desktop; approved-app settings limit allowed targets, not screenshot redaction.",
             "Cursor position: 120,240 in screenshot pixels.",
             "Virtual screen bounds: 720x450 at 0,0 in macOS points.",
             "Displays: 1.",
@@ -446,131 +373,35 @@ describe("computerUseMcpServer", () => {
   });
 
   it("executes double-click through the click helper with a fixed click count", () => {
-    expect(helperInputForComputerTool("computer_double_click", { x: 100, y: 50 }, null)).toEqual({
+    expect(helperInputForComputerTool("computer_double_click", { x: 100, y: 50 })).toEqual({
       x: 100,
       y: 50,
       clickCount: 2,
     });
-    expect(helperInputForComputerTool("computer_click", { x: 100, y: 50 }, null)).toEqual({
+    expect(helperInputForComputerTool("computer_click", { x: 100, y: 50 })).toEqual({
       x: 100,
       y: 50,
     });
   });
 
   it("executes right-click through the click helper with a fixed right button", () => {
-    expect(helperInputForComputerTool("computer_right_click", { x: 100, y: 50 }, null)).toEqual({
+    expect(helperInputForComputerTool("computer_right_click", { x: 100, y: 50 })).toEqual({
       x: 100,
       y: 50,
       button: "right",
-    });
-  });
-
-  it("forwards approved bundle identifiers to helper actions", () => {
-    expect(
-      helperInputForComputerTool(
-        "computer_list_apps",
-        { sessionId: "computer-1" },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      sessionId: "computer-1",
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-    });
-    expect(
-      helperInputForComputerTool(
-        "computer_focus_app",
-        { bundleIdentifier: "com.apple.finder" },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      bundleIdentifier: "com.apple.finder",
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-    });
-    expect(
-      helperInputForComputerTool(
-        "computer_focus_window",
-        { bundleIdentifier: "com.apple.finder", windowIndex: 1 },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      bundleIdentifier: "com.apple.finder",
-      windowIndex: 1,
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-    });
-    expect(
-      helperInputForComputerTool(
-        "computer_click",
-        { x: 100, y: 50 },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      x: 100,
-      y: 50,
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-    });
-    expect(
-      helperInputForComputerTool(
-        "computer_wait",
-        { durationMs: 500 },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      durationMs: 500,
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
     });
   });
 
   it("strips provider-schema null placeholders before helper actions", () => {
     expect(
-      helperInputForComputerTool(
-        "computer_focus_app",
-        {
-          sessionId: null,
-          bundleIdentifier: "com.apple.finder",
-          processIdentifier: null,
-          name: null,
-        },
-        new Set(["com.apple.finder"]),
-      ),
+      helperInputForComputerTool("computer_focus_app", {
+        sessionId: null,
+        bundleIdentifier: "com.apple.finder",
+        processIdentifier: null,
+        name: null,
+      }),
     ).toEqual({
       bundleIdentifier: "com.apple.finder",
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-    });
-  });
-
-  it("preserves explicitly empty approved bundle identifiers for helper calls", () => {
-    expect(
-      helperInputForComputerTool("computer_list_apps", { sessionId: "computer-1" }, new Set()),
-    ).toEqual({
-      sessionId: "computer-1",
-      approvedAppBundleIdentifiers: [],
-    });
-  });
-
-  it("preserves approved bundle identifiers for click aliases", () => {
-    expect(
-      helperInputForComputerTool(
-        "computer_double_click",
-        { x: 100, y: 50 },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      x: 100,
-      y: 50,
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-      clickCount: 2,
-    });
-    expect(
-      helperInputForComputerTool(
-        "computer_right_click",
-        { x: 100, y: 50 },
-        new Set(["com.apple.finder"]),
-      ),
-    ).toEqual({
-      x: 100,
-      y: 50,
-      approvedAppBundleIdentifiers: ["com.apple.finder"],
-      button: "right",
     });
   });
 
@@ -900,121 +731,6 @@ describe("computerUseMcpServer", () => {
             "Active app after action:",
             "1. Notes (active, com.apple.Notes, pid 77)",
             "    - Computer Use Notes (700x500 at 40,80)",
-          ].join("\n"),
-        },
-      ],
-    });
-  });
-
-  it("enforces provider-facing approved app boundaries when an allowlist is configured", () => {
-    process.env.SHIORICODE_COMPUTER_USE_REQUIRE_APPROVAL = "1";
-    delete process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS;
-
-    expect(() => assertComputerToolAllowed("computer_focus_app", { name: "Safari" })).not.toThrow();
-    expect(() => assertComputerToolAllowed("computer_screenshot", {})).not.toThrow();
-
-    process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = "[]";
-
-    expect(() => assertComputerToolAllowed("computer_list_apps", {})).not.toThrow();
-    expect(() => assertComputerToolAllowed("computer_screenshot", {})).toThrow(
-      "No apps are approved for provider-facing Computer Use",
-    );
-    expect(() => assertComputerToolAllowed("computer_click", { x: 10, y: 20 })).toThrow(
-      "No apps are approved for provider-facing Computer Use",
-    );
-
-    process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS = JSON.stringify([
-      "com.apple.Safari",
-    ]);
-
-    expect(() =>
-      assertComputerToolAllowed("computer_focus_app", {
-        bundleIdentifier: "com.apple.Safari",
-      }),
-    ).not.toThrow();
-    expect(() => assertComputerToolAllowed("computer_focus_app", { name: "Safari" })).toThrow(
-      "requires an approved app bundle identifier",
-    );
-    expect(() => assertComputerToolAllowed("computer_focus_window", { name: "Safari" })).toThrow(
-      "requires an approved app bundle identifier",
-    );
-    expect(() =>
-      assertComputerToolAllowed("computer_focus_app", {
-        bundleIdentifier: "com.apple.TextEdit",
-      }),
-    ).toThrow("not approved");
-  });
-
-  it("filters app listings to approved bundle identifiers before formatting MCP output", () => {
-    const filtered = filterAppStateForApprovedApps(
-      {
-        sessionId: "computer-1",
-        checkedAt: "2026-06-04T14:00:00Z",
-        accessibilityTrusted: true,
-        apps: [
-          {
-            processIdentifier: 42,
-            name: "Safari",
-            bundleIdentifier: "com.apple.Safari",
-            isActive: true,
-            isHidden: false,
-            windows: [],
-          },
-          {
-            processIdentifier: 43,
-            name: "Messages",
-            bundleIdentifier: "com.apple.MobileSMS",
-            isActive: false,
-            isHidden: false,
-            windows: [{ title: "Private Chat", bounds: null }],
-          },
-        ],
-      },
-      new Set(["com.apple.Safari"]),
-    );
-
-    expect(toolResultContent(filtered)).toEqual({
-      content: [
-        {
-          type: "text",
-          text: [
-            "Visible macOS apps at 2026-06-04T14:00:00Z:",
-            "Only apps approved in Computer Use settings are shown.",
-            "1. Safari (active, com.apple.Safari, pid 42)",
-          ].join("\n"),
-        },
-      ],
-    });
-  });
-
-  it("treats an explicitly empty approved-app allowlist as no visible provider apps", () => {
-    const filtered = filterAppStateForApprovedApps(
-      {
-        sessionId: "computer-1",
-        checkedAt: "2026-06-04T14:00:00Z",
-        accessibilityTrusted: true,
-        apps: [
-          {
-            processIdentifier: 42,
-            name: "Safari",
-            bundleIdentifier: "com.apple.Safari",
-            isActive: true,
-            isHidden: false,
-            windows: [],
-          },
-        ],
-      },
-      new Set(),
-    );
-
-    expect(toolResultContent(filtered)).toEqual({
-      content: [
-        {
-          type: "text",
-          text: [
-            "Visible macOS apps at 2026-06-04T14:00:00Z:",
-            "Only apps approved in Computer Use settings are shown.",
-            "No visible apps were reported.",
           ].join("\n"),
         },
       ],

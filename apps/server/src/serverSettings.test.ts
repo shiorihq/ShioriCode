@@ -101,26 +101,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(
         decodePatch({
           computerUse: {
-            shareWithProviders: true,
-            approvedApps: [
-              {
-                bundleIdentifier: "com.apple.finder",
-                name: "Finder",
-                approvedAt: "2026-06-04T14:00:00.000Z",
-              },
-            ],
+            enabled: true,
           },
         }),
         {
           computerUse: {
-            shareWithProviders: true,
-            approvedApps: [
-              {
-                bundleIdentifier: "com.apple.finder",
-                name: "Finder",
-                approvedAt: "2026-06-04T14:00:00.000Z",
-              },
-            ],
+            enabled: true,
           },
         },
       );

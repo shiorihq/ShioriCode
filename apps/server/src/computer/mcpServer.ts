@@ -727,99 +727,6 @@ function readBooleanEnv(name: string): boolean | null {
   return null;
 }
 
-function approvedAppBundleIdsFromEnv(): ReadonlySet<string> | null {
-  const raw = process.env.SHIORICODE_COMPUTER_USE_APPROVED_APP_BUNDLE_IDS?.trim();
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return new Set(
-        parsed.flatMap((entry) => {
-          if (typeof entry !== "string") return [];
-          const trimmed = entry.trim();
-          return trimmed.length > 0 ? [trimmed] : [];
-        }),
-      );
-    }
-  } catch {
-    // Fall back to comma-separated input below.
-  }
-  return new Set(
-    raw
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0),
-  );
-}
-
-const APPROVED_APP_SCOPED_TOOL_NAMES = new Set([
-  "get_app_state",
-  "click",
-  "perform_secondary_action",
-  "set_value",
-  "select_text",
-  "scroll",
-  "drag",
-  "press_key",
-  "type_text",
-  "computer_screenshot",
-  "computer_focus_app",
-  "computer_focus_window",
-  "computer_click",
-  "computer_double_click",
-  "computer_right_click",
-  "computer_move",
-  "computer_drag",
-  "computer_type",
-  "computer_key",
-  "computer_scroll",
-  "computer_wait",
-]);
-
-function computerToolTargetBundleIdentifier(args: Record<string, unknown>): string {
-  const explicitBundleIdentifier =
-    typeof args.bundleIdentifier === "string" ? args.bundleIdentifier.trim() : "";
-  if (explicitBundleIdentifier) {
-    return explicitBundleIdentifier;
-  }
-  const app = typeof args.app === "string" ? args.app.trim() : "";
-  if (app && app.includes(".") && !app.includes("/")) {
-    return app;
-  }
-  return "";
-}
-
-export function assertComputerToolAllowed(toolName: string, args: Record<string, unknown>): void {
-  const approvedBundleIds = approvedAppBundleIdsFromEnv();
-  if (approvedBundleIds === null || !APPROVED_APP_SCOPED_TOOL_NAMES.has(toolName)) {
-    return;
-  }
-  if (approvedBundleIds.size === 0) {
-    throw new Error(
-      "No apps are approved for provider-facing Computer Use. Approve at least one app in Settings > Computer Use before using desktop screenshots or actions.",
-    );
-  }
-  if (
-    toolName !== "computer_focus_app" &&
-    toolName !== "computer_focus_window" &&
-    toolName !== "get_app_state"
-  ) {
-    return;
-  }
-
-  const bundleIdentifier = computerToolTargetBundleIdentifier(args);
-  if (!bundleIdentifier) {
-    throw new Error(
-      `${toolName} requires an approved app bundle identifier. Call list_apps and use an approved app bundle identifier when app approval is enabled.`,
-    );
-  }
-  if (!approvedBundleIds.has(bundleIdentifier)) {
-    throw new Error(
-      `App '${bundleIdentifier}' is not approved for Computer Use. Approve it in Settings > Computer Use before focusing it.`,
-    );
-  }
-}
-
 function assertComputerToolInput(toolName: string, args: Record<string, unknown>): void {
   if (toolName === "get_app_state") {
     const app = typeof args.app === "string" ? args.app.trim() : "";
@@ -1068,27 +975,6 @@ async function runShioriComputerUseTool(
   }
 }
 
-export function filterAppStateForApprovedApps(
-  result: unknown,
-  approvedBundleIds = approvedAppBundleIdsFromEnv(),
-): unknown {
-  if (approvedBundleIds === null || !isRecord(result)) {
-    return result;
-  }
-  if (!Array.isArray(result.apps)) {
-    return result;
-  }
-  return {
-    ...result,
-    filteredByApprovedApps: true,
-    apps: result.apps.filter((app) => {
-      if (!isRecord(app)) return false;
-      const bundleIdentifier = stringValue(app.bundleIdentifier);
-      return bundleIdentifier ? approvedBundleIds.has(bundleIdentifier) : false;
-    }),
-  };
-}
-
 function imageContentFromDataUrl(imageDataUrl: string): { data: string; mimeType: string } {
   const match = /^data:([^;]+);base64,(.*)$/s.exec(imageDataUrl);
   return {
@@ -1193,15 +1079,8 @@ export function enrichComputerActionInputWithLatestScreenshotSize(
 export function helperInputForComputerTool(
   toolName: string,
   input: Record<string, unknown>,
-  approvedBundleIds: ReadonlySet<string> | null = approvedAppBundleIdsFromEnv(),
 ): Record<string, unknown> {
-  const approvedAppBundleIdentifiers = approvedBundleIds
-    ? Array.from(approvedBundleIds)
-    : undefined;
-  const cleanInput = stripNullishToolInput(input);
-  const baseInput = approvedAppBundleIdentifiers
-    ? { ...cleanInput, approvedAppBundleIdentifiers }
-    : cleanInput;
+  const baseInput = stripNullishToolInput(input);
   if (toolName === "computer_double_click") {
     return { ...baseInput, clickCount: 2 };
   }
@@ -1263,9 +1142,6 @@ function appStateText(result: Record<string, unknown>): string | null {
     typeof result.accessibilityTrusted === "boolean" ? result.accessibilityTrusted : null;
   return [
     `Visible macOS apps${checkedAt ? ` at ${checkedAt}` : ""}:`,
-    result.filteredByApprovedApps === true
-      ? "Only apps approved in Computer Use settings are shown."
-      : null,
     accessibilityTrusted === false
       ? "Accessibility is not granted, so window titles and bounds may be unavailable."
       : null,
@@ -1447,7 +1323,6 @@ function screenshotContextText(record: Record<string, unknown>): string {
   });
   return [
     `Captured desktop screenshot (${width}x${height}). Use screenshot pixel coordinates with computer_click, computer_double_click, computer_right_click, computer_move, computer_drag, and targeted computer_scroll.`,
-    "The image may include the full visible desktop; approved-app settings limit allowed targets, not screenshot redaction.",
     cursor ? `Cursor position: ${cursor} in screenshot pixels.` : null,
     screenBounds ? `Virtual screen bounds: ${screenBounds} in macOS points.` : null,
     displayCount > 0 ? `Displays: ${displayCount}.` : null,
@@ -1778,7 +1653,6 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
           return;
         }
         assertComputerToolInput(name, args);
-        assertComputerToolAllowed(name, args);
         if (SHIORI_COMPUTER_USE_TOOL_NAMES.has(name)) {
           success(id, toolResultContent(await runShioriComputerUseTool(name, args)));
           return;
@@ -1790,10 +1664,7 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
             enrichComputerActionInputWithLatestScreenshotSize(name, args),
           ),
         );
-        const result = filterAppStateForApprovedApps(
-          await runHelper(helperCommandForTool(name), helperInput),
-          name === "computer_list_apps" ? approvedAppBundleIdsFromEnv() : null,
-        );
+        const result = await runHelper(helperCommandForTool(name), helperInput);
         if (name === "computer_screenshot") {
           rememberLatestScreenshotSize(result);
         }

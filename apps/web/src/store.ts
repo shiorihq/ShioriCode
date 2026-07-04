@@ -35,6 +35,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   type LocalDispatchSnapshot,
 } from "./threadDispatchState";
+import { resolveDataRouteUrl } from "./lib/utils";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ function mapSession(session: OrchestrationSession): Thread["session"] {
 function mapMessage(message: OrchestrationMessage): ChatMessage {
   return mapMessageToChatMessageShared(message, {
     resolveAttachmentPreviewUrl: (attachmentId) =>
-      toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachmentId)),
+      resolveDataRouteUrl(`/attachments/${encodeURIComponent(attachmentId)}`),
   });
 }
 
@@ -486,38 +487,6 @@ function retainThreadProposedPlansAfterRevert(
   );
 }
 
-function resolveWsHttpOrigin(): string {
-  if (typeof window === "undefined") return "";
-  const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
-  const envWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsCandidate =
-    typeof bridgeWsUrl === "string" && bridgeWsUrl.length > 0
-      ? bridgeWsUrl
-      : typeof envWsUrl === "string" && envWsUrl.length > 0
-        ? envWsUrl
-        : null;
-  if (!wsCandidate) return window.location.origin;
-  try {
-    const wsUrl = new URL(wsCandidate);
-    const protocol =
-      wsUrl.protocol === "wss:" ? "https:" : wsUrl.protocol === "ws:" ? "http:" : wsUrl.protocol;
-    return `${protocol}//${wsUrl.host}`;
-  } catch {
-    return window.location.origin;
-  }
-}
-
-function toAttachmentPreviewUrl(rawUrl: string): string {
-  if (rawUrl.startsWith("/")) {
-    return `${resolveWsHttpOrigin()}${rawUrl}`;
-  }
-  return rawUrl;
-}
-
-function attachmentPreviewRoutePath(attachmentId: string): string {
-  return `/attachments/${encodeURIComponent(attachmentId)}`;
-}
-
 function updateThreadState(
   state: AppState,
   threadId: ThreadId,
@@ -680,7 +649,7 @@ function upsertThreadMessage(
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
   const projection = projectReadModelToClientSnapshot(readModel, {
     resolveAttachmentPreviewUrl: (attachmentId) =>
-      toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachmentId)),
+      resolveDataRouteUrl(`/attachments/${encodeURIComponent(attachmentId)}`),
   });
   const pendingThreadDispatchById = projection.threads.reduce<
     AppState["pendingThreadDispatchById"]
