@@ -22,6 +22,7 @@ import {
   type MobilePendingApproval,
   type MobilePendingUserInput,
   type MobileSnapshot,
+  type MobileWorkEntry,
   type ModelSelection,
   PROVIDER_DISPLAY_NAMES,
   ProjectId,
@@ -33,7 +34,12 @@ import {
 } from "contracts";
 import { Data, Effect, Layer, Option, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { derivePendingApprovals, derivePendingUserInputs } from "shared/orchestrationSession";
+import {
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  deriveWorkLogEntries,
+  type WorkLogEntry,
+} from "shared/orchestrationSession";
 
 import { EnvironmentAuth } from "./auth/EnvironmentAuth";
 import { ServerConfig, type ServerConfigShape } from "./config";
@@ -654,6 +660,35 @@ function aggregateFileChanges(
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
+/**
+ * Project the shared work-log derivation (the same collapsed tool/subagent
+ * rows the desktop timeline renders) into the lean mobile shape. Structured
+ * `output` is dropped on purpose: it can carry whole file diffs or command
+ * transcripts, which the phone neither renders nor wants to poll every 400ms.
+ */
+function toMobileWorkEntries(entries: ReadonlyArray<WorkLogEntry>): MobileWorkEntry[] {
+  return entries.map((entry) =>
+    Object.assign(
+      {
+        id: entry.id,
+        createdAt: entry.createdAt,
+        label: entry.label,
+        tone: entry.tone,
+        running: entry.running ?? false,
+      },
+      entry.itemId ? { itemId: entry.itemId } : {},
+      entry.parentItemId ? { parentItemId: entry.parentItemId } : {},
+      entry.detail ? { detail: entry.detail } : {},
+      entry.command ? { command: entry.command } : {},
+      entry.changedFiles && entry.changedFiles.length > 0
+        ? { changedFiles: entry.changedFiles }
+        : {},
+      entry.toolTitle ? { toolTitle: entry.toolTitle } : {},
+      entry.itemType ? { itemType: entry.itemType } : {},
+    ),
+  );
+}
+
 function resolveDefaultModelSelection(
   readModel: OrchestrationReadModel,
   serverDefault: ModelSelection | null,
@@ -724,6 +759,7 @@ function toMobileSnapshot(
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
       })),
+      workEntries: toMobileWorkEntries(deriveWorkLogEntries(thread.activities, undefined)),
       pendingApprovals,
       pendingUserInputs,
       fileChanges: aggregateFileChanges(thread.checkpoints),

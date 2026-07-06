@@ -21,6 +21,7 @@ import {
   UploadChatAttachment,
 } from "./orchestration";
 import { ProjectEntry } from "./project";
+import { ToolLifecycleItemType } from "./providerRuntime";
 
 export const MobilePairingCandidate = Schema.Struct({
   apiBaseUrl: Schema.String,
@@ -129,6 +130,28 @@ export const MobilePendingUserInput = Schema.Struct({
 });
 export type MobilePendingUserInput = typeof MobilePendingUserInput.Type;
 
+/**
+ * One collapsed tool-call/subagent row for the phone's transcript — the mobile
+ * projection of the shared `WorkLogEntry` (already merged across the
+ * started/updated/completed lifecycle). Nesting is reconstructed client-side
+ * by matching `parentItemId` against a sibling's `itemId`.
+ */
+export const MobileWorkEntry = Schema.Struct({
+  id: Schema.String,
+  createdAt: IsoDateTime,
+  label: Schema.String,
+  tone: Schema.Literals(["thinking", "tool", "info", "error"]),
+  running: Schema.Boolean,
+  itemId: Schema.optional(Schema.String),
+  parentItemId: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
+  changedFiles: Schema.optional(Schema.Array(Schema.String)),
+  toolTitle: Schema.optional(Schema.String),
+  itemType: Schema.optional(ToolLifecycleItemType),
+});
+export type MobileWorkEntry = typeof MobileWorkEntry.Type;
+
 export const MobileThreadSummary = Schema.Struct({
   id: ThreadId,
   projectId: Schema.NullOr(ProjectId),
@@ -161,6 +184,7 @@ export const MobileThreadDetail = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   messages: Schema.Array(MobileMessage),
+  workEntries: Schema.Array(MobileWorkEntry),
   pendingApprovals: Schema.Array(MobilePendingApproval),
   pendingUserInputs: Schema.Array(MobilePendingUserInput),
   fileChanges: Schema.Array(MobileFileChange),
