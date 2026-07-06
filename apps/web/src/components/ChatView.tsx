@@ -3834,7 +3834,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, isTurnRunning, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    runningTurnAction: "steer" | "queue" = "steer",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -4077,6 +4080,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     if (isTurnRunning) {
       const activeTurnIdForSteer = activeThread.session?.activeTurnId ?? activeLatestTurn?.turnId;
       const canSteerThisRunningTurn =
+        runningTurnAction === "steer" &&
         selectedModelSelection.provider === "codex" &&
         composerImagesSnapshot.length === 0 &&
         activeTurnIdForSteer !== null &&
@@ -6131,6 +6135,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                               isPreparingWorktree={isPreparingWorktree}
                               hasSendableContent={composerSendState.hasSendableContent}
                               canSteerRunningTurn={canSteerRunningTurn}
+                              onQueueRunningTurn={() => void onSend(undefined, "queue")}
                               onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                               onInterrupt={() => void onInterrupt()}
                               onImplementPlanInNewThread={() =>

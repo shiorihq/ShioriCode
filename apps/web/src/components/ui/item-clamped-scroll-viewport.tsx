@@ -37,8 +37,8 @@ interface ItemClampedScrollViewportProps {
  * each direct item is marked with `data-item-clamped-viewport-item`. The clamp
  * is derived from measured item heights — never a fixed pixel cap — so an item
  * that expands in place (e.g. an opened tool call) always fits the viewport
- * instead of being cut off. When content is scrolled out above, a blur
- * gradient marks the top edge.
+ * instead of being cut off. When content is scrolled out above, a gradient
+ * fade marks the top edge.
  */
 export function ItemClampedScrollViewport({
   children,
@@ -133,10 +133,7 @@ export function ItemClampedScrollViewport({
       <div
         ref={viewportRef}
         {...{ [VIEWPORT_ATTRIBUTE]: "" }}
-        className={cn(
-          "overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent",
-          maxHeight !== null && "pr-1",
-        )}
+        className="overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={maxHeight === null ? undefined : { maxHeight }}
         onScroll={handleScroll}
       >
@@ -145,13 +142,9 @@ export function ItemClampedScrollViewport({
       <div
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background/60 to-transparent backdrop-blur-sm transition-opacity duration-150",
+          "pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-background/80 to-transparent transition-opacity duration-150",
           hasContentAbove ? "opacity-100" : "opacity-0",
         )}
-        style={{
-          maskImage: "linear-gradient(to bottom, black 25%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(to bottom, black 25%, transparent 100%)",
-        }}
       />
     </div>
   );

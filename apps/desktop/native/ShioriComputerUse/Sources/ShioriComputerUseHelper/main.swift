@@ -51,8 +51,53 @@ func writeEncodableJSON<T: Encodable>(_ value: T, exitCode: HelperExitCode = .ok
     exit(exitCode.rawValue)
 }
 
+/// Serve-mode variant of `writeJSON` that keeps the process alive.
+func writeJSONLine(_ object: [String: Any]) {
+    let data = (try? JSONSerialization.data(withJSONObject: object, options: [])) ?? Data("{}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+}
+
+func encodableJSONObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    let data = try encoder.encode(value)
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw HelperFailure(code: "actionFailed", message: "Helper produced a non-object result.")
+    }
+    return object
+}
+
 func fail(_ code: String, _ message: String) -> Never {
     writeJSON(["code": code, "error": message], exitCode: .failed)
+}
+
+/// Snapshot of the login-session state so callers can tell whether the screen
+/// is locked or the session lost the console. Accessibility actions and
+/// per-window capture keep working while locked; global HID input does not
+/// (it would land on the lock screen), so the legacy input commands refuse to
+/// run in that state and every bcu result carries this snapshot as context.
+func loginSessionStateSnapshot() -> [String: Any] {
+    guard let dictionary = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+        // No WindowServer session dictionary (e.g. SSH-only login). Report the
+        // degraded state instead of guessing.
+        return ["screenLocked": false, "onConsole": false, "sessionAvailable": false]
+    }
+    return [
+        "screenLocked": (dictionary["CGSSessionScreenIsLocked"] as? Bool) ?? false,
+        "onConsole": (dictionary["kCGSSessionOnConsoleKey"] as? Bool) ?? true,
+        "sessionAvailable": true,
+    ]
+}
+
+func requireUnlockedScreenForGlobalInput(actionName: String) throws {
+    let state = loginSessionStateSnapshot()
+    guard (state["screenLocked"] as? Bool) != true else {
+        throw HelperFailure(
+            code: "permissionDenied",
+            message: "The macOS screen is locked, so Computer Use \(actionName) is blocked: global input events would target the lock screen instead of the app. Use the app-scoped Shiori Computer Use tools (get_app_state, click, type_text, ...) which deliver input directly to the app, or unlock the Mac."
+        )
+    }
 }
 
 func requireAccessibility() throws {
@@ -911,6 +956,7 @@ func postMouse(type: CGEventType, point: CGPoint, button: CGMouseButton) {
 
 func click(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "click")
     try requireApprovedActiveApp(input: input, actionName: "click")
     let point = try pointFromInput(input)
     let buttonName = (try optionalString(input, "button", fallback: "left") ?? "left").lowercased()
@@ -942,6 +988,7 @@ func click(input: [String: Any]) throws -> [String: Any] {
 
 func move(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "pointer movement")
     try requireApprovedActiveApp(input: input, actionName: "pointer movement")
     let point = try pointFromInput(input)
     postMouse(type: .mouseMoved, point: point, button: .left)
@@ -950,6 +997,7 @@ func move(input: [String: Any]) throws -> [String: Any] {
 
 func drag(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "drag")
     try requireApprovedActiveApp(input: input, actionName: "drag")
     let from = try pointFromInput(input, xKey: "fromX", yKey: "fromY")
     let to = try pointFromInput(input, xKey: "toX", yKey: "toY")
@@ -981,6 +1029,7 @@ func drag(input: [String: Any]) throws -> [String: Any] {
 
 func typeText(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "typing")
     try requireApprovedActiveApp(input: input, actionName: "typing")
     let text = try string(input, "text")
     for character in text {
@@ -1026,6 +1075,7 @@ func flags(from input: [String: Any]) throws -> CGEventFlags {
 
 func pressKey(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "key press")
     try requireApprovedActiveApp(input: input, actionName: "key press")
     let rawKey = try string(input, "key").lowercased()
     guard let keyCode = keyCodes[rawKey] else {
@@ -1044,6 +1094,7 @@ func pressKey(input: [String: Any]) throws -> [String: Any] {
 
 func scroll(input: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try requireUnlockedScreenForGlobalInput(actionName: "scroll")
     try requireApprovedActiveApp(input: input, actionName: "scroll")
     if input["x"] != nil || input["y"] != nil {
         let point = try pointFromInput(input)
@@ -1294,8 +1345,165 @@ func bcuOptionalTarget(input: [String: Any]) throws -> ActionTargetRequestDTO? {
     return try ActionTargetRequestDTO.nodeID(raw)
 }
 
+/// Runs one bcu-* command against a (possibly shared) runtime and returns the
+/// result as a JSON object with the login-session state attached. Used by both
+/// the one-shot CLI dispatch and serve mode, so both transports produce
+/// identical result shapes.
+func bcuCommandResult(
+    command: String,
+    input: [String: Any],
+    runtime: BackgroundComputerUseRuntime
+) throws -> [String: Any] {
+    func finish<T: Encodable>(_ value: T) throws -> [String: Any] {
+        var object = try encodableJSONObject(value)
+        object["sessionState"] = loginSessionStateSnapshot()
+        return object
+    }
+
+    switch command {
+    case "bcu-list-apps":
+        return try finish(runtime.listApps())
+    case "bcu-list-windows":
+        return try finish(try runtime.listWindows(ListWindowsRequest(app: try string(input, "app"))))
+    case "bcu-get-window-state":
+        let window = try bcuWindowID(runtime: runtime, input: input)
+        return try finish(try runtime.getWindowState(GetWindowStateRequest(
+            window: window,
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input)
+        )))
+    case "bcu-click":
+        let window = try bcuWindowID(runtime: runtime, input: input)
+        if let target = try bcuOptionalTarget(input: input) {
+            return try finish(try runtime.click(ClickRequest(
+                window: window,
+                stateToken: try optionalString(input, "stateToken"),
+                target: target,
+                clickCount: try optionalInteger(input, "click_count"),
+                mouseButton: try bcuMouseButton(input: input),
+                maxNodes: try optionalInteger(input, "maxNodes"),
+                imageMode: try bcuImageMode(input: input, fallback: .omit)
+            )))
+        }
+        return try finish(try runtime.click(ClickRequest(
+            window: window,
+            stateToken: try optionalString(input, "stateToken"),
+            x: try number(input, "x"),
+            y: try number(input, "y"),
+            clickCount: try optionalInteger(input, "click_count"),
+            mouseButton: try bcuMouseButton(input: input),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-scroll":
+        return try finish(try runtime.scroll(ScrollRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            direction: try bcuScrollDirection(input: input),
+            pages: try optionalInteger(input, "pages"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-perform-secondary-action":
+        return try finish(try runtime.performSecondaryAction(PerformSecondaryActionRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            action: try string(input, "action"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-set-value":
+        return try finish(try runtime.setValue(SetValueRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuActionTarget(input: input),
+            value: try string(input, "value"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-type-text":
+        return try finish(try runtime.typeText(TypeTextRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            target: try bcuOptionalTarget(input: input),
+            text: try string(input, "text"),
+            focusAssistMode: .focusAndCaretEnd,
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    case "bcu-press-key":
+        return try finish(try runtime.pressKey(PressKeyRequest(
+            window: try bcuWindowID(runtime: runtime, input: input),
+            stateToken: try optionalString(input, "stateToken"),
+            key: try string(input, "key"),
+            maxNodes: try optionalInteger(input, "maxNodes"),
+            imageMode: try bcuImageMode(input: input, fallback: .omit)
+        )))
+    default:
+        throw HelperFailure(code: "actionFailed", message: "Unsupported serve command '\(command)'.")
+    }
+}
+
+/// Long-lived stdio mode: one JSON request per line ({id, command, input}),
+/// one JSON response per line ({id, ok, result | code+error}). A single
+/// BackgroundComputerUseRuntime is shared across requests, which keeps the
+/// Accessibility runtime warm and preserves state-token continuity between
+/// get_app_state and subsequent actions — the two main costs of the
+/// process-per-action model. Only bcu-* commands and `permissions` are
+/// servable; UI-presenting commands (permission-guide) still run one-shot.
+func runServeLoop() -> Never {
+    // Announce readiness so the client can distinguish a serve-capable helper
+    // from an older binary (which would error out or wait for stdin EOF).
+    writeJSONLine(["event": "ready", "protocol": "shiori-computer-use-serve/1"])
+
+    var runtime: BackgroundComputerUseRuntime?
+
+    while let line = readLine(strippingNewline: true) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { continue }
+        var requestId: Any = NSNull()
+        do {
+            guard
+                let data = trimmed.data(using: .utf8),
+                let request = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
+                throw HelperFailure(code: "actionFailed", message: "Serve requests must be JSON objects.")
+            }
+            requestId = request["id"] ?? NSNull()
+            let command = try string(request, "command")
+            let input = (request["input"] as? [String: Any]) ?? [:]
+
+            if command == "permissions" {
+                writeJSONLine(["id": requestId, "ok": true, "result": permissions()])
+                continue
+            }
+
+            let activeRuntime: BackgroundComputerUseRuntime
+            if let existing = runtime {
+                activeRuntime = existing
+            } else {
+                let created = bcuRuntime()
+                runtime = created
+                activeRuntime = created
+            }
+            let result = try bcuCommandResult(command: command, input: input, runtime: activeRuntime)
+            writeJSONLine(["id": requestId, "ok": true, "result": result])
+        } catch let failure as HelperFailure {
+            writeJSONLine(["id": requestId, "ok": false, "code": failure.code, "error": failure.message])
+        } catch {
+            writeJSONLine(["id": requestId, "ok": false, "code": "actionFailed", "error": String(describing: error)])
+        }
+    }
+    exit(HelperExitCode.ok.rawValue)
+}
+
 do {
     let command = CommandLine.arguments.dropFirst().first ?? "permissions"
+    if command == "serve" {
+        runServeLoop()
+    }
     let input = try readInputObject()
     switch command {
     case "permissions":
@@ -1330,93 +1538,8 @@ do {
             writeJSON(openPermissionGuide(request: request))
         }
         dispatchMain()
-    case "bcu-list-apps":
-        writeEncodableJSON(bcuRuntime().listApps())
-    case "bcu-list-windows":
-        writeEncodableJSON(try bcuRuntime().listWindows(ListWindowsRequest(app: try string(input, "app"))))
-    case "bcu-get-window-state":
-        let runtime = bcuRuntime()
-        let window = try bcuWindowID(runtime: runtime, input: input)
-        writeEncodableJSON(try runtime.getWindowState(GetWindowStateRequest(
-            window: window,
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input)
-        )))
-    case "bcu-click":
-        let runtime = bcuRuntime()
-        let window = try bcuWindowID(runtime: runtime, input: input)
-        if let target = try bcuOptionalTarget(input: input) {
-            writeEncodableJSON(try runtime.click(ClickRequest(
-                window: window,
-                stateToken: try optionalString(input, "stateToken"),
-                target: target,
-                clickCount: try optionalInteger(input, "click_count"),
-                mouseButton: try bcuMouseButton(input: input),
-                maxNodes: try optionalInteger(input, "maxNodes"),
-                imageMode: try bcuImageMode(input: input, fallback: .omit)
-            )))
-        }
-        writeEncodableJSON(try runtime.click(ClickRequest(
-            window: window,
-            stateToken: try optionalString(input, "stateToken"),
-            x: try number(input, "x"),
-            y: try number(input, "y"),
-            clickCount: try optionalInteger(input, "click_count"),
-            mouseButton: try bcuMouseButton(input: input),
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
-    case "bcu-scroll":
-        let runtime = bcuRuntime()
-        writeEncodableJSON(try runtime.scroll(ScrollRequest(
-            window: try bcuWindowID(runtime: runtime, input: input),
-            stateToken: try optionalString(input, "stateToken"),
-            target: try bcuActionTarget(input: input),
-            direction: try bcuScrollDirection(input: input),
-            pages: try optionalInteger(input, "pages"),
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
-    case "bcu-perform-secondary-action":
-        let runtime = bcuRuntime()
-        writeEncodableJSON(try runtime.performSecondaryAction(PerformSecondaryActionRequest(
-            window: try bcuWindowID(runtime: runtime, input: input),
-            stateToken: try optionalString(input, "stateToken"),
-            target: try bcuActionTarget(input: input),
-            action: try string(input, "action"),
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
-    case "bcu-set-value":
-        let runtime = bcuRuntime()
-        writeEncodableJSON(try runtime.setValue(SetValueRequest(
-            window: try bcuWindowID(runtime: runtime, input: input),
-            stateToken: try optionalString(input, "stateToken"),
-            target: try bcuActionTarget(input: input),
-            value: try string(input, "value"),
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
-    case "bcu-type-text":
-        let runtime = bcuRuntime()
-        writeEncodableJSON(try runtime.typeText(TypeTextRequest(
-            window: try bcuWindowID(runtime: runtime, input: input),
-            stateToken: try optionalString(input, "stateToken"),
-            target: try bcuOptionalTarget(input: input),
-            text: try string(input, "text"),
-            focusAssistMode: .focusAndCaretEnd,
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
-    case "bcu-press-key":
-        let runtime = bcuRuntime()
-        writeEncodableJSON(try runtime.pressKey(PressKeyRequest(
-            window: try bcuWindowID(runtime: runtime, input: input),
-            stateToken: try optionalString(input, "stateToken"),
-            key: try string(input, "key"),
-            maxNodes: try optionalInteger(input, "maxNodes"),
-            imageMode: try bcuImageMode(input: input, fallback: .omit)
-        )))
+    case let bcuCommand where bcuCommand.hasPrefix("bcu-"):
+        writeJSON(try bcuCommandResult(command: bcuCommand, input: input, runtime: bcuRuntime()))
     default:
         fail("actionFailed", "Unsupported command '\(command)'.")
     }

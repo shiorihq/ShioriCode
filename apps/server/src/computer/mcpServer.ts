@@ -8,7 +8,9 @@ import {
   processResourcesPath,
   resolveAppRootFromModule,
 } from "./helperResolver";
+import { HelperServeClient, HelperServeUnsupportedError } from "./helperServeClient";
 import { enrichComputerPermissionGuideInput } from "./permissionInput";
+import { createPowerAssertion } from "./powerAssertion";
 import {
   enrichScreenshotCoordinateInput,
   screenshotSizeFromResult,
@@ -478,34 +480,6 @@ const SHIORI_COMPUTER_USE_TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
     },
   },
   {
-    name: "select_text",
-    description:
-      "Select text inside a text element, or place the text cursor before or after it using text from the latest accessibility tree.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ...APP_PROPERTY,
-        ...ELEMENT_INDEX_PROPERTY,
-        text: { type: "string", description: "Target text as shown in the accessibility tree." },
-        prefix: {
-          type: "string",
-          description: "Optional text immediately before the target, used to disambiguate matches.",
-        },
-        suffix: {
-          type: "string",
-          description: "Optional text immediately after the target, used to disambiguate matches.",
-        },
-        selection: {
-          type: "string",
-          enum: ["text", "cursor_before", "cursor_after"],
-          description: "Whether to select the text or place the cursor before or after it.",
-        },
-      },
-      required: ["app", "element_index", "text"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "scroll",
     description: "Scroll an element in a direction by a number of pages.",
     inputSchema: {
@@ -517,22 +491,6 @@ const SHIORI_COMPUTER_USE_TOOL_SCHEMAS: ReadonlyArray<ToolSchema> = [
         pages: { type: "number", description: "Number of pages to scroll. Defaults to 1." },
       },
       required: ["app", "element_index", "direction"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "drag",
-    description: "Drag from one point to another using pixel coordinates.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ...APP_PROPERTY,
-        from_x: { type: "number", description: "Start X coordinate." },
-        from_y: { type: "number", description: "Start Y coordinate." },
-        to_x: { type: "number", description: "End X coordinate." },
-        to_y: { type: "number", description: "End Y coordinate." },
-      },
-      required: ["app", "from_x", "from_y", "to_x", "to_y"],
       additionalProperties: false,
     },
   },
@@ -804,8 +762,42 @@ function helperErrorMessage(result: {
   return errorText || text || `Computer Use helper failed with code ${result.code ?? "null"}.`;
 }
 
+const powerAssertion = createPowerAssertion({ reason: "ShioriCode Computer Use session" });
+
+const helperServeClient = new HelperServeClient({
+  resolveHelperPath,
+  requestTimeoutMs: HELPER_TIMEOUT_MS,
+});
+
+/**
+ * Commands the persistent serve-mode helper can execute. UI-presenting
+ * commands (permission guide) and legacy global-desktop commands keep the
+ * one-shot process model.
+ */
+function serveEligibleCommand(command: string): boolean {
+  return command.startsWith("bcu-") || command === "permissions";
+}
+
 async function runHelper(command: string, input: unknown): Promise<unknown> {
   assertRuntimeAllowsComputerUse();
+  // Keep the display and system awake for the duration of the burst so a
+  // multi-step desktop task is not interrupted by idle sleep (which also blacks
+  // out screenshots). Released automatically after an idle period.
+  powerAssertion.keepAwake();
+
+  // Prefer the persistent serve-mode helper: it keeps the Accessibility
+  // runtime warm across actions and preserves state-token continuity. Fall
+  // back to one-shot spawning when the installed helper predates serve mode.
+  if (serveEligibleCommand(command)) {
+    try {
+      return await helperServeClient.request(command, input);
+    } catch (error) {
+      if (!(error instanceof HelperServeUnsupportedError)) {
+        throw error;
+      }
+    }
+  }
+
   const result = await runProcess(resolveHelperPath(), [command], {
     stdin: JSON.stringify(input ?? {}),
     timeoutMs: HELPER_TIMEOUT_MS,
@@ -865,14 +857,73 @@ function rememberBcuAppState(app: unknown, result: unknown): void {
   });
 }
 
-function bcuAppStateFor(input: Record<string, unknown>) {
-  const state = latestBcuAppStates.get(bcuAppKey(input.app));
-  if (!state) {
+/**
+ * Advance the remembered state token after an action so the next action in the
+ * same turn does not reuse a token the UI has already invalidated. bcu actions
+ * return a `postStateToken` describing the window state produced by the action;
+ * carrying it forward is what lets get_app_state -> click -> click sequences
+ * work without an intervening get_app_state.
+ */
+function updateBcuAppStateAfterAction(app: unknown, result: unknown): void {
+  if (!isRecord(result)) return;
+  const postStateToken = stringValue(result.postStateToken) ?? stringValue(result.stateToken);
+  if (!postStateToken) return;
+  const key = bcuAppKey(app);
+  const existing = latestBcuAppStates.get(key);
+  const window =
+    (isRecord(result.window) ? stringValue(result.window.windowID) : null) ??
+    existing?.window ??
+    null;
+  if (!window) return;
+  latestBcuAppStates.set(key, {
+    app: existing?.app ?? (typeof app === "string" ? app.trim() : ""),
+    window,
+    stateToken: postStateToken,
+  });
+}
+
+/**
+ * Return remembered window state for an app, transparently fetching it when it
+ * is missing. Previously a missing entry hard-failed with "Call get_app_state
+ * for this app once in the current assistant turn...", which was the single
+ * most common Computer Use failure: the model would act on an app whose state
+ * had never been captured in this process (fresh MCP process, or a
+ * coordinate-only click) and get a dead end instead of an action. Auto-fetching
+ * the window state keeps the window handle and state token fresh and lets the
+ * action proceed.
+ */
+async function ensureBcuAppState(app: unknown): Promise<{
+  readonly app: string;
+  readonly window: string;
+  readonly stateToken: string;
+}> {
+  const existing = latestBcuAppStates.get(bcuAppKey(app));
+  if (existing) return existing;
+  await runShioriComputerUseTool("get_app_state", { app });
+  const refreshed = latestBcuAppStates.get(bcuAppKey(app));
+  if (!refreshed) {
     throw new Error(
-      "Call get_app_state for this app once in the current assistant turn before using Shiori Computer Use actions.",
+      `Could not resolve a target window for '${typeof app === "string" ? app : ""}'. Call get_app_state for this app first.`,
     );
   }
-  return state;
+  return refreshed;
+}
+
+/**
+ * A failure whose text indicates the supplied state token no longer matches the
+ * live window state. On these we refresh state once and retry, rather than
+ * surfacing a stale-token error the model can't act on.
+ */
+function isStaleStateFailure(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    message.includes("state token") ||
+    message.includes("statetoken") ||
+    message.includes("stale") ||
+    message.includes("out of date") ||
+    message.includes("no longer") ||
+    message.includes("changed since")
+  );
 }
 
 function bcuTargetInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -916,62 +967,90 @@ async function runShioriComputerUseTool(
     );
   }
 
-  const state = bcuAppStateFor(input);
-  const base = {
-    app: state.app,
-    window: state.window,
-    stateToken: state.stateToken,
-    imageMode: "base64",
-    maxNodes: 6500,
-  };
-  switch (toolName) {
-    case "click": {
-      const hasCoordinates =
-        typeof input.x === "number" &&
-        Number.isFinite(input.x) &&
-        typeof input.y === "number" &&
-        Number.isFinite(input.y);
-      return runHelper("bcu-click", {
-        ...base,
-        ...(hasCoordinates ? { x: input.x, y: input.y } : bcuTargetInput(input)),
-        ...(input.mouse_button ? { mouse_button: input.mouse_button } : {}),
-        ...(input.click_count ? { click_count: input.click_count } : {}),
-      });
+  const buildPayload = (state: {
+    readonly app: string;
+    readonly window: string;
+    readonly stateToken: string;
+  }): { command: string; payload: Record<string, unknown> } => {
+    const base = {
+      app: state.app,
+      window: state.window,
+      stateToken: state.stateToken,
+      imageMode: "base64",
+      maxNodes: 6500,
+    };
+    switch (toolName) {
+      case "click": {
+        const hasCoordinates =
+          typeof input.x === "number" &&
+          Number.isFinite(input.x) &&
+          typeof input.y === "number" &&
+          Number.isFinite(input.y);
+        return {
+          command: "bcu-click",
+          payload: {
+            ...base,
+            ...(hasCoordinates ? { x: input.x, y: input.y } : bcuTargetInput(input)),
+            ...(input.mouse_button ? { mouse_button: input.mouse_button } : {}),
+            ...(input.click_count ? { click_count: input.click_count } : {}),
+          },
+        };
+      }
+      case "perform_secondary_action":
+        return {
+          command: "bcu-perform-secondary-action",
+          payload: { ...base, ...bcuTargetInput(input), action: input.action },
+        };
+      case "set_value":
+        return {
+          command: "bcu-set-value",
+          payload: { ...base, ...bcuTargetInput(input), value: input.value },
+        };
+      case "scroll":
+        return {
+          command: "bcu-scroll",
+          payload: {
+            ...base,
+            ...bcuTargetInput(input),
+            direction: input.direction,
+            ...(input.pages ? { pages: input.pages } : {}),
+          },
+        };
+      case "press_key":
+        return { command: "bcu-press-key", payload: { ...base, key: bcuKeySyntax(input) } };
+      case "type_text":
+        return {
+          command: "bcu-type-text",
+          payload: {
+            ...base,
+            ...(typeof input.element_index === "string" && input.element_index.trim()
+              ? bcuTargetInput(input)
+              : {}),
+            text: input.text,
+          },
+        };
+      default:
+        return { command: helperCommandForTool(toolName), payload: input };
     }
-    case "perform_secondary_action":
-      return runHelper("bcu-perform-secondary-action", {
-        ...base,
-        ...bcuTargetInput(input),
-        action: input.action,
-      });
-    case "set_value":
-      return runHelper("bcu-set-value", {
-        ...base,
-        ...bcuTargetInput(input),
-        value: input.value,
-      });
-    case "scroll":
-      return runHelper("bcu-scroll", {
-        ...base,
-        ...bcuTargetInput(input),
-        direction: input.direction,
-        ...(input.pages ? { pages: input.pages } : {}),
-      });
-    case "press_key":
-      return runHelper("bcu-press-key", {
-        ...base,
-        key: bcuKeySyntax(input),
-      });
-    case "type_text":
-      return runHelper("bcu-type-text", {
-        ...base,
-        ...(typeof input.element_index === "string" && input.element_index.trim()
-          ? bcuTargetInput(input)
-          : {}),
-        text: input.text,
-      });
-    default:
-      return runHelper(helperCommandForTool(toolName), input);
+  };
+
+  const state = await ensureBcuAppState(input.app);
+  const { command, payload } = buildPayload(state);
+  try {
+    const result = await runHelper(command, payload);
+    updateBcuAppStateAfterAction(input.app, result);
+    return result;
+  } catch (error) {
+    if (!isStaleStateFailure(error)) throw error;
+    // The state token went stale between get_app_state and this action. Refresh
+    // the window state once and retry with the fresh token rather than handing
+    // the model a stale-token error it cannot recover from on its own.
+    latestBcuAppStates.delete(bcuAppKey(input.app));
+    const refreshed = await ensureBcuAppState(input.app);
+    const retry = buildPayload(refreshed);
+    const result = await runHelper(retry.command, retry.payload);
+    updateBcuAppStateAfterAction(input.app, result);
+    return result;
   }
 }
 
@@ -1377,6 +1456,27 @@ function bcuAppListText(result: Record<string, unknown>): string | null {
     .join("\n");
 }
 
+/**
+ * Human-readable line describing the macOS login-session state attached to bcu
+ * results. Only unusual states produce a line: the model needs to know when
+ * the screen is locked (screenshots may not match the physical display; the
+ * user cannot see actions) or when no interactive session is available.
+ */
+function bcuSessionStateLine(result: Record<string, unknown>): string | null {
+  const state = isRecord(result.sessionState) ? result.sessionState : null;
+  if (!state) return null;
+  if (state.sessionAvailable === false) {
+    return "macOS session: no interactive login session is available; desktop actions may fail.";
+  }
+  if (state.screenLocked === true) {
+    return "macOS session: the screen is LOCKED. App-scoped accessibility actions and window screenshots keep working against the app directly, but the physical display shows the lock screen and the user cannot see these actions.";
+  }
+  if (state.onConsole === false) {
+    return "macOS session: this login session is not on the console (another user is active); desktop actions may fail or be invisible.";
+  }
+  return null;
+}
+
 function bcuWindowHeadline(window: unknown): string | null {
   if (!isRecord(window)) return null;
   const title = stringValue(window.title);
@@ -1429,6 +1529,7 @@ function bcuWindowStateText(result: Record<string, unknown>): string | null {
 
   return [
     "Shiori Computer Use app state.",
+    bcuSessionStateLine(result),
     window ? `Window: ${window}.` : null,
     `State token: ${stateToken}.`,
     pixelWidth !== null && pixelHeight !== null
@@ -1473,6 +1574,7 @@ function bcuActionResultText(result: Record<string, unknown>): string | null {
     : [];
   return [
     `Computer Use action ${result.ok ? "completed" : "did not complete"}.`,
+    bcuSessionStateLine(result),
     summary,
     classification ? `Classification: ${classification}.` : null,
     failureDomain ? `Failure domain: ${failureDomain}.` : null,
@@ -1682,19 +1784,37 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
 }
 
 export async function runComputerUseMcpServer(): Promise<void> {
+  const releasePower = () => {
+    powerAssertion.release();
+    helperServeClient.dispose();
+  };
+  process.once("exit", releasePower);
+  process.once("SIGTERM", () => {
+    releasePower();
+    process.exit(0);
+  });
+  process.once("SIGINT", () => {
+    releasePower();
+    process.exit(0);
+  });
+
   const lines = readline.createInterface({
     input: process.stdin,
     crlfDelay: Infinity,
   });
-  for await (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const message = JSON.parse(line) as Record<string, unknown>;
-      if ("id" in message) {
-        void handleRequest(message);
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const message = JSON.parse(line) as Record<string, unknown>;
+        if ("id" in message) {
+          void handleRequest(message);
+        }
+      } catch (error) {
+        console.error(error);
       }
-    } catch (error) {
-      console.error(error);
     }
+  } finally {
+    releasePower();
   }
 }

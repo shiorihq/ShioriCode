@@ -39,9 +39,7 @@ describe("computerUseMcpServer", () => {
       "click",
       "perform_secondary_action",
       "set_value",
-      "select_text",
       "scroll",
-      "drag",
       "press_key",
       "type_text",
     ]);
@@ -51,9 +49,7 @@ describe("computerUseMcpServer", () => {
     const click = tools.find((tool) => tool.name === "click");
     const secondaryAction = tools.find((tool) => tool.name === "perform_secondary_action");
     const setValue = tools.find((tool) => tool.name === "set_value");
-    const selectText = tools.find((tool) => tool.name === "select_text");
     const scroll = tools.find((tool) => tool.name === "scroll");
-    const drag = tools.find((tool) => tool.name === "drag");
     const pressKey = tools.find((tool) => tool.name === "press_key");
     const typeText = tools.find((tool) => tool.name === "type_text");
 
@@ -88,9 +84,6 @@ describe("computerUseMcpServer", () => {
     expect(setValue?.inputSchema).toMatchObject({
       required: ["app", "element_index", "value"],
     });
-    expect(selectText?.inputSchema).toMatchObject({
-      required: ["app", "element_index", "text", "prefix", "suffix", "selection"],
-    });
     expect(scroll?.inputSchema).toMatchObject({
       properties: {
         app: { type: "string" },
@@ -99,9 +92,6 @@ describe("computerUseMcpServer", () => {
         pages: { type: ["number", "null"] },
       },
       required: ["app", "element_index", "direction", "pages"],
-    });
-    expect(drag?.inputSchema).toMatchObject({
-      required: ["app", "from_x", "from_y", "to_x", "to_y"],
     });
     expect(pressKey?.inputSchema).toMatchObject({
       required: ["app", "key"],
@@ -333,6 +323,38 @@ describe("computerUseMcpServer", () => {
         },
       ],
     });
+  });
+
+  it("surfaces a locked-screen session note in BackgroundComputerUse results", () => {
+    const result = toolResultContent({
+      stateToken: "state-123",
+      window: { windowID: "window-1", title: "Example", bundleID: "app.example", pid: 42 },
+      screenshot: { status: "ok" },
+      tree: { nodeCount: 1, truncated: false, renderedText: '[1] button "Play"' },
+      sessionState: { screenLocked: true, onConsole: true, sessionAvailable: true },
+    }) as { content: Array<{ type: string; text?: string }> };
+
+    expect(result.content[0]?.text).toContain("macOS session: the screen is LOCKED.");
+
+    const actionResult = toolResultContent({
+      ok: true,
+      classification: "completed",
+      summary: "Clicked.",
+      sessionState: { screenLocked: true, onConsole: true, sessionAvailable: true },
+    }) as { content: Array<{ type: string; text?: string }> };
+
+    expect(actionResult.content[0]?.text).toContain("macOS session: the screen is LOCKED.");
+  });
+
+  it("stays quiet about the session state when the desktop is unlocked and on console", () => {
+    const actionResult = toolResultContent({
+      ok: true,
+      classification: "completed",
+      summary: "Clicked.",
+      sessionState: { screenLocked: false, onConsole: true, sessionAvailable: true },
+    }) as { content: Array<{ type: string; text?: string }> };
+
+    expect(actionResult.content[0]?.text).not.toContain("macOS session:");
   });
 
   it("reuses the latest default screenshot size for screenshot-coordinate actions", () => {

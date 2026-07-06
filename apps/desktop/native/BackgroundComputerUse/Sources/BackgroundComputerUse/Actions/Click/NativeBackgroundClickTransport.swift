@@ -64,6 +64,7 @@ final class NativeBackgroundClickTransport {
         guard request.clickCount == 1 || request.clickCount == 2 else {
             throw ClickTransportError.unsupported("Native background clicks support only explicit single or double click.")
         }
+        try NativeClickSymbols.ensureAvailable()
 
         let preparation = try prepareTargetWindowForInput(target: request.target)
         let focusStatus = preparation.targetFocusStatus ?? -1
@@ -331,12 +332,34 @@ enum ClickTransportError: Error, CustomStringConvertible {
 }
 
 private enum NativeClickSymbols {
-    static let loadedSkyLight: Bool = {
+    /// Resolves lazily and reports failure through `availability` instead of
+    /// crashing. Loading the private SkyLight framework or one of its symbols
+    /// can fail on a hardened OS release or in a non-console session; a crash
+    /// here would take down the whole helper with no JSON error, so callers
+    /// must check `ensureAvailable()` before dispatching a native click and
+    /// fall back to Accessibility-based routing when it throws.
+    static let availability: Result<Void, ClickTransportError> = {
         guard dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) != nil else {
-            fatalError("Required SkyLight private framework could not be loaded for native background click transport.")
+            return .failure(.transportFailed(
+                "The SkyLight private framework could not be loaded for native background click transport."
+            ))
         }
-        return true
+        for name in requiredSymbolNames where dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) == nil {
+            return .failure(.transportFailed(
+                "Required native background click symbol \(name) is unavailable in this macOS build."
+            ))
+        }
+        return .success(())
     }()
+
+    static func ensureAvailable() throws {
+        if case let .failure(error) = availability { throw error }
+    }
+
+    private static let requiredSymbolNames = [
+        "CGSMainConnectionID", "CGSGetWindowOwner", "CGSGetConnectionPSN",
+        "SLEventPostToPid", "SLEventSetIntegerValueField", "CGEventSetWindowLocation",
+    ]
 
     static let cgsMainConnectionID = loadRequired("CGSMainConnectionID", as: CGSMainConnectionIDFn.self)
     static let cgsGetWindowOwner = loadRequired("CGSGetWindowOwner", as: CGSGetWindowOwnerFn.self)
@@ -345,10 +368,17 @@ private enum NativeClickSymbols {
     static let slEventSetIntegerValueField = loadRequired("SLEventSetIntegerValueField", as: SLEventSetIntegerValueFieldFn.self)
     static let cgEventSetWindowLocation = loadRequired("CGEventSetWindowLocation", as: CGEventSetWindowLocationFn.self)
 
+    /// Resolves a symbol for use by the dispatch path. Every call site that
+    /// touches these `static let`s is guarded by `ensureAvailable()`, which
+    /// fails first (returning a thrown `ClickTransportError`) whenever any
+    /// required symbol is missing — so this `dlsym` never returns nil in
+    /// practice. The `preconditionFailure` is a defensive invariant guard,
+    /// not a reachable crash path.
     private static func loadRequired<T>(_ name: String, as _: T.Type) -> T {
-        _ = loadedSkyLight
         guard let pointer = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else {
-            fatalError("Required native background click symbol \(name) is unavailable.")
+            preconditionFailure(
+                "Native click symbol \(name) resolved as available but is missing; call ensureAvailable() first."
+            )
         }
         return unsafeBitCast(pointer, to: T.self)
     }

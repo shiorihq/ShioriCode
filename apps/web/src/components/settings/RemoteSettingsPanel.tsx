@@ -26,9 +26,8 @@ const EXPOSURE_OPTIONS: ReadonlyArray<{
   hint: string;
 }> = [
   { value: "off", label: "Off", hint: "This machine only" },
-  { value: "tailscale-serve", label: "Tailscale", hint: "Private · your devices" },
-  { value: "tailscale-funnel", label: "Public", hint: "Anyone with the link" },
-  { value: "custom", label: "Custom", hint: "Your own proxy or tunnel" },
+  { value: "tailscale-serve", label: "My devices", hint: "Private · via your tailnet" },
+  { value: "tailscale-funnel", label: "Public link", hint: "Anywhere · behind sign-in" },
 ];
 
 function relativeTime(iso: string): string {
@@ -113,13 +112,8 @@ export function RemoteSettingsPanel() {
   }, []);
 
   const setExposure = useCallback(
-    (method: RemoteExposureMethod, customUrl?: string) =>
-      runAction(() =>
-        getWsRpcClient().remote.setExposure({
-          method,
-          ...(customUrl !== undefined ? { customUrl } : {}),
-        }),
-      ),
+    (method: RemoteExposureMethod) =>
+      runAction(() => getWsRpcClient().remote.setExposure({ method })),
     [runAction],
   );
 
@@ -263,9 +257,7 @@ export function RemoteSettingsPanel() {
                       size="xs"
                       variant="outline"
                       disabled={busy}
-                      onClick={() =>
-                        void setExposure(status.desiredMethod, status.customUrl ?? undefined)
-                      }
+                      onClick={() => void setExposure(status.desiredMethod)}
                     >
                       Repair
                     </Button>
@@ -333,10 +325,10 @@ export function RemoteSettingsPanel() {
                   ? tailscale.running
                     ? "Tailscale is connected on this machine."
                     : "Tailscale is installed but not connected — open the Tailscale app or run `tailscale up`."
-                  : "Install Tailscale to expose this machine privately, with no router setup — or bring your own proxy with Custom."
+                  : "Remote access runs over Tailscale — install it (free) and this machine is reachable with no ports, DNS, or certificates to manage."
               }
             >
-              <div className="mt-1 grid gap-2 sm:grid-cols-4">
+              <div className="mt-1 grid gap-2 sm:grid-cols-3">
                 {EXPOSURE_OPTIONS.map((option) => {
                   const active = status?.method === option.value;
                   const disabled =
@@ -348,14 +340,7 @@ export function RemoteSettingsPanel() {
                       key={option.value}
                       type="button"
                       disabled={disabled}
-                      onClick={() => {
-                        // Custom needs a URL — always route through the wizard.
-                        if (option.value === "custom") {
-                          openWizard("custom");
-                          return;
-                        }
-                        void setExposure(option.value);
-                      }}
+                      onClick={() => void setExposure(option.value)}
                       className={`flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                         active
                           ? "border-primary bg-primary/5 ring-1 ring-primary"
@@ -371,6 +356,19 @@ export function RemoteSettingsPanel() {
                   );
                 })}
               </div>
+              {tailscale && !tailscale.installed ? (
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  <a
+                    href="https://tailscale.com/download"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    Download Tailscale
+                  </a>{" "}
+                  and sign in, then come back — the setup wizard checks it live.
+                </p>
+              ) : null}
               {canFunnel || status?.method === "tailscale-funnel" ? null : tailscale?.installed &&
                 !tailscale.httpsEnabled ? (
                 <p className="mt-2 text-[11px] text-muted-foreground">

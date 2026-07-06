@@ -18,7 +18,6 @@ const REMOTE_STATE_FILE = "remote.json";
 interface RemoteStateFile {
   readonly version: 1;
   readonly method: RemoteExposureMethod;
-  readonly customUrl: string | null;
   readonly updatedAt: string;
 }
 
@@ -37,7 +36,6 @@ export class RemoteStateStore {
     this.record = this.readFile() ?? {
       version: 1,
       method: "off",
-      customUrl: null,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -46,11 +44,12 @@ export class RemoteStateStore {
     try {
       const raw = fs.readFileSync(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<RemoteStateFile>;
+      // A method we no longer support (e.g. the retired "custom" proxy) fails
+      // validation and falls back to "off" — exposure fails closed on upgrade.
       if (parsed.version === 1 && isExposureMethod(parsed.method)) {
         return {
           version: 1,
           method: parsed.method,
-          customUrl: typeof parsed.customUrl === "string" ? parsed.customUrl : null,
           updatedAt:
             typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
         };
@@ -65,13 +64,9 @@ export class RemoteStateStore {
     return this.record.method;
   }
 
-  get customUrl(): string | null {
-    return this.record.customUrl;
-  }
-
   /** Persist the owner's exposure intent (0600, best-effort like credentials). */
-  set(method: RemoteExposureMethod, customUrl: string | null): void {
-    this.record = { version: 1, method, customUrl, updatedAt: new Date().toISOString() };
+  set(method: RemoteExposureMethod): void {
+    this.record = { version: 1, method, updatedAt: new Date().toISOString() };
     try {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
       fs.writeFileSync(this.filePath, `${JSON.stringify(this.record, null, 2)}\n`, { mode: 0o600 });

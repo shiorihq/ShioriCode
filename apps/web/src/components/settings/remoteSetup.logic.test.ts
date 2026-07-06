@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RemoteTailscaleStatus } from "contracts";
 
-import {
-  credentialsIssue,
-  prerequisiteChecks,
-  prerequisitesSatisfied,
-  validateCustomUrlInput,
-} from "./remoteSetup.logic";
+import { credentialsIssue, prerequisiteChecks, prerequisitesSatisfied } from "./remoteSetup.logic";
 
 function tailscale(overrides: Partial<RemoteTailscaleStatus> = {}): {
   tailscale: RemoteTailscaleStatus;
@@ -24,11 +19,6 @@ function tailscale(overrides: Partial<RemoteTailscaleStatus> = {}): {
 }
 
 describe("prerequisiteChecks", () => {
-  it("has no checks for the custom method", () => {
-    expect(prerequisiteChecks("custom", tailscale())).toEqual([]);
-    expect(prerequisitesSatisfied("custom", tailscale({ installed: false }))).toBe(true);
-  });
-
   it("passes serve when Tailscale is installed and running", () => {
     expect(prerequisitesSatisfied("tailscale-serve", tailscale())).toBe(true);
     expect(prerequisitesSatisfied("tailscale-serve", tailscale({ httpsEnabled: false }))).toBe(
@@ -61,21 +51,6 @@ describe("prerequisiteChecks", () => {
       (check) => check.id === "https",
     );
     expect(https?.href).toContain("admin/dns");
-  });
-});
-
-describe("validateCustomUrlInput", () => {
-  it("accepts bare hosts and https origins", () => {
-    expect(validateCustomUrlInput("code.example.com")).toBeNull();
-    expect(validateCustomUrlInput("https://code.example.com")).toBeNull();
-    expect(validateCustomUrlInput("http://192.168.1.20:8443")).toBeNull();
-  });
-
-  it("rejects empty, malformed, and subpath inputs", () => {
-    expect(validateCustomUrlInput("")).toMatch(/Enter the URL/);
-    expect(validateCustomUrlInput("https://")).toMatch(/isn't a valid URL/);
-    expect(validateCustomUrlInput("ftp://example.com")).toMatch(/must start with/);
-    expect(validateCustomUrlInput("https://example.com/code")).toMatch(/bare origin/);
   });
 });
 

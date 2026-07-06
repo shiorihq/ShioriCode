@@ -1,16 +1,17 @@
 /**
- * Pure logic for the remote-access setup wizard: which exposure methods exist,
- * their prerequisite checks against a RemoteStatus snapshot, and client-side
- * input validation. Kept free of React so it can be unit-tested directly.
+ * Pure logic for the remote-access setup wizard: the two Tailscale exposure
+ * modes, their prerequisite checks against a RemoteStatus snapshot, and
+ * client-side input validation. Kept free of React so it can be unit-tested
+ * directly.
  */
 import type { RemoteStatus } from "contracts";
 
-export type WizardMethod = "tailscale-serve" | "tailscale-funnel" | "custom";
+export type WizardMethod = "tailscale-serve" | "tailscale-funnel";
 
 export type WizardStepId = "method" | "prerequisites" | "credentials" | "enable";
 
 export const WIZARD_STEPS: ReadonlyArray<{ id: WizardStepId; title: string }> = [
-  { id: "method", title: "How it's reached" },
+  { id: "method", title: "Who can reach it" },
   { id: "prerequisites", title: "Get ready" },
   { id: "credentials", title: "Sign-in" },
   { id: "enable", title: "Turn on" },
@@ -24,24 +25,17 @@ export const METHOD_CHOICES: ReadonlyArray<{
 }> = [
   {
     value: "tailscale-serve",
-    label: "Tailscale",
+    label: "Only my devices",
     badge: "Private · recommended",
     description:
-      "Only devices signed into your tailnet can reach it. No ports, DNS, or certificates to manage.",
+      "Reachable from devices signed into your tailnet (phone, laptop…) — Tailscale gates the network, your sign-in gates the app. No ports, DNS, or certificates to manage.",
   },
   {
     value: "tailscale-funnel",
-    label: "Tailscale Funnel",
-    badge: "Public link",
+    label: "Public link",
+    badge: "Anywhere, behind sign-in",
     description:
-      "A public https://….ts.net address anyone can open — sign-in still protects it. Zero infrastructure.",
-  },
-  {
-    value: "custom",
-    label: "Custom server",
-    badge: "Your own domain",
-    description:
-      "You already run a reverse proxy, VPS, or tunnel (nginx, Caddy, Cloudflare Tunnel…). ShioriCode just needs the URL.",
+      "A public https://….ts.net address that works from any browser — your sign-in is the only gate, so use a strong password. Zero infrastructure.",
   },
 ];
 
@@ -60,9 +54,6 @@ export function prerequisiteChecks(
   method: WizardMethod,
   status: Pick<RemoteStatus, "tailscale">,
 ): PrereqCheck[] {
-  if (method === "custom") {
-    return [];
-  }
   const tailscale = status.tailscale;
   const checks: PrereqCheck[] = [
     {
@@ -103,32 +94,6 @@ export function prerequisitesSatisfied(
   status: Pick<RemoteStatus, "tailscale">,
 ): boolean {
   return prerequisiteChecks(method, status).every((check) => check.ok);
-}
-
-/**
- * Client-side validation of a custom URL (mirrors the server's rules so the
- * wizard can catch mistakes before the round-trip). Returns an error message,
- * or null when the input is acceptable.
- */
-export function validateCustomUrlInput(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return "Enter the URL your reverse proxy or tunnel serves ShioriCode on.";
-  }
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  let url: URL;
-  try {
-    url = new URL(withScheme);
-  } catch {
-    return `"${trimmed}" isn't a valid URL.`;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    return "The URL must start with https:// (or http://).";
-  }
-  if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash) {
-    return "Use the bare origin (e.g. https://code.example.com) — subpaths aren't supported.";
-  }
-  return null;
 }
 
 export const MIN_PASSWORD_LENGTH = 8;

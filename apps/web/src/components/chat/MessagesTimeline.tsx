@@ -1992,7 +1992,7 @@ const ReasoningTimelineEntry = memo(function ReasoningTimelineEntry(props: {
       <AnimatedExpandPanel open={isExpanded}>
         <div
           ref={reasoningViewportRef}
-          className="mt-1 max-h-48 overflow-y-auto overscroll-contain pr-1 scrollbar-thin scrollbar-thumb-border/70 scrollbar-track-transparent"
+          className="mt-1 max-h-48 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {hasContent ? (
             <div className="pr-1">

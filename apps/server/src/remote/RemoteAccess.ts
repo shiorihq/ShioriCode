@@ -2,9 +2,11 @@
  * RemoteAccess - drives the Settings ▸ Remote panel.
  *
  * Owns how this machine's server is exposed beyond loopback: Tailscale Serve
- * (private tailnet), Tailscale Funnel (public), or a custom reverse
- * proxy/tunnel the owner runs themselves. The server keeps running locally;
- * this only manages what sits in front of it.
+ * (private — only devices on the owner's tailnet) or Tailscale Funnel (a
+ * public link, gated by the owner sign-in). Tailscale is deliberately the
+ * only supported transport: it needs no ports, DNS, or certificates, and both
+ * modes stay behind auth. The server keeps running locally; this only manages
+ * what sits in front of it.
  *
  * Stability model:
  * - The owner's intent is persisted (`remote/remoteStateStore.ts`) and
@@ -74,36 +76,6 @@ export const remoteHealthRouteLayer = HttpRouter.add(
   ),
 );
 
-/**
- * Validate and normalize an owner-provided custom URL down to an origin.
- * Exported for tests.
- */
-export function normalizeCustomUrl(raw: string | undefined): string {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) {
-    throw new Error("Enter the URL your reverse proxy or tunnel serves ShioriCode on.");
-  }
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  let url: URL;
-  try {
-    url = new URL(withScheme);
-  } catch {
-    throw new Error(`"${trimmed}" isn't a valid URL.`);
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("The custom URL must start with https:// (or http://).");
-  }
-  if (url.username || url.password) {
-    throw new Error("Remove the username/password from the URL — sign-in happens in the app.");
-  }
-  if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash) {
-    throw new Error(
-      "Use the bare origin (e.g. https://code.example.com) — subpaths aren't supported.",
-    );
-  }
-  return url.origin;
-}
-
 async function probeUrl(url: string, bootId: string): Promise<RemoteProbeResult> {
   const startedAt = Date.now();
   try {
@@ -145,7 +117,6 @@ async function probeUrl(url: string, bootId: string): Promise<RemoteProbeResult>
 function reachabilityFor(method: RemoteExposureMethod): RemoteStatus["reachability"] {
   if (method === "tailscale-funnel") return "public";
   if (method === "tailscale-serve") return "tailnet";
-  if (method === "custom") return "unknown";
   return "loopback";
 }
 
@@ -164,22 +135,18 @@ function noticeFor(input: {
   if (exposed && !input.authConfigured) {
     return "This machine is exposed but no sign-in is set. Set a username and password now.";
   }
-  const desiresTailscale =
-    input.desiredMethod === "tailscale-serve" || input.desiredMethod === "tailscale-funnel";
-  if (desiresTailscale && !input.tailscale.installed) {
+  const desired = input.desiredMethod !== "off";
+  if (desired && !input.tailscale.installed) {
     return "Remote access is turned on, but Tailscale is no longer installed on this machine.";
   }
-  if (desiresTailscale && !input.tailscale.running) {
+  if (desired && !input.tailscale.running) {
     return "Tailscale isn't connected — open the Tailscale app or run `tailscale up`, then use Repair below.";
   }
-  if (desiresTailscale && input.method === "off") {
+  if (desired && input.method === "off") {
     return "Tailscale stopped serving ShioriCode (its config was reset elsewhere). Use Repair to turn it back on.";
   }
   if (exposed && input.url?.startsWith("http://")) {
     return "Served over HTTP (no TLS cert). Enable HTTPS on your tailnet for a padlock and the native iOS app.";
-  }
-  if (input.method === "custom") {
-    return "Run “Test connection” after changing your proxy to confirm the URL still reaches this machine.";
   }
   return null;
 }
@@ -204,11 +171,10 @@ export const RemoteAccessLive = Layer.effect(
 
     const buildStatus = async (): Promise<RemoteStatus> => {
       const desiredMethod = store.method;
-      const customUrl = store.customUrl;
       const [tailscale, serve] = await Promise.all([detectTailscale(cli), readServe(cli, port)]);
 
-      const method: RemoteExposureMethod = desiredMethod === "custom" ? "custom" : serve.method;
-      const url = desiredMethod === "custom" ? customUrl : serve.url;
+      const method: RemoteExposureMethod = serve.method;
+      const url = serve.url;
 
       // Fail closed: exposure observed or desired means auth must be on. This
       // only ever raises; only an explicit "off" lowers it.
@@ -221,7 +187,6 @@ export const RemoteAccessLive = Layer.effect(
         desiredMethod,
         enabled: method !== "off",
         url,
-        customUrl,
         reachability: reachabilityFor(method),
         requireAuth: auth.requireAuth,
         authConfigured: auth.authConfigured,
@@ -247,15 +212,13 @@ export const RemoteAccessLive = Layer.effect(
       };
     };
 
-    const applyDesiredExposure = async (
-      method: RemoteExposureMethod,
-      rawCustomUrl: string | undefined,
-    ): Promise<RemoteStatus> => {
+    const applyDesiredExposure = async (method: RemoteExposureMethod): Promise<RemoteStatus> => {
       if (method !== "off" && !auth.authConfigured && !config.unsafeNoAuth) {
         throw new Error("Set a username and password first — remote access requires a sign-in.");
       }
-      const customUrl = method === "custom" ? normalizeCustomUrl(rawCustomUrl) : null;
-      if (method === "tailscale-serve" || method === "tailscale-funnel") {
+      if (method === "off") {
+        await releaseServeIfOurs(cli, port);
+      } else {
         const tailscale = await detectTailscale(cli);
         if (!tailscale.installed) {
           throw new Error("Tailscale isn't installed on this machine.");
@@ -266,11 +229,8 @@ export const RemoteAccessLive = Layer.effect(
           );
         }
         await applyExposure(cli, method, port, tailscale.httpsEnabled);
-      } else {
-        // "off" and "custom" release any Tailscale config we were holding.
-        await releaseServeIfOurs(cli, port);
       }
-      store.set(method, customUrl);
+      store.set(method);
       auth.setRemoteExposed(method !== "off");
       return await buildStatus();
     };
@@ -284,47 +244,45 @@ export const RemoteAccessLive = Layer.effect(
     if (desiredAtBoot !== "off") {
       if (auth.authConfigured || config.unsafeNoAuth) {
         auth.setRemoteExposed(true);
-        if (desiredAtBoot === "tailscale-serve" || desiredAtBoot === "tailscale-funnel") {
-          const reconcileTailscale = Effect.gen(function* () {
-            for (let attempt = 0; attempt < 8; attempt++) {
-              const done = yield* Effect.promise(() =>
-                withExposureLock(async () => {
-                  if (store.method !== desiredAtBoot) {
-                    return true; // the owner changed exposure meanwhile; stand down
-                  }
-                  const [tailscale, serve] = await Promise.all([
-                    detectTailscale(cli),
-                    readServe(cli, port),
-                  ]);
-                  if (serve.method === desiredAtBoot) {
-                    return true;
-                  }
-                  if (!tailscale.installed || !tailscale.running) {
-                    return false; // wait for tailscaled to come up
-                  }
-                  try {
-                    await applyExposure(cli, desiredAtBoot, port, tailscale.httpsEnabled);
-                    return true;
-                  } catch {
-                    return false;
-                  }
-                }),
-              );
-              if (done) {
-                return;
-              }
-              yield* Effect.sleep("15 seconds");
+        const reconcileTailscale = Effect.gen(function* () {
+          for (let attempt = 0; attempt < 8; attempt++) {
+            const done = yield* Effect.promise(() =>
+              withExposureLock(async () => {
+                if (store.method !== desiredAtBoot) {
+                  return true; // the owner changed exposure meanwhile; stand down
+                }
+                const [tailscale, serve] = await Promise.all([
+                  detectTailscale(cli),
+                  readServe(cli, port),
+                ]);
+                if (serve.method === desiredAtBoot) {
+                  return true;
+                }
+                if (!tailscale.installed || !tailscale.running) {
+                  return false; // wait for tailscaled to come up
+                }
+                try {
+                  await applyExposure(cli, desiredAtBoot, port, tailscale.httpsEnabled);
+                  return true;
+                } catch {
+                  return false;
+                }
+              }),
+            );
+            if (done) {
+              return;
             }
-            yield* Effect.logWarning("remote access: could not restore Tailscale exposure", {
-              desired: desiredAtBoot,
-            });
+            yield* Effect.sleep("15 seconds");
+          }
+          yield* Effect.logWarning("remote access: could not restore Tailscale exposure", {
+            desired: desiredAtBoot,
           });
-          yield* Effect.forkDetach(reconcileTailscale);
-        }
+        });
+        yield* Effect.forkDetach(reconcileTailscale);
       } else {
         // Fail closed: exposure was desired but the credentials are gone.
         // Tear the tunnel down rather than coming up reachable-but-open.
-        store.set("off", null);
+        store.set("off");
         yield* Effect.logWarning(
           "remote access: disabled at startup because no credentials are configured",
         );
@@ -338,7 +296,7 @@ export const RemoteAccessLive = Layer.effect(
       getStatus: () => Effect.promise(() => buildStatus()),
       setExposure: (input) =>
         Effect.tryPromise({
-          try: () => withExposureLock(() => applyDesiredExposure(input.method, input.customUrl)),
+          try: () => withExposureLock(() => applyDesiredExposure(input.method)),
           catch: (cause) =>
             new RemoteError({
               message: cause instanceof Error ? cause.message : "Failed to update remote access.",
@@ -347,8 +305,7 @@ export const RemoteAccessLive = Layer.effect(
         }),
       testConnection: () =>
         Effect.promise(async () => {
-          const url =
-            store.method === "custom" ? store.customUrl : (await readServe(cli, port)).url;
+          const url = (await readServe(cli, port)).url;
           if (!url) {
             return {
               ok: false,

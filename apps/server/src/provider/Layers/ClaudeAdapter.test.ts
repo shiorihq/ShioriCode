@@ -364,6 +364,15 @@ function withEnv(
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
 
+// When these tests run inside a ShioriCode-launched agent, the host app has
+// already injected SHIORICODE_COMPUTER_USE_* into the process environment and
+// computerUseMcpEnv() forwards them, breaking exact env assertions. Strip them
+// so the tests observe only what the adapter itself sets.
+delete process.env.SHIORICODE_COMPUTER_USE_HELPER_BINARY;
+delete process.env.SHIORICODE_COMPUTER_USE_HELPER_PACKAGE_PATH;
+delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
+delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME;
+
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();

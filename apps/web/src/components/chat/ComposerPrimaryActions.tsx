@@ -29,6 +29,7 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   canSteerRunningTurn: boolean;
+  onQueueRunningTurn: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -61,6 +62,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   canSteerRunningTurn,
+  onQueueRunningTurn,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
@@ -124,6 +126,18 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
         {queuedTurnCount > 0 ? (
           <span className="text-xs text-muted-foreground">{queuedTurnCount} queued</span>
+        ) : null}
+        {hasSendableContent && canSteerRunningTurn ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className={cn("rounded-full", compact ? "px-3" : "px-4")}
+            onClick={onQueueRunningTurn}
+            disabled={isSendBusy || isConnecting}
+          >
+            Queue
+          </Button>
         ) : null}
         {hasSendableContent ? (
           <Button

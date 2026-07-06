@@ -1795,8 +1795,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("data-item-clamped-viewport");
     expect(markup).not.toContain("max-h-48");
     expect(markup).not.toContain("max-height");
-    expect(markup).not.toContain("[scrollbar-width:none]");
-    expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
+    expect(markup).toContain("[scrollbar-width:none]");
+    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
     expect(markup).not.toContain("Show 1 more");
   });
 
@@ -2047,8 +2047,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("data-item-clamped-viewport");
     expect(markup).not.toContain("max-h-48");
     expect(markup).not.toContain("max-height");
-    expect(markup).not.toContain("[scrollbar-width:none]");
-    expect(markup).not.toContain("[&amp;::-webkit-scrollbar]:hidden");
+    expect(markup).toContain("[scrollbar-width:none]");
+    expect(markup).toContain("[&amp;::-webkit-scrollbar]:hidden");
   });
 
   it("keeps completed exploration groups collapsed by default", async () => {

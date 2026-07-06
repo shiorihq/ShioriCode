@@ -5,6 +5,14 @@ your repos, and runs shell commands locally. "Remote access" only changes how a
 browser or the iOS app **reaches** that local server: it stays the execution
 boundary, and a credential login is the authorization boundary.
 
+Remote access runs over **Tailscale only**. It needs no open ports, DNS
+records, or certificates, and gives two modes:
+
+- **Only my devices** (Tailscale Serve) — reachable from devices signed into
+  your tailnet. Tailscale gates the network, your sign-in gates the app.
+- **Public link** (Tailscale Funnel) — a public `https://….ts.net` address
+  that works from any browser. Your sign-in is the only gate.
+
 > [!IMPORTANT]
 > The server runs arbitrary shell commands and reads your provider credentials.
 > Anyone who can authenticate has full access to your machine. Never expose it
@@ -15,10 +23,10 @@ boundary, and a credential login is the authorization boundary.
 
 Open **Settings → Remote** and run the setup wizard. It walks through:
 
-1. **How it's reached** — Tailscale (private tailnet), Tailscale Funnel
-   (public link), or a **custom server** (your own reverse proxy / tunnel).
-2. **Prerequisites** — live checks for Tailscale (installed, connected, tailnet
-   HTTPS for Funnel), or your proxy URL for the custom method.
+1. **Who can reach it** — only your devices (private tailnet) or a public link.
+2. **Prerequisites** — live checks that Tailscale is installed and connected
+   (plus tailnet HTTPS for the public link), with download/admin-console links
+   and automatic re-checking while you fix them.
 3. **Sign-in** — set the owner username/password (hashed with scrypt into
    `~/shiori/userdata/credentials.json`, mode `0600`). The wizard signs the
    current browser in at the same time.
@@ -55,128 +63,48 @@ shioricode --remote
 ```
 
 `--remote` (alias `--expose`) marks the server as remote-reachable at startup.
-It keeps the bind on `127.0.0.1` (a reverse proxy / tunnel terminates TLS in
-front) but turns on mandatory auth from the first request, and **fails closed**
-at startup if no credentials are configured. Auth is also turned on
-automatically if you bind a non-loopback interface (`--host 0.0.0.0` / a
-LAN/Tailnet IP), or the moment exposure is enabled in Settings. Use
-`--require-auth` to force it on even on loopback, or `--unsafe-no-auth` to
-explicitly turn it off (dangerous).
+It keeps the bind on `127.0.0.1` (Tailscale terminates TLS in front) but turns
+on mandatory auth from the first request, and **fails closed** at startup if no
+credentials are configured. Auth is also turned on automatically if you bind a
+non-loopback interface (`--host 0.0.0.0` / a LAN/Tailnet IP), or the moment
+exposure is enabled in Settings. Use `--require-auth` to force it on even on
+loopback, or `--unsafe-no-auth` to explicitly turn it off (dangerous).
 
-Then pick **one** exposure option below. Options A and B are what the wizard's
-Tailscale methods run for you; C and D pair with the wizard's **Custom server**
-method (enter the resulting URL there so it's persisted, shown as a QR code,
-and testable).
+### 3. Run the exposure the wizard would
 
----
-
-## Option A — Tailscale Serve (private, zero infra) ★ simplest
-
-Reach the server from any device **on your tailnet** (e.g. your phone with the
-Tailscale app). No public exposure, no DNS, no VPS.
+**Private (Tailscale Serve)** — reach the server from any device **on your
+tailnet** (e.g. your phone with the Tailscale app). No public exposure, no DNS,
+no VPS:
 
 ```sh
 tailscale up                                   # if not already running
 tailscale serve --bg --https=443 127.0.0.1:3773
 ```
 
-Open `https://samis-mac-studio.<your-tailnet>.ts.net` and log in. In the iOS app,
-tap **Connect to a remote server** and enter that URL + your credentials.
+Open `https://<machine>.<your-tailnet>.ts.net` and log in. In the iOS app, tap
+**Connect to a remote server** and enter that URL + your credentials.
 
-Tailscale terminates TLS locally and the wire is WireGuard-encrypted end to end,
-so the shared trust boundary is your tailnet plus the login.
+Tailscale terminates TLS locally and the wire is WireGuard-encrypted end to
+end, so the shared trust boundary is your tailnet plus the login.
 
-## Option B — Tailscale Funnel (public HTTPS, zero infra)
-
-Same as Serve, but reachable from **anywhere on the internet** (no Tailscale app
-needed on the client). The login is now the entire boundary, so credentials are
-mandatory (the `--remote` flag already enforces this).
+**Public (Tailscale Funnel)** — same, but reachable from **anywhere on the
+internet** (no Tailscale app needed on the client). The login is the entire
+boundary, so credentials are mandatory (the `--remote` flag already enforces
+this). Funnel requires HTTPS certificates enabled on your tailnet (admin
+console → DNS → Enable HTTPS):
 
 ```sh
 tailscale up
 tailscale funnel --bg --https=443 127.0.0.1:3773
 ```
 
-Open the printed `https://samis-mac-studio.<your-tailnet>.ts.net` URL anywhere.
+Open the printed `https://<machine>.<your-tailnet>.ts.net` URL anywhere.
 
-## Option C — Your Hetzner VPS as a reverse proxy over Tailscale (custom domain)
-
-Serve a custom HTTPS domain from the VPS (`hermes-hetzner`, `65.21.141.237`) and
-proxy it over the tailnet to the Mac. The Mac never opens a public port; the
-VPS↔Mac hop is WireGuard-encrypted; the login is enforced on the Mac.
-
-**Prerequisites**
-
-1. Tailscale must be **running on the Mac** (`tailscale up`). The VPS already
-   sees it on the tailnet as `samis-mac-studio` / `100.112.212.36`.
-2. A DNS `A` record for a subdomain pointing at the VPS, e.g.
-   `mac.shiori.ai → 65.21.141.237`. (Existing `*.shiori.ai` records are already
-   in use — add a new one. There is no wildcard record.)
-
-**On the VPS** (replace `mac.shiori.ai`):
-
-```sh
-# 1. Issue a cert for the new subdomain
-sudo certbot certonly --nginx -d mac.shiori.ai
-
-# 2. Install the site
-sudo tee /etc/nginx/sites-available/shiori-remote >/dev/null <<'NGINX'
-server {
-    server_name mac.shiori.ai;
-
-    # Proxy to the Mac over the tailnet (WireGuard-encrypted).
-    location / {
-        proxy_pass http://100.112.212.36:3773;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;          # WebSocket
-        proxy_set_header Connection $connection_upgrade; # WebSocket
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-    }
-
-    listen 443 ssl;
-    ssl_certificate     /etc/letsencrypt/live/mac.shiori.ai/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/mac.shiori.ai/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-}
-server {
-    listen 80;
-    server_name mac.shiori.ai;
-    return 301 https://$host$request_uri;
-}
-NGINX
-
-# 3. WebSocket upgrade map (only if not already defined globally)
-#    Add to /etc/nginx/conf.d/websocket.conf if `$connection_upgrade` is unset:
-#      map $http_upgrade $connection_upgrade { default upgrade; "" close; }
-
-sudo ln -sf /etc/nginx/sites-available/shiori-remote /etc/nginx/sites-enabled/shiori-remote
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Open `https://mac.shiori.ai` and log in; use the same URL in the iOS app.
-
-> The bottleneck for "from anywhere" with the VPS is the DNS record and Tailscale
-> being up on the Mac — both are one-time. If you don't want a custom domain,
-> Option B (Funnel) gives a public URL with none of this.
-
-## Option D — Cloudflare Tunnel (public, managed)
-
-```sh
-cloudflared tunnel --url http://127.0.0.1:3773
-```
-
-Cloudflare prints a public `https://<random>.trycloudflare.com` URL.
-
-> [!WARNING]
-> Cloudflare terminates TLS at its edge, so Cloudflare can see decrypted traffic
-> (terminal I/O, agent output). Treat it as an untrusted transport and prefer
-> Tailscale or your own VPS for sensitive work. Credentials still gate access.
+> [!NOTE]
+> Fronting the server with your own reverse proxy or tunnel is not a supported
+> exposure method — the app can't observe, repair, or fail-close a proxy it
+> doesn't manage. If you do it anyway, you MUST launch with `--remote` so auth
+> is enforced from the first request, and you own the transport's security.
 
 ---
 
@@ -195,7 +123,8 @@ Cloudflare prints a public `https://<random>.trycloudflare.com` URL.
 
 ## Optional hardening
 
-- `SHIORICODE_ALLOWED_ORIGINS="https://mac.shiori.ai"` — pin the browser origins
-  allowed to open the WebSocket (defense-in-depth against CSRF/DNS-rebinding).
+- `SHIORICODE_ALLOWED_ORIGINS="https://<machine>.<your-tailnet>.ts.net"` — pin
+  the browser origins allowed to open the WebSocket (defense-in-depth against
+  CSRF/DNS-rebinding).
 - Keep `credentials.json` / `sessions.json` out of any backup/sync that leaves
   the machine.

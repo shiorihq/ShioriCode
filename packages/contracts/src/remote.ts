@@ -5,22 +5,11 @@ import * as Schema from "effect/Schema";
  * server is exposed, the owner credential, and connected device sessions.
  */
 
-export const REMOTE_EXPOSURE_METHODS = [
-  "off",
-  "tailscale-serve",
-  "tailscale-funnel",
-  "custom",
-] as const;
+export const REMOTE_EXPOSURE_METHODS = ["off", "tailscale-serve", "tailscale-funnel"] as const;
 export const RemoteExposureMethod = Schema.Literals(REMOTE_EXPOSURE_METHODS);
 export type RemoteExposureMethod = typeof RemoteExposureMethod.Type;
 
-export const RemoteReachability = Schema.Literals([
-  "loopback",
-  "lan",
-  "tailnet",
-  "public",
-  "unknown",
-]);
+export const RemoteReachability = Schema.Literals(["loopback", "tailnet", "public"]);
 export type RemoteReachability = typeof RemoteReachability.Type;
 
 export const RemoteSessionSummary = Schema.Struct({
@@ -63,8 +52,6 @@ export const RemoteStatus = Schema.Struct({
   enabled: Schema.Boolean,
   /** The reachable URL, when known (e.g. https://machine.tailnet.ts.net). */
   url: Schema.NullOr(Schema.String),
-  /** Owner-provided URL for the "custom" method (their own proxy/tunnel). */
-  customUrl: Schema.NullOr(Schema.String),
   reachability: RemoteReachability,
   /** Whether a valid login is currently required (flips live with exposure). */
   requireAuth: Schema.Boolean,
@@ -88,8 +75,6 @@ export type RemoteSetCredentialsInput = typeof RemoteSetCredentialsInput.Type;
 
 export const RemoteSetExposureInput = Schema.Struct({
   method: RemoteExposureMethod,
-  /** Required when method is "custom": the externally reachable base URL. */
-  customUrl: Schema.optional(Schema.String),
 });
 export type RemoteSetExposureInput = typeof RemoteSetExposureInput.Type;
 

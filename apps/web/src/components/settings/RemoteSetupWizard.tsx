@@ -23,7 +23,6 @@ import {
   type WizardStepId,
   credentialsIssue,
   prerequisiteChecks,
-  validateCustomUrlInput,
 } from "./remoteSetup.logic";
 
 const PREREQ_POLL_MS = 4_000;
@@ -37,7 +36,8 @@ interface RemoteSetupWizardProps {
 }
 
 /**
- * Guided setup for remote access: pick how the machine is reached, satisfy the
+ * Guided setup for remote access over Tailscale: pick who can reach the
+ * machine (tailnet-only Serve or a public Funnel link), satisfy the
  * prerequisites (with live re-checking), create the owner sign-in (and sign
  * this browser in silently so it survives the auth flip), then turn exposure
  * on and verify it.
@@ -50,7 +50,6 @@ export function RemoteSetupWizard({
 }: RemoteSetupWizardProps) {
   const [step, setStep] = useState<WizardStepId>("method");
   const [method, setMethod] = useState<WizardMethod>(initialMethod ?? "tailscale-serve");
-  const [customUrl, setCustomUrl] = useState(status.customUrl ?? "");
   const [username, setUsername] = useState(status.username ?? "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -73,12 +72,12 @@ export function RemoteSetupWizard({
 
   // Live re-checking while the owner installs/starts Tailscale in parallel.
   useEffect(() => {
-    if (step !== "prerequisites" || method === "custom") {
+    if (step !== "prerequisites") {
       return;
     }
     const timer = window.setInterval(() => void refreshStatus(), PREREQ_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [step, method, refreshStatus]);
+  }, [step, refreshStatus]);
 
   const goBack = useCallback(() => {
     setError(null);
@@ -95,15 +94,8 @@ export function RemoteSetupWizard({
 
   const continueFromPrerequisites = useCallback(() => {
     setError(null);
-    if (method === "custom") {
-      const issue = validateCustomUrlInput(customUrl);
-      if (issue) {
-        setError(issue);
-        return;
-      }
-    }
     setStep("credentials");
-  }, [method, customUrl]);
+  }, []);
 
   const continueFromCredentials = useCallback(async () => {
     setError(null);
@@ -139,10 +131,7 @@ export function RemoteSetupWizard({
     setError(null);
     setBusy(true);
     try {
-      const next = await getWsRpcClient().remote.setExposure({
-        method,
-        ...(method === "custom" ? { customUrl: customUrl.trim() } : {}),
-      });
+      const next = await getWsRpcClient().remote.setExposure({ method });
       onStatus(next);
       setEnabled(true);
     } catch (cause) {
@@ -150,7 +139,7 @@ export function RemoteSetupWizard({
     } finally {
       setBusy(false);
     }
-  }, [method, customUrl, onStatus]);
+  }, [method, onStatus]);
 
   const runTest = useCallback(async () => {
     setTesting(true);
@@ -238,7 +227,7 @@ export function RemoteSetupWizard({
       ) : null}
 
       {/* ── Step 2: prerequisites ──────────────────────────────── */}
-      {step === "prerequisites" && method !== "custom" ? (
+      {step === "prerequisites" ? (
         <div className="space-y-3">
           <ul className="divide-y divide-border rounded-lg border border-border">
             {checks.map((check) => (
@@ -274,34 +263,6 @@ export function RemoteSetupWizard({
             <RefreshIcon className="size-3 animate-spin [animation-duration:3s]" />
             Checking automatically — finish the steps above and they'll turn green.
           </p>
-        </div>
-      ) : null}
-
-      {step === "prerequisites" && method === "custom" ? (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
-            Point your reverse proxy or tunnel at{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-foreground">
-              http://127.0.0.1:{status.port}
-            </code>{" "}
-            on this machine, then enter the public URL it serves. For example:
-            <pre className="mt-2 overflow-x-auto rounded-md bg-muted px-2.5 py-2 text-[11px] leading-5 text-foreground">
-              {`# Caddy\ncode.example.com {\n  reverse_proxy 127.0.0.1:${status.port}\n}\n\n# Cloudflare Tunnel\ncloudflared tunnel --url http://127.0.0.1:${status.port}`}
-            </pre>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="wizard-custom-url">Public URL</Label>
-            <Input
-              id="wizard-custom-url"
-              placeholder="https://code.example.com"
-              value={customUrl}
-              onChange={(event) => setCustomUrl(event.target.value)}
-              disabled={busy}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Use HTTPS — sign-in credentials travel over this URL.
-            </p>
-          </div>
         </div>
       ) : null}
 
@@ -373,14 +334,8 @@ export function RemoteSetupWizard({
             <>
               <p className="text-xs text-muted-foreground">
                 Ready to go:{" "}
-                <span className="font-medium text-foreground">{methodChoice?.label}</span>
-                {method === "custom" ? (
-                  <>
-                    {" "}
-                    at <code className="rounded bg-muted px-1 py-0.5">{customUrl.trim()}</code>
-                  </>
-                ) : null}
-                . Sign-in required for every device.
+                <span className="font-medium text-foreground">{methodChoice?.label}</span>. Sign-in
+                required for every device.
                 {method === "tailscale-funnel"
                   ? " The first public request can take a minute while Tailscale provisions the TLS certificate."
                   : ""}
@@ -453,11 +408,7 @@ export function RemoteSetupWizard({
             </Button>
           ) : null}
           {step === "prerequisites" ? (
-            <Button
-              size="sm"
-              disabled={busy || (method !== "custom" && !checksPass)}
-              onClick={continueFromPrerequisites}
-            >
+            <Button size="sm" disabled={busy || !checksPass} onClick={continueFromPrerequisites}>
               Continue
             </Button>
           ) : null}

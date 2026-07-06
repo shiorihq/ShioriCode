@@ -24,16 +24,14 @@ describe("RemoteStateStore", () => {
   it("defaults to off when no file exists", () => {
     const store = new RemoteStateStore({ stateDir: makeStateDir() });
     expect(store.method).toBe("off");
-    expect(store.customUrl).toBeNull();
   });
 
   it("round-trips the persisted intent across instances", () => {
     const stateDir = makeStateDir();
-    new RemoteStateStore({ stateDir }).set("custom", "https://code.example.com");
+    new RemoteStateStore({ stateDir }).set("tailscale-funnel");
 
     const reloaded = new RemoteStateStore({ stateDir });
-    expect(reloaded.method).toBe("custom");
-    expect(reloaded.customUrl).toBe("https://code.example.com");
+    expect(reloaded.method).toBe("tailscale-funnel");
   });
 
   it("falls back to off on a corrupt or unknown file", () => {
@@ -48,9 +46,18 @@ describe("RemoteStateStore", () => {
     expect(new RemoteStateStore({ stateDir }).method).toBe("off");
   });
 
+  it("fails closed on a legacy 'custom' record from before Tailscale-only", () => {
+    const stateDir = makeStateDir();
+    fs.writeFileSync(
+      path.join(stateDir, "remote.json"),
+      JSON.stringify({ version: 1, method: "custom", customUrl: "https://code.example.com" }),
+    );
+    expect(new RemoteStateStore({ stateDir }).method).toBe("off");
+  });
+
   it("persists with owner-only permissions", () => {
     const stateDir = makeStateDir();
-    new RemoteStateStore({ stateDir }).set("tailscale-serve", null);
+    new RemoteStateStore({ stateDir }).set("tailscale-serve");
     const mode = fs.statSync(path.join(stateDir, "remote.json")).mode & 0o777;
     expect(mode).toBe(0o600);
   });
