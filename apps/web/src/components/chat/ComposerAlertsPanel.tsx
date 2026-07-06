@@ -15,6 +15,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "~/lib/utils";
 import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
 import { Button } from "../ui/button";
+import { ComposerDockedPanel } from "./ComposerDockedPanel";
 
 /* ── Alert icon (colored, no background tint) ── */
 
@@ -277,17 +278,10 @@ export const ComposerAlertsPanel = memo(function ComposerAlertsPanel({
   }
 
   return (
-    <div className="relative z-0">
-      <div
-        className={cn(
-          "mx-auto w-[calc(100%-3rem)] max-w-[39rem] min-w-0 overflow-hidden rounded-t-[16px] rounded-b-none border border-b-0 border-border bg-card sm:w-[calc(100%-4rem)]",
-        )}
-        data-chat-composer-alerts-panel="true"
-      >
-        <ComposerProviderStatusAlert status={providerStatus} />
-        <ComposerThreadResumeAlert resumeState={resumeState} onResumeAction={onResumeAction} />
-        <ComposerThreadErrorAlert error={threadError} onDismiss={onDismissError} />
-      </div>
-    </div>
+    <ComposerDockedPanel data-chat-composer-alerts-panel="true">
+      <ComposerProviderStatusAlert status={providerStatus} />
+      <ComposerThreadResumeAlert resumeState={resumeState} onResumeAction={onResumeAction} />
+      <ComposerThreadErrorAlert error={threadError} onDismiss={onDismissError} />
+    </ComposerDockedPanel>
   );
 });

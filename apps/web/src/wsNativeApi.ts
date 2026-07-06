@@ -26,6 +26,7 @@ const THREAD_LEASED_COMMAND_TYPES = new Set<ClientOrchestrationCommand["type"]>(
   "thread.user-input.respond",
   "thread.checkpoint.revert",
   "thread.turn.retry",
+  "thread.message.edit",
   "thread.session.ensure",
   "thread.session.stop",
 ]);

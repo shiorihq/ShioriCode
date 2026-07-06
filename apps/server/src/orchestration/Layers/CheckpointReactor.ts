@@ -139,12 +139,12 @@ function selectThreadScopedCheckpointFiles(input: {
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
-class RetryAttachmentCloneError extends Error {
-  readonly _tag = "RetryAttachmentCloneError";
+class TurnRestartAttachmentCloneError extends Error {
+  readonly _tag = "TurnRestartAttachmentCloneError";
 
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
-    this.name = "RetryAttachmentCloneError";
+    this.name = "TurnRestartAttachmentCloneError";
   }
 }
 
@@ -257,6 +257,31 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
+  const appendEditFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly userMessageId: MessageId;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("turn-edit-failure"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "error",
+        kind: "turn.edit.failed",
+        summary: "Message edit failed",
+        payload: {
+          userMessageId: input.userMessageId,
+          detail: input.detail,
+        },
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
   const failWithMessage = <A = never>(message: string): Effect.Effect<A, Error> =>
     Effect.fail(new Error(message));
 
@@ -330,10 +355,9 @@ const make = Effect.gen(function* () {
     return cwd;
   });
 
-  interface ResolvedRetryTarget {
+  interface ResolvedTurnRestartTarget {
     readonly threadId: ThreadId;
-    readonly assistantMessageId: MessageId;
-    readonly turnCountBeforeRetry: number;
+    readonly turnCountBeforeRestart: number;
     readonly runtimeMode: "approval-required" | "full-access";
     readonly interactionMode: "default" | "plan";
     readonly message: {
@@ -353,7 +377,14 @@ const make = Effect.gen(function* () {
     >;
   }
 
-  const cloneRetryAttachments = Effect.fnUntraced(function* (input: {
+  // Anchors a turn restart either on the assistant message being retried or on
+  // the user message being edited. Both resolve to the same shape: the user
+  // message that started the turn plus the checkpoint turn count to rewind to.
+  type TurnRestartAnchor =
+    | { readonly kind: "assistant-message"; readonly messageId: MessageId }
+    | { readonly kind: "user-message"; readonly messageId: MessageId };
+
+  const cloneTurnRestartAttachments = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }): Effect.fn.Return<ReadonlyArray<ChatAttachment>, Error> {
@@ -366,7 +397,7 @@ const make = Effect.gen(function* () {
         try: async () => {
           const nextId = createAttachmentId(input.threadId);
           if (!nextId) {
-            throw new Error("Failed to allocate a retry attachment id.");
+            throw new Error("Failed to allocate an attachment id for the restarted turn.");
           }
 
           const sourcePath = resolveAttachmentPath({
@@ -374,7 +405,7 @@ const make = Effect.gen(function* () {
             attachment,
           });
           if (!sourcePath) {
-            throw new Error(`Attachment '${attachment.id}' is unavailable for retry.`);
+            throw new Error(`Attachment '${attachment.id}' is unavailable for the restarted turn.`);
           }
 
           const nextAttachment = {
@@ -386,7 +417,7 @@ const make = Effect.gen(function* () {
             attachment: nextAttachment,
           });
           if (!targetPath) {
-            throw new Error(`Failed to resolve a retry attachment path for '${attachment.id}'.`);
+            throw new Error(`Failed to resolve an attachment path for '${attachment.id}'.`);
           }
 
           await mkdir(path.dirname(targetPath), { recursive: true });
@@ -394,54 +425,94 @@ const make = Effect.gen(function* () {
           return nextAttachment;
         },
         catch: (error) =>
-          new RetryAttachmentCloneError(
+          new TurnRestartAttachmentCloneError(
             error instanceof Error
               ? error.message
-              : `Failed to clone retry attachment: ${String(error)}`,
+              : `Failed to clone attachment for the restarted turn: ${String(error)}`,
             error,
           ),
       }),
     );
   });
 
-  const resolveRetryTarget = Effect.fnUntraced(function* (input: {
+  const resolveTurnRestartTarget = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
-    readonly assistantMessageId: MessageId;
-  }): Effect.fn.Return<ResolvedRetryTarget, Error | OrchestrationEventStoreError> {
+    readonly anchor: TurnRestartAnchor;
+  }): Effect.fn.Return<ResolvedTurnRestartTarget, Error | OrchestrationEventStoreError> {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === input.threadId);
     if (!thread) {
       return yield* failWithMessage("Thread was not found in read model.");
     }
 
-    const assistantIndex = thread.messages.findIndex(
-      (message) => message.role === "assistant" && message.id === input.assistantMessageId,
-    );
-    if (assistantIndex === -1) {
-      return yield* failWithMessage(
-        `Assistant message '${input.assistantMessageId}' is unavailable for retry.`,
+    // boundaryIndex: messages at or after this index belong to the restarted
+    // turn. anchorAssistantIndex: the assistant message whose checkpoint marks
+    // the end of that turn (-1 when the turn never produced one).
+    let boundaryIndex: number;
+    let anchorAssistantIndex: number;
+    let userMessage: (typeof thread.messages)[number] | undefined;
+
+    if (input.anchor.kind === "assistant-message") {
+      const anchorMessageId = input.anchor.messageId;
+      const assistantIndex = thread.messages.findIndex(
+        (message) => message.role === "assistant" && message.id === anchorMessageId,
+      );
+      if (assistantIndex === -1) {
+        return yield* failWithMessage(
+          `Assistant message '${anchorMessageId}' is unavailable for retry.`,
+        );
+      }
+      userMessage = thread.messages
+        .slice(0, assistantIndex)
+        .toReversed()
+        .find((message) => message.role === "user");
+      if (!userMessage) {
+        return yield* failWithMessage(
+          `No preceding user message was found for assistant message '${anchorMessageId}'.`,
+        );
+      }
+      boundaryIndex = assistantIndex;
+      anchorAssistantIndex = assistantIndex;
+    } else {
+      const anchorMessageId = input.anchor.messageId;
+      const userIndex = thread.messages.findIndex(
+        (message) => message.role === "user" && message.id === anchorMessageId,
+      );
+      if (userIndex === -1) {
+        return yield* failWithMessage(
+          `User message '${anchorMessageId}' is unavailable for editing.`,
+        );
+      }
+      userMessage = thread.messages[userIndex];
+      // Mid-turn user messages (steering, user-input answers) carry a turnId
+      // and never started a turn; restarting from one would drop the turn's
+      // real prompt and replay the steer text as a top-level message.
+      if (userMessage?.turnId) {
+        return yield* failWithMessage(
+          `User message '${anchorMessageId}' was sent mid-turn and cannot be edited.`,
+        );
+      }
+      boundaryIndex = userIndex;
+      anchorAssistantIndex = thread.messages.findIndex(
+        (message, index) => index > userIndex && message.role === "assistant",
       );
     }
-
-    const userMessage = thread.messages
-      .slice(0, assistantIndex)
-      .toReversed()
-      .find((message) => message.role === "user");
     if (!userMessage) {
-      return yield* failWithMessage(
-        `No preceding user message was found for assistant message '${input.assistantMessageId}'.`,
-      );
+      return yield* failWithMessage("User message was not found in read model.");
     }
 
-    const checkpoint =
-      thread.checkpoints.find((entry) => entry.assistantMessageId === input.assistantMessageId) ??
-      (thread.messages[assistantIndex]?.turnId
-        ? thread.checkpoints.find(
-            (entry) => entry.turnId === thread.messages[assistantIndex]?.turnId,
-          )
-        : undefined);
+    const anchorAssistantMessage =
+      anchorAssistantIndex === -1 ? undefined : thread.messages[anchorAssistantIndex];
+    const checkpoint = anchorAssistantMessage
+      ? (thread.checkpoints.find(
+          (entry) => entry.assistantMessageId === anchorAssistantMessage.id,
+        ) ??
+        (anchorAssistantMessage.turnId
+          ? thread.checkpoints.find((entry) => entry.turnId === anchorAssistantMessage.turnId)
+          : undefined))
+      : undefined;
 
-    const turnCountBeforeRetry = checkpoint
+    const turnCountBeforeRestart = checkpoint
       ? Math.max(0, checkpoint.checkpointTurnCount - 1)
       : thread.checkpoints.reduce((maxTurnCount, candidateCheckpoint) => {
           const candidateAssistantIndex = candidateCheckpoint.assistantMessageId
@@ -456,7 +527,7 @@ const make = Effect.gen(function* () {
                     message.role === "assistant" && message.turnId === candidateCheckpoint.turnId,
                 )
               : -1;
-          if (candidateAssistantIndex === -1 || candidateAssistantIndex >= assistantIndex) {
+          if (candidateAssistantIndex === -1 || candidateAssistantIndex >= boundaryIndex) {
             return maxTurnCount;
           }
           return Math.max(maxTurnCount, candidateCheckpoint.checkpointTurnCount);
@@ -465,19 +536,19 @@ const make = Effect.gen(function* () {
     const events = yield* Stream.runCollect(orchestrationEngine.readEvents(0)).pipe(
       Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
     );
+    const userMessageId = userMessage.id;
     const startEvent = events
       .toReversed()
       .find(
         (event): event is Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }> =>
           event.type === "thread.turn-start-requested" &&
           event.payload.threadId === input.threadId &&
-          event.payload.messageId === userMessage.id,
+          event.payload.messageId === userMessageId,
       );
 
     return {
       threadId: input.threadId,
-      assistantMessageId: input.assistantMessageId,
-      turnCountBeforeRetry,
+      turnCountBeforeRestart,
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
       message: {
@@ -588,6 +659,49 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       turnCount: input.turnCount,
       createdAt: input.createdAt,
+    });
+  });
+
+  // Shared tail for retry and edit: rewind the thread to the turn boundary,
+  // then start a fresh turn with the (possibly replaced) user message text.
+  const restartTurn = Effect.fnUntraced(function* (input: {
+    readonly target: ResolvedTurnRestartTarget;
+    readonly text: string;
+    readonly commandTag: string;
+  }) {
+    const restartAttachments = yield* cloneTurnRestartAttachments({
+      threadId: input.target.threadId,
+      attachments: input.target.message.attachments,
+    });
+    const restartCreatedAt = new Date().toISOString();
+
+    yield* rewindThreadState({
+      threadId: input.target.threadId,
+      turnCount: input.target.turnCountBeforeRestart,
+      createdAt: restartCreatedAt,
+      requireFilesystemRestore: false,
+    });
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: serverCommandId(input.commandTag),
+      threadId: input.target.threadId,
+      message: {
+        messageId: MessageId.makeUnsafe(crypto.randomUUID()),
+        role: "user",
+        text: input.text,
+        attachments: restartAttachments,
+      },
+      ...(input.target.modelSelection !== undefined
+        ? { modelSelection: input.target.modelSelection }
+        : {}),
+      ...(input.target.titleSeed !== undefined ? { titleSeed: input.target.titleSeed } : {}),
+      ...(input.target.sourceProposedPlan !== undefined
+        ? { sourceProposedPlan: input.target.sourceProposedPlan }
+        : {}),
+      runtimeMode: input.target.runtimeMode,
+      interactionMode: input.target.interactionMode,
+      createdAt: restartCreatedAt,
     });
   });
 
@@ -992,43 +1106,28 @@ const make = Effect.gen(function* () {
   const handleRetryRequested = Effect.fnUntraced(function* (
     event: Extract<OrchestrationEvent, { type: "thread.turn-retry-requested" }>,
   ) {
-    const retryTarget = yield* resolveRetryTarget({
+    const retryTarget = yield* resolveTurnRestartTarget({
       threadId: event.payload.threadId,
-      assistantMessageId: event.payload.assistantMessageId,
+      anchor: { kind: "assistant-message", messageId: event.payload.assistantMessageId },
     });
-    const retryAttachments = yield* cloneRetryAttachments({
-      threadId: retryTarget.threadId,
-      attachments: retryTarget.message.attachments,
+    yield* restartTurn({
+      target: retryTarget,
+      text: retryTarget.message.text,
+      commandTag: "turn-retry-start",
     });
-    const retryCreatedAt = new Date().toISOString();
+  });
 
-    yield* rewindThreadState({
-      threadId: retryTarget.threadId,
-      turnCount: retryTarget.turnCountBeforeRetry,
-      createdAt: retryCreatedAt,
-      requireFilesystemRestore: false,
+  const handleEditRequested = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.turn-edit-requested" }>,
+  ) {
+    const editTarget = yield* resolveTurnRestartTarget({
+      threadId: event.payload.threadId,
+      anchor: { kind: "user-message", messageId: event.payload.userMessageId },
     });
-
-    yield* orchestrationEngine.dispatch({
-      type: "thread.turn.start",
-      commandId: serverCommandId("turn-retry-start"),
-      threadId: retryTarget.threadId,
-      message: {
-        messageId: MessageId.makeUnsafe(crypto.randomUUID()),
-        role: "user",
-        text: retryTarget.message.text,
-        attachments: retryAttachments,
-      },
-      ...(retryTarget.modelSelection !== undefined
-        ? { modelSelection: retryTarget.modelSelection }
-        : {}),
-      ...(retryTarget.titleSeed !== undefined ? { titleSeed: retryTarget.titleSeed } : {}),
-      ...(retryTarget.sourceProposedPlan !== undefined
-        ? { sourceProposedPlan: retryTarget.sourceProposedPlan }
-        : {}),
-      runtimeMode: retryTarget.runtimeMode,
-      interactionMode: retryTarget.interactionMode,
-      createdAt: retryCreatedAt,
+    yield* restartTurn({
+      target: editTarget,
+      text: event.payload.text,
+      commandTag: "turn-edit-start",
     });
   });
 
@@ -1058,6 +1157,20 @@ const make = Effect.gen(function* () {
           appendRetryFailureActivity({
             threadId: event.payload.threadId,
             assistantMessageId: event.payload.assistantMessageId,
+            detail: error.message,
+            createdAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      return;
+    }
+
+    if (event.type === "thread.turn-edit-requested") {
+      yield* handleEditRequested(event).pipe(
+        Effect.catch((error) =>
+          appendEditFailureActivity({
+            threadId: event.payload.threadId,
+            userMessageId: event.payload.userMessageId,
             detail: error.message,
             createdAt: new Date().toISOString(),
           }),
@@ -1136,6 +1249,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
           event.type !== "thread.turn-retry-requested" &&
+          event.type !== "thread.turn-edit-requested" &&
           event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;

@@ -86,19 +86,54 @@ export async function connectOrStartBackend(baseDir: string): Promise<WsRpcClien
   return started;
 }
 
+const BACKEND_PROBE_TIMEOUT_MS = 2_000;
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function withProbeTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Timed out probing the Shiori backend.")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function connectToRecordedBackend(baseDir: string): Promise<WsRpcClient | null> {
   const instancePath = getServerInstancePath(baseDir);
   if (!fs.existsSync(instancePath)) {
     return null;
   }
 
+  let rpc: WsRpcClient | null = null;
   try {
     const raw = await fs.promises.readFile(instancePath, "utf8");
     const record = decodeServerInstanceRecord(JSON.parse(raw));
-    const rpc = createWsRpcClient({ url: record.wsUrl });
-    await rpc.server.getConfig();
+    if (!isPidAlive(record.pid)) {
+      return null;
+    }
+    rpc = createWsRpcClient({ url: record.wsUrl });
+    // The RPC socket layer retries refused connections indefinitely, so the
+    // probe must be bounded or a stale instance record hangs the caller.
+    await withProbeTimeout(rpc.server.getConfig(), BACKEND_PROBE_TIMEOUT_MS);
     return rpc;
   } catch {
+    await rpc?.dispose().catch(() => undefined);
     return null;
   }
 }
@@ -164,7 +199,7 @@ function resolveBackendEntry(): string {
   }
 }
 
-async function waitForBackend(baseDir: string, timeoutMs = 15_000): Promise<WsRpcClient | null> {
+async function waitForBackend(baseDir: string, timeoutMs = 60_000): Promise<WsRpcClient | null> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

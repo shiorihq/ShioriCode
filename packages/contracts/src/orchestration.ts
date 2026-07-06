@@ -849,6 +849,15 @@ const ThreadTurnRetryCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  userMessageId: MessageId,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
 const ThreadSessionStopCommand = Schema.Struct({
   type: Schema.Literal("thread.session.stop"),
   commandId: CommandId,
@@ -893,6 +902,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadTurnRetryCommand,
+  ThreadMessageEditCommand,
   ThreadSessionStopCommand,
   ThreadSessionEnsureCommand,
 ]);
@@ -929,6 +939,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadTurnRetryCommand,
+  ThreadMessageEditCommand,
   ThreadSessionStopCommand,
   ThreadSessionEnsureCommand,
 ]);
@@ -1056,6 +1067,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
   "thread.turn-retry-requested",
+  "thread.turn-edit-requested",
   "thread.reverted",
   "thread.session-ensure-requested",
   "thread.session-stop-requested",
@@ -1312,6 +1324,13 @@ export const ThreadTurnRetryRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnEditRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  userMessageId: MessageId,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
@@ -1529,6 +1548,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-retry-requested"),
     payload: ThreadTurnRetryRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-edit-requested"),
+    payload: ThreadTurnEditRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

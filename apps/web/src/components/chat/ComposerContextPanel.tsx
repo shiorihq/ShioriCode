@@ -28,6 +28,7 @@ import { AnimatedExpandPanel } from "../ui/AnimatedExpandPanel";
 import { Button } from "../ui/button";
 import { MaskedScrollViewport } from "../ui/masked-scroll-viewport";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { ComposerDockedPanel } from "./ComposerDockedPanel";
 import { MinimalWorkEntry } from "./MessagesTimeline";
 import { type CodexBackgroundSubagentRow } from "./subagentDetail";
 
@@ -406,75 +407,68 @@ export const ComposerContextPanel = memo(function ComposerContextPanel(
     : null;
 
   return (
-    <div className="relative z-0">
-      <div
-        className={cn(
-          "mx-auto w-[calc(100%-3rem)] max-w-[39rem] min-w-0 overflow-hidden rounded-t-[16px] rounded-b-none border border-b-0 border-border bg-card sm:w-[calc(100%-4rem)]",
-        )}
-        data-chat-composer-context-panel="true"
-      >
-        {queuedTurns ? (
+    <ComposerDockedPanel data-chat-composer-context-panel="true">
+      {queuedTurns ? (
+        <ComposerContextSection
+          title="Queued"
+          icon={ClockIcon}
+          count={String(queuedTurns.length)}
+          open={props.queuedOpen}
+          onOpenChange={props.onQueuedOpenChange}
+        >
+          <FadedListViewport
+            scrollable={queuedTurns.length > MAX_VISIBLE_QUEUED}
+            ariaLabel="Queued messages list"
+          >
+            {queuedTurns.map((queuedTurn) => (
+              <ComposerQueuedRow
+                key={queuedTurn.id}
+                queuedTurn={queuedTurn}
+                onDelete={props.onDeleteQueuedTurn}
+                onEdit={props.onEditQueuedTurn}
+              />
+            ))}
+          </FadedListViewport>
+        </ComposerContextSection>
+      ) : null}
+      {taskList && taskSummary ? (
+        <ComposerContextSection
+          title="Tasks"
+          icon={ListChecksIcon}
+          count={`${taskSummary.completed}/${taskSummary.total}`}
+          open={props.taskListOpen}
+          onOpenChange={props.onTaskListOpenChange}
+        >
+          <FadedListViewport
+            scrollable={taskList.items.length > MAX_VISIBLE_TASK_ROWS}
+            ariaLabel="Tasks list"
+          >
+            {taskList.items.map((item) => (
+              <ComposerTaskListRow key={item.id} item={item} />
+            ))}
+          </FadedListViewport>
+        </ComposerContextSection>
+      ) : null}
+      {backgroundSubagents ? (
+        <div data-chat-background-subagents-panel="true">
           <ComposerContextSection
-            title="Queued"
-            icon={ClockIcon}
-            count={String(queuedTurns.length)}
-            open={props.queuedOpen}
-            onOpenChange={props.onQueuedOpenChange}
+            title="Background agents"
+            icon={BotIcon}
+            count={String(backgroundSubagents.length)}
+            open={props.backgroundSubagentsOpen}
+            onOpenChange={props.onBackgroundSubagentsOpenChange}
           >
             <FadedListViewport
-              scrollable={queuedTurns.length > MAX_VISIBLE_QUEUED}
-              ariaLabel="Queued messages list"
+              scrollable={backgroundSubagents.length > MAX_VISIBLE_BACKGROUND_SUBAGENTS}
+              ariaLabel="Background agents list"
             >
-              {queuedTurns.map((queuedTurn) => (
-                <ComposerQueuedRow
-                  key={queuedTurn.id}
-                  queuedTurn={queuedTurn}
-                  onDelete={props.onDeleteQueuedTurn}
-                  onEdit={props.onEditQueuedTurn}
-                />
+              {backgroundSubagents.map((row, index) => (
+                <BackgroundSubagentRow key={row.id} row={row} index={index} />
               ))}
             </FadedListViewport>
           </ComposerContextSection>
-        ) : null}
-        {taskList && taskSummary ? (
-          <ComposerContextSection
-            title="Tasks"
-            icon={ListChecksIcon}
-            count={`${taskSummary.completed}/${taskSummary.total}`}
-            open={props.taskListOpen}
-            onOpenChange={props.onTaskListOpenChange}
-          >
-            <FadedListViewport
-              scrollable={taskList.items.length > MAX_VISIBLE_TASK_ROWS}
-              ariaLabel="Tasks list"
-            >
-              {taskList.items.map((item) => (
-                <ComposerTaskListRow key={item.id} item={item} />
-              ))}
-            </FadedListViewport>
-          </ComposerContextSection>
-        ) : null}
-        {backgroundSubagents ? (
-          <div data-chat-background-subagents-panel="true">
-            <ComposerContextSection
-              title="Background agents"
-              icon={BotIcon}
-              count={String(backgroundSubagents.length)}
-              open={props.backgroundSubagentsOpen}
-              onOpenChange={props.onBackgroundSubagentsOpenChange}
-            >
-              <FadedListViewport
-                scrollable={backgroundSubagents.length > MAX_VISIBLE_BACKGROUND_SUBAGENTS}
-                ariaLabel="Background agents list"
-              >
-                {backgroundSubagents.map((row, index) => (
-                  <BackgroundSubagentRow key={row.id} row={row} index={index} />
-                ))}
-              </FadedListViewport>
-            </ComposerContextSection>
-          </div>
-        ) : null}
-      </div>
-    </div>
+        </div>
+      ) : null}
+    </ComposerDockedPanel>
   );
 });

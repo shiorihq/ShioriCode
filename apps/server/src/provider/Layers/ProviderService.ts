@@ -496,7 +496,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (event.type === "thread.started") {
+      // Sync the persisted binding whenever the provider-side conversation
+      // identity or resume position can have moved: `thread.started` confirms
+      // the provider session id, and `turn.completed` advances the resume
+      // cursor past the turn's messages. Without the latter, a crash between
+      // turns resumed at the previous turn's cursor and dropped the newest
+      // exchange from the provider's context.
+      if (event.type === "thread.started" || event.type === "turn.completed") {
         yield* syncBindingFromActiveSession(event).pipe(Effect.orElseSucceed(() => undefined));
       }
 
@@ -882,10 +888,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.stopSession",
         allowRecovery: false,
       });
+      // Capture the session's final resume cursor before stopping — adapters
+      // drop their in-memory context on stop, and the cursor is the only link
+      // back to the provider-side conversation history.
+      const activeSession = routed.isActive
+        ? (yield* routed.adapter.listSessions()).find(
+            (session) => session.threadId === routed.threadId,
+          )
+        : undefined;
       if (routed.isActive) {
         yield* routed.adapter.stopSession(routed.threadId);
       }
-      yield* directory.remove(input.threadId);
+      // Keep the persisted binding (status "stopped") instead of removing it.
+      // Removing it here erased the resume cursor, so any later turn on the
+      // thread started a fresh provider conversation with no memory of the
+      // existing messages — e.g. after the idle-session reaper stopped it.
+      const binding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
+      const stoppedAt = new Date().toISOString();
+      yield* directory.upsert({
+        threadId: input.threadId,
+        provider: routed.adapter.provider,
+        status: "stopped",
+        runtimeMode: activeSession?.runtimeMode ?? binding?.runtimeMode ?? "full-access",
+        ...(activeSession?.resumeCursor !== undefined
+          ? { resumeCursor: activeSession.resumeCursor }
+          : {}),
+        runtimePayload: {
+          ...(activeSession
+            ? {
+                cwd: activeSession.cwd ?? null,
+                model: activeSession.model ?? null,
+                lastError: activeSession.lastError ?? null,
+              }
+            : {}),
+          activeTurnId: null,
+          lastRuntimeEvent: "provider.stopSession",
+          lastRuntimeEventAt: stoppedAt,
+        },
+      });
       yield* analytics.record("provider.session.stopped", {
         provider: routed.adapter.provider,
       });

@@ -43,6 +43,7 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { detectTailscaleSelf, findTailscaleCli, readServe } from "./remote/tailscale";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
+import { TerminalManager } from "./terminal/Services/Manager";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 
 const PAIRING_SESSION_TTL_MS = 5 * 60 * 1000;
@@ -780,6 +781,7 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
   const engine = yield* OrchestrationEngineService;
   const startup = yield* ServerRuntimeStartup;
   const serverSettings = yield* ServerSettingsService;
+  const terminalManager = yield* TerminalManager;
   const now = new Date().toISOString();
   const commandId = CommandId.makeUnsafe(command.requestId);
 
@@ -960,6 +962,42 @@ const dispatchMobileCommand = Effect.fn(function* (command: MobileCommandShape) 
           commandId,
           threadId: command.threadId,
           createdAt: now,
+        }),
+      );
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.archive": {
+      const result = yield* startup.enqueueCommand(
+        engine.dispatch({
+          type: "thread.archive",
+          commandId,
+          threadId: command.threadId,
+        }),
+      );
+      yield* terminalManager.close({ threadId: command.threadId }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to close thread terminals after archive", {
+            threadId: command.threadId,
+            error: error.message,
+          }),
+        ),
+      );
+      return {
+        sequence: result.sequence,
+        threadId: command.threadId,
+      } satisfies MobileCommandResult;
+    }
+
+    case "thread.unarchive": {
+      const result = yield* startup.enqueueCommand(
+        engine.dispatch({
+          type: "thread.unarchive",
+          commandId,
+          threadId: command.threadId,
         }),
       );
       return {

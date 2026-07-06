@@ -3365,14 +3365,16 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   }, [activeThread?.id]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalState.terminalOpen) return;
+    // Only the focused pane may autofocus its composer — otherwise a
+    // background pane steals focus on mount and drags navigation with it.
+    if (!isFocusedPane || !activeThread?.id || terminalState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, isFocusedPane, terminalState.terminalOpen]);
 
   useEffect(() => {
     composerImagesRef.current = composerImages;
@@ -5526,6 +5528,49 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     ],
   );
 
+  const onEditUserMessage = useCallback(
+    async (userMessageId: MessageId, text: string) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        isRevertingCheckpoint ||
+        isTurnRunning ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current ||
+        text.trim().length === 0
+      )
+        return;
+
+      try {
+        autoScrollOnSend();
+        await api.orchestration.dispatchCommand({
+          type: "thread.message.edit",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          userMessageId,
+          text,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to edit message.",
+        );
+      }
+    },
+    [
+      activeThread,
+      autoScrollOnSend,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSendBusy,
+      isTurnRunning,
+      setThreadError,
+    ],
+  );
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
@@ -5637,6 +5682,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                   onRevertUserMessage={onRevertUserMessage}
                   onRetryAssistantMessage={onRetryAssistantMessage}
+                  onEditUserMessage={onEditUserMessage}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImage}
                   markdownCwd={gitCwd ?? undefined}

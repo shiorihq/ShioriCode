@@ -1351,6 +1351,310 @@ describe("CheckpointReactor", () => {
     ]);
   });
 
+  it("edits a user message by rewinding server state before dispatching a fresh turn", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+    const originalUserMessageId = MessageId.makeUnsafe("msg-user-edit-original");
+    const originalAssistantMessageId = MessageId.makeUnsafe("msg-assistant-edit-original");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-edit-original-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: originalUserMessageId,
+          role: "user",
+          text: "original question",
+          attachments: [],
+        },
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-edit-assistant-delta"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: originalAssistantMessageId,
+        delta: "original answer",
+        turnId: asTurnId("turn-edit-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-edit-assistant-complete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: originalAssistantMessageId,
+        turnId: asTurnId("turn-edit-1"),
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-edit-diff-complete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-edit-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "ready",
+        files: [],
+        assistantMessageId: originalAssistantMessageId,
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit",
+        commandId: CommandId.makeUnsafe("cmd-message-edit"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        userMessageId: originalUserMessageId,
+        text: "edited question",
+        createdAt,
+      }),
+    );
+
+    const events = await waitForEvent(harness.engine, (event) => {
+      const typedEvent = event as { type: string; payload?: { messageId?: string } };
+      return (
+        typedEvent.type === "thread.turn-start-requested" &&
+        typedEvent.payload?.messageId !== String(originalUserMessageId)
+      );
+    });
+    const editStartIndex = events.findIndex((event) => {
+      if (event.type !== "thread.turn-start-requested") {
+        return false;
+      }
+      return event.payload.messageId !== originalUserMessageId;
+    });
+    const revertIndex = events.findIndex((event) => event.type === "thread.reverted");
+
+    expect(revertIndex).toBeGreaterThan(-1);
+    expect(editStartIndex).toBeGreaterThan(revertIndex);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      numTurns: 1,
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.messages.length === 1);
+    expect(thread.checkpoints).toHaveLength(0);
+    expect(thread.messages[0]).toMatchObject({
+      role: "user",
+      text: "edited question",
+    });
+    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
+  });
+
+  it("edits an earlier user message and discards every later turn", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+    const firstUserMessageId = MessageId.makeUnsafe("msg-user-multi-1");
+    const firstAssistantMessageId = MessageId.makeUnsafe("msg-assistant-multi-1");
+    const secondUserMessageId = MessageId.makeUnsafe("msg-user-multi-2");
+    const secondAssistantMessageId = MessageId.makeUnsafe("msg-assistant-multi-2");
+
+    const dispatchTurn = async (input: {
+      readonly tag: string;
+      readonly userMessageId: MessageId;
+      readonly assistantMessageId: MessageId;
+      readonly turnId: string;
+      readonly text: string;
+      readonly answer: string;
+      readonly checkpointTurnCount: number;
+    }) => {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.makeUnsafe(`cmd-${input.tag}-start`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          message: {
+            messageId: input.userMessageId,
+            role: "user",
+            text: input.text,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.makeUnsafe(`cmd-${input.tag}-assistant-delta`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          messageId: input.assistantMessageId,
+          delta: input.answer,
+          turnId: asTurnId(input.turnId),
+          createdAt,
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.makeUnsafe(`cmd-${input.tag}-assistant-complete`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          messageId: input.assistantMessageId,
+          turnId: asTurnId(input.turnId),
+          createdAt,
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.makeUnsafe(`cmd-${input.tag}-diff-complete`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          turnId: asTurnId(input.turnId),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(
+            ThreadId.makeUnsafe("thread-1"),
+            input.checkpointTurnCount,
+          ),
+          status: "ready",
+          files: [],
+          assistantMessageId: input.assistantMessageId,
+          checkpointTurnCount: input.checkpointTurnCount,
+          createdAt,
+        }),
+      );
+    };
+
+    await dispatchTurn({
+      tag: "edit-multi-1",
+      userMessageId: firstUserMessageId,
+      assistantMessageId: firstAssistantMessageId,
+      turnId: "turn-edit-multi-1",
+      text: "first question",
+      answer: "first answer",
+      checkpointTurnCount: 1,
+    });
+    await dispatchTurn({
+      tag: "edit-multi-2",
+      userMessageId: secondUserMessageId,
+      assistantMessageId: secondAssistantMessageId,
+      turnId: "turn-edit-multi-2",
+      text: "second question",
+      answer: "second answer",
+      checkpointTurnCount: 2,
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit",
+        commandId: CommandId.makeUnsafe("cmd-message-edit-multi"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        userMessageId: firstUserMessageId,
+        text: "edited first question",
+        createdAt,
+      }),
+    );
+
+    await waitForEvent(harness.engine, (event) => {
+      const typedEvent = event as { type: string; payload?: { messageId?: string } };
+      return (
+        typedEvent.type === "thread.turn-start-requested" &&
+        typedEvent.payload?.messageId !== String(firstUserMessageId) &&
+        typedEvent.payload?.messageId !== String(secondUserMessageId)
+      );
+    });
+
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      numTurns: 2,
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.messages.length === 1);
+    expect(thread.checkpoints).toHaveLength(0);
+    expect(thread.messages[0]).toMatchObject({
+      role: "user",
+      text: "edited first question",
+    });
+  });
+
+  it("rejects editing a mid-turn steer message", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+    const steerMessageId = MessageId.makeUnsafe("msg-user-steer");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-edit-steer-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: MessageId.makeUnsafe("msg-user-steer-original"),
+          role: "user",
+          text: "original question",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-edit-steer-session"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-steer-1"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.makeUnsafe("cmd-edit-steer"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: steerMessageId,
+          role: "user",
+          text: "steer the turn",
+        },
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit",
+        commandId: CommandId.makeUnsafe("cmd-message-edit-steer"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        userMessageId: steerMessageId,
+        text: "edited steer",
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some((activity) => activity.kind === "turn.edit.failed"),
+    );
+
+    expect(thread.activities.some((activity) => activity.kind === "turn.edit.failed")).toBe(true);
+    expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+  });
+
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();

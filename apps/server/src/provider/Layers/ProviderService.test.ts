@@ -970,20 +970,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       yield* provider.stopSession({ threadId: session.threadId });
-      const sendAfterStop = yield* Effect.result(
-        provider.sendTurn({
-          threadId: session.threadId,
-          input: "after-stop",
-          attachments: [],
-        }),
-      );
-      assertFailure(
-        sendAfterStop,
-        new ProviderValidationError({
-          operation: "ProviderService.sendTurn",
-          issue: `Cannot route thread '${session.threadId}' because no persisted provider binding exists.`,
-        }),
-      );
+
+      // Stopping a session keeps the persisted binding (and its resume
+      // cursor), so the next turn recovers the provider conversation with its
+      // context instead of failing or starting from scratch.
+      routing.codex.startSession.mockClear();
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "after-stop",
+        attachments: [],
+      });
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const recoveredStartInput = routing.codex.startSession.mock.calls[0]?.[0] as
+        | { resumeCursor?: unknown }
+        | undefined;
+      assert.deepEqual(recoveredStartInput?.resumeCursor, session.resumeCursor);
     }),
   );
 

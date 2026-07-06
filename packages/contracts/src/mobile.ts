@@ -289,6 +289,20 @@ export const MobileUserInputRespondCommand = Schema.Struct({
 });
 export type MobileUserInputRespondCommand = typeof MobileUserInputRespondCommand.Type;
 
+export const MobileArchiveThreadCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.archive"),
+  threadId: ThreadId,
+});
+export type MobileArchiveThreadCommand = typeof MobileArchiveThreadCommand.Type;
+
+export const MobileUnarchiveThreadCommand = Schema.Struct({
+  ...MobileCommandBase,
+  type: Schema.Literal("thread.unarchive"),
+  threadId: ThreadId,
+});
+export type MobileUnarchiveThreadCommand = typeof MobileUnarchiveThreadCommand.Type;
+
 export const MobileCommand = Schema.Union([
   MobileCreateThreadCommand,
   MobileSendTurnCommand,
@@ -299,6 +313,8 @@ export const MobileCommand = Schema.Union([
   MobileUserInputRespondCommand,
   MobileSetRuntimeModeCommand,
   MobileSetInteractionModeCommand,
+  MobileArchiveThreadCommand,
+  MobileUnarchiveThreadCommand,
 ]);
 export type MobileCommand = typeof MobileCommand.Type;
 

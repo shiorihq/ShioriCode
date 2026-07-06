@@ -286,8 +286,14 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  void main(process.argv.slice(2)).catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
+  void main(process.argv.slice(2))
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      // The WebSocket RPC runtime can leave live handles behind even after
+      // dispose, so exit explicitly instead of waiting on the event loop.
+      process.exit(process.exitCode ?? 0);
+    });
 }

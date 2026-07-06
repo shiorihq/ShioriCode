@@ -45,6 +45,7 @@ import {
 } from "nucleo-core-outline-24";
 import { type IconLike } from "../Icons";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clamp } from "effect/Number";
 import {
@@ -149,6 +150,7 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onRetryAssistantMessage: (messageId: MessageId) => void;
+  onEditUserMessage?: (messageId: MessageId, text: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -191,6 +193,7 @@ function MessagesTimelineView({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onRetryAssistantMessage,
+  onEditUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -209,6 +212,12 @@ function MessagesTimelineView({
     new Map<string, TimelineRowHeightCacheEntry>(),
   );
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+  // The user message currently being edited inline, with its draft text. Only
+  // one message can be edited at a time; submitting dispatches a turn restart.
+  const [editingUserMessage, setEditingUserMessage] = useState<{
+    id: MessageId;
+    draft: string;
+  } | null>(null);
   // After the latest turn settles, its intermediate work collapses behind the
   // "Worked for …" divider. Reset to collapsed whenever a new turn completes.
   const [latestTurnWorkExpanded, setLatestTurnWorkExpanded] = useState(false);
@@ -840,11 +849,85 @@ function MessagesTimelineView({
             const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
             const terminalContexts = displayedUserMessage.contexts;
             const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
-            const hasActions = Boolean(displayedUserMessage.copyText) || canRevertAgentWork;
+            // Mid-turn user messages (steering input) carry a turnId; only
+            // turn-start prompts can be edited and re-run.
+            const canEditMessage = onEditUserMessage !== undefined && !row.message.turnId;
+
+            if (editingUserMessage?.id === row.message.id) {
+              const draftIsSendable = editingUserMessage.draft.trim().length > 0;
+              const closeEditor = () => {
+                setEditingUserMessage(null);
+                scheduleTimelineMeasure();
+              };
+              const submitEdit = () => {
+                if (!draftIsSendable || !onEditUserMessage || isWorking || isRevertingCheckpoint) {
+                  return;
+                }
+                onEditUserMessage(row.message.id, editingUserMessage.draft);
+                closeEditor();
+              };
+              return (
+                <div className="ml-auto w-full max-w-[75%]">
+                  <Textarea
+                    autoFocus
+                    size="sm"
+                    value={editingUserMessage.draft}
+                    aria-label="Edit message"
+                    onChange={(event) =>
+                      setEditingUserMessage({ id: row.message.id, draft: event.target.value })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        closeEditor();
+                        return;
+                      }
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        submitEdit();
+                      }
+                    }}
+                  />
+                  <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                    <Button type="button" size="xs" variant="ghost" onClick={closeEditor}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={!draftIsSendable || isRevertingCheckpoint || isWorking}
+                      onClick={submitEdit}
+                      title="Send the edited message; later messages in this thread are discarded"
+                    >
+                      Send
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+
+            const hasActions =
+              Boolean(displayedUserMessage.copyText) || canRevertAgentWork || canEditMessage;
             const actionButtons = hasActions ? (
               <>
                 {displayedUserMessage.copyText && (
                   <MessageCopyButton text={displayedUserMessage.copyText} />
+                )}
+                {canEditMessage && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={isRevertingCheckpoint || isWorking}
+                    onClick={() => {
+                      setEditingUserMessage({ id: row.message.id, draft: row.message.text });
+                      scheduleTimelineMeasure();
+                    }}
+                    title="Edit message"
+                  >
+                    <PencilLineIcon className="size-3" />
+                  </Button>
                 )}
                 {canRevertAgentWork && (
                   <Button

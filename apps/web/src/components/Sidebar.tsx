@@ -82,14 +82,13 @@ import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useDesktopWindowControlsInset } from "../hooks/useDesktopWindowControlsInset";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { writeThreadPaneDragData } from "../paneLayout/dnd";
 import {
-  addThreadPaneId,
   encodeThreadPaneSearchValue,
-  parseDiffRouteSearch,
+  openThreadPaneBeside,
   parseThreadPaneSearchValue,
-  resolveDroppedThreadPaneIds,
-  writeThreadPaneDragData,
-} from "../diffRouteSearch";
+} from "../paneLayout/threadPanes";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { toastManager } from "./ui/toast";
@@ -588,9 +587,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (isThreadBusy) {
-              return;
-            }
             if (props.hasSelection) {
               props.clearSelection();
             }
@@ -769,118 +765,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       </TooltipPopup>
                     </Tooltip>
                   ) : null}
-                  <Menu
-                    open={actionMenuOpen}
-                    onOpenChange={(open) => {
-                      setActionMenuOpen(open);
-                      if (!open) {
-                        setActionMenuPosition(null);
-                      }
-                    }}
-                  >
-                    <MenuTrigger
-                      render={<button type="button" aria-hidden tabIndex={-1} />}
-                      className="pointer-events-none fixed size-px opacity-0"
-                      style={actionMenuTriggerStyle}
-                    />
-                    <MenuPopup
-                      anchor={actionMenuAnchor}
-                      align="start"
-                      positionMethod="fixed"
-                      side="bottom"
-                      sideOffset={4}
-                      className="min-w-44"
-                    >
-                      <MenuGroup>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            props.onOpenThreadBeside(thread.id);
-                          }}
-                        >
-                          <Columns2Icon className="size-4" />
-                          Open beside
-                        </MenuItem>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            void props.onBranchThread(thread.id);
-                          }}
-                        >
-                          <GitBranchIcon className="size-4" />
-                          Branch thread
-                        </MenuItem>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            props.setRenamingTitle(thread.title);
-                            props.setRenamingThreadId(thread.id);
-                            props.renamingCommittedRef.current = false;
-                          }}
-                        >
-                          <PencilIcon className="size-4" />
-                          Rename
-                        </MenuItem>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            props.onMarkThreadUnread(thread.id);
-                          }}
-                        >
-                          <NewThreadIcon className="size-4" />
-                          Mark unread
-                        </MenuItem>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            void props.onSetPinned(thread.id, !isPinned);
-                          }}
-                        >
-                          {isPinned ? (
-                            <PinOffIcon className="size-4" />
-                          ) : (
-                            <PinIcon className="size-4" />
-                          )}
-                          {isPinned ? "Unpin" : "Pin"}
-                        </MenuItem>
-                      </MenuGroup>
-                      <MenuGroup>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          disabled={threadWorkspacePath === null}
-                          onClick={() => {
-                            if (threadWorkspacePath) {
-                              props.onCopyPath(threadWorkspacePath);
-                            }
-                          }}
-                        >
-                          <CopyIcon className="size-4" />
-                          Copy path
-                        </MenuItem>
-                        <MenuItem
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            props.onCopyThreadId(thread.id);
-                          }}
-                        >
-                          <CopyIcon className="size-4" />
-                          Copy thread ID
-                        </MenuItem>
-                      </MenuGroup>
-                      <MenuGroup>
-                        <MenuItem
-                          data-testid={`thread-context-archive-${thread.id}`}
-                          className="grid grid-cols-[1rem_1fr] gap-2"
-                          onClick={() => {
-                            void props.attemptArchiveThread(thread.id);
-                          }}
-                        >
-                          <ArchiveIcon className="size-4" />
-                          Archive
-                        </MenuItem>
-                      </MenuGroup>
-                    </MenuPopup>
-                  </Menu>
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -954,6 +838,116 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
           </div>
         </SidebarMenuSubButton>
+        <Menu
+          open={actionMenuOpen}
+          onOpenChange={(open) => {
+            setActionMenuOpen(open);
+            if (!open) {
+              setActionMenuPosition(null);
+            }
+          }}
+        >
+          <MenuTrigger
+            render={<button type="button" aria-hidden tabIndex={-1} />}
+            className="pointer-events-none fixed size-px opacity-0"
+            style={actionMenuTriggerStyle}
+          />
+          <MenuPopup
+            anchor={actionMenuAnchor}
+            align="start"
+            positionMethod="fixed"
+            side="bottom"
+            sideOffset={4}
+            className="min-w-44"
+          >
+            <MenuGroup>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                onClick={() => {
+                  props.onOpenThreadBeside(thread.id);
+                }}
+              >
+                <Columns2Icon className="size-4" />
+                Open beside
+              </MenuItem>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                disabled={isThreadBusy}
+                onClick={() => {
+                  void props.onBranchThread(thread.id);
+                }}
+              >
+                <GitBranchIcon className="size-4" />
+                Branch thread
+              </MenuItem>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                onClick={() => {
+                  props.setRenamingTitle(thread.title);
+                  props.setRenamingThreadId(thread.id);
+                  props.renamingCommittedRef.current = false;
+                }}
+              >
+                <PencilIcon className="size-4" />
+                Rename
+              </MenuItem>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                onClick={() => {
+                  props.onMarkThreadUnread(thread.id);
+                }}
+              >
+                <NewThreadIcon className="size-4" />
+                Mark unread
+              </MenuItem>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                onClick={() => {
+                  void props.onSetPinned(thread.id, !isPinned);
+                }}
+              >
+                {isPinned ? <PinOffIcon className="size-4" /> : <PinIcon className="size-4" />}
+                {isPinned ? "Unpin" : "Pin"}
+              </MenuItem>
+            </MenuGroup>
+            <MenuGroup>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                disabled={threadWorkspacePath === null}
+                onClick={() => {
+                  if (threadWorkspacePath) {
+                    props.onCopyPath(threadWorkspacePath);
+                  }
+                }}
+              >
+                <CopyIcon className="size-4" />
+                Copy path
+              </MenuItem>
+              <MenuItem
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                onClick={() => {
+                  props.onCopyThreadId(thread.id);
+                }}
+              >
+                <CopyIcon className="size-4" />
+                Copy thread ID
+              </MenuItem>
+            </MenuGroup>
+            <MenuGroup>
+              <MenuItem
+                data-testid={`thread-context-archive-${thread.id}`}
+                className="grid grid-cols-[1rem_1fr] gap-2"
+                disabled={isThreadBusy}
+                onClick={() => {
+                  void props.attemptArchiveThread(thread.id);
+                }}
+              >
+                <ArchiveIcon className="size-4" />
+                Archive
+              </MenuItem>
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
       </SidebarMenuSubItem>
       {hasSubagents && subagentsExpanded ? (
         <SidebarBackgroundSubagentRowsView threadId={thread.id} rows={subagentRows} />
@@ -1696,26 +1690,18 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
       }
       setSelectionAnchor(threadId);
       const focusedThreadId = routeThreadId ?? threadId;
-      const paneThreadIds = parseThreadPaneSearchValue(routeSearch.panes);
-      const nextPaneIds =
-        routeThreadId === null
-          ? addThreadPaneId({
-              focusedThreadId,
-              paneThreadIds,
-              threadId,
-            })
-          : resolveDroppedThreadPaneIds({
-              focusedThreadId,
-              paneThreadIds,
-              threadId,
-            });
+      const nextLayout = openThreadPaneBeside({
+        focusedThreadId: routeThreadId,
+        layout: parseThreadPaneSearchValue(routeSearch.panes),
+        threadId,
+      });
 
       void navigate({
         to: "/$threadId",
         params: { threadId: focusedThreadId },
         search: (previous) => ({
           ...previous,
-          panes: encodeThreadPaneSearchValue(nextPaneIds),
+          panes: encodeThreadPaneSearchValue(nextLayout),
         }),
       });
     },

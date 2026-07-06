@@ -4,7 +4,6 @@ import { Schema } from "effect";
 import {
   Suspense,
   lazy,
-  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -21,8 +20,8 @@ import {
   IconXmarkOutline24 as XIcon,
 } from "nucleo-core-outline-24";
 
-import ChatView from "../components/ChatView";
 import BrowserPanel from "../components/browser/BrowserPanel";
+import { ChatThreadPane } from "../components/ChatThreadPane";
 import { DockedSidebarResizeHandle } from "../components/DockedSidebarResizeHandle";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
@@ -33,19 +32,22 @@ import {
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
-  closeThreadPane,
-  encodeThreadPaneSearchValue,
   type DiffRouteSearch,
-  hasThreadPaneDragData,
   parseDiffRouteSearch,
-  parseThreadPaneSearchValue,
-  readThreadPaneDragData,
   resolveActiveThreadPanel,
-  resolveDroppedThreadPaneIds,
-  resolveVisibleThreadPaneIds,
   type RightPanelId,
   stripRightSidebarSearchParams,
 } from "../diffRouteSearch";
+import type { PaneDropZone, PaneLayoutNode } from "../paneLayout/model";
+import { SplitLayout } from "../paneLayout/SplitLayout";
+import {
+  closeThreadPane,
+  dropThreadOnPane,
+  encodeThreadPaneSearchValue,
+  parseThreadPaneSearchValue,
+  resolveThreadPaneLayout,
+  threadPaneIds,
+} from "../paneLayout/threadPanes";
 import { useActiveThreadLeases } from "../hooks/useActiveThreadLease";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
@@ -61,6 +63,7 @@ import { cn } from "~/lib/utils";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const ArtifactPanel = lazy(() => import("../components/ArtifactPanel"));
+const THREAD_PANE_MIN_SIZE_PX = 320;
 const DIFF_DOCKED_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_DOCKED_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_DOCKED_SIDEBAR_MIN_WIDTH = 26 * 16;
@@ -410,80 +413,6 @@ const SidePanelDockedSidebar = (props: {
   ) : null;
 };
 
-function ChatThreadPane(props: {
-  focused: boolean;
-  multiPane: boolean;
-  onClose: () => void;
-  onFocus: () => void;
-  threadId: ThreadId;
-}) {
-  return (
-    <section
-      aria-label={props.focused ? "Focused thread pane" : "Thread pane"}
-      data-focused={props.focused ? "true" : "false"}
-      className={cn(
-        "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-        props.multiPane &&
-          "min-w-[min(34rem,86vw)] basis-[34rem] border-r border-border/70 last:border-r-0",
-        props.multiPane && !props.focused && "bg-muted/10",
-      )}
-      onFocusCapture={() => {
-        if (!props.focused) {
-          props.onFocus();
-        }
-      }}
-      onPointerEnter={() => {
-        if (!props.focused) {
-          props.onFocus();
-        }
-      }}
-      onPointerDownCapture={(event) => {
-        if (props.focused) {
-          return;
-        }
-        const target = event.target;
-        if (!(target instanceof Element)) {
-          return;
-        }
-        if (target.closest("[data-thread-pane-close='true']")) {
-          return;
-        }
-        props.onFocus();
-      }}
-    >
-      {props.multiPane ? (
-        <div
-          className={cn(
-            "flex h-8 shrink-0 items-center justify-end border-b px-2",
-            props.focused ? "border-foreground/20 bg-background" : "border-border/70 bg-muted/10",
-          )}
-        >
-          <div
-            className={cn(
-              "pointer-events-none absolute inset-x-0 top-0 z-30 h-px transition-colors",
-              props.focused ? "bg-foreground/60" : "bg-border/80",
-            )}
-          />
-          <button
-            type="button"
-            data-thread-pane-close="true"
-            aria-label="Close thread pane"
-            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              props.onClose();
-            }}
-          >
-            <XIcon className="size-3.5" />
-          </button>
-        </div>
-      ) : null}
-      <ChatView key={props.threadId} threadId={props.threadId} isFocusedPane={props.focused} />
-    </section>
-  );
-}
-
 function ChatThreadRouteView() {
   const bootstrapComplete = useStore((store) => store.bootstrapComplete);
   const navigate = useNavigate();
@@ -518,36 +447,39 @@ function ChatThreadRouteView() {
   );
   const shouldUseDiffSheet = useMediaQuery(DIFF_DOCKED_LAYOUT_MEDIA_QUERY);
   const missingThreadSinceRef = useRef<number | null>(null);
-  const threadDropDepthRef = useRef(0);
   const isThreadAvailable = useCallback(
     (paneThreadId: ThreadId) =>
       threadIndexById[paneThreadId] !== undefined ||
       Object.hasOwn(draftThreadsByThreadId, paneThreadId),
     [draftThreadsByThreadId, threadIndexById],
   );
-  const visibleThreadIds = useMemo(
+  const paneLayout = useMemo(
     () =>
       routeThreadExists
-        ? resolveVisibleThreadPaneIds({
+        ? resolveThreadPaneLayout({
             focusedThreadId: threadId,
-            paneThreadIds: parseThreadPaneSearchValue(search.panes),
+            layout: parseThreadPaneSearchValue(search.panes),
             isThreadAvailable,
           })
-        : [],
+        : null,
     [isThreadAvailable, routeThreadExists, search.panes, threadId],
   );
-  const encodedVisiblePanes = encodeThreadPaneSearchValue(visibleThreadIds);
+  const visibleThreadIds = useMemo(() => threadPaneIds(paneLayout), [paneLayout]);
+  const encodedVisiblePanes = encodeThreadPaneSearchValue(paneLayout);
   const multiPane = visibleThreadIds.length > 1;
-  const [threadDropActive, setThreadDropActive] = useState(false);
+  const [paneDropTarget, setPaneDropTarget] = useState<{
+    threadId: ThreadId;
+    zone: PaneDropZone;
+  } | null>(null);
+  const paneDropActive = paneDropTarget !== null;
   useActiveThreadLeases(visibleThreadIds);
   useEffect(() => {
-    if (!threadDropActive) {
+    if (!paneDropActive) {
       return;
     }
 
     const resetThreadDropState = () => {
-      threadDropDepthRef.current = 0;
-      setThreadDropActive(false);
+      setPaneDropTarget(null);
     };
 
     window.addEventListener("dragend", resetThreadDropState);
@@ -556,7 +488,7 @@ function ChatThreadRouteView() {
       window.removeEventListener("dragend", resetThreadDropState);
       window.removeEventListener("drop", resetThreadDropState);
     };
-  }, [threadDropActive]);
+  }, [paneDropActive]);
   // TanStack Router keeps param-only route navigations mounted by default, so reset any
   // "missing thread" grace bookkeeping when the active thread id changes.
   useEffect(() => {
@@ -665,46 +597,62 @@ function ChatThreadRouteView() {
     return null;
   }
 
+  const navigateToPaneLayout = (
+    nextFocusedThreadId: ThreadId,
+    nextLayout: PaneLayoutNode | null,
+    options: { replace?: boolean } = {},
+  ) => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: nextFocusedThreadId },
+      replace: options.replace ?? false,
+      search: (previous) => ({
+        ...previous,
+        panes: encodeThreadPaneSearchValue(nextLayout),
+      }),
+    });
+  };
   const focusThreadPane = (nextThreadId: ThreadId) => {
     if (nextThreadId === threadId) {
       return;
     }
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: nextThreadId },
-      replace: true,
-      search: (previous) => ({
-        ...previous,
-        panes: encodedVisiblePanes,
-      }),
+    navigateToPaneLayout(nextThreadId, paneLayout, { replace: true });
+  };
+  const handlePaneDropZoneChange = (paneThreadId: ThreadId, zone: PaneDropZone | null) => {
+    setPaneDropTarget((previous) => {
+      if (zone === null) {
+        return previous?.threadId === paneThreadId ? null : previous;
+      }
+      return previous?.threadId === paneThreadId && previous.zone === zone
+        ? previous
+        : { threadId: paneThreadId, zone };
     });
   };
-  const openDroppedThreadPane = (nextThreadId: ThreadId) => {
-    if (!isThreadAvailable(nextThreadId)) {
+  const handleThreadPaneDrop = (
+    targetThreadId: ThreadId,
+    zone: PaneDropZone,
+    droppedThreadId: ThreadId,
+  ) => {
+    if (paneLayout === null || !isThreadAvailable(droppedThreadId)) {
       return;
     }
-
-    const nextPaneIds = resolveDroppedThreadPaneIds({
+    const dropResult = dropThreadOnPane({
+      droppedThreadId,
       focusedThreadId: threadId,
-      paneThreadIds: visibleThreadIds,
-      threadId: nextThreadId,
+      layout: paneLayout,
+      targetThreadId,
+      zone,
     });
-
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: nextThreadId },
-      replace: true,
-      search: (previous) => ({
-        ...previous,
-        panes: encodeThreadPaneSearchValue(nextPaneIds),
-      }),
-    });
+    navigateToPaneLayout(dropResult.focusedThreadId, dropResult.layout, { replace: true });
   };
   const closeVisibleThreadPane = (closingThreadId: ThreadId) => {
+    if (paneLayout === null) {
+      return;
+    }
     const nextPaneState = closeThreadPane({
-      focusedThreadId: threadId,
-      paneThreadIds: visibleThreadIds,
       closingThreadId,
+      focusedThreadId: threadId,
+      layout: paneLayout,
     });
 
     if (nextPaneState.focusedThreadId === null) {
@@ -712,14 +660,7 @@ function ChatThreadRouteView() {
       return;
     }
 
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: nextPaneState.focusedThreadId },
-      search: (previous) => ({
-        ...previous,
-        panes: encodeThreadPaneSearchValue(nextPaneState.paneThreadIds),
-      }),
-    });
+    navigateToPaneLayout(nextPaneState.focusedThreadId, nextPaneState.layout);
   };
   const activateRightPanel = (panel: RightPanelId) => {
     if (panel === "browser") {
@@ -851,71 +792,30 @@ function ChatThreadRouteView() {
       </RightSidebarFrame>
     );
   };
-  const renderChatPanes = () =>
-    visibleThreadIds.map((visibleThreadId) => (
-      <ChatThreadPane
-        key={visibleThreadId}
-        threadId={visibleThreadId}
-        focused={visibleThreadId === threadId}
-        multiPane={multiPane}
-        onFocus={() => focusThreadPane(visibleThreadId)}
-        onClose={() => closeVisibleThreadPane(visibleThreadId)}
+  const paneStrip =
+    paneLayout === null ? null : (
+      <SplitLayout
+        layout={paneLayout}
+        minPaneSizePx={THREAD_PANE_MIN_SIZE_PX}
+        renderPane={(paneKey) => {
+          const paneThreadId = ThreadId.makeUnsafe(paneKey);
+          return (
+            <ChatThreadPane
+              threadId={paneThreadId}
+              focused={paneThreadId === threadId}
+              multiPane={multiPane}
+              dropZone={paneDropTarget?.threadId === paneThreadId ? paneDropTarget.zone : null}
+              onDropZoneChange={(zone) => handlePaneDropZoneChange(paneThreadId, zone)}
+              onThreadDrop={(droppedThreadId, zone) =>
+                handleThreadPaneDrop(paneThreadId, zone, droppedThreadId)
+              }
+              onFocus={() => focusThreadPane(paneThreadId)}
+              onClose={() => closeVisibleThreadPane(paneThreadId)}
+            />
+          );
+        }}
       />
-    ));
-  const acceptThreadPaneDrag = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!hasThreadPaneDragData(event.dataTransfer)) {
-      return false;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    return true;
-  };
-  const handleThreadPaneDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!acceptThreadPaneDrag(event)) {
-      return;
-    }
-    threadDropDepthRef.current += 1;
-    setThreadDropActive(true);
-  };
-  const handleThreadPaneDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    acceptThreadPaneDrag(event);
-  };
-  const handleThreadPaneDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!hasThreadPaneDragData(event.dataTransfer)) {
-      return;
-    }
-    threadDropDepthRef.current = Math.max(0, threadDropDepthRef.current - 1);
-    if (threadDropDepthRef.current === 0) {
-      setThreadDropActive(false);
-    }
-  };
-  const handleThreadPaneDrop = (event: ReactDragEvent<HTMLDivElement>) => {
-    const droppedThreadId = readThreadPaneDragData(event.dataTransfer);
-    if (!droppedThreadId) {
-      return;
-    }
-    event.preventDefault();
-    threadDropDepthRef.current = 0;
-    setThreadDropActive(false);
-    openDroppedThreadPane(droppedThreadId);
-  };
-  const paneStrip = (
-    <div
-      className={cn(
-        "relative flex min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden",
-        threadDropActive && "ring-1 ring-inset ring-foreground/35",
-      )}
-      onDragEnter={handleThreadPaneDragEnter}
-      onDragOver={handleThreadPaneDragOver}
-      onDragLeave={handleThreadPaneDragLeave}
-      onDrop={handleThreadPaneDrop}
-    >
-      {renderChatPanes()}
-      {threadDropActive ? (
-        <div className="pointer-events-none absolute inset-2 z-50 rounded-lg border border-dashed border-foreground/35 bg-background/20" />
-      ) : null}
-    </div>
-  );
+    );
 
   if (!shouldUseDiffSheet) {
     return (
