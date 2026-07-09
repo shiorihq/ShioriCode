@@ -27,6 +27,8 @@ export interface CodexAccountSnapshot {
 }
 
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-luna";
+export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+const CODEX_LEGACY_SPARK_FALLBACK_MODEL = "gpt-5.3-codex";
 const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
 const CODEX_PLAN_TYPES = new Set<CodexPlanType>([
   "free",
@@ -242,7 +244,11 @@ export function readCodexUsageSnapshot(response: unknown): CodexUsageSnapshot {
 
 export function resolveCodexModelForAccount(
   model: string | undefined,
-  _account: CodexAccountSnapshot,
+  account: CodexAccountSnapshot,
 ): string | undefined {
-  return model;
+  if (model !== CODEX_SPARK_MODEL || account.sparkEnabled) {
+    return model;
+  }
+
+  return CODEX_LEGACY_SPARK_FALLBACK_MODEL;
 }

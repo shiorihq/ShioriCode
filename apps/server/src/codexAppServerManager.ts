@@ -49,6 +49,7 @@ import {
 import { toCodexUserInputAnswers } from "./provider/codexUserInput";
 import { isProviderApprovalAccepted } from "./provider/providerApprovalDecision";
 import {
+  CODEX_SPARK_MODEL,
   readCodexAccountSnapshot,
   readCodexUsageSnapshot,
   resolveCodexModelForAccount,
@@ -258,6 +259,10 @@ export function normalizeCodexModelSlug(
   }
 
   return normalized;
+}
+
+function supportsDetailedReasoningSummaryForModel(model: string | undefined): boolean {
+  return model !== CODEX_SPARK_MODEL;
 }
 
 export interface CodexAppServerManagerEvents {
@@ -629,7 +634,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (input.effort) {
       turnStartParams.effort = input.effort;
     }
-    if (context.supportsReasoningSummary) {
+    if (
+      context.supportsReasoningSummary &&
+      supportsDetailedReasoningSummaryForModel(normalizedModel)
+    ) {
       turnStartParams.summary = "detailed";
     }
     const developerInstructionsAppendix = await this.readAssistantSettingsAppendix();
@@ -1475,6 +1483,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     readonly models: ReadonlyArray<CodexAppServerModelSnapshot> | null;
   }): string | undefined {
     if (!input.requestedModel) {
+      return undefined;
+    }
+
+    if (input.account.type === "unknown" && input.requestedModel === CODEX_SPARK_MODEL) {
       return undefined;
     }
 

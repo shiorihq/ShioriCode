@@ -204,7 +204,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
-      it.effect("returns the codex plan type in auth and keeps spark for supported plans", () =>
+      it.effect("returns the codex plan type in auth without exposing retired Spark", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome();
           const status = yield* checkCodexProviderStatus(() =>
@@ -222,7 +222,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.auth.label, "ChatGPT Pro Subscription");
           assert.deepStrictEqual(
             status.models.some((model) => model.slug === "gpt-5.3-codex-spark"),
-            true,
+            false,
           );
         }).pipe(
           Effect.provide(
@@ -248,9 +248,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               },
               models: [
                 {
-                  id: "gpt-5.5",
-                  model: "gpt-5.5",
-                  displayName: "GPT-5.5",
+                  id: "gpt-5.6-sol",
+                  model: "gpt-5.6-sol",
+                  displayName: "GPT-5.6-Sol",
                   description: "Frontier model for complex coding.",
                   hidden: false,
                   supportedReasoningEfforts: [
@@ -326,15 +326,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             }),
           );
 
-          assert.strictEqual(status.models[0]?.slug, "gpt-5.5");
-          assert.strictEqual(status.models[0]?.name, "GPT-5.5");
+          assert.strictEqual(status.models[0]?.slug, "gpt-5.6-sol");
+          assert.strictEqual(status.models[0]?.name, "GPT-5.6 Sol");
           assert.strictEqual(status.models[0]?.multiModal, true);
           assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
-          assert.strictEqual(status.models[1]?.name, "GPT-5.4 Mini");
-          assert.strictEqual(status.models[2]?.name, "GPT-5.3 Codex");
+          assert.strictEqual(status.models[1]?.name, "GPT-5.6 Terra");
+          assert.strictEqual(status.models[2]?.name, "GPT-5.6 Luna");
           assert.deepStrictEqual(
             status.models[0]?.capabilities?.reasoningEffortLevels.find((level) => level.isDefault),
-            { value: "medium", label: "Medium", isDefault: true },
+            { value: "low", label: "Low", isDefault: true },
           );
           assert.strictEqual(
             status.models.some((model) => model.slug === "internal-preview"),

@@ -64,6 +64,32 @@ const RETIRED_CODEX_MODEL_SLUGS = new Set([
   "gpt-5.2-codex",
   "gpt-5.2",
 ]);
+const LEGACY_CODEX_MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
+  "gpt-5.4": {
+    reasoningEffortLevels: [
+      { value: "xhigh", label: "Extra High" },
+      { value: "high", label: "High", isDefault: true },
+      { value: "medium", label: "Medium" },
+      { value: "low", label: "Low" },
+    ],
+    supportsFastMode: true,
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  },
+  "gpt-5.4-mini": {
+    reasoningEffortLevels: [
+      { value: "xhigh", label: "Extra High" },
+      { value: "high", label: "High", isDefault: true },
+      { value: "medium", label: "Medium" },
+      { value: "low", label: "Low" },
+    ],
+    supportsFastMode: true,
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  },
+};
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "gpt-5.6-sol",
@@ -250,7 +276,8 @@ function resolveCodexProviderModels(input: {
 export function getCodexModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
   return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ?? {
+    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
+    LEGACY_CODEX_MODEL_CAPABILITIES[slug ?? ""] ?? {
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: false,
