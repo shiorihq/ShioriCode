@@ -161,6 +161,13 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "5.6-luna": "gpt-5.6-luna",
     "gpt-5.6": "gpt-5.6-luna",
     "gpt-5.6-luna": "gpt-5.6-luna",
+    // Retained to normalize existing persisted selections; retired models are not shown in the picker.
+    "5.5": "gpt-5.5",
+    "5.4": "gpt-5.4",
+    "5.3": "gpt-5.3-codex",
+    "gpt-5.3": "gpt-5.3-codex",
+    "5.3-spark": "gpt-5.3-codex-spark",
+    "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   claudeAgent: {
     default: "claude-sonnet-5",
