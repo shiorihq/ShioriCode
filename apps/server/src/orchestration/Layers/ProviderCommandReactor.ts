@@ -35,7 +35,6 @@ import { makeDrainableWorker } from "shared/DrainableWorker";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { ProviderAdapterRequestError, ProviderServiceError } from "../../provider/Errors.ts";
-import { CODEX_SPARK_MODEL } from "../../provider/codexAccount.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -124,17 +123,6 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
   return (
     message.includes("unknown pending approval request") ||
     message.includes("unknown pending permission request")
-  );
-}
-
-function shouldStartFreshCodexSessionForModelSwitch(input: {
-  readonly requestedModelSelection?: ModelSelection;
-  readonly activeSessionModel: string | undefined;
-}): boolean {
-  return (
-    input.requestedModelSelection?.provider === "codex" &&
-    input.requestedModelSelection.model === CODEX_SPARK_MODEL &&
-    input.activeSessionModel !== CODEX_SPARK_MODEL
   );
 }
 
@@ -428,13 +416,7 @@ const make = Effect.gen(function* () {
       const modelChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
-      const shouldRestartForModelChange =
-        modelChanged &&
-        (sessionModelSwitch === "restart-session" ||
-          shouldStartFreshCodexSessionForModelSwitch({
-            requestedModelSelection,
-            activeSessionModel: activeSession?.model,
-          }));
+      const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
         currentProvider === "claudeAgent" &&

@@ -78,7 +78,7 @@ const makeAutomationRepository = Effect.gen(function* () {
       prompt,
       project_id AS "projectId",
       projectless_cwd AS "projectlessCwd",
-      COALESCE(model_selection_json, '{"provider":"codex","model":"gpt-5.5"}') AS "modelSelection",
+      COALESCE(model_selection_json, '{"provider":"codex","model":"gpt-5.6-luna"}') AS "modelSelection",
       COALESCE(runtime_mode, 'full-access') AS "runtimeMode",
       COALESCE(interaction_mode, 'default') AS "interactionMode",
       schedule_rrule AS "scheduleRrule",

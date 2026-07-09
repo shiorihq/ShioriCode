@@ -1,5 +1,3 @@
-import type { ServerProviderModel } from "contracts";
-
 import type {
   CodexCreditsUsageSnapshot,
   CodexIndividualLimitUsageSnapshot,
@@ -28,8 +26,7 @@ export interface CodexAccountSnapshot {
   readonly sparkEnabled: boolean;
 }
 
-export const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
-export const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+export const CODEX_DEFAULT_MODEL = "gpt-5.6-luna";
 const CODEX_SPARK_ENABLED_PLAN_TYPES = new Set<CodexPlanType>(["pro"]);
 const CODEX_PLAN_TYPES = new Set<CodexPlanType>([
   "free",
@@ -243,24 +240,9 @@ export function readCodexUsageSnapshot(response: unknown): CodexUsageSnapshot {
   };
 }
 
-export function adjustCodexModelsForAccount(
-  baseModels: ReadonlyArray<ServerProviderModel>,
-  account: CodexAccountSnapshot | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (account?.sparkEnabled !== false) {
-    return baseModels;
-  }
-
-  return baseModels.filter((model) => model.isCustom || model.slug !== CODEX_SPARK_MODEL);
-}
-
 export function resolveCodexModelForAccount(
   model: string | undefined,
-  account: CodexAccountSnapshot,
+  _account: CodexAccountSnapshot,
 ): string | undefined {
-  if (model !== CODEX_SPARK_MODEL || account.sparkEnabled) {
-    return model;
-  }
-
-  return CODEX_DEFAULT_MODEL;
+  return model;
 }

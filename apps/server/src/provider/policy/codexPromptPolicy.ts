@@ -168,7 +168,7 @@ export function buildCodexCollaborationMode(input: {
     return undefined;
   }
 
-  const model = normalizeModelSlug(input.model) ?? "gpt-5.3-codex";
+  const model = normalizeModelSlug(input.model) ?? "gpt-5.6-luna";
   return {
     mode: input.interactionMode,
     settings: {

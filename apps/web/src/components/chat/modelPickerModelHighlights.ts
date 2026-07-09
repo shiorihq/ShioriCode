@@ -4,7 +4,11 @@ import type { ProviderKind } from "contracts";
  * Model slugs that show a gold "NEW" chip in the model picker list.
  * Add entries as `provider:slug` when you want to highlight freshly shipped models.
  */
-const NEW_MODEL_KEYS = new Set<string>(["codex:gpt-5.5"]);
+const NEW_MODEL_KEYS = new Set<string>([
+  "codex:gpt-5.6-sol",
+  "codex:gpt-5.6-terra",
+  "codex:gpt-5.6-luna",
+]);
 
 export function isModelPickerNewModel(provider: ProviderKind, slug: string): boolean {
   return NEW_MODEL_KEYS.has(`${provider}:${slug}`);

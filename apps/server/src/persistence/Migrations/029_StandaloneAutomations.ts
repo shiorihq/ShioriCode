@@ -25,7 +25,7 @@ export default Effect.gen(function* () {
       model_selection_json = COALESCE(
         model_selection_json,
         (SELECT model_selection_json FROM projection_threads WHERE thread_id = automations.target_thread_id),
-        '{"provider":"codex","model":"gpt-5.5"}'
+        '{"provider":"codex","model":"gpt-5.6-luna"}'
       ),
       runtime_mode = COALESCE(
         runtime_mode,

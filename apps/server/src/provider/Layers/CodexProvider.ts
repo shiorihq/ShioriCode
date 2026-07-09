@@ -42,12 +42,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "../codexCliVersion";
-import {
-  adjustCodexModelsForAccount,
-  codexAuthSubLabel,
-  codexAuthSubType,
-  type CodexAccountSnapshot,
-} from "../codexAccount";
+import { codexAuthSubLabel, codexAuthSubType, type CodexAccountSnapshot } from "../codexAccount";
 import { resolvePreferredCodexBinaryPath } from "../codexBinaryPath";
 import {
   probeCodexMetadata,
@@ -60,14 +55,45 @@ import { ServerSettingsError } from "contracts";
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
+const RETIRED_CODEX_MODEL_SLUGS = new Set([
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.2-codex",
+  "gpt-5.2",
+]);
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "gpt-5.5",
-    name: "GPT-5.5",
+    slug: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
     isCustom: false,
     multiModal: true,
     capabilities: {
       reasoningEffortLevels: [
+        { value: "ultra", label: "Ultra" },
+        { value: "max", label: "Maximum" },
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High" },
+        { value: "medium", label: "Medium" },
+        { value: "low", label: "Low", isDefault: true },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+  {
+    slug: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    isCustom: false,
+    multiModal: true,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "ultra", label: "Ultra" },
+        { value: "max", label: "Maximum" },
         { value: "xhigh", label: "Extra High" },
         { value: "high", label: "High" },
         { value: "medium", label: "Medium", isDefault: true },
@@ -80,99 +106,16 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     },
   },
   {
-    slug: "gpt-5.4",
-    name: "GPT-5.4",
+    slug: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
     isCustom: false,
+    multiModal: true,
     capabilities: {
       reasoningEffortLevels: [
+        { value: "max", label: "Maximum" },
         { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.4-mini",
-    name: "GPT-5.4 Mini",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.3-codex",
-    name: "GPT-5.3 Codex",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.3-codex-spark",
-    name: "GPT-5.3 Codex Spark",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.2-codex",
-    name: "GPT-5.2 Codex",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
-        { value: "low", label: "Low" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-  {
-    slug: "gpt-5.2",
-    name: "GPT-5.2",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "xhigh", label: "Extra High" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "medium", label: "Medium", isDefault: true },
         { value: "low", label: "Low" },
       ],
       supportsFastMode: true,
@@ -259,7 +202,7 @@ function codexModelsFromAppServerModelList(
   const seen = new Set<string>();
   const visibleModels = models.flatMap((model) => {
     const slug = normalizeModelSlug(model.model ?? model.id, PROVIDER);
-    if (!slug || model.hidden || seen.has(slug)) {
+    if (!slug || model.hidden || RETIRED_CODEX_MODEL_SLUGS.has(slug) || seen.has(slug)) {
       return [];
     }
     seen.add(slug);
@@ -298,11 +241,10 @@ function resolveCodexProviderModels(input: {
   readonly account?: CodexAccountSnapshot;
 }): ReadonlyArray<ServerProviderModel> {
   const appServerModels = codexModelsFromAppServerModelList(input.metadata?.models);
-  const baseModels = appServerModels ?? BUILT_IN_MODELS;
-  return adjustCodexModelsForAccount(
-    providerModelsFromSettings(baseModels, PROVIDER, input.customModels),
-    input.metadata?.account ?? input.account,
-  );
+  const builtInSlugs = new Set(BUILT_IN_MODELS.map((model) => model.slug));
+  const runtimeModels = appServerModels?.filter((model) => !builtInSlugs.has(model.slug)) ?? [];
+  const baseModels = [...BUILT_IN_MODELS, ...runtimeModels];
+  return providerModelsFromSettings(baseModels, PROVIDER, input.customModels);
 }
 
 export function getCodexModelCapabilities(model: string | null | undefined): ModelCapabilities {
