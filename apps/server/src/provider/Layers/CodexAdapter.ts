@@ -885,10 +885,6 @@ function asRuntimeRequestId(requestId: string): RuntimeRequestId {
   return RuntimeRequestId.makeUnsafe(requestId);
 }
 
-function asRuntimeTaskId(taskId: string): RuntimeTaskId {
-  return RuntimeTaskId.makeUnsafe(taskId);
-}
-
 function normalizeCodexPlanStepStatus(value: unknown): "pending" | "inProgress" | "completed" {
   switch (value) {
     case "completed":
@@ -948,32 +944,53 @@ function codexEventMessage(
   return asObject(payload?.msg);
 }
 
+function codexTaskId(
+  payload: Record<string, unknown> | undefined,
+  message: Record<string, unknown> | undefined,
+): RuntimeTaskId | undefined {
+  const taskId =
+    asString(message?.turn_id) ??
+    asString(message?.turnId) ??
+    asString(payload?.taskId) ??
+    asString(payload?.task_id) ??
+    asString(payload?.id);
+  return taskId ? RuntimeTaskId.makeUnsafe(taskId) : undefined;
+}
+
+function codexTaskErrorSummary(value: unknown): string | undefined {
+  const error = asObject(value);
+  return (
+    asString(error?.message) ?? asString(error?.detail) ?? asString(asObject(error?.error)?.message)
+  );
+}
+
 function codexEventBase(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): Omit<ProviderRuntimeEvent, "type" | "payload"> {
   const payload = asObject(event.payload);
   const msg = codexEventMessage(payload);
-  const turnId = event.turnId ?? toTurnId(asString(msg?.turn_id) ?? asString(msg?.turnId));
+  const nativeTurnId = toTurnId(asString(msg?.turn_id) ?? asString(msg?.turnId));
+  const routedTurnId = event.turnId ?? nativeTurnId;
   const itemId = event.itemId ?? toProviderItemId(asString(msg?.item_id) ?? asString(msg?.itemId));
   const requestId = asString(msg?.request_id) ?? asString(msg?.requestId);
   const base = runtimeEventBase(event, canonicalThreadId);
   const providerRefs = base.providerRefs
     ? {
         ...base.providerRefs,
-        ...(turnId ? { providerTurnId: turnId } : {}),
+        ...((nativeTurnId ?? routedTurnId) ? { providerTurnId: nativeTurnId ?? routedTurnId } : {}),
         ...(itemId ? { providerItemId: itemId } : {}),
         ...(requestId ? { providerRequestId: requestId } : {}),
       }
     : {
-        ...(turnId ? { providerTurnId: turnId } : {}),
+        ...((nativeTurnId ?? routedTurnId) ? { providerTurnId: nativeTurnId ?? routedTurnId } : {}),
         ...(itemId ? { providerItemId: itemId } : {}),
         ...(requestId ? { providerRequestId: requestId } : {}),
       };
 
   return {
     ...base,
-    ...(turnId ? { turnId } : {}),
+    ...(routedTurnId ? { turnId: routedTurnId } : {}),
     ...(itemId ? { itemId: asRuntimeItemId(itemId) } : {}),
     ...(requestId ? { requestId: asRuntimeRequestId(requestId) } : {}),
     ...(Object.keys(providerRefs).length > 0 ? { providerRefs } : {}),
@@ -1897,7 +1914,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "codex/event/task_started") {
     const msg = codexEventMessage(payload);
-    const taskId = asString(payload?.id) ?? asString(msg?.turn_id);
+    const taskId = codexTaskId(payload, msg);
     if (!taskId) {
       return [];
     }
@@ -1906,7 +1923,7 @@ function mapToRuntimeEvents(
         ...codexEventBase(event, canonicalThreadId),
         type: "task.started",
         payload: {
-          taskId: asRuntimeTaskId(taskId),
+          taskId,
           ...(asString(msg?.collaboration_mode_kind)
             ? { taskType: asString(msg?.collaboration_mode_kind) }
             : {}),
@@ -1917,7 +1934,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "codex/event/task_complete") {
     const msg = codexEventMessage(payload);
-    const taskId = asString(payload?.id) ?? asString(msg?.turn_id);
+    const taskId = codexTaskId(payload, msg);
     const proposedPlanMarkdown = extractProposedPlanMarkdown(asString(msg?.last_agent_message));
     if (!taskId) {
       if (!proposedPlanMarkdown) {
@@ -1933,20 +1950,24 @@ function mapToRuntimeEvents(
         },
       ];
     }
+    const errorSummary = codexTaskErrorSummary(msg?.error);
+    const failed = msg?.error != null;
     const events: ProviderRuntimeEvent[] = [
       {
         ...codexEventBase(event, canonicalThreadId),
         type: "task.completed",
         payload: {
-          taskId: asRuntimeTaskId(taskId),
-          status: "completed",
-          ...(asString(msg?.last_agent_message)
-            ? { summary: asString(msg?.last_agent_message) }
-            : {}),
+          taskId,
+          status: failed ? "failed" : "completed",
+          ...(failed && errorSummary
+            ? { summary: errorSummary }
+            : asString(msg?.last_agent_message)
+              ? { summary: asString(msg?.last_agent_message) }
+              : {}),
         },
       },
     ];
-    if (proposedPlanMarkdown) {
+    if (proposedPlanMarkdown && !failed) {
       events.push({
         ...codexEventBase(event, canonicalThreadId),
         type: "turn.proposed.completed",
@@ -1960,7 +1981,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "codex/event/agent_reasoning") {
     const msg = codexEventMessage(payload);
-    const taskId = asString(payload?.id);
+    const taskId = codexTaskId(payload, msg);
     const description = asString(msg?.text);
     if (!taskId || !description) {
       return [];
@@ -1970,7 +1991,7 @@ function mapToRuntimeEvents(
         ...codexEventBase(event, canonicalThreadId),
         type: "task.progress",
         payload: {
-          taskId: asRuntimeTaskId(taskId),
+          taskId,
           description,
         },
       },

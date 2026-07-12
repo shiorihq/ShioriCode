@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multi-Agent Runtime Ownership</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        --bg: #0b1020;
+        --card: #151d33;
+        --line: #5873a8;
+        --text: #edf3ff;
+        --muted: #a8b7d6;
+        --accent: #79d8c4;
+        --warn: #f1bd68;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+      }
+      main {
+        max-width: 1100px;
+        margin: auto;
+        padding: 48px 24px 64px;
+      }
+      h1 {
+        font-size: clamp(28px, 5vw, 48px);
+        margin: 0 0 8px;
+        letter-spacing: -0.03em;
+      }
+      p {
+        color: var(--muted);
+        max-width: 760px;
+        line-height: 1.6;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(150px, 1fr));
+        gap: 28px;
+        align-items: stretch;
+        margin-top: 44px;
+      }
+      .card {
+        position: relative;
+        border: 1px solid #2b3b62;
+        background: var(--card);
+        border-radius: 16px;
+        padding: 18px;
+        min-height: 170px;
+        box-shadow: 0 14px 38px #0005;
+      }
+      .card:not(:last-child)::after {
+        content: "→";
+        position: absolute;
+        right: -23px;
+        top: 68px;
+        color: var(--accent);
+        font-size: 26px;
+      }
+      .card h2 {
+        font-size: 15px;
+        margin: 0 0 12px;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .card strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+      .card ul {
+        padding-left: 18px;
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+        font-size: 14px;
+      }
+      .rule {
+        margin-top: 36px;
+        padding: 18px 20px;
+        border-left: 4px solid var(--warn);
+        background: #191c2c;
+        border-radius: 6px 12px 12px 6px;
+      }
+      .rule b {
+        color: var(--warn);
+      }
+      @media (max-width: 900px) {
+        .flow {
+          grid-template-columns: 1fr;
+        }
+        .card:not(:last-child)::after {
+          content: "↓";
+          right: auto;
+          left: 50%;
+          top: auto;
+          bottom: -30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>One execution graph, many provider dialects</h1>
+      <p>
+        Identity and lifecycle cross a narrow evidence-driven boundary. Native detail stays cold;
+        compact graph state stays replayable; presentation never becomes a second orchestration
+        database.
+      </p>
+      <section class="flow">
+        <article class="card">
+          <h2>Provider evidence</h2>
+          <strong>Claude SDK · Codex app-server</strong>
+          <ul>
+            <li>Versioned native envelopes</li>
+            <li>Exact provider identifiers</li>
+            <li>Observed capabilities</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h2>Adapters</h2>
+          <strong>Translate facts, not brands</strong>
+          <ul>
+            <li>Known typed events</li>
+            <li>Unknown dispositions</li>
+            <li>Bounded legacy fallback</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h2>Execution graph</h2>
+          <strong>Single identity owner</strong>
+          <ul>
+            <li>Runs and nodes</li>
+            <li>Aliases and edges</li>
+            <li>Lifecycle and progress</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h2>Journal + projections</h2>
+          <strong>Restart-safe truth</strong>
+          <ul>
+            <li>Append-only graph deltas</li>
+            <li>SQLite read models</li>
+            <li>Paged lazy details</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h2>Shared presentation</h2>
+          <strong>Compact live hierarchy</strong>
+          <ul>
+            <li>Recursive timeline</li>
+            <li>Composer and sidebar</li>
+            <li>Detail on demand</li>
+          </ul>
+        </article>
+      </section>
+      <div class="rule">
+        <b>Scope firewall:</b> “Ultra,” model names, and terminal UI controls are labels—not
+        protocol. ShioriCode exposes only behavior supported by machine-readable evidence.
+      </div>
+    </main>
+  </body>
+</html>

@@ -3078,6 +3078,103 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps failed Codex task completion without coercing it to success", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-failed"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("parent-turn"),
+        createdAt: new Date().toISOString(),
+        method: "codex/event/task_complete",
+        payload: {
+          id: "envelope-id",
+          msg: {
+            type: "task_complete",
+            turn_id: "child-turn",
+            last_agent_message: "<proposed_plan>\n# Unsafe partial plan\n</proposed_plan>",
+            error: { message: "Subagent exceeded its retry budget" },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "task.completed") {
+        return;
+      }
+      assert.equal(firstEvent.value.turnId, "parent-turn");
+      assert.equal(firstEvent.value.providerRefs?.providerTurnId, "child-turn");
+      assert.equal(firstEvent.value.payload.taskId, "child-turn");
+      assert.equal(firstEvent.value.payload.status, "failed");
+      assert.equal(firstEvent.value.payload.summary, "Subagent exceeded its retry budget");
+    }),
+  );
+
+  it.effect("correlates Codex task chunks by nested turn id when envelope ids differ", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      const createdAt = new Date().toISOString();
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-id-start"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("parent-turn"),
+        createdAt,
+        method: "codex/event/task_started",
+        payload: { id: "start-envelope", msg: { turn_id: "child-turn" } },
+      } satisfies ProviderEvent);
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-id-progress"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("parent-turn"),
+        createdAt,
+        method: "codex/event/agent_reasoning",
+        payload: {
+          id: "progress-envelope",
+          msg: { turn_id: "child-turn", text: "Inspecting protocol events" },
+        },
+      } satisfies ProviderEvent);
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-id-complete"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("parent-turn"),
+        createdAt,
+        method: "codex/event/task_complete",
+        payload: { id: "complete-envelope", msg: { turn_id: "child-turn" } },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.deepEqual(
+        events.map((event) =>
+          event.type === "task.started" ||
+          event.type === "task.progress" ||
+          event.type === "task.completed"
+            ? event.payload.taskId
+            : null,
+        ),
+        ["child-turn", "child-turn", "child-turn"],
+      );
+      assert.deepEqual(
+        events.map((event) => event.turnId),
+        ["parent-turn", "parent-turn", "parent-turn"],
+      );
+    }),
+  );
+
   it.effect("maps reasoning summary-part notifications with inline text into deltas", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -3664,7 +3761,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
       assert.equal(firstEvent.value.turnId, "turn-parent");
-      assert.equal(firstEvent.value.providerRefs?.providerTurnId, "turn-parent");
+      assert.equal(firstEvent.value.providerRefs?.providerTurnId, "turn-child");
       assert.equal(firstEvent.value.payload.taskId, "turn-child");
     }),
   );
