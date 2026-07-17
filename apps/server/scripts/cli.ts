@@ -214,6 +214,7 @@ const publishCmd = Command.make(
       yield* runCommand(
         ChildProcess.make("npm", [...args], {
           cwd: packageDir,
+          stdin: "inherit",
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
           // Windows needs shell mode to resolve .cmd shims.
