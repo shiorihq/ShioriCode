@@ -47,6 +47,53 @@ export function normalizeDesktopDeepLink(rawUrl: string, scheme: string): string
   return normalized.toString();
 }
 
+export interface DesktopLinkAuthCallback {
+  readonly state: string;
+  readonly token?: string;
+  readonly refreshToken?: string;
+  readonly error?: string;
+}
+
+/** Extracts the project requested by `shioricode open` from the hash route. */
+export function parseDesktopProjectDeepLink(rawUrl: string, scheme: string): string | null {
+  const normalized = normalizeDesktopDeepLink(rawUrl, scheme);
+  if (!normalized) return null;
+  const hash = new URL(normalized).hash;
+  if (!hash.startsWith("#/")) return null;
+
+  const route = new URL(hash.slice(1), "https://shioricode.local");
+  if (route.pathname !== "/" || route.searchParams.getAll("project").length !== 1) {
+    return null;
+  }
+  return route.searchParams.get("project")?.trim() || null;
+}
+
+/** Extracts a one-time Link auth callback without exposing it to the renderer. */
+export function parseDesktopLinkAuthCallback(
+  rawUrl: string,
+  scheme: string,
+): DesktopLinkAuthCallback | null {
+  const normalized = normalizeDesktopDeepLink(rawUrl, scheme);
+  if (!normalized) return null;
+  const url = new URL(normalized);
+  if (url.searchParams.get("link-auth") !== "callback") return null;
+
+  for (const key of ["link-auth", "state", "token", "refreshToken", "error"]) {
+    if (url.searchParams.getAll(key).length > 1) return null;
+  }
+  const state = url.searchParams.get("state")?.trim();
+  const token = url.searchParams.get("token")?.trim();
+  const refreshToken = url.searchParams.get("refreshToken")?.trim();
+  const error = url.searchParams.get("error")?.trim();
+  if (!state || (!error && (!token || !refreshToken))) return null;
+  return {
+    state,
+    ...(token ? { token } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
 /**
  * Resolves the URL that the Electron window should load for a desktop deep link.
  */

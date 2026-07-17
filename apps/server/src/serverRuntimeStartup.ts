@@ -50,7 +50,7 @@ export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeSt
 
 export interface ServerRuntimeStartupShape {
   readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
-  readonly markHttpListening: Effect.Effect<void>;
+  readonly markHttpRoutesReady: Effect.Effect<void>;
   readonly enqueueCommand: <A, E>(
     effect: Effect.Effect<A, E>,
   ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
@@ -274,7 +274,7 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
   const automations = yield* AutomationService;
 
   const commandGate = yield* makeCommandGate;
-  const httpListening = yield* Deferred.make<void>();
+  const httpRoutesReady = yield* Deferred.make<void>();
   const reactorScope = yield* Scope.make("sequential");
 
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
@@ -340,8 +340,10 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;
-      yield* Effect.logDebug("startup phase: waiting for http listener");
-      yield* Deferred.await(httpListening);
+      yield* Effect.logDebug("startup phase: waiting for routed HTTP application");
+      yield* Deferred.await(httpRoutesReady);
+      yield* Effect.logDebug("startup phase: reconciling HTTP-dependent orchestration work");
+      yield* orchestrationReactor.reconcileAfterHttpListening.pipe(Scope.provide(reactorScope));
       yield* Effect.logDebug("startup phase: publishing ready event");
       yield* lifecycleEvents.publish({
         version: 1,
@@ -361,7 +363,7 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
 
   return {
     awaitCommandReady: commandGate.awaitCommandReady,
-    markHttpListening: Deferred.succeed(httpListening, undefined),
+    markHttpRoutesReady: Deferred.succeed(httpRoutesReady, undefined),
     enqueueCommand: commandGate.enqueueCommand,
   } satisfies ServerRuntimeStartupShape;
 });

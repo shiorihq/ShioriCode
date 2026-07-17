@@ -54,10 +54,10 @@ export const CODEX_APP_SERVER_INITIALIZE_TIMEOUT_MS = 60_000;
 const CODEX_PROBE_STDERR_DETAIL_LIMIT = 4_000;
 
 export function buildCodexAppServerArgs(): string[] {
-  // Current Codex CLI releases expose app-server over stdio without any
-  // transport flag. Keep the argv minimal so probes and session startup
-  // stay compatible with the installed binary.
-  return ["app-server"];
+  // ShioriCode owns the goal lifecycle for every provider. Disable Codex's
+  // native goal engine so a goal persisted in CODEX_HOME cannot start hidden
+  // continuations alongside the harness-owned lifecycle.
+  return ["-c", "features.goals=false", "app-server"];
 }
 
 function readErrorMessage(response: JsonRpcProbeResponse): string | undefined {

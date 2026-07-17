@@ -16,6 +16,7 @@ describe("ComposerContextPanel", () => {
       modelSelection: { provider: "codex", model: "gpt-5.1" },
       runtimeMode: "full-access",
       interactionMode: "default",
+      goalIntent: null,
       titleSeed: "Follow up on the queue rendering",
       createdAt: "2026-04-23T12:01:00.000Z",
       composerSnapshot: {

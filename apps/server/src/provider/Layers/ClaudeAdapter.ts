@@ -91,10 +91,16 @@ import { ServerConfig } from "../../config.ts";
 import { fetchClaudeUsageSnapshot } from "../claudeUsage.ts";
 import { isSimpleApprovalDecision } from "../providerApprovalDecision.ts";
 import { isClaudeMissingConversationErrorMessage } from "../claudeConversationErrors.ts";
+import { commitPreparedSessionReplacement } from "../sessionReplacement.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import { getGlmModelCapabilities } from "./GlmProvider.ts";
-import { builtInShioriMcpServers, materializeMcpServersForRuntime } from "../mcpServers.ts";
+import {
+  builtInShioriMcpServers,
+  materializeMcpServersForRuntime,
+  mergeMcpServers,
+  THREAD_GOAL_MCP_SERVER_NAME,
+} from "../mcpServers.ts";
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 import {
   ProviderAdapterProcessError,
@@ -270,6 +276,10 @@ export interface ClaudeAdapterLiveOptions {
   // Max time to wait for `context.query.close()` to resolve before we log a
   // warning and move on. Prevents a hung SDK child from stalling session stop.
   readonly queryCloseTimeout?: Duration.Input;
+  // The built-in thread-goal MCP is part of the ShioriCode harness contract.
+  // Do not publish a provider session until the SDK reports it connected.
+  readonly mcpServerReadyTimeout?: Duration.Input;
+  readonly mcpServerStatusPollInterval?: Duration.Input;
   // Opt-in: enable SDK file checkpointing so rollbackThread can call
   // rewindFiles and keep on-disk state in sync with the in-memory turn trim.
   // Off by default to avoid surprising users who don't expect their files to
@@ -400,7 +410,16 @@ function isClaudeMcpServerReservedName(name: string): boolean {
     normalized.length === 0 ||
     normalized.startsWith("mcp__") ||
     normalized === "shioricode-browser" ||
-    normalized === "shiori-computer-use"
+    normalized === "shiori-computer-use" ||
+    normalized === THREAD_GOAL_MCP_SERVER_NAME
+  );
+}
+
+function isTrustedThreadGoalMcpTool(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+  return (
+    normalized === `mcp__${THREAD_GOAL_MCP_SERVER_NAME}__get_goal` ||
+    normalized === `mcp__${THREAD_GOAL_MCP_SERVER_NAME}__update_goal`
   );
 }
 
@@ -1477,6 +1496,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const approvalWaitTimeout: Duration.Input = options?.approvalWaitTimeout ?? "10 minutes";
   // 5 seconds default for SDK query.close() before we log and move on.
   const queryCloseTimeout: Duration.Input = options?.queryCloseTimeout ?? "5 seconds";
+  const mcpServerReadyTimeout: Duration.Input = options?.mcpServerReadyTimeout ?? "30 seconds";
+  const mcpServerStatusPollInterval: Duration.Input =
+    options?.mcpServerStatusPollInterval ?? "100 millis";
   const fileCheckpointingEnabled = options?.enableFileCheckpointing === true;
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
@@ -1849,39 +1871,94 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
-  const emitMcpServerStatusWarnings = Effect.fn("emitMcpServerStatusWarnings")(function* (
-    context: ClaudeSessionContext,
-  ) {
-    const readStatus = context.query.mcpServerStatus;
-    if (!readStatus) {
-      return;
-    }
-
-    const statuses = yield* Effect.tryPromise({
-      try: () => readStatus(),
-      catch: (cause) => toRequestError(PROVIDER, context.session.threadId, "mcp/status", cause),
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logDebug("claude mcp server status probe failed", {
-            threadId: context.session.threadId,
-            detail: cause,
-          });
-          return [] as ReadonlyArray<McpServerStatus>;
-        }),
-      ),
-    );
-
-    for (const status of statuses) {
-      if (status.status === "connected" || status.status === "pending") {
-        continue;
+  const emitOptionalMcpServerStatusWarnings = Effect.fn("emitOptionalMcpServerStatusWarnings")(
+    function* (context: ClaudeSessionContext, statuses: ReadonlyArray<McpServerStatus>) {
+      for (const status of statuses) {
+        if (
+          status.name.trim().toLowerCase() === THREAD_GOAL_MCP_SERVER_NAME ||
+          status.status === "connected"
+        ) {
+          continue;
+        }
+        yield* emitRuntimeWarning(
+          context,
+          `${providerLabel} MCP server '${status.name}' is ${status.status}.`,
+          status.error ?? status,
+        );
       }
-      yield* emitRuntimeWarning(
-        context,
-        `Claude MCP server '${status.name}' is ${status.status}.`,
-        status.error ?? status,
-      );
+    },
+  );
+
+  const awaitThreadGoalMcpConnected = Effect.fn("awaitThreadGoalMcpConnected")(function* (
+    queryRuntime: ClaudeQueryRuntime,
+  ) {
+    const readStatus = queryRuntime.mcpServerStatus;
+    if (!readStatus) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "mcp/status",
+        detail: `Cannot verify the required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server because this provider runtime does not expose MCP status.`,
+      });
     }
+
+    const pollUntilConnected = Effect.gen(function* () {
+      while (true) {
+        const statuses = yield* Effect.tryPromise({
+          try: () => readStatus(),
+          catch: (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "mcp/status",
+              detail: `Failed to verify the required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server: ${toMessage(
+                cause,
+                "MCP status probe failed.",
+              )}`,
+              cause,
+            }),
+        });
+        const threadGoalStatus = statuses.find(
+          (status) => status.name.trim().toLowerCase() === THREAD_GOAL_MCP_SERVER_NAME,
+        );
+
+        if (!threadGoalStatus) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "mcp/status",
+            detail: `The required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server is missing from the provider status response.`,
+          });
+        }
+        if (threadGoalStatus.status === "connected") {
+          return statuses;
+        }
+        if (threadGoalStatus.status !== "pending") {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "mcp/status",
+            detail: `The required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server is ${threadGoalStatus.status}.${
+              threadGoalStatus.error ? ` ${threadGoalStatus.error}` : ""
+            }`,
+          });
+        }
+
+        yield* Effect.sleep(mcpServerStatusPollInterval);
+      }
+    });
+
+    return yield* pollUntilConnected.pipe(
+      Effect.timeoutOrElse({
+        duration: mcpServerReadyTimeout,
+        orElse: () =>
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "mcp/status",
+              detail: `Timed out after ${Duration.format(
+                Duration.fromInputUnsafe(mcpServerReadyTimeout),
+              )} waiting for the required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server to connect.`,
+            }),
+          ),
+      }),
+    );
   });
 
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
@@ -1953,6 +2030,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resultUsage,
       resultContextWindow ?? context.lastKnownContextWindow,
     );
+    // Claude's terminal result usage is the authoritative total across every
+    // model request made for this turn. Intermediate task usage remains a
+    // context snapshot and intentionally carries no processed-token delta.
+    const processedTokensDelta = accumulatedSnapshot?.usedTokens;
     const lastGoodUsage = context.lastKnownTokenUsage;
     const maxTokens = resultContextWindow ?? context.lastKnownContextWindow;
     const usageSnapshot: ThreadTokenUsageSnapshot | undefined = lastGoodUsage
@@ -1964,8 +2045,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(accumulatedSnapshot && accumulatedSnapshot.usedTokens > lastGoodUsage.usedTokens
             ? { totalProcessedTokens: accumulatedSnapshot.usedTokens }
             : {}),
+          ...(processedTokensDelta !== undefined ? { processedTokensDelta } : {}),
         }
-      : accumulatedSnapshot;
+      : accumulatedSnapshot && processedTokensDelta !== undefined
+        ? { ...accumulatedSnapshot, processedTokensDelta }
+        : accumulatedSnapshot;
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -3404,6 +3488,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        if (isTrustedThreadGoalMcpTool(String(toolName))) {
+          return {
+            behavior: "allow",
+            updatedInput: toolInput,
+          } satisfies PermissionResult;
+        }
+
         const runtimeMode = input.runtimeMode ?? "full-access";
         if (runtimeMode === "full-access") {
           return {
@@ -3583,13 +3674,16 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         label: providerLabel,
       });
       mcpWarnings.push(...postvalidatedMcpServers.warnings);
-      const claudeMcpServers = buildClaudeMcpServers([
-        ...postvalidatedMcpServers.servers,
-        ...builtInShioriMcpServers({
-          provider: PROVIDER,
-          settings: serverSettings,
-        }),
-      ]);
+      const claudeMcpServers = buildClaudeMcpServers(
+        mergeMcpServers([
+          ...postvalidatedMcpServers.servers,
+          ...builtInShioriMcpServers({
+            provider: PROVIDER,
+            settings: serverSettings,
+            threadGoal: { config: serverConfig, threadId: input.threadId },
+          }),
+        ]),
+      );
       const assistantSettingsAppendix = buildAssistantSettingsAppendix({
         personality: serverSettings.assistantPersonality,
         generateMemories: serverSettings.generateMemories,
@@ -3609,6 +3703,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         input.runtimeMode === "full-access" ? "bypassPermissions" : "default";
 
       const queryOptions: ClaudeQueryOptions = {
+        // The thread-goal MCP is a harness safety boundary: without its
+        // structured stop signal an active goal could continue indefinitely.
+        strictMcpConfig: true,
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: providerBinaryPath,
@@ -3670,6 +3767,24 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
       });
 
+      const mcpServerStatuses = yield* awaitThreadGoalMcpConnected(queryRuntime).pipe(
+        Effect.onError(() =>
+          Queue.shutdown(promptQueue).pipe(
+            Effect.andThen(
+              Effect.sync(() => queryRuntime.close()).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logDebug("failed to close provider query after MCP readiness failure", {
+                    provider: PROVIDER,
+                    threadId,
+                    detail: cause,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
       const session: ProviderSession = {
         threadId,
         provider: PROVIDER,
@@ -3715,7 +3830,19 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         interrupting: false,
       };
       yield* Ref.set(contextRef, context);
-      sessions.set(threadId, context);
+      yield* commitPreparedSessionReplacement({
+        replacement: context,
+        readCurrent: Effect.sync(() => sessions.get(threadId)),
+        retire: (previous) =>
+          stopSessionInternal(previous, {
+            emitExitEvent: false,
+            reason: "Session replaced after the new runtime became ready.",
+          }),
+        publish: (replacement) =>
+          Effect.sync(() => {
+            sessions.set(threadId, replacement);
+          }),
+      });
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3761,7 +3888,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       yield* emitRuntimeWarnings(context, mcpWarnings);
-      yield* emitMcpServerStatusWarnings(context);
+      yield* emitOptionalMcpServerStatusWarnings(context, mcpServerStatuses);
 
       let streamFiber: Fiber.Fiber<void, never>;
       streamFiber = runFork(

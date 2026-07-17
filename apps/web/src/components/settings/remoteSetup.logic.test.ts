@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { RemoteTailscaleStatus } from "contracts";
+import type { RemoteLinkStatus, RemoteTailscaleStatus } from "contracts";
 
 import { credentialsIssue, prerequisiteChecks, prerequisitesSatisfied } from "./remoteSetup.logic";
 
 function tailscale(overrides: Partial<RemoteTailscaleStatus> = {}): {
   tailscale: RemoteTailscaleStatus;
+  link: RemoteLinkStatus;
 } {
   return {
+    link: {
+      accountLinked: false,
+      connectorInstalled: false,
+      connectorRunning: false,
+      endpoint: null,
+      lastError: null,
+    },
     tailscale: {
       installed: true,
       running: true,
@@ -19,6 +27,16 @@ function tailscale(overrides: Partial<RemoteTailscaleStatus> = {}): {
 }
 
 describe("prerequisiteChecks", () => {
+  it("requires a linked Shiori account for Link", () => {
+    const status = tailscale();
+    expect(prerequisitesSatisfied("shiori-link", status)).toBe(false);
+    expect(
+      prerequisitesSatisfied("shiori-link", {
+        ...status,
+        link: { ...status.link, accountLinked: true },
+      }),
+    ).toBe(true);
+  });
   it("passes serve when Tailscale is installed and running", () => {
     expect(prerequisitesSatisfied("tailscale-serve", tailscale())).toBe(true);
     expect(prerequisitesSatisfied("tailscale-serve", tailscale({ httpsEnabled: false }))).toBe(

@@ -20,6 +20,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  ThreadGoal,
   ProjectId,
   ThreadId,
 } from "contracts";
@@ -78,6 +79,7 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.NullOr(Schema.String),
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -254,6 +256,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tag,
           resume_state AS "resumeState",
           latest_turn_id AS "latestTurnId",
+          goal_json AS "goal",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           pinned_at AS "pinnedAt",
@@ -372,6 +375,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
+          goal_lifecycle_key AS "goalLifecycleKey",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
@@ -767,6 +771,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               providerName: row.providerName,
               runtimeMode: row.runtimeMode,
               activeTurnId: row.activeTurnId,
+              goalLifecycleKey: row.goalLifecycleKey ?? null,
               lastError: row.lastError,
               updatedAt: row.updatedAt,
             });
@@ -799,6 +804,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             worktreePath: row.worktreePath,
             resumeState: row.resumeState,
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+            goal: row.goal,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             pinnedAt: row.pinnedAt,

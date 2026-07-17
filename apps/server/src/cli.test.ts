@@ -59,3 +59,16 @@ describe("cli log-level parsing", () => {
     assert.equal(error.value, "Debug");
   });
 });
+
+describe("remote command parsing", () => {
+  it("exposes the Tailscale Serve and Funnel subcommands", async () => {
+    await Effect.runPromise(runCliForParserOnly(["remote", "tailscale", "serve", "--help"]));
+    await Effect.runPromise(runCliForParserOnly(["remote", "tailscale", "funnel", "--help"]));
+  });
+
+  it("accepts a base directory for local backends", async () => {
+    await Effect.runPromise(
+      runCliForParserOnly(["remote", "status", "--base-dir", "/tmp/shioricode", "--help"]),
+    );
+  });
+});

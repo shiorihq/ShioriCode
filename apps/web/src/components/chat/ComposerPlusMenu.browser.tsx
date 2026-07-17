@@ -1,6 +1,11 @@
 import "../../index.css";
 
-import { ThreadId, type ProviderKind } from "contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  type ProviderKind,
+  type ServerProviderModel,
+  ThreadId,
+} from "contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -79,11 +84,16 @@ const GEMINI_MODELS = [
   },
 ] as const;
 
-async function mountMenu(props?: {
-  provider?: ProviderKind;
-  model?: "claude-opus-4-6" | "claude-opus-4-7" | "gpt-5.4" | "gemini-3-pro";
-  fastMode?: boolean;
-}) {
+const PROVIDER_KINDS = [
+  "kimiCode",
+  "gemini",
+  "glm",
+  "cursor",
+  "codex",
+  "claudeAgent",
+] as const satisfies ReadonlyArray<ProviderKind>;
+
+async function mountMenu(props?: { provider?: ProviderKind; model?: string; fastMode?: boolean }) {
   const threadId = ThreadId.makeUnsafe("thread-composer-plus-menu");
   const provider = props?.provider ?? "claudeAgent";
   const model =
@@ -92,14 +102,32 @@ async function mountMenu(props?: {
       ? "claude-opus-4-6"
       : provider === "gemini"
         ? "gemini-3-pro"
-        : "gpt-5.4");
-  const models =
+        : provider === "codex"
+          ? "gpt-5.4"
+          : DEFAULT_MODEL_BY_PROVIDER[provider]);
+  const models: ReadonlyArray<ServerProviderModel> =
     provider === "claudeAgent"
       ? CLAUDE_MODELS
       : provider === "gemini"
         ? GEMINI_MODELS
-        : CODEX_MODELS;
+        : provider === "codex"
+          ? CODEX_MODELS
+          : [
+              {
+                slug: model,
+                name: model,
+                isCustom: false,
+                capabilities: {
+                  reasoningEffortLevels: [],
+                  supportsFastMode: false,
+                  supportsThinkingToggle: false,
+                  contextWindowOptions: [],
+                  promptInjectedEffortLevels: [],
+                },
+              },
+            ];
   const modelOptions = props?.fastMode !== undefined ? { fastMode: props.fastMode } : undefined;
+  const onToggleGoalMode = vi.fn();
 
   useComposerDraftStore.setState({
     draftsByThreadId: {
@@ -137,13 +165,14 @@ async function mountMenu(props?: {
       planModeActive={false}
       onTogglePlanMode={vi.fn()}
       goalModeActive={false}
-      onToggleGoalMode={vi.fn()}
+      onToggleGoalMode={onToggleGoalMode}
       onAddFiles={vi.fn()}
     />,
     { container: host },
   );
 
   return {
+    onToggleGoalMode,
     cleanup: async () => {
       await screen.unmount();
       host.remove();
@@ -160,6 +189,21 @@ describe("ComposerPlusMenu", () => {
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
     });
+  });
+
+  it.each(PROVIDER_KINDS)("keeps Shiori goal mode available for %s", async (provider) => {
+    const mounted = await mountMenu({ provider });
+
+    try {
+      await page.getByRole("button", { name: "More options" }).click();
+      const goalItem = page.getByRole("menuitemcheckbox", { name: "Goal" });
+
+      await expect.element(goalItem).toBeEnabled();
+      await goalItem.click();
+      expect(mounted.onToggleGoalMode).toHaveBeenCalledOnce();
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("shows the updated Claude fast mode tradeoff copy", async () => {

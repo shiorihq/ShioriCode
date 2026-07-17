@@ -145,6 +145,7 @@ describe("normalizeAcpPromptUsage", () => {
     ).toEqual({
       usedTokens: 162,
       totalProcessedTokens: 162,
+      processedTokensDelta: 162,
       inputTokens: 100,
       cachedInputTokens: 25,
       outputTokens: 30,

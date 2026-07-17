@@ -6,6 +6,7 @@ import {
   ProviderItemId,
   type ProviderApprovalDecision,
   type ProviderEvent,
+  type McpServerEntry,
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
@@ -29,12 +30,39 @@ import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { CodexUsageSnapshot } from "../Services/ProviderUsage.ts";
 import { resolvePreferredCodexBinaryPath, supportsCodexReasoningSummary } from "../codexBinaryPath";
-import { makeCodexAdapterLive } from "./CodexAdapter.ts";
+import { type CodexAdapterLiveOptions, makeCodexAdapterLive } from "./CodexAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+
+function emitCodexTokenUsage(input: {
+  readonly manager: FakeCodexManager;
+  readonly eventId: string;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly totalTokens: number;
+  readonly lastTokens: number;
+}): void {
+  input.manager.emit("event", {
+    id: asEventId(input.eventId),
+    kind: "notification",
+    provider: "codex",
+    threadId: input.threadId,
+    turnId: input.turnId,
+    createdAt: new Date().toISOString(),
+    method: "thread/tokenUsage/updated",
+    payload: {
+      threadId: input.threadId,
+      turnId: input.turnId,
+      tokenUsage: {
+        total: { totalTokens: input.totalTokens },
+        last: { totalTokens: input.lastTokens },
+      },
+    },
+  } satisfies ProviderEvent);
+}
 
 class FakeCodexManager extends CodexAppServerManager {
   public startSessionImpl = vi.fn(
@@ -168,14 +196,44 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
 });
 
 const validationManager = new FakeCodexManager();
-const emptyManagedMcpServers = async () => ({
-  servers: [],
-  warnings: [],
-});
+const validationManagedMcpServers = vi.fn(
+  async (input: Parameters<NonNullable<CodexAdapterLiveOptions["loadManagedMcpServers"]>>[0]) => {
+    const goalServer: McpServerEntry = {
+      name: "shioricode-thread-goal",
+      transport: "stdio" as const,
+      command: process.execPath,
+      args: ["server.js", "thread-goal-mcp"],
+      env: {
+        SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
+        SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: "codex-test-capability",
+      },
+      enabled: true,
+      providers: ["codex"],
+    };
+    const { env: _goalEnv, ...goalServerWithoutEnv } = goalServer;
+    const threadId = String(input.threadGoal?.threadId ?? "");
+    return {
+      servers:
+        threadId === "thread-missing-goal-mcp"
+          ? []
+          : threadId === "thread-invalid-goal-mcp"
+            ? [goalServerWithoutEnv]
+            : threadId === "thread-duplicate-goal-mcp"
+              ? [goalServer, { ...goalServer }]
+              : [goalServer],
+      warnings: [],
+    };
+  },
+);
+const prepareValidationManagedMcpHome = vi.fn(
+  async (_input: Parameters<NonNullable<CodexAdapterLiveOptions["prepareManagedMcpHome"]>>[0]) =>
+    null,
+);
 const validationLayer = it.layer(
   makeCodexAdapterLive({
     manager: validationManager,
-    loadManagedMcpServers: emptyManagedMcpServers,
+    loadManagedMcpServers: validationManagedMcpServers,
+    prepareManagedMcpHome: prepareValidationManagedMcpHome,
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -185,6 +243,61 @@ const validationLayer = it.layer(
 );
 
 validationLayer("CodexAdapterLive validation", (it) => {
+  it.effect("requires the harness-owned thread-goal MCP before manager startup", () =>
+    Effect.gen(function* () {
+      validationManager.startSessionImpl.mockClear();
+      validationManagedMcpServers.mockClear();
+      prepareValidationManagedMcpHome.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-valid-goal-mcp");
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(validationManager.startSessionImpl.mock.calls.length, 1);
+      assert.equal(validationManagedMcpServers.mock.calls.length, 1);
+      assert.equal(validationManagedMcpServers.mock.calls[0]?.[0].threadGoal?.threadId, threadId);
+      assert.equal(prepareValidationManagedMcpHome.mock.calls.length, 1);
+      assert.deepStrictEqual(
+        prepareValidationManagedMcpHome.mock.calls[0]?.[0].servers.map((server) => server.name),
+        ["shioricode-thread-goal"],
+      );
+    }),
+  );
+
+  for (const [threadId, expectedDetail] of [
+    ["thread-missing-goal-mcp", /received 0/u],
+    ["thread-invalid-goal-mcp", /missing control URL, missing capability token/u],
+    ["thread-duplicate-goal-mcp", /received 2/u],
+  ] as const) {
+    it.effect(`fails closed before manager startup for ${threadId}`, () =>
+      Effect.gen(function* () {
+        validationManager.startSessionImpl.mockClear();
+        prepareValidationManagedMcpHome.mockClear();
+        const adapter = yield* CodexAdapter;
+
+        const result = yield* adapter
+          .startSession({
+            provider: "codex",
+            threadId: asThreadId(threadId),
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result.failure._tag !== "ProviderAdapterProcessError") {
+          assert.fail(`Expected ProviderAdapterProcessError, received ${result.failure._tag}.`);
+        }
+        assert.match(result.failure.detail, expectedDetail);
+        assert.equal(prepareValidationManagedMcpHome.mock.calls.length, 0);
+        assert.equal(validationManager.startSessionImpl.mock.calls.length, 0);
+      }),
+    );
+  }
+
   it.effect("returns validation error for non-codex provider on startSession", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -236,6 +349,90 @@ validationLayer("CodexAdapterLive validation", (it) => {
         serviceTier: "fast",
         runtimeMode: "full-access",
       });
+    }),
+  );
+});
+
+const replacementHomeManager = new FakeCodexManager();
+const replacementHomeCleanups: Array<ReturnType<typeof vi.fn<() => Promise<void>>>> = [];
+const prepareReplacementManagedMcpHome = vi.fn(
+  async (_input: Parameters<NonNullable<CodexAdapterLiveOptions["prepareManagedMcpHome"]>>[0]) => {
+    const cleanup = vi.fn(async () => undefined);
+    replacementHomeCleanups.push(cleanup);
+    return {
+      homePath: `/tmp/codex-replacement-home-${replacementHomeCleanups.length}`,
+      cleanup,
+    };
+  },
+);
+const replacementHomeLayer = it.layer(
+  makeCodexAdapterLive({
+    manager: replacementHomeManager,
+    loadManagedMcpServers: validationManagedMcpServers,
+    prepareManagedMcpHome: prepareReplacementManagedMcpHome,
+  }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+replacementHomeLayer("CodexAdapterLive session replacement", (it) => {
+  it.effect("preserves the active home on failure and releases it only after replacement", () =>
+    Effect.gen(function* () {
+      replacementHomeCleanups.length = 0;
+      prepareReplacementManagedMcpHome.mockClear();
+      replacementHomeManager.startSessionImpl.mockReset();
+      const readySession = (input: CodexAppServerStartSessionInput): ProviderSession => {
+        const now = new Date().toISOString();
+        return {
+          provider: "codex",
+          status: "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          ...(input.homePath ? { cwd: input.homePath } : {}),
+          createdAt: now,
+          updatedAt: now,
+        };
+      };
+      replacementHomeManager.startSessionImpl
+        .mockImplementationOnce(async (input) => readySession(input))
+        .mockRejectedValueOnce(new Error("replacement failed"))
+        .mockImplementationOnce(async (input) => readySession(input));
+
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-codex-home-replacement");
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const failedReplacement = yield* adapter
+        .startSession({
+          provider: "codex",
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      assert.equal(failedReplacement._tag, "Failure");
+      assert.equal(replacementHomeCleanups.length, 2);
+      assert.equal(replacementHomeCleanups[0]?.mock.calls.length, 0);
+      assert.equal(replacementHomeCleanups[1]?.mock.calls.length, 1);
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        runtimeMode: "full-access",
+      });
+      assert.equal(replacementHomeCleanups.length, 3);
+      assert.equal(replacementHomeCleanups[0]?.mock.calls.length, 1);
+      assert.equal(replacementHomeCleanups[1]?.mock.calls.length, 1);
+      assert.equal(replacementHomeCleanups[2]?.mock.calls.length, 0);
+
+      yield* adapter.stopSession(threadId);
+      assert.equal(replacementHomeCleanups[2]?.mock.calls.length, 1);
     }),
   );
 });
@@ -982,78 +1179,6 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           summary: [],
         },
       });
-    }),
-  );
-
-  it.effect("maps Codex thread goal notifications to runtime goal events", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const eventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.take(2),
-        Stream.runCollect,
-        Effect.map((chunk) => Array.from(chunk)),
-        Effect.forkChild,
-      );
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-thread-goal-updated"),
-        kind: "notification",
-        provider: "codex",
-        createdAt: "2026-06-04T09:00:00.000Z",
-        method: "thread/goal/updated",
-        threadId: asThreadId("thread-1"),
-        payload: {
-          threadId: "thread-1",
-          goal: {
-            threadId: "thread-1",
-            objective: "Improve Codex compatibility",
-            status: "active",
-            tokenBudget: 200000,
-            tokensUsed: 12000,
-            timeUsedSeconds: 90,
-            createdAt: 1776272400,
-            updatedAt: 1776272460,
-          },
-        },
-      } satisfies ProviderEvent);
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-thread-goal-cleared"),
-        kind: "notification",
-        provider: "codex",
-        createdAt: "2026-06-04T09:02:00.000Z",
-        method: "thread/goal/cleared",
-        threadId: asThreadId("thread-1"),
-        payload: {
-          threadId: "thread-1",
-        },
-      } satisfies ProviderEvent);
-
-      const events = yield* Fiber.join(eventsFiber);
-
-      assert.equal(events.length, 2);
-      const [updated, cleared] = events;
-
-      assert.equal(updated?.type, "thread.goal.updated");
-      if (updated?.type === "thread.goal.updated") {
-        assert.deepEqual(updated.payload.goal, {
-          threadId: "thread-1",
-          objective: "Improve Codex compatibility",
-          status: "active",
-          tokenBudget: 200000,
-          tokensUsed: 12000,
-          timeUsedSeconds: 90,
-          createdAt: "2026-04-15T17:00:00.000Z",
-          updatedAt: "2026-04-15T17:01:00.000Z",
-        });
-      }
-
-      assert.equal(cleared?.type, "thread.goal.cleared");
-      if (cleared?.type === "thread.goal.cleared") {
-        assert.deepEqual(cleared.payload, {
-          clearedAt: "2026-06-04T09:02:00.000Z",
-        });
-      }
     }),
   );
 
@@ -3827,6 +3952,89 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+    }),
+  );
+
+  it.effect("derives sum-safe deltas from Codex cumulative processed totals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const freshThreadId = asThreadId("thread-codex-usage-fresh");
+      const freshEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: freshThreadId,
+        runtimeMode: "full-access",
+      });
+      emitCodexTokenUsage({
+        manager: lifecycleManager,
+        eventId: "evt-codex-usage-fresh-1",
+        threadId: freshThreadId,
+        turnId: asTurnId("turn-fresh-1"),
+        totalTokens: 100,
+        lastTokens: 100,
+      });
+      emitCodexTokenUsage({
+        manager: lifecycleManager,
+        eventId: "evt-codex-usage-fresh-2",
+        threadId: freshThreadId,
+        turnId: asTurnId("turn-fresh-1"),
+        totalTokens: 175,
+        lastTokens: 75,
+      });
+
+      const freshEvents = Array.from(yield* Fiber.join(freshEventsFiber));
+      assert.deepEqual(
+        freshEvents.map((event) =>
+          event.type === "thread.token-usage.updated"
+            ? event.payload.usage.processedTokensDelta
+            : undefined,
+        ),
+        [100, 75],
+      );
+
+      const resumedThreadId = asThreadId("thread-codex-usage-resumed");
+      const resumedEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: resumedThreadId,
+        runtimeMode: "full-access",
+        resumeCursor: "provider-thread-existing",
+      });
+      emitCodexTokenUsage({
+        manager: lifecycleManager,
+        eventId: "evt-codex-usage-resumed-replay",
+        threadId: resumedThreadId,
+        turnId: asTurnId("turn-resumed-old"),
+        totalTokens: 900,
+        lastTokens: 200,
+      });
+      emitCodexTokenUsage({
+        manager: lifecycleManager,
+        eventId: "evt-codex-usage-resumed-new",
+        threadId: resumedThreadId,
+        turnId: asTurnId("turn-resumed-new"),
+        totalTokens: 950,
+        lastTokens: 50,
+      });
+
+      const resumedEvents = Array.from(yield* Fiber.join(resumedEventsFiber));
+      assert.deepEqual(
+        resumedEvents.map((event) =>
+          event.type === "thread.token-usage.updated"
+            ? event.payload.usage.processedTokensDelta
+            : undefined,
+        ),
+        [undefined, 50],
+      );
     }),
   );
 });

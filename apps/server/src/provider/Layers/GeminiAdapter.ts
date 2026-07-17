@@ -35,6 +35,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   type CanonicalRequestType,
+  type McpServerEntry,
   type ProviderApprovalDecision,
   type ProviderApprovalPolicy,
   type ProviderRuntimeEvent,
@@ -73,7 +74,14 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { builtInShioriMcpServers, materializeMcpServersForRuntime } from "../mcpServers.ts";
+import {
+  THREAD_GOAL_MCP_SERVER_NAME,
+  builtInShioriMcpServers,
+  materializeMcpServersForRuntime,
+  mergeMcpServers,
+  verifyThreadGoalMcpServer,
+} from "../mcpServers.ts";
+import { commitPreparedSessionReplacement } from "../sessionReplacement.ts";
 import { GeminiAdapter, type GeminiAdapterShape } from "../Services/GeminiAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -84,6 +92,10 @@ export interface GeminiAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly startAgent?: (config: LocalAgentConfig) => Promise<Agent>;
+  readonly verifyGoalMcpServer?: (input: {
+    readonly servers: ReadonlyArray<McpServerEntry>;
+    readonly cwd: string;
+  }) => Promise<void>;
 }
 
 interface PendingApproval {
@@ -211,7 +223,7 @@ function turnStateFromStepStatus(status: StepStatus): "completed" | "failed" | "
   }
 }
 
-function normalizeUsage(step: Step): ThreadTokenUsageSnapshot | undefined {
+export function normalizeGeminiStepUsage(step: Step): ThreadTokenUsageSnapshot | undefined {
   const usage = step.usageMetadata;
   if (!usage) return undefined;
   const usedTokens = Math.max(0, usage.totalTokenCount ?? 0);
@@ -219,6 +231,9 @@ function normalizeUsage(step: Step): ThreadTokenUsageSnapshot | undefined {
   return {
     usedTokens,
     totalProcessedTokens: usedTokens,
+    // Antigravity usage metadata is attached per step, and the SDK's own
+    // Conversation implementation sums these records to form turn usage.
+    processedTokensDelta: usedTokens,
     inputTokens: Math.max(0, usage.promptTokenCount ?? 0),
     cachedInputTokens: Math.max(0, usage.cachedContentTokenCount ?? 0),
     outputTokens: Math.max(0, usage.candidatesTokenCount ?? 0),
@@ -248,18 +263,11 @@ function toMcpServerConfig(entry: {
   readonly headers?: Readonly<Record<string, string>> | undefined;
 }): McpServerConfig | undefined {
   if (entry.transport === "stdio" && entry.command?.trim()) {
-    const envArgs = Object.entries(entry.env ?? {})
-      .filter(([name, value]) => name.trim() && value !== undefined)
-      .map(([name, value]) => `${name}=${value}`);
-    const command = envArgs.length > 0 ? "/usr/bin/env" : entry.command;
-    const args =
-      envArgs.length > 0
-        ? [...envArgs, entry.command, ...(entry.args ?? [])]
-        : [...(entry.args ?? [])];
     return new McpStdioServer({
       name: entry.name,
-      command,
-      args,
+      command: entry.command,
+      args: [...(entry.args ?? [])],
+      ...(entry.env ? { env: { ...entry.env } } : {}),
     });
   }
   if (entry.transport === "sse" && entry.url?.trim()) {
@@ -279,6 +287,16 @@ function toMcpServerConfig(entry: {
   return undefined;
 }
 
+function isUsableThreadGoalMcpServer(server: McpServerConfig): server is McpStdioServer {
+  return (
+    server.name.trim().toLowerCase() === THREAD_GOAL_MCP_SERVER_NAME &&
+    server instanceof McpStdioServer &&
+    server.command.trim().length > 0 &&
+    Boolean(server.env?.SHIORICODE_THREAD_GOAL_CONTROL_URL?.trim()) &&
+    Boolean(server.env?.SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN?.trim())
+  );
+}
+
 function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -293,6 +311,10 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         : undefined);
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+    const verifyGoalMcpServer =
+      options?.verifyGoalMcpServer ??
+      ((input: { readonly servers: ReadonlyArray<McpServerEntry>; readonly cwd: string }) =>
+        verifyThreadGoalMcpServer({ provider: PROVIDER, ...input }));
 
     const sessions = new Map<ThreadId, GeminiSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -385,7 +407,10 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         ctx.pendingUserInputs.clear();
       });
 
-    const stopSessionInternal = (ctx: GeminiSessionContext) =>
+    const stopSessionInternal = (
+      ctx: GeminiSessionContext,
+      options?: { readonly emitExitEvent?: boolean },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
@@ -396,13 +421,15 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         yield* Effect.tryPromise(() => ctx.agent.stop()).pipe(Effect.ignore);
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
-        yield* offerRuntimeEvent({
-          type: "session.exited",
-          ...(yield* makeEventStamp()),
-          provider: PROVIDER,
-          threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
-        });
+        if (options?.emitExitEvent !== false) {
+          yield* offerRuntimeEvent({
+            type: "session.exited",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            payload: { exitKind: "graceful" },
+          });
+        }
       });
 
     const makeApprovalHandler = (ctx: () => GeminiSessionContext | undefined) => {
@@ -605,7 +632,7 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
             raw: { source: "antigravity.sdk.step", method: "toolCall", payload: step },
           });
         }
-        const usage = normalizeUsage(step);
+        const usage = normalizeGeminiStepUsage(step);
         if (usage) {
           yield* offerRuntimeEvent({
             type: "thread.token-usage.updated",
@@ -724,18 +751,47 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
       const builtInMcpServers = builtInShioriMcpServers({
         provider: PROVIDER,
         settings: serverSettings,
+        threadGoal: { config: serverConfig, threadId: input.threadId },
       });
-      const mcpServers = [...runtimeMcpServers, ...builtInMcpServers]
-        .filter(
-          (server) =>
-            server.enabled && (!server.providers.length || server.providers.includes(PROVIDER)),
-        )
+      const effectiveMcpServers = mergeMcpServers([
+        ...runtimeMcpServers,
+        ...builtInMcpServers,
+      ]).filter(
+        (server) =>
+          server.enabled && (!server.providers.length || server.providers.includes(PROVIDER)),
+      );
+      yield* Effect.tryPromise({
+        try: () => verifyGoalMcpServer({ servers: effectiveMcpServers, cwd: input.cwd }),
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Required Gemini goal MCP failed exact-tool validation."),
+            cause,
+          }),
+      });
+      const mcpServers = effectiveMcpServers
         .map(toMcpServerConfig)
         .filter((server): server is McpServerConfig => server !== undefined);
+      if (!mcpServers.some(isUsableThreadGoalMcpServer)) {
+        return yield* new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail: `Required MCP server '${THREAD_GOAL_MCP_SERVER_NAME}' was not preserved in the Antigravity configuration.`,
+        });
+      }
       const approvalHandler = makeApprovalHandler(() => ctx);
       const sdkPolicies =
         input.runtimeMode === "approval-required"
-          ? [policy.askUser("*", { handler: approvalHandler, name: "shiori_approval" })]
+          ? [
+              policy.allow("shioricode-thread-goal/get_goal", {
+                name: "shioricode_thread_goal_get",
+              }),
+              policy.allow("shioricode-thread-goal/update_goal", {
+                name: "shioricode_thread_goal_update",
+              }),
+              policy.askUser("*", { handler: approvalHandler, name: "shiori_approval" }),
+            ]
           : [policy.allowAll()];
       const startAgent = options?.startAgent ?? ((config: LocalAgentConfig) => Agent.start(config));
       const googleCloudProject = trimOrUndefined(geminiSettings.googleCloudProject);
@@ -759,6 +815,13 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         configInput.vertex = true;
       }
       const config = new LocalAgentConfig(configInput);
+      if (!config.mcpServers.some(isUsableThreadGoalMcpServer)) {
+        return yield* new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail: `Required MCP server '${THREAD_GOAL_MCP_SERVER_NAME}' was dropped before Antigravity startup.`,
+        });
+      }
       const agent = yield* Effect.tryPromise(() => startAgent(config)).pipe(
         Effect.mapError(
           (cause) =>
@@ -798,33 +861,38 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         approvalPolicy: input.approvalPolicy,
         stopped: false,
       };
-      sessions.set(input.threadId, ctx);
       sessionScopeTransferred = true;
-
-      yield* offerRuntimeEvent({
-        type: "session.started",
-        ...(yield* makeEventStamp()),
-        provider: PROVIDER,
-        threadId: input.threadId,
-        payload: { resume: session.resumeCursor },
-      });
-      yield* offerRuntimeEvent({
-        type: "session.state.changed",
-        ...(yield* makeEventStamp()),
-        provider: PROVIDER,
-        threadId: input.threadId,
-        payload: { state: "ready", reason: "Antigravity SDK session ready" },
-      });
-      yield* offerRuntimeEvent({
-        type: "thread.started",
-        ...(yield* makeEventStamp()),
-        provider: PROVIDER,
-        threadId: input.threadId,
-        payload: conversationId ? { providerThreadId: conversationId } : {},
-      });
 
       return ctx;
     });
+
+    const publishSessionStarted = (ctx: GeminiSessionContext) =>
+      Effect.gen(function* () {
+        yield* offerRuntimeEvent({
+          type: "session.started",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { resume: ctx.session.resumeCursor },
+        });
+        yield* offerRuntimeEvent({
+          type: "session.state.changed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { state: "ready", reason: "Antigravity SDK session ready" },
+        });
+        const conversationId =
+          ctx.agent.conversationId ??
+          parseAntigravityResume(ctx.session.resumeCursor)?.conversationId;
+        yield* offerRuntimeEvent({
+          type: "thread.started",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: conversationId ? { providerThreadId: conversationId } : {},
+        });
+      });
 
     const startSession: GeminiAdapterShape["startSession"] = (input) =>
       withThreadLock(
@@ -840,10 +908,6 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           const cwd = nodePath.resolve(trimOrUndefined(input.cwd) ?? serverConfig.cwd);
           const modelSelection =
             input.modelSelection?.provider === PROVIDER ? input.modelSelection : undefined;
-          const existing = sessions.get(input.threadId);
-          if (existing && !existing.stopped) {
-            yield* stopSessionInternal(existing);
-          }
           const resumeConversationId = parseAntigravityResume(input.resumeCursor)?.conversationId;
           const ctx = yield* createSessionContext({
             threadId: input.threadId,
@@ -853,6 +917,19 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
             model: modelSelection?.model,
             ...(resumeConversationId ? { resumeConversationId } : {}),
           }).pipe(Effect.scoped);
+          yield* commitPreparedSessionReplacement({
+            replacement: ctx,
+            readCurrent: Effect.sync(() => sessions.get(input.threadId)),
+            retire: (previous) =>
+              stopSessionInternal(previous, {
+                emitExitEvent: false,
+              }),
+            publish: (replacement) =>
+              Effect.sync(() => {
+                sessions.set(input.threadId, replacement);
+              }),
+          });
+          yield* publishSessionStarted(ctx);
           return ctx.session;
         }),
       );
@@ -1080,10 +1157,12 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
       });
 
     const stopAll: GeminiAdapterShape["stopAll"] = () =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true });
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), { discard: true });
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }).pipe(
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), {
+        discard: true,
+      }).pipe(
         Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
         Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
       ),

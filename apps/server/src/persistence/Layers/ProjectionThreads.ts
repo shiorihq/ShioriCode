@@ -1,5 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { ThreadGoal } from "contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 
 import { toPersistenceSqlError } from "../Errors.ts";
@@ -16,6 +17,7 @@ import {
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.NullOr(Schema.String),
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -50,6 +52,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           tag,
           resume_state,
           latest_turn_id,
+          goal_json,
           created_at,
           updated_at,
           pinned_at,
@@ -72,6 +75,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.tag},
           ${row.resumeState ?? "resumed"},
           ${row.latestTurnId},
+          ${row.goal === null ? null : JSON.stringify(row.goal)},
           ${row.createdAt},
           ${row.updatedAt},
           ${row.pinnedAt},
@@ -94,6 +98,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           tag = excluded.tag,
           resume_state = excluded.resume_state,
           latest_turn_id = excluded.latest_turn_id,
+          goal_json = excluded.goal_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           pinned_at = excluded.pinned_at,
@@ -123,6 +128,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           tag,
           resume_state AS "resumeState",
           latest_turn_id AS "latestTurnId",
+          goal_json AS "goal",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           pinned_at AS "pinnedAt",
@@ -154,6 +160,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           tag,
           resume_state AS "resumeState",
           latest_turn_id AS "latestTurnId",
+          goal_json AS "goal",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           pinned_at AS "pinnedAt",

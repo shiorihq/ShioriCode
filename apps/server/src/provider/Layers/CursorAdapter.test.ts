@@ -19,7 +19,11 @@ import { vi } from "vitest";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
-import { makeCursorAdapterLive, parseCursorResume } from "./CursorAdapter.ts";
+import {
+  makeCursorAdapterLive,
+  normalizeCursorTokenUsage,
+  parseCursorResume,
+} from "./CursorAdapter.ts";
 
 vi.mock("@cursor/sdk", () => ({
   Agent: {
@@ -87,14 +91,18 @@ class FakeCursorRun implements Run {
 }
 
 class FakeCursorAgent implements SDKAgent {
-  readonly agentId = "cursor-agent-1";
+  constructor(readonly agentId = "cursor-agent-1") {}
   model = { id: "auto" };
   readonly sendCalls: Array<{ message: string | SDKUserMessage; options?: SendOptions }> = [];
   closeCalls = 0;
   nextRun = new FakeCursorRun();
+  sendError: Error | undefined;
 
   send(message: string | SDKUserMessage, options?: SendOptions): Promise<Run> {
     this.sendCalls.push({ message, ...(options ? { options } : {}) });
+    if (this.sendError) {
+      return Promise.reject(this.sendError);
+    }
     return Promise.resolve(this.nextRun);
   }
 
@@ -126,6 +134,9 @@ function makeHarness(input?: {
   readonly settings?: Parameters<typeof ServerSettingsService.layerTest>[0];
   readonly createAgent?: (options: AgentOptions) => Promise<SDKAgent>;
   readonly resumeAgent?: (agentId: string, options?: Partial<AgentOptions>) => Promise<SDKAgent>;
+  readonly verifyGoalMcpServer?: NonNullable<
+    Parameters<typeof makeCursorAdapterLive>[0]
+  >["verifyGoalMcpServer"];
 }) {
   const agent = input?.agent ?? new FakeCursorAgent();
   return makeCursorAdapterLive({
@@ -139,6 +150,7 @@ function makeHarness(input?: {
       : {}),
     createAgent: input?.createAgent ?? (() => Promise.resolve(agent)),
     resumeAgent: input?.resumeAgent ?? (() => Promise.resolve(agent)),
+    verifyGoalMcpServer: input?.verifyGoalMcpServer ?? (() => Promise.resolve()),
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest("/tmp/cursor-adapter-test", { prefix: "cursor" })),
     Layer.provideMerge(ServerSettingsService.layerTest(input?.settings ?? {})),
@@ -147,6 +159,128 @@ function makeHarness(input?: {
 }
 
 describe("CursorAdapterLive", () => {
+  it.effect("replaces a ready agent only after its successor is created", () => {
+    const first = new FakeCursorAgent("cursor-agent-first");
+    const second = new FakeCursorAgent("cursor-agent-second");
+    let callIndex = 0;
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
+      const replacement = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(first.closeCalls, 1);
+      assert.equal(second.closeCalls, 0);
+      assert.deepInclude(replacement.resumeCursor as Record<string, unknown>, {
+        agentId: "cursor-agent-second",
+      });
+      assert.equal((yield* adapter.listSessions()).length, 1);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          createAgent: () => Promise.resolve(callIndex++ === 0 ? first : second),
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("preserves a ready agent when successor creation fails", () => {
+    const first = new FakeCursorAgent("cursor-agent-stable");
+    let callIndex = 0;
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const original = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
+      yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "cursor",
+          cwd: "/tmp/cursor-adapter-test",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(first.closeCalls, 0);
+      assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, original.resumeCursor);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          createAgent: () => {
+            callIndex += 1;
+            return callIndex === 1
+              ? Promise.resolve(first)
+              : Promise.reject(new Error("replacement failed"));
+          },
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it("marks terminal Cursor turn usage as a processed-token delta", () => {
+    assert.deepStrictEqual(
+      normalizeCursorTokenUsage({
+        inputTokens: 100,
+        outputTokens: 30,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 5,
+      }),
+      {
+        usedTokens: 155,
+        processedTokensDelta: 155,
+        lastUsedTokens: 155,
+        inputTokens: 125,
+        outputTokens: 30,
+      },
+    );
+  });
+
+  it.effect("fails closed before creating a Cursor agent when the goal MCP probe fails", () => {
+    const createAgent = vi.fn(() => Promise.resolve(new FakeCursorAgent()));
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const error = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "cursor",
+          cwd: "/tmp/cursor-adapter-test",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      if (error._tag !== "ProviderAdapterRequestError") {
+        assert.fail(`Expected ProviderAdapterRequestError, received ${error._tag}`);
+      }
+      assert.equal(error.method, "MCP.initialize");
+      assert.match(error.detail, /goal MCP probe failed/u);
+      assert.equal(createAgent.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        makeHarness({
+          createAgent,
+          verifyGoalMcpServer: () => Promise.reject(new Error("goal MCP probe failed")),
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
   it.effect("starts a Cursor SDK session and persists an agent resume cursor", () => {
     const agent = new FakeCursorAgent();
     const createCalls: AgentOptions[] = [];
@@ -164,6 +298,10 @@ describe("CursorAdapterLive", () => {
         provider: "cursor",
         agentId: agent.agentId,
       });
+      assert.deepEqual(createCalls[0]?.local?.settingSources, []);
+      const goalServer = createCalls[0]?.mcpServers?.["shioricode-thread-goal"];
+      assert.ok(goalServer);
+      assert.equal(goalServer.type, "stdio");
     }).pipe(
       Effect.provide(
         makeHarness({
@@ -176,6 +314,39 @@ describe("CursorAdapterLive", () => {
       ),
       Effect.scoped,
     );
+  });
+
+  it.effect("fails and releases a turn when strict Cursor MCP initialization rejects send", () => {
+    const agent = new FakeCursorAgent();
+    const events: ProviderRuntimeEvent[] = [];
+    agent.sendError = new Error("Required goal MCP failed to initialize");
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "cursor",
+        cwd: "/tmp/cursor-adapter-test",
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .sendTurn({ threadId: THREAD_ID, input: "continue the goal" })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.status, "error");
+      assert.equal(sessions[0]?.activeTurnId, undefined);
+      assert.equal(
+        events.some((event) => event.type === "runtime.error"),
+        true,
+      );
+      assert.equal(
+        events.some((event) => event.type === "turn.completed" && event.payload.state === "failed"),
+        true,
+      );
+    }).pipe(Effect.provide(makeHarness({ agent, events })), Effect.scoped);
   });
 
   it.effect("passes built-in Computer Use MCP to Cursor when approvals are not required", () => {

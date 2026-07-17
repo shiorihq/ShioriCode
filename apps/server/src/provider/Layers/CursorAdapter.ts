@@ -25,6 +25,7 @@ import {
   type CanonicalItemType,
   type ChatAttachment,
   type CursorModelOptions,
+  type McpServerEntry,
   ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -61,7 +62,10 @@ import {
   builtInShioriMcpServers,
   filterMcpServersForProvider,
   materializeMcpServersForRuntime,
+  mergeMcpServers,
+  verifyThreadGoalMcpServer,
 } from "../mcpServers.ts";
+import { commitPreparedSessionReplacement } from "../sessionReplacement.ts";
 import {
   classifyProviderToolLifecycleItemType,
   providerToolTitle,
@@ -88,6 +92,10 @@ export interface CursorAdapterLiveOptions {
   readonly runtimeEventObserver?: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly createAgent?: (options: AgentOptions) => Promise<SDKAgent>;
   readonly resumeAgent?: (agentId: string, options?: Partial<AgentOptions>) => Promise<SDKAgent>;
+  readonly verifyGoalMcpServer?: (input: {
+    readonly servers: ReadonlyArray<McpServerEntry>;
+    readonly cwd: string;
+  }) => Promise<void>;
 }
 
 interface CursorTurnState {
@@ -326,7 +334,7 @@ function statusFromSdkToolMessage(
   }
 }
 
-function normalizeCursorTokenUsage(
+export function normalizeCursorTokenUsage(
   usage: Extract<InteractionUpdate, { type: "turn-ended" }>["usage"],
 ): ThreadTokenUsageSnapshot | undefined {
   if (!usage) return undefined;
@@ -336,6 +344,8 @@ function normalizeCursorTokenUsage(
   if (usedTokens <= 0) return undefined;
   return {
     usedTokens,
+    // Cursor emits this usage exactly once in the terminal turn-ended delta.
+    processedTokensDelta: usedTokens,
     lastUsedTokens: usedTokens,
     ...(inputTokens > 0 ? { inputTokens } : {}),
     ...(outputTokens > 0 ? { outputTokens } : {}),
@@ -388,6 +398,10 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       options?.resumeAgent ??
       ((agentId: string, agentOptions?: Partial<AgentOptions>) =>
         Agent.resume(agentId, agentOptions));
+    const verifyGoalMcpServer =
+      options?.verifyGoalMcpServer ??
+      ((input: { readonly servers: ReadonlyArray<McpServerEntry>; readonly cwd: string }) =>
+        verifyThreadGoalMcpServer({ provider: PROVIDER, ...input }));
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -837,7 +851,10 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         });
       });
 
-    const stopSessionInternal = (ctx: CursorSessionContext) =>
+    const stopSessionInternal = (
+      ctx: CursorSessionContext,
+      options?: { readonly emitExitEvent?: boolean },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
@@ -850,15 +867,24 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         if (ctx.streamFiber) {
           yield* Fiber.interrupt(ctx.streamFiber);
         }
-        yield* Effect.sync(() => ctx.agent.close());
+        yield* Effect.sync(() => ctx.agent.close()).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Cursor SDK agent close failed during session teardown", {
+              threadId: ctx.threadId,
+              cause,
+            }),
+          ),
+        );
         sessions.delete(ctx.threadId);
-        yield* offerRuntimeEvent({
-          type: "session.exited",
-          ...(yield* makeEventStamp()),
-          provider: PROVIDER,
-          threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
-        });
+        if (options?.emitExitEvent !== false) {
+          yield* offerRuntimeEvent({
+            type: "session.exited",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            payload: { exitKind: "graceful" },
+          });
+        }
       });
 
     const startSession: CursorAdapterShape["startSession"] = (input) =>
@@ -881,11 +907,6 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           }
 
           const cwd = nodePath.resolve(input.cwd.trim());
-          const existing = sessions.get(input.threadId);
-          if (existing && !existing.stopped) {
-            yield* stopSessionInternal(existing);
-          }
-
           const serverSettings = yield* serverSettingsService.getSettings.pipe(
             Effect.mapError(
               (error) =>
@@ -921,22 +942,38 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               }),
             ),
           );
-          const sdkMcpServers = buildCursorSdkMcpServers([
+          const mergedMcpServers = mergeMcpServers([
             ...filterMcpServersForProvider(PROVIDER, runtimeMcpServers),
             ...builtInShioriMcpServers({
               provider: PROVIDER,
               settings: serverSettings,
+              threadGoal: { config: serverConfig, threadId: input.threadId },
               browserPanel: {
                 config: serverConfig,
                 threadId: input.threadId,
               },
             }),
           ]);
+          yield* Effect.tryPromise({
+            try: () => verifyGoalMcpServer({ servers: mergedMcpServers, cwd }),
+            catch: (cause) =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "MCP.initialize",
+                detail: toMessage(cause, "Required Cursor goal MCP failed to initialize."),
+                cause,
+              }),
+          });
+          const sdkMcpServers = buildCursorSdkMcpServers(mergedMcpServers);
           const parsedResumeCursor = parseCursorResume(input.resumeCursor);
           const baseAgentOptions: AgentOptions = {
             model: sdkModel,
             local: {
               cwd,
+              // ShioriCode owns the complete MCP set for this session. Loading
+              // ambient Cursor MCP configuration would make goal availability
+              // depend on provider-local state outside the harness.
+              settingSources: [],
               sandboxOptions: { enabled: input.runtimeMode !== "full-access" },
             },
             ...(sdkMcpServers ? { mcpServers: sdkMcpServers } : {}),
@@ -985,7 +1022,18 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             turnState: undefined,
             stopped: false,
           };
-          sessions.set(input.threadId, ctx);
+          yield* commitPreparedSessionReplacement({
+            replacement: ctx,
+            readCurrent: Effect.sync(() => sessions.get(input.threadId)),
+            retire: (previous) =>
+              stopSessionInternal(previous, {
+                emitExitEvent: false,
+              }),
+            publish: (replacement) =>
+              Effect.sync(() => {
+                sessions.set(input.threadId, replacement);
+              }),
+          });
 
           yield* offerRuntimeEvent({
             type: "session.started",
@@ -1152,7 +1200,18 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                 detail: toMessage(cause, "Cursor SDK send failed."),
                 cause,
               }),
-          });
+          }).pipe(
+            Effect.tapError((error) =>
+              Effect.gen(function* () {
+                yield* emitRuntimeError(ctx, turnId, error);
+                yield* completeTurn(ctx, turnId, {
+                  state: "failed",
+                  errorMessage: error.message,
+                  model: modelForEvent,
+                });
+              }),
+            ),
+          );
           if (ctx.turnState) {
             ctx.turnState.run = run;
             ctx.turnState.items.push({ prompt: message, runId: run.id });
@@ -1298,10 +1357,12 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       });
 
     const stopAll: CursorAdapterShape["stopAll"] = () =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true });
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), { discard: true });
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }).pipe(
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), {
+        discard: true,
+      }).pipe(
         Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
         Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
       ),

@@ -15,6 +15,40 @@ import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolve
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 
+function devProxyUrl(devUrl: URL, requestUrl: URL): URL {
+  const upstream = new URL(devUrl);
+  upstream.pathname = requestUrl.pathname;
+  upstream.search = requestUrl.search;
+  upstream.hash = "";
+  return upstream;
+}
+
+function proxyDevRequest(
+  request: HttpServerRequest.HttpServerRequest,
+  requestUrl: URL,
+  devUrl: URL,
+) {
+  const headers: Record<string, string> = {};
+  for (const name of ["accept", "accept-language", "if-modified-since", "if-none-match"]) {
+    const value = request.headers[name];
+    if (value) headers[name] = value;
+  }
+  return Effect.tryPromise(() =>
+    fetch(devProxyUrl(devUrl, requestUrl), {
+      headers,
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    }),
+  ).pipe(
+    Effect.map(HttpServerResponse.fromWeb),
+    Effect.catch(() =>
+      Effect.succeed(
+        HttpServerResponse.text("Development web server unavailable", { status: 502 }),
+      ),
+    ),
+  );
+}
+
 export const attachmentsRouteLayer = HttpRouter.add(
   "GET",
   `${ATTACHMENTS_ROUTE_PREFIX}/*`,
@@ -130,7 +164,7 @@ export const staticAndDevRouteLayer = HttpRouter.add(
 
     const config = yield* ServerConfig;
     if (config.devUrl) {
-      return HttpServerResponse.redirect(config.devUrl.href, { status: 302 });
+      return yield* proxyDevRequest(request, url.value, config.devUrl);
     }
 
     if (!config.staticDir) {

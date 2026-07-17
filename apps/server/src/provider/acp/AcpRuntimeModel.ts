@@ -422,6 +422,10 @@ export function normalizeAcpPromptUsage(
   return {
     usedTokens,
     totalProcessedTokens: usedTokens,
+    // PromptResponse.usage is terminal usage for this prompt. ACP
+    // usage_update notifications are context-window snapshots and remain
+    // intentionally delta-free in normalizeAcpUsageUpdate below.
+    processedTokensDelta: usedTokens,
     ...(inputTokens > 0 ? { inputTokens, lastInputTokens: inputTokens } : {}),
     ...(cachedInputTokens > 0
       ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }

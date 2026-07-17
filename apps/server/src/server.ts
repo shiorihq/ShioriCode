@@ -7,7 +7,9 @@ import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/s
 
 import { authRoutesLayer } from "./auth/authRoutes";
 import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
+import { linkAccessRoutesLayer } from "./auth/linkAccessRoutes";
 import { RemoteAccessLive, remoteHealthRouteLayer } from "./remote/RemoteAccess";
+import { linkAuthCallbackRouteLayer } from "./remote/linkAuthRoute";
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
 import {
   BrowserPanelRequestsLive,
@@ -17,6 +19,7 @@ import {
 import { type ServerConfigShape, ServerConfig } from "./config";
 import { attachmentsRouteLayer, projectFaviconRouteLayer, staticAndDevRouteLayer } from "./http";
 import { mobileRoutesLayer } from "./mobile";
+import { threadGoalControlRouteLayer } from "./threadGoalControl";
 import { fixPath } from "./os-jank";
 import { websocketRpcRouteLayer } from "./ws";
 import { OpenLive } from "./open";
@@ -66,6 +69,11 @@ import { ComputerUseManagerLive } from "./computer/Layers/MacOSComputerUseManage
 import { AutomationRepositoryLive } from "./automations/Layers/AutomationRepository";
 import { AutomationServiceLive } from "./automations/Layers/AutomationService";
 
+// Mobile snapshots may intentionally hold a request for up to 25 seconds.
+// Bun defaults to 10 seconds, which aborts healthy long polls and makes the
+// phone appear offline while the desktop server is still running.
+const BUN_HTTP_IDLE_TIMEOUT_SECONDS = 35;
+
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
     if (typeof Bun !== "undefined" && process.platform !== "win32") {
@@ -87,6 +95,7 @@ const HttpServerLive = Layer.unwrap(
       );
       return BunHttpServer.layer({
         port: config.port,
+        idleTimeout: BUN_HTTP_IDLE_TIMEOUT_SECONDS,
         ...(config.host ? { hostname: config.host } : {}),
       });
     } else {
@@ -253,12 +262,52 @@ export const makeRoutesLayer = Layer.mergeAll(
   browserPanelRequestRouteLayer,
   browserPanelCommandRouteLayer,
   authRoutesLayer,
+  linkAccessRoutesLayer,
   remoteHealthRouteLayer,
+  linkAuthCallbackRouteLayer,
   mobileRoutesLayer,
+  threadGoalControlRouteLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
 );
+
+/**
+ * Signals HTTP-dependent startup work only after the routed application has
+ * been installed on the listening server. Acquiring HttpServer alone is not a
+ * sufficient readiness boundary: its socket can accept connections before
+ * HttpRouter.serve attaches the request handler.
+ */
+export const withHttpRoutesReadySignal =
+  (config: ServerConfigShape) =>
+  <A, E, R>(servedRoutesLayer: Layer.Layer<A, E, R>) =>
+    servedRoutesLayer.pipe(
+      Layer.tap(() =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* HttpServer.HttpServer;
+          const startup = yield* ServerRuntimeStartup;
+          yield* writeServerInstanceRecord(fs, config).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to write server instance record", {
+                path: config.serverInstancePath,
+                cause,
+              }),
+            ),
+          );
+          yield* Effect.addFinalizer(() =>
+            clearServerInstanceRecord(fs, config).pipe(
+              Effect.catch(() =>
+                Effect.logWarning("failed to clear server instance record", {
+                  path: config.serverInstancePath,
+                }),
+              ),
+            ),
+          );
+          yield* startup.markHttpRoutesReady;
+        }),
+      ),
+    );
 
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -286,38 +335,9 @@ export const makeServerLayer = Layer.unwrap(
 
     fixPath();
 
-    const httpListeningLayer = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* HttpServer.HttpServer;
-        const startup = yield* ServerRuntimeStartup;
-        yield* startup.markHttpListening;
-        yield* writeServerInstanceRecord(fs, config).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("failed to write server instance record", {
-              path: config.serverInstancePath,
-              cause,
-            }),
-          ),
-        );
-        yield* Effect.addFinalizer(() =>
-          clearServerInstanceRecord(fs, config).pipe(
-            Effect.catch(() =>
-              Effect.logWarning("failed to clear server instance record", {
-                path: config.serverInstancePath,
-              }),
-            ),
-          ),
-        );
-      }),
-    );
-
-    const serverApplicationLayer = Layer.mergeAll(
-      HttpRouter.serve(makeRoutesLayer, {
-        disableLogger: !config.logWebSocketEvents,
-      }).pipe(Layer.provide(BrowserPanelRequestsLive)),
-      httpListeningLayer,
-    );
+    const serverApplicationLayer = HttpRouter.serve(makeRoutesLayer, {
+      disableLogger: !config.logWebSocketEvents,
+    }).pipe(Layer.provide(BrowserPanelRequestsLive), withHttpRoutesReadySignal(config));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),

@@ -78,7 +78,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectOrder).toEqual([project2, project3, project1]);
   });
 
-  it("syncProjects preserves current project order during snapshot recovery", () => {
+  it("syncProjects puts a newly opened project before the current project order", () => {
     const project1 = ProjectId.makeUnsafe("project-1");
     const project2 = ProjectId.makeUnsafe("project-2");
     const project3 = ProjectId.makeUnsafe("project-3");
@@ -96,7 +96,7 @@ describe("uiStateStore pure functions", () => {
       { id: project3, cwd: "/tmp/project-3" },
     ]);
 
-    expect(next.projectOrder).toEqual([project2, project1, project3]);
+    expect(next.projectOrder).toEqual([project3, project2, project1]);
     expect(next.projectExpandedById[project2]).toBe(false);
   });
 

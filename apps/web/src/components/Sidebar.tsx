@@ -34,7 +34,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import { BrailleLoader } from "./ui/braille-loader";
+import { SpiralLatticeLoader } from "./ui/dot-matrix-loader";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -158,6 +158,7 @@ import {
   useThreadJumpHintVisibility,
 } from "./Sidebar.logic";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
+import { SidebarRemoteSwitcher } from "./sidebar/SidebarRemoteSwitcher";
 import { useProjectAddRequest } from "./sidebar/useProjectAddRequest";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
@@ -314,10 +315,8 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   return null;
 }
 
-function SidebarThreadBrailleLoader() {
-  return (
-    <BrailleLoader className="inline-flex size-3 shrink-0 items-center justify-center font-normal text-sm leading-none text-current opacity-70" />
-  );
+function SidebarThreadWorkingLoader() {
+  return <SpiralLatticeLoader ariaLabel="Chat is working" className="opacity-70" size={12} />;
 }
 
 function SidebarLoadingSkeleton({ className }: { className?: string }) {
@@ -440,7 +439,7 @@ function SidebarThreadStatusGlyph(props: {
           )}
           aria-hidden={!isLoaderVisible}
         >
-          <SidebarThreadBrailleLoader />
+          <SidebarThreadWorkingLoader />
         </span>
       ) : null}
     </span>
@@ -2910,6 +2909,7 @@ function ThreadSidebarContent(props: { onSearchClick?: () => void }) {
 
       <SidebarFooter className="mt-auto p-2">
         <SidebarUpdatePill />
+        <SidebarRemoteSwitcher onManage={() => void navigate({ to: "/settings/remote" })} />
         <SidebarUserFooter
           onSettingsClick={() => void navigate({ to: "/settings/general" })}
           sortMenu={

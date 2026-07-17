@@ -1,4 +1,9 @@
-import type { OrchestrationCommand, OrchestrationEvent, OrchestrationReadModel } from "contracts";
+import {
+  MessageId,
+  type OrchestrationCommand,
+  type OrchestrationEvent,
+  type OrchestrationReadModel,
+} from "contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -15,6 +20,11 @@ import {
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
+const maxIso = (...values: ReadonlyArray<string | null | undefined>): string =>
+  values.reduce<string>(
+    (latest, value) => (value !== null && value !== undefined && value > latest ? value : latest),
+    "",
+  );
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
   aggregateKind: "thread",
@@ -447,13 +457,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
+      const archivedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -467,6 +477,31 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      if (thread.goal?.status !== "active") {
+        return archivedEvent;
+      }
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+          metadata: { threadGoalMutation: "user" },
+        }),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: command.threadId,
+          goal: {
+            ...thread.goal,
+            status: "paused",
+            updatedAt: maxIso(occurredAt, thread.goal.updatedAt, thread.latestTurn?.startedAt),
+          },
+          ...(thread.session?.activeTurnId !== null && thread.session?.activeTurnId !== undefined
+            ? { turnId: thread.session.activeTurnId }
+            : {}),
+        },
+      };
+      return [goalUpdatedEvent, { ...archivedEvent, causationEventId: goalUpdatedEvent.eventId }];
     }
 
     case "thread.unarchive": {
@@ -573,32 +608,77 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (thread.deletedAt !== null || thread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot mutate a goal after deletion or archival.`,
+        });
+      }
       if (command.objective === undefined && thread.goal === null) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "Creating a thread goal requires an objective.",
         });
       }
-      const occurredAt = command.createdAt;
+      const previous = thread.goal ?? null;
+      const previousLifecycleKey = previous?.lifecycleId ?? previous?.createdAt ?? null;
+      if (
+        (command.expectedGoalLifecycleKey === undefined && previousLifecycleKey !== null) ||
+        (command.expectedGoalLifecycleKey !== undefined &&
+          command.expectedGoalLifecycleKey !== previousLifecycleKey)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal update for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (previous !== null && command.status === "paused" && previous.status !== "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal for thread '${command.threadId}' cannot be paused from status '${previous.status}'.`,
+        });
+      }
+      const tokenBudget =
+        command.tokenBudget !== undefined ? command.tokenBudget : (previous?.tokenBudget ?? null);
+      const tokensUsed = previous?.tokensUsed ?? 0;
+      const requestedStatus = command.status ?? previous?.status ?? ("active" as const);
+      const status =
+        requestedStatus === "active" && tokenBudget !== null && tokensUsed >= tokenBudget
+          ? ("budgetLimited" as const)
+          : requestedStatus;
+      const objective = command.objective ?? previous!.objective;
+      const shouldRotateLifecycle =
+        previous !== null &&
+        ((command.objective !== undefined && objective !== previous.objective) ||
+          (status === "active" && previous.status !== "active"));
       const goal = {
         threadId: command.threadId,
-        objective: command.objective ?? thread.goal!.objective,
-        status: command.status ?? thread.goal?.status ?? ("active" as const),
-        tokenBudget:
-          command.tokenBudget !== undefined
-            ? command.tokenBudget
-            : (thread.goal?.tokenBudget ?? null),
-        tokensUsed: command.tokensUsed ?? thread.goal?.tokensUsed ?? 0,
-        timeUsedSeconds: command.timeUsedSeconds ?? thread.goal?.timeUsedSeconds ?? 0,
-        createdAt: command.goalCreatedAt ?? thread.goal?.createdAt ?? occurredAt,
-        updatedAt: command.goalUpdatedAt ?? occurredAt,
+        ...(shouldRotateLifecycle
+          ? { lifecycleId: `goal:${command.commandId}` }
+          : previous?.lifecycleId !== undefined
+            ? { lifecycleId: previous.lifecycleId }
+            : previous === null
+              ? { lifecycleId: `goal:${command.commandId}` }
+              : {}),
+        objective,
+        status,
+        tokenBudget,
+        tokensUsed,
+        timeUsedSeconds: previous?.timeUsedSeconds ?? 0,
+        createdAt: previous?.createdAt ?? command.createdAt,
+        updatedAt: maxIso(
+          command.createdAt,
+          previous?.updatedAt,
+          (thread.session?.activeTurnId ?? null) !== null ? thread.latestTurn?.startedAt : null,
+        ),
       };
       return {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
-          occurredAt,
+          occurredAt: command.createdAt,
           commandId: command.commandId,
+          metadata: { threadGoalMutation: "user" },
         }),
         type: "thread.goal-updated",
         payload: {
@@ -609,6 +689,246 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.goal.clear": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.deletedAt !== null || thread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot clear a goal after deletion or archival.`,
+        });
+      }
+      const currentLifecycleKey = thread.goal?.lifecycleId ?? thread.goal?.createdAt ?? null;
+      if (
+        (command.expectedGoalLifecycleKey === undefined && currentLifecycleKey !== null) ||
+        (command.expectedGoalLifecycleKey !== undefined &&
+          command.expectedGoalLifecycleKey !== currentLifecycleKey)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal clear for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: { threadGoalMutation: "user" },
+        }),
+        type: "thread.goal-cleared",
+        payload: {
+          threadId: command.threadId,
+          ...(currentLifecycleKey !== null ? { goalLifecycleKey: currentLifecycleKey } : {}),
+          clearedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.snapshot.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.goal.threadId !== command.threadId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal snapshot thread '${command.goal.threadId}' does not match command thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: command.threadId,
+          goal: command.goal,
+          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+        },
+      };
+    }
+
+    case "thread.goal.usage.record": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const current = thread.goal;
+      const currentLifecycleKey = current?.lifecycleId ?? current?.createdAt;
+      if (!current || currentLifecycleKey !== command.expectedGoalLifecycleKey) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal usage for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (command.tokensDelta === 0 && command.timeDeltaSeconds === 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Goal usage must record a positive token or time delta.",
+        });
+      }
+
+      const tokensUsed = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.tokensUsed + command.tokensDelta,
+      );
+      const timeUsedSeconds = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.timeUsedSeconds + command.timeDeltaSeconds,
+      );
+      const status =
+        current.status === "active" &&
+        current.tokenBudget !== null &&
+        tokensUsed >= current.tokenBudget
+          ? ("budgetLimited" as const)
+          : current.status;
+      const goal = {
+        ...current,
+        status,
+        tokensUsed,
+        timeUsedSeconds,
+        updatedAt: command.createdAt > current.updatedAt ? command.createdAt : current.updatedAt,
+      };
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: command.threadId,
+          goal,
+          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+        },
+      };
+    }
+
+    case "thread.goal.status.report": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const current = thread.goal;
+      const currentLifecycleKey = current?.lifecycleId ?? current?.createdAt;
+      if (!current || currentLifecycleKey !== command.expectedGoalLifecycleKey) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal status for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (current.status === "budgetLimited" && command.status !== "complete") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A provider report cannot overwrite a harness-enforced goal budget limit.",
+        });
+      }
+      if (
+        current.status !== "active" &&
+        current.status !== "budgetLimited" &&
+        current.status !== command.status
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal status '${current.status}' cannot be changed by a provider report.`,
+        });
+      }
+
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-updated",
+        payload: {
+          threadId: command.threadId,
+          goal: {
+            ...current,
+            status: command.status,
+            updatedAt: maxIso(
+              command.createdAt,
+              current.updatedAt,
+              command.turnId !== undefined && thread.latestTurn?.turnId === command.turnId
+                ? thread.latestTurn.startedAt
+                : null,
+            ),
+          },
+          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+        },
+      };
+    }
+
+    case "thread.goal.continue": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const current = thread.goal;
+      if (thread.deletedAt !== null || thread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot continue a goal after deletion or archival.`,
+        });
+      }
+      const currentLifecycleKey = current?.lifecycleId ?? current?.createdAt;
+      if (!current || currentLifecycleKey !== command.expectedGoalLifecycleKey) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal continuation for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (current.status !== "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal continuation requires an active goal, not '${current.status}'.`,
+        });
+      }
+      if (thread.interactionMode === "plan") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Plan-mode threads cannot automatically continue a goal.",
+        });
+      }
+      if (thread.session?.status === "running" || (thread.session?.activeTurnId ?? null) !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal continuation requires thread '${command.threadId}' to be idle.`,
+        });
+      }
+
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.goal-continuation-requested",
+        payload: {
+          threadId: command.threadId,
+          expectedGoalLifecycleKey: command.expectedGoalLifecycleKey,
+          messageId: MessageId.makeUnsafe(`goal-continuation:${command.commandId}`),
+          ...(command.sourceTurnId !== undefined ? { sourceTurnId: command.sourceTurnId } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.goal.snapshot.clear": {
       yield* requireThread({
         readModel,
         command,
@@ -624,7 +944,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.goal-cleared",
         payload: {
           threadId: command.threadId,
-          clearedAt: command.createdAt,
+          clearedAt: command.clearedAt,
         },
       };
     }
@@ -635,6 +955,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const currentGoalLifecycleKey =
+        targetThread.goal?.lifecycleId ?? targetThread.goal?.createdAt ?? null;
+      if (
+        command.goalIntent !== undefined &&
+        ((command.goalIntent.expectedGoalLifecycleKey === undefined &&
+          currentGoalLifecycleKey !== null) ||
+          (command.goalIntent.expectedGoalLifecycleKey !== undefined &&
+            command.goalIntent.expectedGoalLifecycleKey !== currentGoalLifecycleKey))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal replacement for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (
+        command.goalIntent !== undefined &&
+        (command.interactionMode === "plan" || targetThread.interactionMode === "plan")
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Plan-mode turns cannot start or account for a thread goal.",
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -679,6 +1022,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> | null = command.goalIntent
+        ? {
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            }),
+            causationEventId: userMessageEvent.eventId,
+            type: "thread.goal-updated",
+            payload: {
+              threadId: command.threadId,
+              goal: {
+                threadId: command.threadId,
+                lifecycleId: `goal:${command.commandId}`,
+                objective: command.goalIntent.objective,
+                status: "active",
+                tokenBudget: command.goalIntent.tokenBudget,
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+                createdAt: command.createdAt,
+                updatedAt: command.createdAt,
+              },
+            },
+          }
+        : null;
       const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -686,7 +1055,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt: command.createdAt,
           commandId: command.commandId,
         }),
-        causationEventId: userMessageEvent.eventId,
+        causationEventId: goalUpdatedEvent?.eventId ?? userMessageEvent.eventId,
         type: "thread.turn-start-requested",
         payload: {
           threadId: command.threadId,
@@ -697,11 +1066,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
+          goalLifecycleKey:
+            targetThread.interactionMode === "plan"
+              ? null
+              : command.goalIntent !== undefined
+                ? `goal:${command.commandId}`
+                : targetThread.goal?.status === "active"
+                  ? (targetThread.goal.lifecycleId ?? targetThread.goal.createdAt)
+                  : null,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnStartRequestedEvent];
+      return goalUpdatedEvent
+        ? [userMessageEvent, goalUpdatedEvent, turnStartRequestedEvent]
+        : [userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.steer": {
@@ -710,6 +1089,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const currentGoalLifecycleKey =
+        targetThread.goal?.lifecycleId ?? targetThread.goal?.createdAt ?? null;
+      if (
+        command.goalIntent !== undefined &&
+        ((command.goalIntent.expectedGoalLifecycleKey === undefined &&
+          currentGoalLifecycleKey !== null) ||
+          (command.goalIntent.expectedGoalLifecycleKey !== undefined &&
+            command.goalIntent.expectedGoalLifecycleKey !== currentGoalLifecycleKey))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Goal replacement for thread '${command.threadId}' targets a stale lifecycle.`,
+        });
+      }
+      if (command.goalIntent !== undefined && targetThread.interactionMode === "plan") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Plan-mode turns cannot start or account for a thread goal.",
+        });
+      }
       const activeTurnId =
         command.turnId ??
         targetThread.session?.activeTurnId ??
@@ -739,6 +1138,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> | null = command.goalIntent
+        ? {
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            }),
+            causationEventId: userMessageEvent.eventId,
+            type: "thread.goal-updated",
+            payload: {
+              threadId: command.threadId,
+              goal: {
+                threadId: command.threadId,
+                lifecycleId: `goal:${command.commandId}`,
+                objective: command.goalIntent.objective,
+                status: "active",
+                tokenBudget: command.goalIntent.tokenBudget,
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+                createdAt: command.createdAt,
+                updatedAt: command.createdAt,
+              },
+            },
+          }
+        : null;
       const turnSteerRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -746,31 +1171,68 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt: command.createdAt,
           commandId: command.commandId,
         }),
-        causationEventId: userMessageEvent.eventId,
+        causationEventId: goalUpdatedEvent?.eventId ?? userMessageEvent.eventId,
         type: "thread.turn-steer-requested",
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
           turnId: activeTurnId,
+          goalLifecycleKey:
+            targetThread.interactionMode === "plan"
+              ? null
+              : command.goalIntent !== undefined
+                ? `goal:${command.commandId}`
+                : targetThread.goal?.status === "active"
+                  ? (targetThread.goal.lifecycleId ?? targetThread.goal.createdAt)
+                  : null,
           createdAt: command.createdAt,
         },
       };
-      return [userMessageEvent, turnSteerRequestedEvent];
+      return goalUpdatedEvent
+        ? [userMessageEvent, goalUpdatedEvent, turnSteerRequestedEvent]
+        : [userMessageEvent, turnSteerRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> | null =
+        thread.goal?.status === "active"
+          ? {
+              ...withEventBase({
+                aggregateKind: "thread",
+                aggregateId: command.threadId,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+                metadata: { threadGoalMutation: "interrupt" },
+              }),
+              type: "thread.goal-updated",
+              payload: {
+                threadId: command.threadId,
+                goal: {
+                  ...thread.goal,
+                  status: "paused",
+                  updatedAt: maxIso(
+                    command.createdAt,
+                    thread.goal.updatedAt,
+                    thread.latestTurn?.startedAt,
+                  ),
+                },
+                ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+              },
+            }
+          : null;
+      const interruptRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         }),
+        causationEventId: goalUpdatedEvent?.eventId ?? null,
         type: "thread.turn-interrupt-requested",
         payload: {
           threadId: command.threadId,
@@ -778,6 +1240,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      if (goalUpdatedEvent) {
+        return [goalUpdatedEvent, interruptRequestedEvent];
+      }
+      return interruptRequestedEvent;
     }
 
     case "thread.approval.respond": {
@@ -900,12 +1366,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.stop": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const goalUpdatedEvent: Omit<OrchestrationEvent, "sequence"> | null =
+        thread.goal?.status === "active"
+          ? {
+              ...withEventBase({
+                aggregateKind: "thread",
+                aggregateId: command.threadId,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+                metadata: { threadGoalMutation: "interrupt" },
+              }),
+              type: "thread.goal-updated",
+              payload: {
+                threadId: command.threadId,
+                goal: {
+                  ...thread.goal,
+                  status: "paused",
+                  updatedAt: maxIso(
+                    command.createdAt,
+                    thread.goal.updatedAt,
+                    thread.latestTurn?.startedAt,
+                  ),
+                },
+                ...(thread.session?.activeTurnId ? { turnId: thread.session.activeTurnId } : {}),
+              },
+            }
+          : null;
+      const sessionStopRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -918,6 +1410,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      if (goalUpdatedEvent) {
+        return [
+          goalUpdatedEvent,
+          { ...sessionStopRequestedEvent, causationEventId: goalUpdatedEvent.eventId },
+        ];
+      }
+      return sessionStopRequestedEvent;
     }
 
     case "thread.session.ensure": {

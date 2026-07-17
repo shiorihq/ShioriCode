@@ -12,7 +12,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
-import { ProviderKind, ThreadGoal } from "./orchestration";
+import { ProviderKind } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -167,8 +167,6 @@ const ProviderRuntimeEventType = Schema.Literals([
   "thread.started",
   "thread.state.changed",
   "thread.metadata.updated",
-  "thread.goal.updated",
-  "thread.goal.cleared",
   "thread.token-usage.updated",
   "thread.realtime.started",
   "thread.realtime.sdp",
@@ -234,8 +232,6 @@ const SessionExitedType = Schema.Literal("session.exited");
 const ThreadStartedType = Schema.Literal("thread.started");
 const ThreadStateChangedType = Schema.Literal("thread.state.changed");
 const ThreadMetadataUpdatedType = Schema.Literal("thread.metadata.updated");
-const ThreadGoalUpdatedType = Schema.Literal("thread.goal.updated");
-const ThreadGoalClearedType = Schema.Literal("thread.goal.cleared");
 const ThreadTokenUsageUpdatedType = Schema.Literal("thread.token-usage.updated");
 const ThreadRealtimeStartedType = Schema.Literal("thread.realtime.started");
 const ThreadRealtimeSdpType = Schema.Literal("thread.realtime.sdp");
@@ -349,19 +345,10 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 
-const ThreadGoalUpdatedRuntimePayload = Schema.Struct({
-  goal: ThreadGoal,
-});
-export type ThreadGoalUpdatedRuntimePayload = typeof ThreadGoalUpdatedRuntimePayload.Type;
-
-const ThreadGoalClearedRuntimePayload = Schema.Struct({
-  clearedAt: Schema.optional(IsoDateTime),
-});
-export type ThreadGoalClearedRuntimePayload = typeof ThreadGoalClearedRuntimePayload.Type;
-
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
+  processedTokensDelta: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
@@ -817,22 +804,6 @@ const ProviderRuntimeThreadMetadataUpdatedEvent = Schema.Struct({
 export type ProviderRuntimeThreadMetadataUpdatedEvent =
   typeof ProviderRuntimeThreadMetadataUpdatedEvent.Type;
 
-const ProviderRuntimeThreadGoalUpdatedEvent = Schema.Struct({
-  ...ProviderRuntimeEventBase.fields,
-  type: ThreadGoalUpdatedType,
-  payload: ThreadGoalUpdatedRuntimePayload,
-});
-export type ProviderRuntimeThreadGoalUpdatedEvent =
-  typeof ProviderRuntimeThreadGoalUpdatedEvent.Type;
-
-const ProviderRuntimeThreadGoalClearedEvent = Schema.Struct({
-  ...ProviderRuntimeEventBase.fields,
-  type: ThreadGoalClearedType,
-  payload: ThreadGoalClearedRuntimePayload,
-});
-export type ProviderRuntimeThreadGoalClearedEvent =
-  typeof ProviderRuntimeThreadGoalClearedEvent.Type;
-
 const ProviderRuntimeThreadTokenUsageUpdatedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadTokenUsageUpdatedType,
@@ -1249,8 +1220,6 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeThreadStartedEvent,
   ProviderRuntimeThreadStateChangedEvent,
   ProviderRuntimeThreadMetadataUpdatedEvent,
-  ProviderRuntimeThreadGoalUpdatedEvent,
-  ProviderRuntimeThreadGoalClearedEvent,
   ProviderRuntimeThreadTokenUsageUpdatedEvent,
   ProviderRuntimeThreadRealtimeStartedEvent,
   ProviderRuntimeThreadRealtimeSdpEvent,

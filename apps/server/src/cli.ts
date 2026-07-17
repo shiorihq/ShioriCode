@@ -1,6 +1,6 @@
 import { NetService } from "shared/Net";
 import { Config, Effect, LogLevel, Option, Schema } from "effect";
-import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
 import {
   DEFAULT_PORT,
@@ -14,8 +14,24 @@ import {
 import { readBootstrapEnvelope } from "./bootstrap";
 import { runBrowserPanelMcpServer } from "./browserPanelMcpServer";
 import { runComputerUseMcpServer } from "./computer/mcpServer";
+import { runThreadGoalMcpServer } from "./threadGoalMcpServer";
+import {
+  connectLinkEnvironment,
+  disconnectLinkEnvironment,
+  listLinkEnvironments,
+  linkStatus,
+} from "./linkCli";
 import { resolveBaseDir } from "./os-jank";
+import { providerDoctor } from "./providerDoctor";
+import { openShioriCodeDirectory } from "./openCli";
+import { remoteStatus, setRemoteExposure } from "./remoteCli";
 import { runServer } from "./server";
+import {
+  controlService,
+  installService,
+  serviceSummary,
+  type ServiceAction,
+} from "./serviceManager";
 
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
@@ -329,16 +345,178 @@ const commandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
 } as const;
 
-const rootCommand = Command.make("shioricode", commandFlags).pipe(
-  Command.withDescription("Run the ShioriCode server."),
-  Command.withHandler((flags) =>
-    Effect.gen(function* () {
-      const logLevel = yield* GlobalFlag.LogLevel;
-      const config = yield* resolveServerConfig(flags, logLevel);
-      return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
+const runServerWithFlags = (flags: CliServerFlags) =>
+  Effect.gen(function* () {
+    const logLevel = yield* GlobalFlag.LogLevel;
+    const config = yield* resolveServerConfig(flags, logLevel);
+    return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
+  });
+
+const serveCommand = Command.make("serve", commandFlags).pipe(
+  Command.withDescription("Run the ShioriCode server in the foreground."),
+  Command.withHandler(runServerWithFlags),
+);
+
+const serviceActionCommand = (action: ServiceAction, description: string) =>
+  Command.make(action).pipe(
+    Command.withDescription(description),
+    Command.withHandler(() =>
+      Effect.promise(async () => {
+        console.log(await controlService(action));
+      }),
+    ),
+  );
+
+const serviceCommand = Command.make("service").pipe(
+  Command.withDescription("Install and control the OS background service."),
+  Command.withSubcommands([
+    Command.make("install").pipe(
+      Command.withDescription("Install and start ShioriCode under a dedicated OS account."),
+      Command.withHandler(() =>
+        Effect.promise(async () => {
+          const result = await installService();
+          console.log("ShioriCode service installed and started.\n");
+          console.log(serviceSummary(result.layout));
+          console.log("\nLocal recovery credentials (store these securely):");
+          console.log(`Username: ${result.recoveryUsername}`);
+          console.log(`Password: ${result.recoveryPassword}`);
+          console.log("\nNext: shioricode link connect");
+        }),
+      ),
+    ),
+    serviceActionCommand("start", "Start the ShioriCode service."),
+    serviceActionCommand("stop", "Stop the ShioriCode service."),
+    serviceActionCommand("restart", "Restart the ShioriCode service."),
+    serviceActionCommand("status", "Show service status."),
+    serviceActionCommand("logs", "Print the latest service logs."),
+    serviceActionCommand("uninstall", "Remove the service while preserving data."),
+  ]),
+);
+
+const linkNameFlag = Flag.string("name").pipe(
+  Flag.withDescription("Human-readable name for this server in your Shiori account."),
+  Flag.optional,
+);
+
+const linkCommand = Command.make("link").pipe(
+  Command.withDescription("Connect and control ShioriCode Link hosting."),
+  Command.withSubcommands([
+    Command.make("connect", { name: linkNameFlag }).pipe(
+      Command.withDescription("Sign in with GitHub and publish this server through Link."),
+      Command.withHandler(({ name }) =>
+        Effect.promise(async () => {
+          const endpoint = await connectLinkEnvironment(Option.getOrElse(name, () => ""));
+          console.log(`\nLink hosting is ready:\n${endpoint}`);
+        }),
+      ),
+    ),
+    Command.make("status").pipe(
+      Command.withDescription("Show the Link connection configured for this service."),
+      Command.withHandler(() => Effect.sync(() => console.log(linkStatus()))),
+    ),
+    Command.make("list").pipe(
+      Command.withDescription("List named Link environments on the connected GitHub account."),
+      Command.withHandler(() =>
+        Effect.promise(async () => console.log(await listLinkEnvironments())),
+      ),
+    ),
+    Command.make("disconnect").pipe(
+      Command.withDescription("Revoke this Link environment and unlink GitHub."),
+      Command.withHandler(() =>
+        Effect.promise(async () => console.log(await disconnectLinkEnvironment())),
+      ),
+    ),
+  ]),
+);
+
+const openCommand = Command.make("open", {
+  directory: Argument.directory("directory", { mustExist: true }).pipe(Argument.optional),
+  baseDir: baseDirFlag,
+}).pipe(
+  Command.withDescription(
+    "Open a directory in ShioriCode Desktop, falling back to the local web UI.",
+  ),
+  Command.withHandler(({ directory, baseDir }) =>
+    Effect.promise(async () => {
+      const resolvedDirectory = Option.getOrUndefined(directory);
+      const resolvedBaseDir = Option.getOrUndefined(baseDir);
+      const result = await openShioriCodeDirectory({
+        ...(resolvedDirectory === undefined ? {} : { directory: resolvedDirectory }),
+        ...(resolvedBaseDir === undefined ? {} : { baseDir: resolvedBaseDir }),
+      });
+      console.log(
+        `Opened ${result.directory} in ShioriCode ${result.target === "desktop" ? "Desktop" : "Web"}.`,
+      );
     }),
   ),
+);
+
+const remoteStatusCommand = Command.make("status", { baseDir: baseDirFlag }).pipe(
+  Command.withDescription("Show the active remote access method and reachable URL."),
+  Command.withHandler(({ baseDir }) =>
+    Effect.promise(async () => {
+      console.log(await remoteStatus(Option.getOrUndefined(baseDir)));
+    }),
+  ),
+);
+
+const remoteExposureCommand = (
+  name: "serve" | "funnel",
+  method: "tailscale-serve" | "tailscale-funnel",
+  description: string,
+) =>
+  Command.make(name, { baseDir: baseDirFlag }).pipe(
+    Command.withDescription(description),
+    Command.withHandler(({ baseDir }) =>
+      Effect.promise(async () => {
+        console.log(await setRemoteExposure(method, Option.getOrUndefined(baseDir)));
+      }),
+    ),
+  );
+
+const remoteCommand = Command.make("remote").pipe(
+  Command.withDescription("Configure remote access to this ShioriCode server."),
   Command.withSubcommands([
+    remoteStatusCommand,
+    Command.make("tailscale").pipe(
+      Command.withDescription("Expose ShioriCode through your existing Tailscale installation."),
+      Command.withSubcommands([
+        remoteExposureCommand(
+          "serve",
+          "tailscale-serve",
+          "Make ShioriCode private to devices on your tailnet.",
+        ),
+        remoteExposureCommand(
+          "funnel",
+          "tailscale-funnel",
+          "Publish ShioriCode through a public Tailscale Funnel URL.",
+        ),
+      ]),
+    ),
+    Command.make("off", { baseDir: baseDirFlag }).pipe(
+      Command.withDescription("Disable the currently configured remote exposure."),
+      Command.withHandler(({ baseDir }) =>
+        Effect.promise(async () => {
+          console.log(await setRemoteExposure("off", Option.getOrUndefined(baseDir)));
+        }),
+      ),
+    ),
+  ]),
+);
+
+const rootCommand = Command.make("shioricode", commandFlags).pipe(
+  Command.withDescription("Run the ShioriCode server."),
+  Command.withHandler(runServerWithFlags),
+  Command.withSubcommands([
+    serveCommand,
+    openCommand,
+    serviceCommand,
+    linkCommand,
+    remoteCommand,
+    Command.make("doctor").pipe(
+      Command.withDescription("Check provider CLIs and authentication in the service account."),
+      Command.withHandler(() => Effect.promise(async () => console.log(await providerDoctor()))),
+    ),
     Command.make("browser-panel-mcp").pipe(
       Command.withDescription("Run the built-in browser panel MCP server over stdio."),
       Command.withHandler(() => Effect.promise(() => runBrowserPanelMcpServer())),
@@ -346,6 +524,10 @@ const rootCommand = Command.make("shioricode", commandFlags).pipe(
     Command.make("computer-use-mcp").pipe(
       Command.withDescription("Run the macOS Computer Use MCP server over stdio."),
       Command.withHandler(() => Effect.promise(() => runComputerUseMcpServer())),
+    ),
+    Command.make("thread-goal-mcp").pipe(
+      Command.withDescription("Run the built-in thread-goal MCP server over stdio."),
+      Command.withHandler(() => Effect.promise(() => runThreadGoalMcpServer())),
     ),
   ]),
 );

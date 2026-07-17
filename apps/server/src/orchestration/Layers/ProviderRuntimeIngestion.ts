@@ -2,15 +2,16 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
-  type KanbanItem,
   MessageId,
   type OrchestrationEvent,
+  type OrchestrationThread,
   type OrchestrationProposedPlanId,
   CheckpointRef,
   isToolLifecycleItemType,
   type OrchestrationSession,
   ThreadId,
   type ThreadTokenUsageSnapshot,
+  type ThreadGoal,
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
@@ -32,11 +33,14 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  incompleteKanbanItemsAssignedToThread,
+  newGoalCompletionSortKey,
+} from "../goalCompletion.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
-const newKanbanSortKey = () => `${Date.now().toString().padStart(13, "0")}_${crypto.randomUUID()}`;
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 2_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(30);
@@ -46,6 +50,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 1_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(30);
 const COMMENTARY_ASSISTANT_ITEMS_BY_ID_CACHE_CAPACITY = 2_000;
 const COMMENTARY_ASSISTANT_ITEMS_BY_ID_TTL = Duration.minutes(30);
+const GOAL_TURN_BINDING_MAX = 2_000;
+const GOAL_TURN_BINDING_TTL_MS = 30 * 60 * 1_000;
 const MAX_BUFFERED_ASSISTANT_CHARS = 12_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD =
   process.env.SHIORICODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
@@ -55,9 +61,14 @@ type BufferedAssistantTextEntry = {
   lastContentIndex?: number | undefined;
 };
 
-type TurnStartRequestedDomainEvent = Extract<
+type GoalBindingDomainEvent = Extract<
   OrchestrationEvent,
-  { type: "thread.turn-start-requested" }
+  {
+    type:
+      | "thread.turn-start-requested"
+      | "thread.goal-continuation-requested"
+      | "thread.session-set";
+  }
 >;
 
 type RuntimeIngestionInput =
@@ -67,7 +78,7 @@ type RuntimeIngestionInput =
     }
   | {
       source: "domain";
-      event: TurnStartRequestedDomainEvent;
+      event: GoalBindingDomainEvent;
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -236,10 +247,17 @@ function normalizeRuntimeTurnState(
   }
 }
 
-function kanbanItemHasAssignedThread(item: KanbanItem, threadId: ThreadId): boolean {
-  return item.assignees.some(
-    (assignee) => assignee.threadId !== null && String(assignee.threadId) === String(threadId),
+function isUsageLimitedMessage(message: string | null | undefined): boolean {
+  return Boolean(
+    message &&
+    /(?:usage|rate)[ _-]?limit|quota|insufficient (?:credits?|balance)|credits? exhausted/i.test(
+      message,
+    ),
   );
+}
+
+function threadGoalDefersLogicalCompletion(goal: ThreadGoal | null | undefined): boolean {
+  return goal !== null && goal !== undefined && goal.status !== "complete";
 }
 
 function orchestrationSessionStatusFromRuntimeState(
@@ -883,7 +901,53 @@ const make = Effect.fn("make")(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
-
+  const goalLifecycleByTurnKey = new Map<
+    string,
+    { readonly lifecycleKey: string | null; readonly retainedAt: number }
+  >();
+  const rememberGoalTurnBinding = (key: string, lifecycleKey: string | null) => {
+    goalLifecycleByTurnKey.delete(key);
+    goalLifecycleByTurnKey.set(key, { lifecycleKey, retainedAt: Date.now() });
+    while (goalLifecycleByTurnKey.size > GOAL_TURN_BINDING_MAX) {
+      const oldestKey = goalLifecycleByTurnKey.keys().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      goalLifecycleByTurnKey.delete(oldestKey);
+    }
+  };
+  const goalTurnBinding = (key: string): string | null | undefined => {
+    const binding = goalLifecycleByTurnKey.get(key);
+    if (!binding) return undefined;
+    if (Date.now() - binding.retainedAt > GOAL_TURN_BINDING_TTL_MS) {
+      goalLifecycleByTurnKey.delete(key);
+      return undefined;
+    }
+    return binding.lifecycleKey;
+  };
+  type PendingGoalTurnBinding = {
+    readonly messageId: MessageId;
+    readonly lifecycleKey: string | null;
+  };
+  const pendingGoalBindingsByThreadId = new Map<ThreadId, ReadonlyArray<PendingGoalTurnBinding>>();
+  const enqueuePendingGoalBinding = (threadId: ThreadId, binding: PendingGoalTurnBinding) => {
+    const queued = pendingGoalBindingsByThreadId.get(threadId) ?? [];
+    if (queued.some((entry) => entry.messageId === binding.messageId)) {
+      return;
+    }
+    pendingGoalBindingsByThreadId.set(threadId, [...queued, binding]);
+  };
+  const takePendingGoalBinding = (threadId: ThreadId): PendingGoalTurnBinding | undefined => {
+    const queued = pendingGoalBindingsByThreadId.get(threadId);
+    const next = queued?.[0];
+    if (!next) {
+      return undefined;
+    }
+    if (queued.length === 1) {
+      pendingGoalBindingsByThreadId.delete(threadId);
+    } else {
+      pendingGoalBindingsByThreadId.set(threadId, queued.slice(1));
+    }
+    return next;
+  };
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -1369,22 +1433,143 @@ const make = Effect.fn("make")(function* () {
     event: ProviderRuntimeEvent,
   ) {
     const currentReadModel = yield* orchestrationEngine.getReadModel();
-    const linkedItems = (currentReadModel.kanbanItems ?? []).filter(
-      (item) =>
-        item.deletedAt === null &&
-        item.status !== "done" &&
-        kanbanItemHasAssignedThread(item, threadId),
-    );
+    const linkedItems = incompleteKanbanItemsAssignedToThread(currentReadModel, threadId);
 
     for (const item of linkedItems) {
       yield* orchestrationEngine.dispatch({
         type: "kanbanItem.complete",
         commandId: providerCommandId(event, "kanban-thread-complete"),
         itemId: item.id,
-        sortKey: newKanbanSortKey(),
+        sortKey: newGoalCompletionSortKey(),
         completedAt,
       });
     }
+  });
+
+  const requestAutomationSessionStop = Effect.fnUntraced(function* (
+    thread: OrchestrationThread,
+    stoppedAt: string,
+    event: ProviderRuntimeEvent,
+  ) {
+    if (!isAutomationThread(thread) || thread.session?.status === "stopped") {
+      return;
+    }
+
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.session.stop",
+        commandId: providerCommandId(event, "automation-session-stop"),
+        threadId: thread.id,
+        createdAt: stoppedAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider runtime ingestion failed to stop automation session", {
+            eventId: event.eventId,
+            threadId: thread.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+  });
+
+  const recordHarnessGoalUsage = Effect.fnUntraced(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly goal: ThreadGoal;
+    readonly tokensDelta: number;
+    readonly timeDeltaSeconds: number;
+    readonly turnId: TurnId;
+    readonly tag: "tokens" | "time";
+  }) {
+    if (input.tokensDelta <= 0 && input.timeDeltaSeconds <= 0) return;
+
+    const lifecycleKey = input.goal.lifecycleId ?? input.goal.createdAt;
+    const semanticUsageKey =
+      input.tag === "tokens" && input.event.type === "thread.token-usage.updated"
+        ? input.event.eventId
+        : "terminal";
+
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.goal.usage.record",
+        commandId: CommandId.makeUnsafe(
+          `server:harness-goal-usage:${input.goal.threadId}:${lifecycleKey}:${input.turnId}:${input.tag}:${semanticUsageKey}`,
+        ),
+        threadId: input.goal.threadId,
+        expectedGoalLifecycleKey: lifecycleKey,
+        tokensDelta: Math.max(0, Math.floor(input.tokensDelta)),
+        timeDeltaSeconds: Math.max(0, Math.floor(input.timeDeltaSeconds)),
+        turnId: input.turnId,
+        createdAt: input.event.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug("provider runtime ingestion skipped stale goal usage", {
+            eventId: input.event.eventId,
+            threadId: input.goal.threadId,
+            goalCreatedAt: input.goal.createdAt,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+  });
+
+  const requestHarnessGoalContinuation = Effect.fnUntraced(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly goal: ThreadGoal;
+    readonly turnId?: TurnId;
+  }) {
+    const lifecycleKey = input.goal.lifecycleId ?? input.goal.createdAt;
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.goal.continue",
+        commandId: CommandId.makeUnsafe(
+          `server:harness-goal-continuation:${input.goal.threadId}:${lifecycleKey}:${input.turnId ?? "idle"}`,
+        ),
+        threadId: input.goal.threadId,
+        expectedGoalLifecycleKey: lifecycleKey,
+        ...(input.turnId !== undefined ? { sourceTurnId: input.turnId } : {}),
+        createdAt: input.event.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug("provider runtime ingestion skipped goal continuation", {
+            eventId: input.event.eventId,
+            threadId: input.goal.threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+  });
+
+  const stopHarnessGoalAfterTerminalTurn = Effect.fnUntraced(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly goal: ThreadGoal;
+    readonly turnId?: TurnId;
+    readonly status: "paused" | "blocked" | "usageLimited";
+  }) {
+    const lifecycleKey = input.goal.lifecycleId ?? input.goal.createdAt;
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.goal.status.report",
+        commandId: CommandId.makeUnsafe(
+          `server:harness-goal-stop:${input.goal.threadId}:${lifecycleKey}:${input.turnId ?? "idle"}:${input.status}`,
+        ),
+        threadId: input.goal.threadId,
+        expectedGoalLifecycleKey: lifecycleKey,
+        status: input.status,
+        ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
+        createdAt: input.event.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug("provider runtime ingestion skipped stale goal stop status", {
+            eventId: input.event.eventId,
+            threadId: input.goal.threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
   });
 
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
@@ -1394,37 +1579,80 @@ const make = Effect.fn("make")(function* () {
     const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) return;
 
-    // Guard against stale events from a provider that no longer owns this
-    // thread's session.  Lifecycle events (session.*, turn.*, thread.started)
-    // are exempt because they establish or transition session state and may
-    // legitimately race with the session-set dispatch during restarts.
-    const isSessionLifecycleEvent =
-      event.type === "session.started" ||
-      event.type === "session.configured" ||
-      event.type === "session.state.changed" ||
-      event.type === "session.exited" ||
-      event.type === "thread.started" ||
-      event.type === "turn.started" ||
-      event.type === "turn.completed" ||
-      event.type === "turn.aborted";
-
-    if (!isSessionLifecycleEvent) {
-      const sessionProvider = thread.session?.providerName ?? null;
-      if (sessionProvider !== null && event.provider !== sessionProvider) {
-        yield* Effect.logDebug("provider runtime ingestion skipping stale-provider event", {
-          eventId: event.eventId,
-          eventType: event.type,
-          eventProvider: event.provider,
-          sessionProvider,
-          threadId: thread.id,
-        });
-        return;
-      }
+    // A bound session owns every runtime event, including terminal lifecycle
+    // events. Only a start notification from the provider currently selected
+    // on the thread may establish a replacement binding. This prevents a late
+    // exit/error from an old provider from clobbering the new session.
+    const sessionProvider = thread.session?.providerName ?? null;
+    const establishesSelectedProvider =
+      (event.type === "session.started" || event.type === "thread.started") &&
+      event.provider === thread.modelSelection.provider;
+    if (
+      sessionProvider !== null &&
+      event.provider !== sessionProvider &&
+      !establishesSelectedProvider
+    ) {
+      yield* Effect.logDebug("provider runtime ingestion skipping stale-provider event", {
+        eventId: event.eventId,
+        eventType: event.type,
+        eventProvider: event.provider,
+        sessionProvider,
+        threadId: thread.id,
+      });
+      return;
+    }
+    if (
+      thread.session !== null &&
+      thread.session.status !== "stopped" &&
+      (event.type === "session.state.changed" ||
+        event.type === "session.exited" ||
+        (event.type === "thread.state.changed" && event.payload.state === "idle")) &&
+      event.createdAt < thread.session.updatedAt
+    ) {
+      yield* Effect.logDebug("provider runtime ingestion skipping stale-session event", {
+        eventId: event.eventId,
+        eventType: event.type,
+        eventCreatedAt: event.createdAt,
+        sessionUpdatedAt: thread.session.updatedAt,
+        threadId: thread.id,
+      });
+      return;
     }
 
     const now = event.createdAt;
     const eventTurnId = toTurnId(event.turnId);
     const activeTurnId = thread.session?.activeTurnId ?? null;
+    const goalDefersLogicalCompletion = threadGoalDefersLogicalCompletion(thread.goal);
+
+    const persistedEventTurn =
+      eventTurnId !== undefined
+        ? yield* projectionTurnRepository.getByTurnId({
+            threadId: thread.id,
+            turnId: eventTurnId,
+          })
+        : Option.none();
+    if (eventTurnId !== undefined && Option.isSome(persistedEventTurn)) {
+      rememberGoalTurnBinding(
+        providerTurnKey(thread.id, eventTurnId),
+        persistedEventTurn.value.goalLifecycleKey ?? null,
+      );
+    }
+
+    const expectedProviderTurnId =
+      event.type === "turn.started" && activeTurnId === null
+        ? yield* getExpectedProviderTurnIdForThread(thread.id)
+        : null;
+    const isUnexpectedProviderTurnStart =
+      event.type === "turn.started" &&
+      eventTurnId !== undefined &&
+      expectedProviderTurnId !== null &&
+      expectedProviderTurnId !== undefined &&
+      !sameId(expectedProviderTurnId, eventTurnId);
+    const isTerminalTurnStartReplay =
+      event.type === "turn.started" &&
+      activeTurnId === null &&
+      Option.isSome(persistedEventTurn) &&
+      persistedEventTurn.value.state !== "running";
 
     const conflictsWithActiveTurn =
       activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1441,7 +1669,9 @@ const make = Effect.fn("make")(function* () {
         case "thread.started":
           return true;
         case "turn.started":
-          return !conflictsWithActiveTurn;
+          return (
+            !conflictsWithActiveTurn && !isUnexpectedProviderTurnStart && !isTerminalTurnStartReplay
+          );
         case "turn.completed":
         case "turn.aborted":
           if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
@@ -1457,6 +1687,150 @@ const make = Effect.fn("make")(function* () {
           return true;
       }
     })();
+    const trackedGoalTurnId =
+      activeTurnId ?? (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null);
+    const isIdleTurnTerminalFallback =
+      event.type === "thread.state.changed" &&
+      event.payload.state === "idle" &&
+      activeTurnId !== null &&
+      thread.session?.status === "running";
+    const goalAccountingTurnId =
+      eventTurnId !== undefined &&
+      ((trackedGoalTurnId !== null && sameId(trackedGoalTurnId, eventTurnId)) ||
+        goalTurnBinding(providerTurnKey(thread.id, eventTurnId)) !== undefined)
+        ? eventTurnId
+        : isIdleTurnTerminalFallback && trackedGoalTurnId !== null
+          ? trackedGoalTurnId
+          : undefined;
+    const currentGoal =
+      thread.deletedAt === null && thread.archivedAt === null ? (thread.goal ?? null) : null;
+    const currentGoalLifecycleKey = currentGoal?.lifecycleId ?? currentGoal?.createdAt;
+    if (event.type === "turn.started" && eventTurnId !== undefined && shouldApplyThreadLifecycle) {
+      const turnKey = providerTurnKey(thread.id, eventTurnId);
+      const persistedBinding = goalTurnBinding(turnKey);
+      let hasCapturedBinding = persistedBinding !== undefined;
+      let capturedGoalLifecycleKey = persistedBinding ?? null;
+      if (!hasCapturedBinding) {
+        const queuedBinding = takePendingGoalBinding(thread.id);
+        if (queuedBinding !== undefined) {
+          hasCapturedBinding = true;
+          capturedGoalLifecycleKey = queuedBinding.lifecycleKey;
+        } else {
+          const pendingTurn = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+            threadId: thread.id,
+          });
+          if (Option.isSome(pendingTurn)) {
+            hasCapturedBinding = true;
+            capturedGoalLifecycleKey = pendingTurn.value.goalLifecycleKey ?? null;
+          }
+        }
+      }
+
+      if (hasCapturedBinding) {
+        rememberGoalTurnBinding(turnKey, capturedGoalLifecycleKey);
+      } else if (currentGoalLifecycleKey !== undefined) {
+        // Compatibility fallback for a turn requested before goal-aware turn
+        // correlation existed. New requests always carry an explicit binding
+        // decision, including an explicit null for ordinary/plan turns.
+        if (currentGoal?.status === "active" && thread.interactionMode !== "plan") {
+          rememberGoalTurnBinding(turnKey, currentGoalLifecycleKey);
+          hasCapturedBinding = true;
+        }
+      }
+    }
+    if (
+      trackedGoalTurnId !== null &&
+      thread.session !== null &&
+      goalTurnBinding(providerTurnKey(thread.id, trackedGoalTurnId)) === undefined
+    ) {
+      rememberGoalTurnBinding(
+        providerTurnKey(thread.id, trackedGoalTurnId),
+        thread.session.goalLifecycleKey ?? null,
+      );
+    }
+    const boundGoalTurnId = eventTurnId ?? trackedGoalTurnId ?? undefined;
+    const boundGoalLifecycleKey =
+      boundGoalTurnId !== undefined
+        ? goalTurnBinding(providerTurnKey(thread.id, boundGoalTurnId))
+        : undefined;
+    const goalTurnOwnsCurrentLifecycle =
+      currentGoalLifecycleKey !== undefined && boundGoalLifecycleKey === currentGoalLifecycleKey;
+    const turnForGoalTiming = goalAccountingTurnId ?? trackedGoalTurnId;
+    const currentTurnStartedAt =
+      thread.latestTurn !== null &&
+      turnForGoalTiming !== null &&
+      turnForGoalTiming !== undefined &&
+      sameId(thread.latestTurn.turnId, turnForGoalTiming)
+        ? (thread.latestTurn.startedAt ?? thread.latestTurn.requestedAt)
+        : null;
+    const goalStatusCountsForCurrentTurn =
+      currentGoal !== null &&
+      (currentGoal.status === "active" ||
+        currentGoal.status === "budgetLimited" ||
+        ((currentGoal.status === "complete" ||
+          currentGoal.status === "blocked" ||
+          currentGoal.status === "paused" ||
+          currentGoal.status === "usageLimited") &&
+          currentTurnStartedAt !== null &&
+          currentGoal.updatedAt >= currentTurnStartedAt));
+    const accountingGoal =
+      currentGoal !== null &&
+      goalStatusCountsForCurrentTurn &&
+      boundGoalLifecycleKey === currentGoalLifecycleKey &&
+      goalAccountingTurnId !== undefined &&
+      shouldApplyThreadLifecycle
+        ? currentGoal
+        : null;
+
+    if (
+      event.type === "thread.token-usage.updated" &&
+      accountingGoal !== null &&
+      goalAccountingTurnId !== undefined
+    ) {
+      const tokensDelta = event.payload.usage.processedTokensDelta ?? 0;
+      if (tokensDelta > 0) {
+        yield* recordHarnessGoalUsage({
+          event,
+          goal: accountingGoal,
+          tokensDelta,
+          timeDeltaSeconds: 0,
+          turnId: goalAccountingTurnId,
+          tag: "tokens",
+        });
+      }
+    }
+
+    if (
+      (event.type === "turn.completed" ||
+        event.type === "turn.aborted" ||
+        isIdleTurnTerminalFallback) &&
+      accountingGoal !== null &&
+      goalAccountingTurnId !== undefined &&
+      thread.latestTurn?.turnId === goalAccountingTurnId
+    ) {
+      const startedAt = thread.latestTurn.startedAt ?? thread.latestTurn.requestedAt;
+      const completedAtMs = Date.parse(event.createdAt);
+      const turnStartedAtMs = Date.parse(startedAt);
+      const goalCreatedAtMs = Date.parse(accountingGoal.createdAt);
+      const startedAtMs =
+        Number.isFinite(goalCreatedAtMs) && goalCreatedAtMs <= completedAtMs
+          ? Math.max(turnStartedAtMs, goalCreatedAtMs)
+          : turnStartedAtMs;
+      const timeDeltaSeconds =
+        Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)
+          ? Math.max(0, Math.floor((completedAtMs - startedAtMs) / 1_000))
+          : 0;
+      if (timeDeltaSeconds > 0) {
+        yield* recordHarnessGoalUsage({
+          event,
+          goal: accountingGoal,
+          tokensDelta: 0,
+          timeDeltaSeconds,
+          turnId: goalAccountingTurnId,
+          tag: "time",
+        });
+      }
+    }
     const acceptedTurnStartedSourcePlan =
       event.type === "turn.started" && shouldApplyThreadLifecycle
         ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
@@ -1471,18 +1845,43 @@ const make = Effect.fn("make")(function* () {
       event.type === "turn.completed" ||
       event.type === "turn.aborted"
     ) {
+      const isSessionStartupStateWithoutTurn =
+        event.type === "session.state.changed" &&
+        eventTurnId === undefined &&
+        (event.payload.state === "starting" ||
+          event.payload.state === "ready" ||
+          event.payload.state === "running" ||
+          event.payload.state === "waiting");
+      const hasAcceptedGoalPrebinding =
+        activeTurnId === null &&
+        thread.session !== null &&
+        (thread.session.status === "ready" || thread.session.status === "running") &&
+        thread.session.goalLifecycleKey !== null;
+      const shouldPreserveAcceptedTurnAcrossSessionStartupState =
+        isSessionStartupStateWithoutTurn && (activeTurnId !== null || hasAcceptedGoalPrebinding);
       const nextActiveTurnId =
         event.type === "turn.started"
           ? (eventTurnId ?? null)
-          : event.type === "turn.completed" ||
-              event.type === "turn.aborted" ||
-              event.type === "session.exited"
+          : event.type === "session.state.changed" &&
+              event.payload.state === "error" &&
+              trackedGoalTurnId !== null &&
+              currentGoal?.status === "active" &&
+              !goalTurnOwnsCurrentLifecycle &&
+              thread.interactionMode !== "plan"
             ? null
-            : activeTurnId;
+            : event.type === "turn.completed" ||
+                event.type === "turn.aborted" ||
+                event.type === "session.exited"
+              ? null
+              : activeTurnId;
       const status = (() => {
         switch (event.type) {
           case "session.state.changed":
-            return orchestrationSessionStatusFromRuntimeState(event.payload.state);
+            return shouldPreserveAcceptedTurnAcrossSessionStartupState
+              ? activeTurnId !== null
+                ? "running"
+                : (thread.session?.status ?? "ready")
+              : orchestrationSessionStatusFromRuntimeState(event.payload.state);
           case "turn.started":
             return "running";
           case "session.exited":
@@ -1525,6 +1924,17 @@ const make = Effect.fn("make")(function* () {
             return "resumed";
         }
       })();
+      const nextGoalLifecycleKey =
+        event.type === "session.started" ||
+        event.type === "thread.started" ||
+        shouldPreserveAcceptedTurnAcrossSessionStartupState
+          ? (thread.session?.goalLifecycleKey ?? null)
+          : nextActiveTurnId === null
+            ? null
+            : (boundGoalLifecycleKey ??
+              (thread.session?.activeTurnId === nextActiveTurnId
+                ? thread.session.goalLifecycleKey
+                : null));
 
       if (shouldApplyThreadLifecycle) {
         if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1554,6 +1964,7 @@ const make = Effect.fn("make")(function* () {
             providerName: event.provider,
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: nextActiveTurnId,
+            goalLifecycleKey: nextGoalLifecycleKey ?? null,
             lastError,
             updatedAt: now,
           },
@@ -1565,9 +1976,139 @@ const make = Effect.fn("make")(function* () {
           createdAt: now,
         });
 
+        const completedTurnState =
+          event.type === "turn.completed" ? normalizeRuntimeTurnState(event.payload.state) : null;
         if (
           event.type === "turn.completed" &&
-          normalizeRuntimeTurnState(event.payload.state) === "completed"
+          completedTurnState === "failed" &&
+          currentGoal?.status === "active" &&
+          goalTurnOwnsCurrentLifecycle &&
+          eventTurnId !== undefined
+        ) {
+          yield* stopHarnessGoalAfterTerminalTurn({
+            event,
+            goal: currentGoal,
+            turnId: eventTurnId,
+            status: isUsageLimitedMessage(event.payload.errorMessage) ? "usageLimited" : "blocked",
+          });
+        } else if (
+          event.type === "turn.completed" &&
+          (completedTurnState === "interrupted" || completedTurnState === "cancelled") &&
+          currentGoal?.status === "active" &&
+          goalTurnOwnsCurrentLifecycle &&
+          eventTurnId !== undefined
+        ) {
+          yield* stopHarnessGoalAfterTerminalTurn({
+            event,
+            goal: currentGoal,
+            turnId: eventTurnId,
+            status: "paused",
+          });
+        } else if (
+          event.type === "turn.aborted" &&
+          currentGoal?.status === "active" &&
+          goalTurnOwnsCurrentLifecycle &&
+          eventTurnId !== undefined
+        ) {
+          yield* stopHarnessGoalAfterTerminalTurn({
+            event,
+            goal: currentGoal,
+            turnId: eventTurnId,
+            status: "paused",
+          });
+        } else if (
+          (event.type === "turn.aborted" ||
+            (event.type === "turn.completed" && completedTurnState !== "completed")) &&
+          !goalTurnOwnsCurrentLifecycle &&
+          currentGoal?.status === "active" &&
+          thread.interactionMode !== "plan" &&
+          eventTurnId !== undefined
+        ) {
+          // The terminal physical turn did not own the current lifecycle (for
+          // example it was a plan turn or belonged to a replaced goal). Resume
+          // the current goal only after that turn has ended.
+          yield* requestHarnessGoalContinuation({
+            event,
+            goal: currentGoal,
+            turnId: eventTurnId,
+          });
+        } else if (
+          event.type === "turn.completed" &&
+          completedTurnState === "completed" &&
+          currentGoal?.status === "active" &&
+          thread.interactionMode !== "plan" &&
+          eventTurnId !== undefined
+        ) {
+          yield* requestHarnessGoalContinuation({
+            event,
+            goal: currentGoal,
+            turnId: eventTurnId,
+          });
+        }
+
+        if (
+          event.type === "session.state.changed" &&
+          event.payload.state === "error" &&
+          currentGoal?.status === "active" &&
+          (trackedGoalTurnId !== null
+            ? goalTurnOwnsCurrentLifecycle
+            : thread.interactionMode !== "plan")
+        ) {
+          yield* stopHarnessGoalAfterTerminalTurn({
+            event,
+            goal: currentGoal,
+            ...(trackedGoalTurnId !== null ? { turnId: trackedGoalTurnId } : {}),
+            status: isUsageLimitedMessage(event.payload.reason) ? "usageLimited" : "blocked",
+          });
+        } else if (
+          event.type === "session.state.changed" &&
+          event.payload.state === "error" &&
+          currentGoal?.status === "active" &&
+          trackedGoalTurnId !== null &&
+          !goalTurnOwnsCurrentLifecycle &&
+          thread.interactionMode !== "plan"
+        ) {
+          yield* requestHarnessGoalContinuation({
+            event,
+            goal: currentGoal,
+            turnId: trackedGoalTurnId,
+          });
+        }
+
+        if (event.type === "session.exited" && currentGoal?.status === "active") {
+          if (event.payload.exitKind === "graceful") {
+            if (thread.interactionMode !== "plan") {
+              yield* requestHarnessGoalContinuation({
+                event,
+                goal: currentGoal,
+                ...(trackedGoalTurnId !== null ? { turnId: trackedGoalTurnId } : {}),
+              });
+            }
+          } else if (
+            trackedGoalTurnId !== null
+              ? goalTurnOwnsCurrentLifecycle
+              : thread.interactionMode !== "plan"
+          ) {
+            yield* stopHarnessGoalAfterTerminalTurn({
+              event,
+              goal: currentGoal,
+              ...(trackedGoalTurnId !== null ? { turnId: trackedGoalTurnId } : {}),
+              status: isUsageLimitedMessage(event.payload.reason) ? "usageLimited" : "blocked",
+            });
+          } else if (thread.interactionMode !== "plan") {
+            yield* requestHarnessGoalContinuation({
+              event,
+              goal: currentGoal,
+              ...(trackedGoalTurnId !== null ? { turnId: trackedGoalTurnId } : {}),
+            });
+          }
+        }
+
+        if (
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "completed" &&
+          !goalDefersLogicalCompletion &&
+          thread.goal?.status !== "complete"
         ) {
           yield* completeKanbanItemsAssignedToThread(thread.id, now, event).pipe(
             Effect.catchCause((cause) =>
@@ -1582,13 +2123,7 @@ const make = Effect.fn("make")(function* () {
       }
     }
 
-    const shouldRecoverRunningSessionFromIdleThreadStatus =
-      event.type === "thread.state.changed" &&
-      event.payload.state === "idle" &&
-      activeTurnId !== null &&
-      thread.session?.status === "running";
-
-    if (shouldRecoverRunningSessionFromIdleThreadStatus) {
+    if (isIdleTurnTerminalFallback) {
       yield* orchestrationEngine.dispatch({
         type: "thread.session.set",
         commandId: providerCommandId(event, "thread-session-idle-recovery"),
@@ -1599,6 +2134,7 @@ const make = Effect.fn("make")(function* () {
           providerName: event.provider,
           runtimeMode: thread.session?.runtimeMode ?? "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: now,
         },
@@ -1609,6 +2145,18 @@ const make = Effect.fn("make")(function* () {
         resumeState: "resumed",
         createdAt: now,
       });
+
+      if (thread.interactionMode !== "plan" && trackedGoalTurnId !== null) {
+        const latestReadModel = yield* orchestrationEngine.getReadModel();
+        const latestGoal = latestReadModel.threads.find((entry) => entry.id === thread.id)?.goal;
+        if (latestGoal?.status === "active") {
+          yield* requestHarnessGoalContinuation({
+            event,
+            goal: latestGoal,
+            turnId: trackedGoalTurnId,
+          });
+        }
+      }
     }
 
     const commentaryAssistantItemId =
@@ -1823,30 +2371,21 @@ const make = Effect.fn("make")(function* () {
 
     if (
       shouldApplyThreadLifecycle &&
-      isAutomationThread(thread) &&
-      (event.type === "turn.completed" || event.type === "turn.aborted")
+      (event.type === "turn.aborted" ||
+        (event.type === "turn.completed" &&
+          !goalDefersLogicalCompletion &&
+          thread.goal?.status !== "complete"))
     ) {
-      yield* orchestrationEngine
-        .dispatch({
-          type: "thread.session.stop",
-          commandId: providerCommandId(event, "automation-session-stop"),
-          threadId: thread.id,
-          createdAt: now,
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("provider runtime ingestion failed to stop automation session", {
-              eventId: event.eventId,
-              threadId: thread.id,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
+      yield* requestAutomationSessionStop(thread, now, event);
     }
 
     if (event.type === "session.exited") {
       yield* clearTurnStateForSession(thread.id);
     }
+
+    // Keep terminal bindings briefly: some providers emit final token usage
+    // after completion or reconnect. The bounded TTL map preserves attribution
+    // without granting stale turns ownership of a replacement lifecycle.
 
     if (event.type === "runtime.error") {
       if (eventTurnId) {
@@ -1866,6 +2405,11 @@ const make = Effect.fn("make")(function* () {
         : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
       if (shouldApplyRuntimeError) {
+        const runtimeErrorBelongsToReplacedGoal =
+          currentGoal?.status === "active" &&
+          trackedGoalTurnId !== null &&
+          !goalTurnOwnsCurrentLifecycle &&
+          thread.interactionMode !== "plan";
         yield* orchestrationEngine.dispatch({
           type: "thread.session.set",
           commandId: providerCommandId(event, "runtime-error-session-set"),
@@ -1875,7 +2419,14 @@ const make = Effect.fn("make")(function* () {
             status: "error",
             providerName: event.provider,
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
-            activeTurnId: eventTurnId ?? null,
+            activeTurnId: runtimeErrorBelongsToReplacedGoal
+              ? null
+              : (eventTurnId ?? trackedGoalTurnId),
+            goalLifecycleKey:
+              !runtimeErrorBelongsToReplacedGoal &&
+              (eventTurnId !== undefined || trackedGoalTurnId !== null)
+                ? (boundGoalLifecycleKey ?? thread.session?.goalLifecycleKey ?? null)
+                : null,
             lastError: runtimeErrorMessage,
             updatedAt: now,
           },
@@ -1886,6 +2437,33 @@ const make = Effect.fn("make")(function* () {
           resumeState: "needs_resume",
           createdAt: now,
         });
+        if (
+          currentGoal?.status === "active" &&
+          (trackedGoalTurnId !== null
+            ? goalTurnOwnsCurrentLifecycle
+            : thread.interactionMode !== "plan")
+        ) {
+          yield* stopHarnessGoalAfterTerminalTurn({
+            event,
+            goal: currentGoal,
+            ...(eventTurnId !== undefined
+              ? { turnId: eventTurnId }
+              : trackedGoalTurnId !== null
+                ? { turnId: trackedGoalTurnId }
+                : {}),
+            status: isUsageLimitedMessage(runtimeErrorMessage) ? "usageLimited" : "blocked",
+          });
+        } else if (runtimeErrorBelongsToReplacedGoal && currentGoal !== null) {
+          yield* requestHarnessGoalContinuation({
+            event,
+            goal: currentGoal,
+            ...(eventTurnId !== undefined
+              ? { turnId: eventTurnId }
+              : trackedGoalTurnId !== null
+                ? { turnId: trackedGoalTurnId }
+                : {}),
+          });
+        }
       }
     }
 
@@ -1895,31 +2473,6 @@ const make = Effect.fn("make")(function* () {
         commandId: providerCommandId(event, "thread-meta-update"),
         threadId: thread.id,
         title: event.payload.name,
-      });
-    }
-
-    if (event.type === "thread.goal.updated") {
-      yield* orchestrationEngine.dispatch({
-        type: "thread.goal.set",
-        commandId: providerCommandId(event, "thread-goal-set"),
-        threadId: thread.id,
-        objective: event.payload.goal.objective,
-        status: event.payload.goal.status,
-        tokenBudget: event.payload.goal.tokenBudget,
-        tokensUsed: event.payload.goal.tokensUsed,
-        timeUsedSeconds: event.payload.goal.timeUsedSeconds,
-        goalCreatedAt: event.payload.goal.createdAt,
-        goalUpdatedAt: event.payload.goal.updatedAt,
-        createdAt: event.createdAt,
-      });
-    }
-
-    if (event.type === "thread.goal.cleared") {
-      yield* orchestrationEngine.dispatch({
-        type: "thread.goal.clear",
-        commandId: providerCommandId(event, "thread-goal-clear"),
-        threadId: thread.id,
-        createdAt: event.payload.clearedAt ?? event.createdAt,
       });
     }
 
@@ -1974,7 +2527,27 @@ const make = Effect.fn("make")(function* () {
     ).pipe(Effect.asVoid);
   });
 
-  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
+  const processDomainEvent = (event: GoalBindingDomainEvent) =>
+    Effect.sync(() => {
+      if (event.type === "thread.session-set") {
+        const activeTurnId = event.payload.session.activeTurnId;
+        if (event.payload.session.status === "running" && activeTurnId !== null) {
+          const turnKey = providerTurnKey(event.payload.threadId, activeTurnId);
+          if (goalTurnBinding(turnKey) === undefined) {
+            takePendingGoalBinding(event.payload.threadId);
+          }
+          rememberGoalTurnBinding(turnKey, event.payload.session.goalLifecycleKey ?? null);
+        }
+        return;
+      }
+      enqueuePendingGoalBinding(event.payload.threadId, {
+        messageId: event.payload.messageId,
+        lifecycleKey:
+          event.type === "thread.turn-start-requested"
+            ? (event.payload.goalLifecycleKey ?? null)
+            : event.payload.expectedGoalLifecycleKey,
+      });
+    });
 
   const processInput = (input: RuntimeIngestionInput) =>
     input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
@@ -1983,7 +2556,7 @@ const make = Effect.fn("make")(function* () {
     processInput(input).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
+          return Effect.interrupt;
         }
         return Effect.logWarning("provider runtime ingestion failed to process event", {
           source: input.source,
@@ -1997,6 +2570,60 @@ const make = Effect.fn("make")(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: ProviderRuntimeIngestionShape["start"] = Effect.fn("start")(function* () {
+    // Capture durable binding facts before provider reconciliation rewrites the
+    // projected session. Never reconstruct ownership from the mutable current
+    // goal or interaction mode.
+    const recoveryReadModel = yield* orchestrationEngine.getReadModel();
+    yield* Effect.forEach(
+      recoveryReadModel.threads,
+      Effect.fn(function* (thread) {
+        const runningTurnId =
+          thread.session?.activeTurnId ??
+          (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null);
+        if (runningTurnId !== null) {
+          const persistedRunningTurn = yield* projectionTurnRepository
+            .getByTurnId({ threadId: thread.id, turnId: runningTurnId })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider runtime ingestion could not recover a running turn binding",
+                  { threadId: thread.id, turnId: runningTurnId, cause: Cause.pretty(cause) },
+                ).pipe(Effect.as(Option.none())),
+              ),
+            );
+          if (Option.isSome(persistedRunningTurn)) {
+            rememberGoalTurnBinding(
+              providerTurnKey(thread.id, runningTurnId),
+              persistedRunningTurn.value.goalLifecycleKey ?? null,
+            );
+          } else if (thread.session?.activeTurnId === runningTurnId) {
+            rememberGoalTurnBinding(
+              providerTurnKey(thread.id, runningTurnId),
+              thread.session.goalLifecycleKey ?? null,
+            );
+          }
+        }
+
+        const pendingTurns = yield* projectionTurnRepository
+          .listPendingTurnStartsByThreadId({ threadId: thread.id })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "provider runtime ingestion could not recover pending turn bindings",
+                { threadId: thread.id, cause: Cause.pretty(cause) },
+              ).pipe(Effect.as<ReadonlyArray<never>>([])),
+            ),
+          );
+        for (const pendingTurn of pendingTurns) {
+          enqueuePendingGoalBinding(thread.id, {
+            messageId: pendingTurn.messageId,
+            lifecycleKey: pendingTurn.goalLifecycleKey ?? null,
+          });
+        }
+      }),
+      { concurrency: 1 },
+    );
+
     const reconciledSessions = yield* providerService.reconcileSessions().pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider runtime ingestion failed to reconcile provider sessions", {
@@ -2009,31 +2636,64 @@ const make = Effect.fn("make")(function* () {
       reconciledSessions,
       Effect.fn(function* (entry) {
         const readModel = yield* orchestrationEngine.getReadModel();
-        if (!readModel.threads.some((thread) => thread.id === entry.threadId)) {
+        const existingThread = readModel.threads.find((thread) => thread.id === entry.threadId);
+        if (!existingThread) {
           return;
         }
         const inactiveStatus: OrchestrationSession["status"] =
           entry.resumeState === "unrecoverable" ? "error" : "stopped";
-        const projectedSession: OrchestrationSession =
-          entry.session !== null
-            ? {
+        let projectedSession: OrchestrationSession;
+        if (entry.session !== null) {
+          const activeTurnId =
+            entry.session.activeTurnId ??
+            (entry.session.status === "running"
+              ? (existingThread.session?.activeTurnId ?? null)
+              : null);
+          let goalLifecycleKey: string | null =
+            activeTurnId === null && entry.session.status === "running"
+              ? (existingThread.session?.goalLifecycleKey ?? null)
+              : null;
+          if (activeTurnId !== null) {
+            const turnKey = providerTurnKey(entry.threadId, activeTurnId);
+            const recoveredBinding = goalTurnBinding(turnKey);
+            if (recoveredBinding !== undefined) {
+              goalLifecycleKey = recoveredBinding;
+            } else if (existingThread.session?.activeTurnId === activeTurnId) {
+              goalLifecycleKey = existingThread.session.goalLifecycleKey ?? null;
+              rememberGoalTurnBinding(turnKey, goalLifecycleKey);
+            } else {
+              const pendingTurn = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
                 threadId: entry.threadId,
-                status: orchestrationSessionStatusFromProviderSessionStatus(entry.session.status),
-                providerName: entry.provider,
-                runtimeMode: entry.runtimeMode,
-                activeTurnId: null,
-                lastError: entry.lastError,
-                updatedAt: entry.session.updatedAt,
+              });
+              if (Option.isSome(pendingTurn)) {
+                goalLifecycleKey = pendingTurn.value.goalLifecycleKey ?? null;
+                takePendingGoalBinding(entry.threadId);
+                rememberGoalTurnBinding(turnKey, goalLifecycleKey);
               }
-            : {
-                threadId: entry.threadId,
-                status: inactiveStatus,
-                providerName: entry.provider,
-                runtimeMode: entry.runtimeMode,
-                activeTurnId: null,
-                lastError: entry.lastError,
-                updatedAt: new Date().toISOString(),
-              };
+            }
+          }
+          projectedSession = {
+            threadId: entry.threadId,
+            status: orchestrationSessionStatusFromProviderSessionStatus(entry.session.status),
+            providerName: entry.provider,
+            runtimeMode: entry.runtimeMode,
+            activeTurnId,
+            goalLifecycleKey,
+            lastError: entry.lastError,
+            updatedAt: entry.session.updatedAt,
+          };
+        } else {
+          projectedSession = {
+            threadId: entry.threadId,
+            status: inactiveStatus,
+            providerName: entry.provider,
+            runtimeMode: entry.runtimeMode,
+            activeTurnId: null,
+            goalLifecycleKey: null,
+            lastError: entry.lastError,
+            updatedAt: new Date().toISOString(),
+          };
+        }
 
         yield* orchestrationEngine.dispatch({
           type: "thread.session.set",
@@ -2066,7 +2726,11 @@ const make = Effect.fn("make")(function* () {
     );
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (event.type !== "thread.turn-start-requested") {
+        if (
+          event.type !== "thread.turn-start-requested" &&
+          event.type !== "thread.goal-continuation-requested" &&
+          event.type !== "thread.session-set"
+        ) {
           return Effect.void;
         }
         return worker.enqueue({ source: "domain", event });
@@ -2080,7 +2744,11 @@ const make = Effect.fn("make")(function* () {
   } satisfies ProviderRuntimeIngestionShape;
 });
 
-export const ProviderRuntimeIngestionLive = Layer.effect(
+export const ProviderRuntimeIngestionUnprovided = Layer.effect(
   ProviderRuntimeIngestionService,
   make(),
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+);
+
+export const ProviderRuntimeIngestionLive = ProviderRuntimeIngestionUnprovided.pipe(
+  Layer.provideMerge(ProjectionTurnRepositoryLive),
+);

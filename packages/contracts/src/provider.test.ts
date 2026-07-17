@@ -114,6 +114,29 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("drops harness-only goal metadata at the provider boundary", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "Harness-rendered goal context",
+      goal: {
+        threadId: "thread-1",
+        objective: "This field must not reach a provider adapter",
+        status: "active",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: "2026-07-16T10:00:00.000Z",
+        updatedAt: "2026-07-16T10:00:00.000Z",
+      },
+    });
+
+    expect(parsed).toEqual({
+      threadId: "thread-1",
+      input: "Harness-rendered goal context",
+    });
+    expect(parsed).not.toHaveProperty("goal");
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

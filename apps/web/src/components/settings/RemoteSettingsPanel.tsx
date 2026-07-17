@@ -17,6 +17,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { RemoteSetupWizard } from "./RemoteSetupWizard";
 import { RemoteUrlCard } from "./RemoteUrlCard";
+import { DesktopRemoteConnectionCard } from "./DesktopRemoteConnectionCard";
 import type { WizardMethod } from "./remoteSetup.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./SettingsPanels";
 
@@ -26,6 +27,7 @@ const EXPOSURE_OPTIONS: ReadonlyArray<{
   hint: string;
 }> = [
   { value: "off", label: "Off", hint: "This machine only" },
+  { value: "shiori-link", label: "Link", hint: "Public · hosted by Shiori" },
   { value: "tailscale-serve", label: "My devices", hint: "Private · via your tailnet" },
   { value: "tailscale-funnel", label: "Public link", hint: "Anywhere · behind sign-in" },
 ];
@@ -135,6 +137,11 @@ export function RemoteSettingsPanel() {
     [runAction],
   );
 
+  const disconnectLinkAccount = useCallback(
+    () => runAction(() => getWsRpcClient().remote.disconnectLinkAccount({})),
+    [runAction],
+  );
+
   const runTest = useCallback(async () => {
     setTesting(true);
     setTestResult(null);
@@ -158,6 +165,8 @@ export function RemoteSettingsPanel() {
   }, []);
 
   const tailscale = status?.tailscale;
+  const link = status?.link;
+  const canLink = Boolean(link?.accountLinked);
   const canServe = Boolean(tailscale?.installed);
   const canFunnel = Boolean(tailscale?.installed && tailscale.httpsEnabled);
   const drifted = Boolean(
@@ -183,6 +192,7 @@ export function RemoteSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <DesktopRemoteConnectionCard />
       {/* ── Status / wizard card ─────────────────────────────────── */}
       <SettingsSection
         title="Remote access"
@@ -321,18 +331,21 @@ export function RemoteSettingsPanel() {
             <SettingsRow
               title="Access method"
               description={
-                tailscale?.installed
-                  ? tailscale.running
-                    ? "Tailscale is connected on this machine."
-                    : "Tailscale is installed but not connected — open the Tailscale app or run `tailscale up`."
-                  : "Remote access runs over Tailscale — install it (free) and this machine is reachable with no ports, DNS, or certificates to manage."
+                link?.accountLinked
+                  ? "Link is ready. Tailscale remains available for private tailnet-only access."
+                  : tailscale?.installed
+                    ? tailscale.running
+                      ? "Connect Shiori for Link, or keep using this machine's Tailscale connection."
+                      : "Connect Shiori for Link without Tailscale, or reconnect the Tailscale app."
+                    : "ShioriCode Link gives this machine a hosted link without Tailscale, ports, or DNS setup."
               }
             >
-              <div className="mt-1 grid gap-2 sm:grid-cols-3">
+              <div className="mt-1 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {EXPOSURE_OPTIONS.map((option) => {
                   const active = status?.method === option.value;
                   const disabled =
                     busy ||
+                    (option.value === "shiori-link" && !canLink) ||
                     (option.value === "tailscale-serve" && !canServe) ||
                     (option.value === "tailscale-funnel" && !canFunnel);
                   return (

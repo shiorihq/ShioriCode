@@ -31,12 +31,9 @@ vi.mock("~/uiStateStore", () => ({
 }));
 
 vi.mock("~/hooks/useSettings", () => ({
-  useSettings: (
-    selector?: (settings: { sidebarTranslucent: boolean; goals: { enabled: boolean } }) => unknown,
-  ) => {
+  useSettings: (selector?: (settings: { sidebarTranslucent: boolean }) => unknown) => {
     const settings = {
       sidebarTranslucent: false,
-      goals: { enabled: false },
     };
     return selector ? selector(settings) : settings;
   },

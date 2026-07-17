@@ -1,4 +1,9 @@
-import { ThreadId } from "contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  type ModelSelection,
+  type ProviderKind,
+  ThreadId,
+} from "contracts";
 import { MessageId } from "contracts";
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +15,14 @@ import {
 const THREAD_ID = ThreadId.makeUnsafe("thread-queued");
 const QUEUED_CREATED_AT = "2026-04-19T17:47:27.301Z";
 const DISPATCHED_AT = "2026-04-19T17:48:15.500Z";
+const PROVIDER_KINDS = [
+  "kimiCode",
+  "gemini",
+  "glm",
+  "cursor",
+  "codex",
+  "claudeAgent",
+] as const satisfies ReadonlyArray<ProviderKind>;
 
 describe("buildQueuedTurnDispatchCommands", () => {
   it("stamps queued turns with the dequeue time instead of the original queue timestamp", () => {
@@ -22,6 +35,7 @@ describe("buildQueuedTurnDispatchCommands", () => {
         modelSelection: { provider: "codex", model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
+        goalIntent: null,
         titleSeed: "Thread",
       },
       thread: {
@@ -44,6 +58,50 @@ describe("buildQueuedTurnDispatchCommands", () => {
     });
   });
 
+  it.each(PROVIDER_KINDS)("carries goal intent into a dequeued %s turn", (provider) => {
+    const modelSelection = {
+      provider,
+      model: DEFAULT_MODEL_BY_PROVIDER[provider],
+    } as ModelSelection;
+    const commands = buildQueuedTurnDispatchCommands({
+      queuedTurn: {
+        threadId: THREAD_ID,
+        messageId: "message-goal-queued",
+        text: "ship the goal flow",
+        attachments: [],
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        goalIntent: {
+          objective: "ship the goal flow",
+          status: "active",
+          tokenBudget: null,
+          expectedGoalLifecycleKey: null,
+        },
+        titleSeed: "Thread",
+      },
+      thread: {
+        id: THREAD_ID,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
+      dispatchCreatedAt: DISPATCHED_AT,
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      type: "thread.turn.start",
+      modelSelection,
+      goalIntent: {
+        objective: "ship the goal flow",
+        status: "active",
+        tokenBudget: null,
+        expectedGoalLifecycleKey: null,
+      },
+    });
+  });
+
   it("uses the dequeue time for queued setting changes as well", () => {
     const commands = buildQueuedTurnDispatchCommands({
       queuedTurn: {
@@ -54,6 +112,7 @@ describe("buildQueuedTurnDispatchCommands", () => {
         modelSelection: { provider: "codex", model: "gpt-5.4" },
         runtimeMode: "approval-required",
         interactionMode: "plan",
+        goalIntent: null,
         titleSeed: "Thread",
       },
       thread: {
@@ -108,6 +167,7 @@ describe("decideQueuedTurnProcessing", () => {
           modelSelection: { provider: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          goalIntent: null,
           titleSeed: "Thread",
           createdAt: "2026-04-19T20:20:00.000Z",
           composerSnapshot: {
@@ -127,6 +187,7 @@ describe("decideQueuedTurnProcessing", () => {
           modelSelection: { provider: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          goalIntent: null,
           titleSeed: "Thread",
           createdAt: "2026-04-19T20:20:01.000Z",
           composerSnapshot: {
@@ -180,6 +241,7 @@ describe("decideQueuedTurnProcessing", () => {
           modelSelection: { provider: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          goalIntent: null,
           titleSeed: "Thread",
           createdAt: "2026-04-19T20:20:00.000Z",
           composerSnapshot: {
@@ -240,6 +302,7 @@ describe("decideQueuedTurnProcessing", () => {
           modelSelection: { provider: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          goalIntent: null,
           titleSeed: "Thread",
           createdAt: "2026-04-19T20:20:00.000Z",
           composerSnapshot: {
@@ -288,6 +351,7 @@ describe("decideQueuedTurnProcessing", () => {
           modelSelection: { provider: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
+          goalIntent: null,
           titleSeed: "Thread",
           createdAt: "2026-04-19T20:20:00.000Z",
           composerSnapshot: {

@@ -372,6 +372,7 @@ function createSnapshotForTargetUser(options: {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: NOW_ISO,
         },
@@ -433,6 +434,7 @@ function addThreadToSnapshot(
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: NOW_ISO,
         },
@@ -1363,6 +1365,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ...thread.session,
             status: "running",
             activeTurnId: targetTurnId,
+            goalLifecycleKey: null,
             updatedAt: isoAt(391),
           },
           messages: thread.messages.map((message) =>
@@ -1441,6 +1444,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ...thread.session,
             status: "ready",
             activeTurnId: null,
+            goalLifecycleKey: null,
             updatedAt: isoAt(401),
           },
         },
@@ -1696,6 +1700,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 providerName: "codex",
                 runtimeMode: "full-access",
                 activeTurnId: null,
+                goalLifecycleKey: null,
                 lastError: null,
                 updatedAt: isoAt(70),
               },
@@ -2732,6 +2737,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ...session,
             status: "running" as const,
             activeTurnId: targetTurnId,
+            goalLifecycleKey: null,
           },
         },
       ],
@@ -2767,6 +2773,109 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps goal mode and the draft when pausing before queueing is rejected", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-goal-queue-pause-failure" as MessageId,
+      targetText: "goal queue pause failure target",
+      sessionStatus: "running",
+    });
+    const targetTurnId = "turn-goal-queue-pause-failure" as TurnId;
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Missing thread fixture for goal queue pause failure test.");
+    }
+    const goalLifecycleKey = "goal:active-before-queue";
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-5",
+          },
+          messages: thread.messages.slice(0, 2),
+          latestTurn: {
+            turnId: targetTurnId,
+            state: "running",
+            requestedAt: isoAt(500),
+            startedAt: isoAt(501),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          goal: {
+            threadId: THREAD_ID,
+            lifecycleId: goalLifecycleKey,
+            objective: "Finish the current goal",
+            status: "active",
+            tokenBudget: null,
+            tokensUsed: 100,
+            timeUsedSeconds: 10,
+            createdAt: isoAt(490),
+            updatedAt: isoAt(501),
+          },
+          session: {
+            ...thread.session,
+            status: "running",
+            providerName: "claudeAgent",
+            activeTurnId: targetTurnId,
+            goalLifecycleKey,
+            updatedAt: isoAt(501),
+          },
+        },
+      ],
+    };
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: createMultiProviderConfig(),
+        };
+      },
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "thread.goal.set" &&
+          body.status === "paused"
+        ) {
+          return Promise.reject(new Error("Goal update targets a stale lifecycle."));
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await composerEditor.fill("/goal");
+      await page.getByRole("button", { name: "Queue", exact: true }).click();
+      await expect.element(page.getByText("Sending as goal")).toBeVisible();
+
+      const objective = "Replace the running goal after this turn";
+      await composerEditor.fill(objective);
+      await page.getByRole("button", { name: "Queue", exact: true }).click();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.goal.set" &&
+              request.status === "paused",
+          ),
+        ).toBe(true);
+      });
+      await expect.element(page.getByText("Sending as goal")).toBeVisible();
+      await expect.element(composerEditor).toHaveTextContent(objective);
+      expect(document.body.textContent).not.toContain("1 queued");
+    } finally {
+      confirmSpy.mockRestore();
       await mounted.cleanup();
     }
   });

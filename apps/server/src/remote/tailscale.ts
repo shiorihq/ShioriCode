@@ -72,6 +72,21 @@ export function runCli(
   });
 }
 
+/** Allow a dedicated daemon account to manage Tailscale on Linux. */
+export async function setTailscaleOperator(cli: string | null, account: string): Promise<void> {
+  if (!cli) {
+    throw new Error(
+      "Tailscale isn't installed. Install it and run `tailscale up` before enabling remote access.",
+    );
+  }
+  const result = await runCli(cli, ["set", `--operator=${account}`], 15_000);
+  if (result.code !== 0) {
+    throw new Error(
+      result.stderr.trim() || `Could not grant Tailscale operator access to ${account}.`,
+    );
+  }
+}
+
 async function runJson(
   cli: string,
   args: ReadonlyArray<string>,
@@ -244,7 +259,10 @@ export async function applyExposure(
     throw new Error("Tailscale isn't installed on this machine.");
   }
   // Clear any existing serve/funnel config before applying the new one.
-  await runCli(cli, ["serve", "reset"], 10_000);
+  const reset = await runCli(cli, ["serve", "reset"], 10_000);
+  if (reset.code !== 0) {
+    throw new Error(reset.stderr.trim() || "Failed to reset the existing Tailscale Serve config.");
+  }
   if (method === "off") {
     return;
   }
@@ -283,6 +301,9 @@ export async function releaseServeIfOurs(cli: string | null, port: number): Prom
   }
   const observed = await readServe(cli, port);
   if (observed.method !== "off") {
-    await runCli(cli, ["serve", "reset"], 10_000);
+    const result = await runCli(cli, ["serve", "reset"], 10_000);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || "Failed to turn off Tailscale remote access.");
+    }
   }
 }

@@ -115,6 +115,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch,
           worktree_path,
           latest_turn_id,
+          goal_json,
           created_at,
           updated_at,
           deleted_at
@@ -127,6 +128,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           NULL,
           NULL,
           'turn-1',
+          '{"threadId":"thread-1","objective":"Persist goals across restarts","status":"active","tokenBudget":20000,"tokensUsed":500,"timeUsedSeconds":45,"createdAt":"2026-02-24T00:00:02.500Z","updatedAt":"2026-02-24T00:00:03.000Z"}',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -347,7 +349,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
         createdAt: "2026-02-24T00:00:02.000Z",
         updatedAt: "2026-02-24T00:00:03.000Z",
-        goal: null,
+        goal: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          objective: "Persist goals across restarts",
+          status: "active",
+          tokenBudget: 20_000,
+          tokensUsed: 500,
+          timeUsedSeconds: 45,
+          createdAt: "2026-02-24T00:00:02.500Z",
+          updatedAt: "2026-02-24T00:00:03.000Z",
+        },
         archivedAt: null,
         deletedAt: null,
         messages: [
@@ -400,6 +411,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: "2026-02-24T00:00:07.000Z",
         },

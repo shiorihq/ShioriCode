@@ -5,7 +5,12 @@ import * as Schema from "effect/Schema";
  * server is exposed, the owner credential, and connected device sessions.
  */
 
-export const REMOTE_EXPOSURE_METHODS = ["off", "tailscale-serve", "tailscale-funnel"] as const;
+export const REMOTE_EXPOSURE_METHODS = [
+  "off",
+  "shiori-link",
+  "tailscale-serve",
+  "tailscale-funnel",
+] as const;
 export const RemoteExposureMethod = Schema.Literals(REMOTE_EXPOSURE_METHODS);
 export type RemoteExposureMethod = typeof RemoteExposureMethod.Type;
 
@@ -39,6 +44,20 @@ export const RemoteTailscaleStatus = Schema.Struct({
 });
 export type RemoteTailscaleStatus = typeof RemoteTailscaleStatus.Type;
 
+export const RemoteLinkStatus = Schema.Struct({
+  /** Whether this installation is linked to a Shiori account. */
+  accountLinked: Schema.Boolean,
+  /** Whether a connector binary is present and checksum-verified. */
+  connectorInstalled: Schema.Boolean,
+  /** Whether the connector process is currently running. */
+  connectorRunning: Schema.Boolean,
+  /** Stable public environment URL allocated by Shiori. */
+  endpoint: Schema.NullOr(Schema.String),
+  /** Last connector or control-plane error, without credentials. */
+  lastError: Schema.NullOr(Schema.String),
+});
+export type RemoteLinkStatus = typeof RemoteLinkStatus.Type;
+
 export const RemoteStatus = Schema.Struct({
   /** Currently active exposure method (what is observably in effect). */
   method: RemoteExposureMethod,
@@ -60,6 +79,7 @@ export const RemoteStatus = Schema.Struct({
   username: Schema.NullOr(Schema.String),
   /** Local port the server listens on (what a proxy/tunnel targets). */
   port: Schema.Number,
+  link: RemoteLinkStatus,
   tailscale: RemoteTailscaleStatus,
   sessions: Schema.Array(RemoteSessionSummary),
   /** A human note for the current state (e.g. why HTTPS is unavailable). */
@@ -77,6 +97,17 @@ export const RemoteSetExposureInput = Schema.Struct({
   method: RemoteExposureMethod,
 });
 export type RemoteSetExposureInput = typeof RemoteSetExposureInput.Type;
+
+export const RemoteBeginLinkSignInInput = Schema.Struct({
+  provider: Schema.Literals(["github", "google", "apple"]),
+});
+export type RemoteBeginLinkSignInInput = typeof RemoteBeginLinkSignInInput.Type;
+
+export const RemoteBeginLinkSignInResult = Schema.Struct({
+  authUrl: Schema.String,
+  expiresAt: Schema.String,
+});
+export type RemoteBeginLinkSignInResult = typeof RemoteBeginLinkSignInResult.Type;
 
 /** Result of probing whether a remote URL round-trips to THIS server. */
 export const RemoteProbeResult = Schema.Struct({

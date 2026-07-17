@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ClientOrchestrationCommand,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
@@ -17,6 +18,8 @@ import {
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadGoalObjective,
+  THREAD_GOAL_OBJECTIVE_MAX_SCALARS,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -36,6 +39,7 @@ const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLa
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
@@ -43,6 +47,7 @@ const decodeProviderApprovalDecision = Schema.decodeUnknownEffect(ProviderApprov
 const decodeProjectionPendingApprovalDecision = Schema.decodeUnknownEffect(
   ProjectionPendingApprovalDecision,
 );
+const decodeThreadGoalObjective = Schema.decodeUnknownEffect(ThreadGoalObjective);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -209,6 +214,259 @@ it.effect("rejects command fields that become empty after trim", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("limits goal objectives by Unicode scalar values", () =>
+  Effect.gen(function* () {
+    const accepted = "🚀".repeat(THREAD_GOAL_OBJECTIVE_MAX_SCALARS);
+    assert.strictEqual(yield* decodeThreadGoalObjective(accepted), accepted);
+
+    const rejected = yield* Effect.exit(decodeThreadGoalObjective(`${accepted}🚀`));
+    assert.ok(Exit.isFailure(rejected));
+  }),
+);
+
+it.effect("requires positive non-null goal token budgets", () =>
+  Effect.gen(function* () {
+    const publicRequest = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.goal.set",
+        commandId: "command-goal-budget",
+        threadId: "thread-goal-budget",
+        expectedGoalLifecycleKey: null,
+        objective: "Ship the goal",
+        tokenBudget: 0,
+        createdAt: "2026-07-16T10:00:00.000Z",
+      }),
+    );
+    assert.ok(Exit.isFailure(publicRequest));
+
+    const turnIntent = yield* Effect.exit(
+      decodeThreadTurnStartCommand({
+        type: "thread.turn.start",
+        commandId: "command-goal-turn-budget",
+        threadId: "thread-goal-budget",
+        message: {
+          messageId: "message-goal-budget",
+          role: "user",
+          text: "Ship the goal",
+          attachments: [],
+        },
+        goalIntent: {
+          objective: "Ship the goal",
+          status: "active",
+          tokenBudget: 0,
+          expectedGoalLifecycleKey: null,
+        },
+        createdAt: "2026-07-16T10:00:00.000Z",
+      }),
+    );
+    assert.ok(Exit.isFailure(turnIntent));
+
+    const snapshot = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.goal.snapshot.set",
+        commandId: "command-goal-snapshot-budget",
+        threadId: "thread-goal-budget",
+        goal: {
+          threadId: "thread-goal-budget",
+          objective: "Ship the goal",
+          status: "active",
+          tokenBudget: 0,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: "2026-07-16T10:00:00.000Z",
+          updatedAt: "2026-07-16T10:00:00.000Z",
+        },
+        createdAt: "2026-07-16T10:00:00.000Z",
+      }),
+    );
+    assert.ok(Exit.isFailure(snapshot));
+
+    const factualEvent = yield* Effect.exit(
+      decodeOrchestrationEvent({
+        sequence: 1,
+        eventId: "event-goal-updated-budget",
+        aggregateKind: "thread",
+        aggregateId: "thread-goal-budget",
+        occurredAt: "2026-07-16T10:00:00.000Z",
+        commandId: "command-goal-updated-budget",
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.goal-updated",
+        payload: {
+          threadId: "thread-goal-budget",
+          goal: {
+            threadId: "thread-goal-budget",
+            objective: "Ship the goal",
+            status: "active",
+            tokenBudget: 0,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: "2026-07-16T10:00:00.000Z",
+            updatedAt: "2026-07-16T10:00:00.000Z",
+          },
+        },
+      }),
+    );
+    assert.ok(Exit.isFailure(factualEvent));
+  }),
+);
+
+it.effect("strips harness-owned goal lifecycle fields from public commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.goal.set",
+      commandId: "command-goal-public-fields",
+      threadId: "thread-goal-public-fields",
+      expectedGoalLifecycleKey: null,
+      objective: "Ship the goal",
+      tokensUsed: 100,
+      timeUsedSeconds: 20,
+      goalCreatedAt: "2026-07-16T09:00:00.000Z",
+      goalUpdatedAt: "2026-07-16T09:01:00.000Z",
+      createdAt: "2026-07-16T10:00:00.000Z",
+    });
+
+    assert.strictEqual("tokensUsed" in parsed, false);
+    assert.strictEqual("timeUsedSeconds" in parsed, false);
+    assert.strictEqual("goalCreatedAt" in parsed, false);
+    assert.strictEqual("goalUpdatedAt" in parsed, false);
+  }),
+);
+
+it.effect("rejects harness-owned limit statuses on public goal commands", () =>
+  Effect.gen(function* () {
+    for (const status of ["blocked", "usageLimited", "budgetLimited"] as const) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "thread.goal.set",
+          commandId: `command-goal-status-${status}`,
+          threadId: "thread-goal-status",
+          expectedGoalLifecycleKey: null,
+          objective: "Ship the goal",
+          status,
+          createdAt: "2026-07-16T10:00:00.000Z",
+        }),
+      );
+      assert.ok(Exit.isFailure(result));
+    }
+  }),
+);
+
+it.effect("decodes harness-only goal lifecycle commands and mutation metadata", () =>
+  Effect.gen(function* () {
+    const statusReport = yield* decodeOrchestrationCommand({
+      type: "thread.goal.status.report",
+      commandId: "server:goal-complete",
+      threadId: "thread-goal-internal",
+      expectedGoalLifecycleKey: "goal:lifecycle-1",
+      status: "complete",
+      turnId: "turn-goal-internal",
+      createdAt: "2026-07-16T10:00:00.000Z",
+    });
+    assert.strictEqual(statusReport.type, "thread.goal.status.report");
+
+    const continuation = yield* decodeOrchestrationCommand({
+      type: "thread.goal.continue",
+      commandId: "server:goal-continue",
+      threadId: "thread-goal-internal",
+      expectedGoalLifecycleKey: "goal:lifecycle-1",
+      sourceTurnId: "turn-goal-internal",
+      createdAt: "2026-07-16T10:00:01.000Z",
+    });
+    assert.strictEqual(continuation.type, "thread.goal.continue");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-goal-user-mutation",
+      aggregateKind: "thread",
+      aggregateId: "thread-goal-internal",
+      occurredAt: "2026-07-16T10:00:00.000Z",
+      commandId: "command-goal-user-mutation",
+      causationEventId: null,
+      correlationId: "command-goal-user-mutation",
+      metadata: { threadGoalMutation: "user" },
+      type: "thread.goal-updated",
+      payload: {
+        threadId: "thread-goal-internal",
+        goal: {
+          threadId: "thread-goal-internal",
+          lifecycleId: "goal:lifecycle-1",
+          objective: "Ship the goal",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: "2026-07-16T10:00:00.000Z",
+          updatedAt: "2026-07-16T10:00:00.000Z",
+        },
+      },
+    });
+    assert.strictEqual(event.metadata.threadGoalMutation, "user");
+  }),
+);
+
+it.effect("rejects harness-only goal lifecycle commands at the client boundary", () =>
+  Effect.gen(function* () {
+    const createdAt = "2026-07-16T10:00:00.000Z";
+    const commands: ReadonlyArray<unknown> = [
+      {
+        type: "thread.goal.snapshot.set",
+        commandId: "server:goal-snapshot",
+        threadId: "thread-goal-internal",
+        goal: {
+          threadId: "thread-goal-internal",
+          lifecycleId: "goal:lifecycle-1",
+          objective: "Ship the harness goal",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      },
+      {
+        type: "thread.goal.usage.record",
+        commandId: "server:goal-usage",
+        threadId: "thread-goal-internal",
+        expectedGoalLifecycleKey: "goal:lifecycle-1",
+        tokensDelta: 10,
+        timeDeltaSeconds: 1,
+        createdAt,
+      },
+      {
+        type: "thread.goal.status.report",
+        commandId: "server:goal-complete",
+        threadId: "thread-goal-internal",
+        expectedGoalLifecycleKey: "goal:lifecycle-1",
+        status: "complete",
+        createdAt,
+      },
+      {
+        type: "thread.goal.continue",
+        commandId: "server:goal-continue",
+        threadId: "thread-goal-internal",
+        expectedGoalLifecycleKey: "goal:lifecycle-1",
+        createdAt,
+      },
+      {
+        type: "thread.goal.snapshot.clear",
+        commandId: "server:goal-snapshot-clear",
+        threadId: "thread-goal-internal",
+        clearedAt: createdAt,
+        createdAt,
+      },
+    ];
+
+    for (const command of commands) {
+      const result = yield* Effect.exit(decodeClientOrchestrationCommand(command));
+      assert.ok(Exit.isFailure(result));
+    }
   }),
 );
 

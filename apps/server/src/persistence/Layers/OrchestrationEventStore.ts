@@ -10,6 +10,7 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
+  THREAD_GOAL_OBJECTIVE_MAX_SCALARS,
   ThreadId,
 } from "contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -64,6 +65,56 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
+
+function normalizeHistoricalGoalObjective(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  let normalized = "";
+  let count = 0;
+  for (const scalar of value) {
+    if (count >= THREAD_GOAL_OBJECTIVE_MAX_SCALARS) {
+      break;
+    }
+    const codePoint = scalar.codePointAt(0);
+    normalized +=
+      codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdfff ? "�" : scalar;
+    count += 1;
+  }
+  return normalized;
+}
+
+/** Keep the immutable event log readable after tightening the public goal schema. */
+function normalizeHistoricalGoalEvent(row: typeof OrchestrationEventPersistedRowSchema.Type) {
+  if (
+    row.type !== "thread.goal-updated" ||
+    !row.payload ||
+    typeof row.payload !== "object" ||
+    Array.isArray(row.payload)
+  ) {
+    return row;
+  }
+  const payload = row.payload as Record<string, unknown>;
+  const rawGoal = payload.goal;
+  if (!rawGoal || typeof rawGoal !== "object" || Array.isArray(rawGoal)) {
+    return row;
+  }
+  const goal = rawGoal as Record<string, unknown>;
+  const tokenBudget = goal.tokenBudget;
+  return {
+    ...row,
+    payload: {
+      ...payload,
+      goal: {
+        ...goal,
+        // Older Codex notifications could persist the provider thread id.
+        threadId: row.aggregateId,
+        objective: normalizeHistoricalGoalObjective(goal.objective),
+        ...(typeof tokenBudget === "number" && tokenBudget <= 0 ? { tokenBudget: null } : {}),
+      },
+    },
+  };
+}
 
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
@@ -200,7 +251,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((row) =>
-        decodeEvent(row).pipe(
+        decodeEvent(normalizeHistoricalGoalEvent(row)).pipe(
           Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
         ),
       ),
@@ -231,7 +282,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodeEvent(normalizeHistoricalGoalEvent(row)).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
                 ),

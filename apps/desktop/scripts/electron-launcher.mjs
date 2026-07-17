@@ -18,8 +18,11 @@ import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "ShioriCode (Dev)" : "ShioriCode";
-const APP_BUNDLE_ID = "com.shioritools.shioricode";
-const LAUNCHER_VERSION = 2;
+const APP_BUNDLE_ID = isDevelopment
+  ? "com.shioritools.shioricode.dev"
+  : "com.shioritools.shioricode";
+const APP_URL_SCHEME = isDevelopment ? "shioricode-dev" : "shioricode";
+const LAUNCHER_VERSION = 3;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
@@ -43,12 +46,39 @@ function setPlistString(plistPath, key, value) {
   throw new Error(`Failed to update plist key "${key}" at ${plistPath}: ${details}`.trim());
 }
 
+function setPlistJson(plistPath, key, value) {
+  const serialized = JSON.stringify(value);
+  const replaceResult = spawnSync("plutil", ["-replace", key, "-json", serialized, plistPath], {
+    encoding: "utf8",
+  });
+  if (replaceResult.status === 0) {
+    return;
+  }
+
+  const insertResult = spawnSync("plutil", ["-insert", key, "-json", serialized, plistPath], {
+    encoding: "utf8",
+  });
+  if (insertResult.status === 0) {
+    return;
+  }
+
+  const details = [replaceResult.stderr, insertResult.stderr].filter(Boolean).join("\n");
+  throw new Error(`Failed to update plist key "${key}" at ${plistPath}: ${details}`.trim());
+}
+
 function patchMainBundleInfoPlist(appBundlePath, iconPath) {
   const infoPlistPath = join(appBundlePath, "Contents", "Info.plist");
   setPlistString(infoPlistPath, "CFBundleDisplayName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
   setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
+  setPlistJson(infoPlistPath, "CFBundleURLTypes", [
+    {
+      CFBundleTypeRole: "Editor",
+      CFBundleURLName: APP_DISPLAY_NAME,
+      CFBundleURLSchemes: [APP_URL_SCHEME],
+    },
+  ]);
 
   const resourcesDir = join(appBundlePath, "Contents", "Resources");
   copyFileSync(iconPath, join(resourcesDir, "icon.icns"));

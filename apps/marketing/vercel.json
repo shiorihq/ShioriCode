@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/auth/signin-mobile",
+      "destination": "https://api.link.shiori.codes/api/shiori-code/link/auth/start"
+    },
+    {
+      "source": "/api/shiori-code/link/:path*",
+      "destination": "https://api.link.shiori.codes/api/shiori-code/link/:path*"
+    }
+  ]
+}

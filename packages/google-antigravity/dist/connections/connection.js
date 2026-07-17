@@ -131,6 +131,7 @@ export function cloneMcpServerConfig(config) {
             name: config.name,
             command: config.command,
             args: [...config.args],
+            env: config.env ? { ...config.env } : undefined,
             ...filters,
         });
     }

@@ -7,9 +7,12 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveGoalSendModeForQueuedDraftRestore,
+  deriveGoalIntentForSend,
   getVisibleChatProviderStatus,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  shouldConfirmGoalReplacement,
   waitForServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -73,6 +76,113 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("deriveGoalIntentForSend", () => {
+  it("creates an explicit fresh goal intent for a normal goal-mode send", () => {
+    expect(
+      deriveGoalIntentForSend({
+        goalSendMode: true,
+        objective: "  Ship reliable goals  ",
+        interactionMode: "default",
+        standaloneSlashCommand: null,
+        expectedGoalLifecycleKey: null,
+      }),
+    ).toEqual({
+      objective: "Ship reliable goals",
+      status: "active",
+      tokenBudget: null,
+      expectedGoalLifecycleKey: null,
+    });
+  });
+
+  it.each(["compact", "review"] as const)(
+    "does not turn an exact /%s maintenance command into a goal",
+    (command) => {
+      expect(
+        deriveGoalIntentForSend({
+          goalSendMode: true,
+          objective: `/${command}`,
+          interactionMode: "default",
+          standaloneSlashCommand: { command },
+          expectedGoalLifecycleKey: null,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps image-only and terminal-only sends from creating an empty objective", () => {
+    expect(
+      deriveGoalIntentForSend({
+        goalSendMode: true,
+        objective: "",
+        interactionMode: "default",
+        standaloneSlashCommand: null,
+        expectedGoalLifecycleKey: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not attach a goal to a plan-mode turn", () => {
+    expect(
+      deriveGoalIntentForSend({
+        goalSendMode: true,
+        objective: "Plan the rollout",
+        interactionMode: "plan",
+        standaloneSlashCommand: null,
+        expectedGoalLifecycleKey: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("deriveGoalSendModeForQueuedDraftRestore", () => {
+  const goalIntent = {
+    objective: "Ship the queued goal",
+    status: "active" as const,
+    tokenBudget: null,
+    expectedGoalLifecycleKey: null,
+  };
+
+  it.each([
+    {
+      label: "turns goal mode off for a normal queued draft",
+      goalIntent: null,
+      interactionMode: "default" as const,
+      expected: false,
+    },
+    {
+      label: "turns goal mode on for a goal draft in default mode",
+      goalIntent,
+      interactionMode: "default" as const,
+      expected: true,
+    },
+    {
+      label: "keeps goal mode off for a goal draft restored in plan mode",
+      goalIntent,
+      interactionMode: "plan" as const,
+      expected: false,
+    },
+  ])("$label", ({ goalIntent, interactionMode, expected }) => {
+    expect(deriveGoalSendModeForQueuedDraftRestore({ goalIntent, interactionMode })).toBe(expected);
+  });
+});
+
+describe("shouldConfirmGoalReplacement", () => {
+  it.each(["active", "paused", "blocked", "usageLimited", "budgetLimited"] as const)(
+    "requires confirmation before replacing a %s goal",
+    (status) => {
+      expect(shouldConfirmGoalReplacement({ status })).toBe(true);
+    },
+  );
+
+  it("allows a completed goal to be replaced directly", () => {
+    expect(shouldConfirmGoalReplacement({ status: "complete" })).toBe(false);
+  });
+
+  it("does not prompt when the thread has no goal", () => {
+    expect(shouldConfirmGoalReplacement(null)).toBe(false);
   });
 });
 

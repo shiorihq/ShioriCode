@@ -25,6 +25,13 @@ export interface ProviderCommandReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
+   * Reconcile durable provider intents after the HTTP listener is reachable.
+   * Startup goal turns may invoke the harness-owned local MCP control route,
+   * so this phase must not run while that route can still refuse connections.
+   */
+  readonly reconcile: Effect.Effect<void, never, Scope.Scope>;
+
+  /**
    * Resolves when the internal processing queue is empty and idle.
    * Intended for test use to replace timing-sensitive sleeps.
    */

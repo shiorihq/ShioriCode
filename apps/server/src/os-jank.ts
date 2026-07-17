@@ -13,6 +13,7 @@ export function fixPath(
   if (platform !== "darwin" && platform !== "linux") return;
 
   const env = options.env ?? process.env;
+  if (env.SHIORICODE_SERVICE === "1") return;
 
   try {
     const shell = resolveLoginShell(platform, env.SHELL);

@@ -20,6 +20,9 @@ export interface OrchestrationReactorShape {
    * finalized on shutdown.
    */
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+
+  /** Runs startup work that may call back into the listening HTTP server. */
+  readonly reconcileAfterHttpListening: Effect.Effect<void, never, Scope.Scope>;
 }
 
 /**

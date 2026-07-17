@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseServeStatusJson, parseServeStatusText } from "./tailscale";
+import { parseServeStatusJson, parseServeStatusText, setTailscaleOperator } from "./tailscale";
 
 describe("parseServeStatusJson", () => {
   it("reports off for an empty or missing config", () => {
@@ -107,5 +107,13 @@ describe("parseServeStatusText", () => {
       "|-- / proxy http://127.0.0.1:9999",
     ].join("\n");
     expect(parseServeStatusText(text, 3773)).toEqual({ method: "off", url: null });
+  });
+});
+
+describe("setTailscaleOperator", () => {
+  it("fails with install guidance when the CLI is unavailable", async () => {
+    await expect(setTailscaleOperator(null, "shioricode")).rejects.toThrow(
+      "Tailscale isn't installed",
+    );
   });
 });

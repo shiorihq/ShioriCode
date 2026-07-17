@@ -222,6 +222,7 @@ describe("ProviderRuntimeEvent", () => {
       payload: {
         usage: {
           usedTokens: 31251,
+          processedTokensDelta: 24542,
           maxTokens: 200000,
           toolUses: 25,
           durationMs: 43567,
@@ -235,52 +236,42 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
+    expect(parsed.payload.usage.processedTokensDelta).toBe(24542);
   });
 
-  it("decodes thread goal update and clear events", () => {
-    const updated = decodeRuntimeEvent({
-      type: "thread.goal.updated",
-      eventId: "event-thread-goal-updated",
-      provider: "codex",
-      createdAt: "2026-06-04T09:00:00.000Z",
-      threadId: "thread-1",
-      payload: {
-        goal: {
-          threadId: "thread-1",
-          objective: "Improve Codex compatibility",
-          status: "active",
-          tokenBudget: 200000,
-          tokensUsed: 12000,
-          timeUsedSeconds: 90,
-          createdAt: "2026-04-15T17:00:00.000Z",
-          updatedAt: "2026-04-15T17:01:00.000Z",
+  it("rejects negative processed token deltas", () => {
+    expect(() =>
+      decodeRuntimeEvent({
+        type: "thread.token-usage.updated",
+        eventId: "event-token-usage-negative-delta",
+        provider: "cursor",
+        createdAt: "2026-02-28T00:00:04.000Z",
+        threadId: "thread-1",
+        payload: {
+          usage: {
+            usedTokens: 100,
+            processedTokensDelta: -1,
+          },
         },
-      },
-    });
-
-    expect(updated.type).toBe("thread.goal.updated");
-    if (updated.type !== "thread.goal.updated") {
-      throw new Error("expected thread.goal.updated");
-    }
-    expect(updated.payload.goal.tokensUsed).toBe(12000);
-
-    const cleared = decodeRuntimeEvent({
-      type: "thread.goal.cleared",
-      eventId: "event-thread-goal-cleared",
-      provider: "codex",
-      createdAt: "2026-06-04T09:02:00.000Z",
-      threadId: "thread-1",
-      payload: {
-        clearedAt: "2026-06-04T09:02:00.000Z",
-      },
-    });
-
-    expect(cleared.type).toBe("thread.goal.cleared");
-    if (cleared.type !== "thread.goal.cleared") {
-      throw new Error("expected thread.goal.cleared");
-    }
-    expect(cleared.payload.clearedAt).toBe("2026-06-04T09:02:00.000Z");
+      }),
+    ).toThrow();
   });
+
+  it.each(["thread.goal.updated", "thread.goal.cleared"])(
+    "rejects provider-owned goal lifecycle event %s",
+    (type) => {
+      expect(() =>
+        decodeRuntimeEvent({
+          type,
+          eventId: `event-${type}`,
+          provider: "codex",
+          createdAt: "2026-06-04T09:00:00.000Z",
+          threadId: "thread-1",
+          payload: {},
+        }),
+      ).toThrow();
+    },
+  );
 
   it("decodes structured turn completion errors", () => {
     const parsed = decodeRuntimeEvent({

@@ -1,4 +1,12 @@
-import { ProjectId, type ModelSelection, type ServerProvider, type ThreadId } from "contracts";
+import {
+  ProjectId,
+  type ModelSelection,
+  type ProviderInteractionMode,
+  type ServerProvider,
+  type ThreadGoal,
+  type ThreadGoalIntent,
+  type ThreadId,
+} from "contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -10,6 +18,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import { isPendingProviderCheckStatus } from "../providerModels";
+import type { StandaloneComposerSlashCommand } from "../composer-logic";
 export {
   createLocalDispatchSnapshot,
   hasServerAcknowledgedLocalDispatch,
@@ -183,6 +192,42 @@ export function deriveComposerSendState(options: {
     hasSendableContent:
       trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
   };
+}
+
+export function deriveGoalIntentForSend(input: {
+  goalSendMode: boolean;
+  objective: string;
+  interactionMode: ProviderInteractionMode;
+  standaloneSlashCommand: StandaloneComposerSlashCommand | null;
+  expectedGoalLifecycleKey: string | null;
+}): ThreadGoalIntent | null {
+  const objective = input.objective.trim();
+  if (
+    !input.goalSendMode ||
+    input.interactionMode === "plan" ||
+    objective.length === 0 ||
+    input.standaloneSlashCommand?.command === "compact" ||
+    input.standaloneSlashCommand?.command === "review"
+  ) {
+    return null;
+  }
+  return {
+    objective,
+    status: "active",
+    tokenBudget: null,
+    expectedGoalLifecycleKey: input.expectedGoalLifecycleKey,
+  };
+}
+
+export function deriveGoalSendModeForQueuedDraftRestore(input: {
+  goalIntent: ThreadGoalIntent | null;
+  interactionMode: ProviderInteractionMode;
+}): boolean {
+  return input.goalIntent !== null && input.interactionMode !== "plan";
+}
+
+export function shouldConfirmGoalReplacement(goal: Pick<ThreadGoal, "status"> | null): boolean {
+  return goal !== null && goal.status !== "complete";
 }
 
 export function formatAssistantSelectedTextForComposer(selectedText: string): string {

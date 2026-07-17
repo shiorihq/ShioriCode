@@ -7,6 +7,7 @@ import type {
   OrchestrationReadModel,
   ProviderRuntimeEvent,
   ProviderSession,
+  ThreadGoalStatus,
 } from "contracts";
 import {
   ApprovalRequestId,
@@ -27,15 +28,21 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
+  ProjectionTurnRepository,
+  type ProjectionTurnRepositoryShape,
+} from "../../persistence/Services/ProjectionTurns.ts";
+import {
   ProviderService,
+  type ProviderSessionReconciliation,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { ProviderRuntimeIngestionUnprovided } from "./ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -89,6 +96,7 @@ function isLegacyTurnCompletedEvent(
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
+  let reconciliations: ReadonlyArray<ProviderSessionReconciliation> = [];
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -100,7 +108,7 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
-    reconcileSessions: () => Effect.succeed([]),
+    reconcileSessions: () => Effect.succeed(reconciliations),
     getCapabilities: () =>
       Effect.succeed({
         sessionModelSwitch: "in-session",
@@ -119,6 +127,9 @@ function createProviderServiceHarness() {
       return;
     }
     runtimeSessions.push(session);
+  };
+  const setReconciliations = (next: ReadonlyArray<ProviderSessionReconciliation>): void => {
+    reconciliations = next;
   };
 
   const normalizeLegacyEvent = (event: LegacyProviderRuntimeEvent): ProviderRuntimeEvent => {
@@ -144,6 +155,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    setReconciliations,
   };
 }
 
@@ -207,6 +219,7 @@ describe("ProviderRuntimeIngestion", () => {
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
+  const additionalRuntimeDisposers: Array<() => Promise<void>> = [];
   const tempDirs: string[] = [];
 
   function makeTempDir(prefix: string): string {
@@ -220,6 +233,9 @@ describe("ProviderRuntimeIngestion", () => {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
     scope = null;
+    for (const dispose of additionalRuntimeDisposers.splice(0).reverse()) {
+      await dispose();
+    }
     if (runtime) {
       await runtime.dispose();
     }
@@ -240,20 +256,60 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
-    const layer = ProviderRuntimeIngestionLive.pipe(
+    const projectionTurnRepositoryLayer = ProjectionTurnRepositoryLive;
+    const ingestionLayer = ProviderRuntimeIngestionUnprovided.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provide(projectionTurnRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
+    let projectionTurnRepository: ProjectionTurnRepositoryShape | undefined;
+    const captureProjectionTurnRepositoryLayer = Layer.effectDiscard(
+      Effect.service(ProjectionTurnRepository).pipe(
+        Effect.tap((repository) =>
+          Effect.sync(() => {
+            projectionTurnRepository = repository;
+          }),
+        ),
+      ),
+    ).pipe(Layer.provide(projectionTurnRepositoryLayer));
+    const layer = Layer.merge(ingestionLayer, captureProjectionTurnRepositoryLayer).pipe(
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    if (projectionTurnRepository === undefined) {
+      throw new Error("Projection turn repository capture layer did not initialize");
+    }
+    const sharedProjectionTurnRepository = projectionTurnRepository;
+    let ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
+    const restartIngestion = async () => {
+      if (scope) {
+        await Effect.runPromise(Scope.close(scope, Exit.void));
+      }
+
+      const restartedLayer = ProviderRuntimeIngestionUnprovided.pipe(
+        Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
+        Layer.provideMerge(Layer.succeed(ProjectionTurnRepository, sharedProjectionTurnRepository)),
+        Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+        Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const restartedRuntime = ManagedRuntime.make(restartedLayer);
+      additionalRuntimeDisposers.push(() => restartedRuntime.dispose());
+      ingestion = await restartedRuntime.runPromise(
+        Effect.service(ProviderRuntimeIngestionService),
+      );
+      scope = await Effect.runPromise(Scope.make("sequential"));
+      await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    };
 
     const createdAt = new Date().toISOString();
     await Effect.runPromise(
@@ -299,6 +355,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -318,8 +375,161 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      setProviderReconciliations: provider.setReconciliations,
       drain,
+      restartIngestion,
     };
+  }
+
+  async function prepareAutomationKanbanWork(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    itemId: KanbanItemId,
+    now: string,
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe(`cmd-automation-tag-${itemId}`),
+        threadId: asThreadId("thread-1"),
+        tag: "automation",
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "kanbanItem.create",
+        commandId: CommandId.makeUnsafe(`cmd-kanban-create-${itemId}`),
+        itemId,
+        projectId: asProjectId("project-1"),
+        pullRequest: null,
+        title: "Finish this logical operation",
+        description: "",
+        status: "in_progress",
+        sortKey: "001",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "kanbanItem.assign",
+        commandId: CommandId.makeUnsafe(`cmd-kanban-assign-${itemId}`),
+        itemId,
+        assignee: {
+          id: KanbanItemAssigneeId.makeUnsafe(`assignee-${itemId}`),
+          provider: "codex",
+          model: "gpt-5.4",
+          role: "owner",
+          status: "assigned",
+          threadId: asThreadId("thread-1"),
+          assignedAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+  }
+
+  async function setHarnessGoal(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    input: {
+      commandId: string;
+      objective?: string;
+      status?: ThreadGoalStatus;
+      tokenBudget?: number | null;
+      tokensUsed?: number;
+      timeUsedSeconds?: number;
+      createdAt: string;
+      updatedAt?: string;
+    },
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.snapshot.set",
+        commandId: CommandId.makeUnsafe(input.commandId),
+        threadId: asThreadId("thread-1"),
+        goal: {
+          threadId: asThreadId("thread-1"),
+          lifecycleId: `goal:${input.commandId}`,
+          objective: input.objective ?? "Exercise the ShioriCode goal harness",
+          status: input.status ?? "active",
+          tokenBudget: input.tokenBudget ?? null,
+          tokensUsed: input.tokensUsed ?? 0,
+          timeUsedSeconds: input.timeUsedSeconds ?? 0,
+          createdAt: input.createdAt,
+          updatedAt: input.updatedAt ?? input.createdAt,
+        },
+        createdAt: input.updatedAt ?? input.createdAt,
+      }),
+    );
+  }
+
+  async function startHarnessGoalTurn(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    input: {
+      provider: ProviderRuntimeEvent["provider"];
+      turnId: TurnId;
+      startedAt: string;
+    },
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe(`cmd-session-${input.provider}-${input.turnId}`),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "ready",
+          providerName: input.provider,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          goalLifecycleKey: null,
+          updatedAt: input.startedAt,
+          lastError: null,
+        },
+        createdAt: input.startedAt,
+      }),
+    );
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId(`evt-start-${input.provider}-${input.turnId}`),
+      provider: input.provider,
+      threadId: asThreadId("thread-1"),
+      createdAt: input.startedAt,
+      turnId: input.turnId,
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.activeTurnId === input.turnId &&
+        thread.latestTurn?.turnId === input.turnId &&
+        thread.latestTurn.state === "running",
+    );
+  }
+
+  async function requestHarnessTurn(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    input: {
+      readonly commandId: string;
+      readonly interactionMode: "default" | "plan";
+      readonly createdAt: string;
+    },
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe(input.commandId),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: MessageId.makeUnsafe(`message:${input.commandId}`),
+          role: "user",
+          text: "Continue the requested work",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: input.interactionMode,
+        createdAt: input.createdAt,
+      }),
+    );
+    await harness.drain();
   }
 
   it("maps turn started/completed events into thread session updates", async () => {
@@ -362,6 +572,22 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-terminal-replay"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date(Date.now() + 1_000).toISOString(),
+      turnId: asTurnId("turn-1"),
+    });
+    await harness.drain();
+    const afterReplay = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(afterReplay?.session).toMatchObject({
+      status: "error",
+      activeTurnId: null,
+      lastError: "turn failed",
+    });
   });
 
   it("requests provider session stop after an automation turn completes", async () => {
@@ -469,6 +695,660 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.status === "done",
     );
     expect(item.completedAt).toBe(now);
+  });
+
+  it.each(["kimiCode", "gemini", "glm", "cursor", "codex", "claudeAgent"] as const)(
+    "defers Kanban completion and automation stop for an active harness goal on %s",
+    async (provider) => {
+      const harness = await createHarness();
+      const itemId = KanbanItemId.makeUnsafe(`kanban-item-deferred-goal-${provider}`);
+      const goalCreatedAt = "2026-07-02T00:00:00.000Z";
+      const turnCompletedAt = "2026-07-02T00:01:00.000Z";
+      await prepareAutomationKanbanWork(harness, itemId, goalCreatedAt);
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.makeUnsafe(`cmd-goal-provider-${provider}`),
+          threadId: asThreadId("thread-1"),
+          session: {
+            threadId: asThreadId("thread-1"),
+            status: "ready",
+            providerName: provider,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            goalLifecycleKey: null,
+            updatedAt: goalCreatedAt,
+            lastError: null,
+          },
+          createdAt: goalCreatedAt,
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.goal.snapshot.set",
+          commandId: CommandId.makeUnsafe(`cmd-deferred-goal-${provider}`),
+          threadId: asThreadId("thread-1"),
+          goal: {
+            threadId: asThreadId("thread-1"),
+            lifecycleId: `goal:cmd-deferred-goal-${provider}`,
+            objective: "Finish across multiple physical turns",
+            status: "active",
+            tokenBudget: 50_000,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: goalCreatedAt,
+            updatedAt: goalCreatedAt,
+          },
+          createdAt: goalCreatedAt,
+        }),
+      );
+
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId(`evt-deferred-goal-${provider}`),
+        provider,
+        threadId: asThreadId("thread-1"),
+        createdAt: turnCompletedAt,
+        turnId: asTurnId(`turn-deferred-goal-${provider}`),
+        payload: {
+          state: "completed",
+        },
+      });
+      await harness.drain();
+
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      expect((readModel.kanbanItems ?? []).find((item) => item.id === itemId)?.status).toBe(
+        "in_progress",
+      );
+      const events = await Effect.runPromise(
+        Stream.runCollect(harness.engine.readEvents(0)).pipe(
+          Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+        ),
+      );
+      expect(events.filter((event) => event.type === "thread.session-stop-requested")).toHaveLength(
+        0,
+      );
+    },
+  );
+
+  it.each(["kimiCode", "gemini", "glm", "cursor", "codex", "claudeAgent"] as const)(
+    "persists one harness continuation after a successful %s goal turn",
+    async (provider) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-goal-continuation-${provider}`);
+      const startedAt = "2026-07-02T03:00:00.000Z";
+      const completedAt = "2026-07-02T03:00:05.000Z";
+      const commandId = `cmd-goal-continuation-${provider}`;
+      await setHarnessGoal(harness, { commandId, createdAt: startedAt });
+      await startHarnessGoalTurn(harness, { provider, turnId, startedAt });
+
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId(`evt-goal-continuation-${provider}`),
+        provider,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt: completedAt,
+        payload: { state: "completed" },
+      });
+      await harness.drain();
+
+      const events = await Effect.runPromise(
+        Stream.runCollect(harness.engine.readEvents(0)).pipe(
+          Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+        ),
+      );
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "thread.goal-continuation-requested" &&
+            event.payload.sourceTurnId === turnId,
+        ),
+      ).toHaveLength(1);
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.status === "ready" && entry.session.activeTurnId === null,
+      );
+      expect(thread.goal?.status).toBe("active");
+    },
+  );
+
+  it.each([
+    { eventType: "turn.completed" as const, expectedStatus: "blocked" as const },
+    { eventType: "turn.aborted" as const, expectedStatus: "paused" as const },
+  ])("stops automatic goal work after $eventType", async ({ eventType, expectedStatus }) => {
+    const harness = await createHarness();
+    const turnId = asTurnId(`turn-goal-stop-${eventType}`);
+    const startedAt = "2026-07-02T04:00:00.000Z";
+    await setHarnessGoal(harness, {
+      commandId: `cmd-goal-stop-${eventType}`,
+      createdAt: startedAt,
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt,
+    });
+
+    harness.emit(
+      eventType === "turn.completed"
+        ? {
+            type: "turn.completed",
+            eventId: asEventId(`evt-goal-stop-${eventType}`),
+            provider: "codex",
+            threadId: asThreadId("thread-1"),
+            turnId,
+            createdAt: "2026-07-02T04:00:05.000Z",
+            payload: { state: "failed", errorMessage: "terminal failure" },
+          }
+        : {
+            type: "turn.aborted",
+            eventId: asEventId(`evt-goal-stop-${eventType}`),
+            provider: "codex",
+            threadId: asThreadId("thread-1"),
+            turnId,
+            createdAt: "2026-07-02T04:00:05.000Z",
+            payload: { reason: "interrupted" },
+          },
+    );
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.goal?.status === expectedStatus,
+    );
+    expect(thread.goal?.status).toBe(expectedStatus);
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.filter((event) => event.type === "thread.goal-continuation-requested"),
+    ).toHaveLength(0);
+  });
+
+  it.each(["interrupted", "cancelled"] as const)(
+    "pauses automatic goal work after a %s terminal turn",
+    async (state) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-goal-${state}`);
+      const startedAt = "2026-07-02T04:10:00.000Z";
+      await setHarnessGoal(harness, { commandId: `cmd-goal-${state}`, createdAt: startedAt });
+      await startHarnessGoalTurn(harness, { provider: "cursor", turnId, startedAt });
+
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId(`evt-goal-${state}`),
+        provider: "cursor",
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt: "2026-07-02T04:10:05.000Z",
+        payload: { state },
+      });
+      await harness.drain();
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.goal?.status === "paused",
+      );
+      expect(thread.goal?.status).toBe("paused");
+    },
+  );
+
+  it("maps provider usage exhaustion to usageLimited", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-usage-limited");
+    const startedAt = "2026-07-02T04:20:00.000Z";
+    await setHarnessGoal(harness, { commandId: "cmd-goal-usage-limited", createdAt: startedAt });
+    await startHarnessGoalTurn(harness, { provider: "claudeAgent", turnId, startedAt });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-usage-limited"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-02T04:20:05.000Z",
+      payload: { state: "failed", errorMessage: "Usage limit reached for this account" },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.goal?.status === "usageLimited",
+    );
+    expect(thread.goal?.status).toBe("usageLimited");
+  });
+
+  it.each(["turn.completed", "turn.aborted"] as const)(
+    "does not mutate a dormant active goal after a failed plan-mode %s event",
+    async (eventType) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-plan-goal-${eventType}`);
+      const startedAt = "2026-07-02T04:30:00.000Z";
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.makeUnsafe(`cmd-plan-goal-${eventType}`),
+          threadId: asThreadId("thread-1"),
+          interactionMode: "plan",
+          createdAt: startedAt,
+        }),
+      );
+      await setHarnessGoal(harness, {
+        commandId: `cmd-dormant-plan-goal-${eventType}`,
+        createdAt: startedAt,
+      });
+      await startHarnessGoalTurn(harness, { provider: "codex", turnId, startedAt });
+      const before = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+        (thread) => thread.id === asThreadId("thread-1"),
+      )?.goal;
+
+      harness.emit(
+        eventType === "turn.completed"
+          ? {
+              type: "turn.completed",
+              eventId: asEventId(`evt-plan-goal-${eventType}`),
+              provider: "codex",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-02T04:30:05.000Z",
+              payload: { state: "failed", errorMessage: "plan failed" },
+            }
+          : {
+              type: "turn.aborted",
+              eventId: asEventId(`evt-plan-goal-${eventType}`),
+              provider: "codex",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-02T04:30:05.000Z",
+              payload: { reason: "plan aborted" },
+            },
+      );
+      await harness.drain();
+
+      const after = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+        (thread) => thread.id === asThreadId("thread-1"),
+      )?.goal;
+      expect(after).toEqual(before);
+      expect(after?.status).toBe("active");
+    },
+  );
+
+  it.each([
+    { eventType: "turn.completed" as const, expectedStatus: "blocked" as const },
+    { eventType: "turn.aborted" as const, expectedStatus: "paused" as const },
+  ])(
+    "keeps a default-bound goal turn accounted after switching to plan for $eventType",
+    async ({ eventType, expectedStatus }) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-default-to-plan-${eventType}`);
+      await setHarnessGoal(harness, {
+        commandId: `cmd-default-to-plan-${eventType}`,
+        createdAt: "2026-07-20T00:00:00.000Z",
+      });
+      await startHarnessGoalTurn(harness, {
+        provider: "codex",
+        turnId,
+        startedAt: "2026-07-20T00:00:05.000Z",
+      });
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.makeUnsafe(`cmd-default-to-plan-mode-${eventType}`),
+          threadId: asThreadId("thread-1"),
+          interactionMode: "plan",
+          createdAt: "2026-07-20T00:00:06.000Z",
+        }),
+      );
+
+      harness.emit({
+        type: "thread.token-usage.updated",
+        eventId: asEventId(`evt-default-to-plan-usage-${eventType}`),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt: "2026-07-20T00:00:07.000Z",
+        payload: {
+          usage: { usedTokens: 125, processedTokensDelta: 125 },
+        },
+      });
+      harness.emit(
+        eventType === "turn.completed"
+          ? {
+              type: "turn.completed",
+              eventId: asEventId(`evt-default-to-plan-terminal-${eventType}`),
+              provider: "codex",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-20T00:00:15.000Z",
+              payload: { state: "failed", errorMessage: "bound turn failed" },
+            }
+          : {
+              type: "turn.aborted",
+              eventId: asEventId(`evt-default-to-plan-terminal-${eventType}`),
+              provider: "codex",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-20T00:00:15.000Z",
+              payload: { reason: "bound turn aborted" },
+            },
+      );
+      await harness.drain();
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) =>
+          entry.goal?.status === expectedStatus &&
+          entry.goal.tokensUsed === 125 &&
+          entry.goal.timeUsedSeconds === 10,
+      );
+      expect(thread.interactionMode).toBe("plan");
+      expect(thread.goal).toMatchObject({
+        status: expectedStatus,
+        tokensUsed: 125,
+        timeUsedSeconds: 10,
+      });
+    },
+  );
+
+  it.each(["turn.completed", "turn.aborted"] as const)(
+    "keeps an unbound plan turn outside the goal after switching to default for %s",
+    async (eventType) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-plan-to-default-${eventType}`);
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.makeUnsafe(`cmd-plan-to-default-plan-${eventType}`),
+          threadId: asThreadId("thread-1"),
+          interactionMode: "plan",
+          createdAt: "2026-07-20T01:00:00.000Z",
+        }),
+      );
+      await setHarnessGoal(harness, {
+        commandId: `cmd-plan-to-default-goal-${eventType}`,
+        createdAt: "2026-07-20T01:00:01.000Z",
+      });
+      await startHarnessGoalTurn(harness, {
+        provider: "cursor",
+        turnId,
+        startedAt: "2026-07-20T01:00:05.000Z",
+      });
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.makeUnsafe(`cmd-plan-to-default-default-${eventType}`),
+          threadId: asThreadId("thread-1"),
+          interactionMode: "default",
+          createdAt: "2026-07-20T01:00:06.000Z",
+        }),
+      );
+      const goalBeforeTerminal = (
+        await Effect.runPromise(harness.engine.getReadModel())
+      ).threads.find((thread) => thread.id === asThreadId("thread-1"))?.goal;
+
+      harness.emit({
+        type: "thread.token-usage.updated",
+        eventId: asEventId(`evt-plan-to-default-usage-${eventType}`),
+        provider: "cursor",
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt: "2026-07-20T01:00:07.000Z",
+        payload: {
+          usage: { usedTokens: 500, processedTokensDelta: 500 },
+        },
+      });
+      harness.emit(
+        eventType === "turn.completed"
+          ? {
+              type: "turn.completed",
+              eventId: asEventId(`evt-plan-to-default-terminal-${eventType}`),
+              provider: "cursor",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-20T01:00:15.000Z",
+              payload: { state: "failed", errorMessage: "unbound plan turn failed" },
+            }
+          : {
+              type: "turn.aborted",
+              eventId: asEventId(`evt-plan-to-default-terminal-${eventType}`),
+              provider: "cursor",
+              threadId: asThreadId("thread-1"),
+              turnId,
+              createdAt: "2026-07-20T01:00:15.000Z",
+              payload: { reason: "unbound plan turn aborted" },
+            },
+      );
+      await harness.drain();
+
+      const goalAfterTerminal = (
+        await Effect.runPromise(harness.engine.getReadModel())
+      ).threads.find((thread) => thread.id === asThreadId("thread-1"))?.goal;
+      expect(goalAfterTerminal).toEqual(goalBeforeTerminal);
+      expect(goalAfterTerminal).toMatchObject({
+        status: "active",
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+      });
+    },
+  );
+
+  it.each([
+    { reason: "provider crashed", expectedStatus: "blocked" as const },
+    { reason: "Rate limit exceeded", expectedStatus: "usageLimited" as const },
+  ])(
+    "moves an active goal to $expectedStatus after a session error",
+    async ({ reason, expectedStatus }) => {
+      const harness = await createHarness();
+      await setHarnessGoal(harness, {
+        commandId: `cmd-session-error-goal-${expectedStatus}`,
+        createdAt: "2026-07-02T04:40:00.000Z",
+      });
+      const eventAt = new Date(Date.now() + 1_000).toISOString();
+
+      harness.emit({
+        type: "session.state.changed",
+        eventId: asEventId(`evt-session-error-goal-${expectedStatus}`),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: eventAt,
+        payload: { state: "error", reason },
+      });
+      await harness.drain();
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.goal?.status === expectedStatus,
+      );
+      expect(thread.goal?.status).toBe(expectedStatus);
+    },
+  );
+
+  it("blocks an active goal when its provider session exits", async () => {
+    const harness = await createHarness();
+    await setHarnessGoal(harness, {
+      commandId: "cmd-session-exited-goal",
+      createdAt: "2026-07-02T04:50:00.000Z",
+    });
+    const eventAt = new Date(Date.now() + 1_000).toISOString();
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-goal"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: eventAt,
+      payload: {
+        reason: "provider process exited",
+        recoverable: true,
+        exitKind: "error",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.status === "blocked");
+    expect(thread.goal?.status).toBe("blocked");
+  });
+
+  it("keeps the goal active and requests continuation after a graceful session exit", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-graceful-exit");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-graceful-exit",
+      createdAt: "2026-07-20T02:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt: "2026-07-20T02:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-goal-graceful-exit"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-07-20T02:00:10.000Z",
+      payload: {
+        reason: "provider finished cleanly",
+        recoverable: false,
+        exitKind: "graceful",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped" && entry.session.activeTurnId === null,
+    );
+    expect(thread.goal?.status).toBe("active");
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.goal-continuation-requested" &&
+          event.payload.sourceTurnId === turnId,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    { message: "runtime exploded", expectedStatus: "blocked" as const },
+    { message: "Usage limit reached for this account", expectedStatus: "usageLimited" as const },
+  ])(
+    "moves an active goal to $expectedStatus after a runtime error",
+    async ({ message, expectedStatus }) => {
+      const harness = await createHarness();
+      await setHarnessGoal(harness, {
+        commandId: `cmd-runtime-error-goal-${expectedStatus}`,
+        createdAt: "2026-07-02T05:00:00.000Z",
+      });
+
+      harness.emit({
+        type: "runtime.error",
+        eventId: asEventId(`evt-runtime-error-goal-${expectedStatus}`),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-07-02T05:00:05.000Z",
+        payload: { message },
+      });
+      await harness.drain();
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.goal?.status === expectedStatus,
+      );
+      expect(thread.goal?.status).toBe(expectedStatus);
+    },
+  );
+
+  it("preserves the active turn when a runtime error omits turnId", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-runtime-error-without-turn-id");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-runtime-error-without-turn-id",
+      createdAt: "2026-07-20T03:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "claudeAgent",
+      turnId,
+      startedAt: "2026-07-20T03:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-without-turn-id"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-07-20T03:00:10.000Z",
+      payload: { message: "runtime failed without turn metadata" },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.activeTurnId === turnId &&
+        entry.goal?.status === "blocked",
+    );
+    expect(thread.session).toMatchObject({
+      status: "error",
+      activeTurnId: turnId,
+      goalLifecycleKey: "goal:cmd-runtime-error-without-turn-id",
+      lastError: "runtime failed without turn metadata",
+    });
+  });
+
+  it("ignores a stale lifecycle exit from the wrong provider", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-stale-provider-exit");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-stale-provider-exit",
+      createdAt: "2026-07-20T04:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "claudeAgent",
+      turnId,
+      startedAt: "2026-07-20T04:00:05.000Z",
+    });
+    const before = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+      (thread) => thread.id === asThreadId("thread-1"),
+    );
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-stale-provider-exit"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-07-20T04:00:10.000Z",
+      payload: {
+        reason: "old provider exited late",
+        recoverable: true,
+        exitKind: "error",
+      },
+    });
+    await harness.drain();
+
+    const after = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+      (thread) => thread.id === asThreadId("thread-1"),
+    );
+    expect(after?.session).toEqual(before?.session);
+    expect(after?.goal).toEqual(before?.goal);
+    expect(after?.session).toMatchObject({
+      providerName: "claudeAgent",
+      status: "running",
+      activeTurnId: turnId,
+      goalLifecycleKey: "goal:cmd-stale-provider-exit",
+    });
+    expect(after?.goal?.status).toBe("active");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -587,6 +1467,17 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
     });
     harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-delayed-session-ready-after-goal-prebind"),
+      provider: "codex",
+      createdAt: "2026-07-21T04:00:02.500Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "ready",
+        reason: "startup readiness arrived after prebinding",
+      },
+    });
+    harness.emit({
       type: "session.started",
       eventId: asEventId("evt-session-started-midturn-lifecycle"),
       provider: "codex",
@@ -633,6 +1524,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: seededAt,
           lastError: null,
         },
@@ -814,6 +1706,96 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("accounts and continues an active goal when idle is the provider's terminal signal", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-idle-goal-terminal");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-idle-goal-terminal",
+      createdAt: "2026-07-17T04:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt: "2026-07-17T04:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-idle-goal-terminal"),
+      provider: "codex",
+      createdAt: "2026-07-17T04:00:20.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: { state: "idle" },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.goal?.timeUsedSeconds === 15,
+    );
+    expect(thread.goal?.status).toBe("active");
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.goal-continuation-requested" &&
+          event.payload.sourceTurnId === turnId,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("ignores a stale idle signal instead of clearing a newer running turn", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-stale-idle");
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt: "2026-07-17T04:10:05.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-newer-running-before-stale-idle"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          goalLifecycleKey: null,
+          lastError: null,
+          updatedAt: "2026-07-17T04:10:20.000Z",
+        },
+        createdAt: "2026-07-17T04:10:20.000Z",
+      }),
+    );
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-stale-idle"),
+      provider: "codex",
+      createdAt: "2026-07-17T04:10:10.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: { state: "idle" },
+    });
+    await harness.drain();
+
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(thread?.session).toMatchObject({
+      status: "running",
+      activeTurnId: turnId,
+      updatedAt: "2026-07-17T04:10:20.000Z",
+    });
   });
 
   it("truncates oversized tool payload snapshots before storing thread activities", async () => {
@@ -1104,6 +2086,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -1139,6 +2122,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -1291,6 +2275,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -1444,6 +2429,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -1479,6 +2465,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -1569,6 +2556,13 @@ describe("ProviderRuntimeIngestion", () => {
     ).toMatchObject({
       implementedAt: null,
       implementationThreadId: null,
+    });
+    const targetThreadAfterUnrelatedStart = readModel.threads.find(
+      (entry) => entry.id === targetThreadId,
+    );
+    expect(targetThreadAfterUnrelatedStart?.session).toMatchObject({
+      status: "ready",
+      activeTurnId: null,
     });
   });
 
@@ -2711,56 +3705,103 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
-  it("consumes provider thread goal updates and clears into projected goal state", async () => {
+  it("preserves a prebound goal across delayed provider start notifications", async () => {
     const harness = await createHarness();
-
-    harness.emit({
-      type: "thread.goal.updated",
-      eventId: asEventId("evt-thread-goal-updated"),
-      provider: "codex",
-      createdAt: "2026-06-04T09:00:00.000Z",
-      threadId: asThreadId("thread-1"),
-      payload: {
-        goal: {
+    const lifecycleId = "goal:cmd-delayed-provider-start-binding";
+    const preboundAt = "2026-07-21T04:00:00.000Z";
+    await setHarnessGoal(harness, {
+      commandId: "cmd-delayed-provider-start-binding",
+      createdAt: preboundAt,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-prebind-before-delayed-provider-start"),
+        threadId: asThreadId("thread-1"),
+        session: {
           threadId: asThreadId("thread-1"),
-          objective: "Improve Codex compatibility",
-          status: "active",
-          tokenBudget: 200000,
-          tokensUsed: 12000,
-          timeUsedSeconds: 90,
-          createdAt: "2026-04-15T19:40:00.000Z",
-          updatedAt: "2026-04-15T19:41:00.000Z",
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          goalLifecycleKey: lifecycleId,
+          updatedAt: preboundAt,
+          lastError: null,
         },
-      },
-    });
-
-    let thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 12000);
-
-    expect(thread.goal).toEqual({
-      threadId: asThreadId("thread-1"),
-      objective: "Improve Codex compatibility",
-      status: "active",
-      tokenBudget: 200000,
-      tokensUsed: 12000,
-      timeUsedSeconds: 90,
-      createdAt: "2026-04-15T19:40:00.000Z",
-      updatedAt: "2026-04-15T19:41:00.000Z",
-    });
+        createdAt: preboundAt,
+      }),
+    );
 
     harness.emit({
-      type: "thread.goal.cleared",
-      eventId: asEventId("evt-thread-goal-cleared"),
+      type: "session.started",
+      eventId: asEventId("evt-delayed-session-started-after-goal-prebind"),
       provider: "codex",
-      createdAt: "2026-06-04T09:02:00.000Z",
+      createdAt: "2026-07-21T04:00:01.000Z",
       threadId: asThreadId("thread-1"),
-      payload: {
-        clearedAt: "2026-06-04T09:02:00.000Z",
-      },
+      message: "session started",
+    });
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-delayed-thread-started-after-goal-prebind"),
+      provider: "codex",
+      createdAt: "2026-07-21T04:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+    });
+    await harness.drain();
+
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(thread?.session).toMatchObject({
+      status: "ready",
+      activeTurnId: null,
+      goalLifecycleKey: lifecycleId,
     });
 
-    thread = await waitForThread(harness.engine, (entry) => entry.goal === null);
+    const turnId = asTurnId("turn-delayed-provider-start-after-goal-rebind");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-rebind-before-delayed-provider-start"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          goalLifecycleKey: lifecycleId,
+          updatedAt: "2026-07-21T04:00:03.000Z",
+          lastError: null,
+        },
+        createdAt: "2026-07-21T04:00:03.000Z",
+      }),
+    );
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-delayed-session-started-after-active-goal-rebind"),
+      provider: "codex",
+      createdAt: "2026-07-21T04:00:04.000Z",
+      threadId: asThreadId("thread-1"),
+      message: "session started late",
+    });
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-delayed-session-ready-after-active-goal-rebind"),
+      provider: "codex",
+      createdAt: "2026-07-21T04:00:05.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "ready",
+        reason: "startup readiness arrived late",
+      },
+    });
+    await harness.drain();
 
-    expect(thread.goal).toBeNull();
+    const rebound = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(rebound?.session).toMatchObject({
+      status: "running",
+      activeTurnId: turnId,
+      goalLifecycleKey: lifecycleId,
+    });
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
@@ -2900,6 +3941,977 @@ describe("ProviderRuntimeIngestion", () => {
     ]);
   });
 
+  it.each(["kimiCode", "gemini", "glm", "cursor", "codex", "claudeAgent"] as const)(
+    "accounts processed token deltas for %s through the harness goal",
+    async (provider) => {
+      const harness = await createHarness();
+      const goalCreatedAt = "2026-07-04T00:00:00.000Z";
+      const turnId = asTurnId(`turn-goal-accounting-${provider}`);
+      await setHarnessGoal(harness, {
+        commandId: `cmd-goal-accounting-${provider}`,
+        createdAt: goalCreatedAt,
+      });
+      await startHarnessGoalTurn(harness, {
+        provider,
+        turnId,
+        startedAt: "2026-07-04T00:00:05.000Z",
+      });
+
+      harness.emit({
+        type: "thread.token-usage.updated",
+        eventId: asEventId(`evt-goal-accounting-${provider}`),
+        provider,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt: "2026-07-04T00:00:10.000Z",
+        payload: {
+          usage: {
+            usedTokens: 321,
+            processedTokensDelta: 321,
+          },
+        },
+      });
+
+      const thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 321);
+      expect(thread.goal).toMatchObject({
+        status: "active",
+        tokensUsed: 321,
+        timeUsedSeconds: 0,
+      });
+    },
+  );
+
+  it("accounts elapsed wall time when the active provider turn terminates", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-time-accounting");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-time-accounting",
+      createdAt: "2026-07-04T01:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "gemini",
+      turnId,
+      startedAt: "2026-07-04T01:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-time-accounting"),
+      provider: "gemini",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T01:01:20.000Z",
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.goal?.timeUsedSeconds === 75,
+    );
+    expect(thread.goal).toMatchObject({
+      status: "active",
+      tokensUsed: 0,
+      timeUsedSeconds: 75,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-time-accounting-semantic-replay"),
+      provider: "gemini",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T01:01:20.000Z",
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+    const afterReplay = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(afterReplay?.goal?.timeUsedSeconds).toBe(75);
+  });
+
+  it("reconstructs the goal binding after ingestion restarts mid-turn", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-ingestion-restart");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-ingestion-restart",
+      createdAt: "2026-07-20T05:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "kimiCode",
+      turnId,
+      startedAt: "2026-07-20T05:00:05.000Z",
+    });
+    harness.setProviderSession({
+      provider: "kimiCode",
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: asThreadId("thread-1"),
+      activeTurnId: turnId,
+      createdAt: "2026-07-20T05:00:05.000Z",
+      updatedAt: "2026-07-20T05:00:05.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-goal-ingestion-restart-plan-mode"),
+        threadId: asThreadId("thread-1"),
+        interactionMode: "plan",
+        createdAt: "2026-07-20T05:00:06.000Z",
+      }),
+    );
+
+    await harness.restartIngestion();
+    await harness.restartIngestion();
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-ingestion-restart-usage"),
+      provider: "kimiCode",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-20T05:00:07.000Z",
+      payload: {
+        usage: { usedTokens: 222, processedTokensDelta: 222 },
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-ingestion-restart-completed"),
+      provider: "kimiCode",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-20T05:00:15.000Z",
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.goal).toMatchObject({
+      status: "active",
+      tokensUsed: 222,
+      timeUsedSeconds: 10,
+    });
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.goal-continuation-requested" &&
+          event.payload.sourceTurnId === turnId,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("reconstructs two accepted pre-running goal turns in FIFO order after restart", async () => {
+    const harness = await createHarness();
+    const firstTurnId = asTurnId("turn-goal-queue-first");
+    const secondTurnId = asTurnId("turn-goal-queue-second");
+    const firstLifecycleId = "goal:cmd-goal-queue-first";
+    const secondLifecycleId = "goal:cmd-goal-queue-second";
+
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-queue-first",
+      objective: "First accepted objective",
+      createdAt: "2026-07-20T05:10:00.000Z",
+    });
+    await requestHarnessTurn(harness, {
+      commandId: "cmd-turn-queue-first",
+      interactionMode: "default",
+      createdAt: "2026-07-20T05:10:01.000Z",
+    });
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-queue-second",
+      objective: "Second accepted objective",
+      createdAt: "2026-07-20T05:10:02.000Z",
+    });
+    await requestHarnessTurn(harness, {
+      commandId: "cmd-turn-queue-second",
+      interactionMode: "default",
+      createdAt: "2026-07-20T05:10:03.000Z",
+    });
+
+    await harness.restartIngestion();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-goal-queue-first-started"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId: firstTurnId,
+      createdAt: "2026-07-20T05:10:04.000Z",
+    });
+    let thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.activeTurnId === firstTurnId,
+    );
+    expect(thread.session?.goalLifecycleKey).toBe(firstLifecycleId);
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-queue-first-completed"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId: firstTurnId,
+      createdAt: "2026-07-20T05:10:05.000Z",
+      payload: { state: "completed" },
+    });
+    await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.activeTurnId === null && entry.latestTurn?.turnId === firstTurnId,
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-goal-queue-second-started"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId: secondTurnId,
+      createdAt: "2026-07-20T05:10:06.000Z",
+    });
+    thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.activeTurnId === secondTurnId,
+    );
+    expect(thread.session?.goalLifecycleKey).toBe(secondLifecycleId);
+  });
+
+  it("recovers an accepted goal continuation across the provider-ack crash gap", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-recovered-goal-continuation");
+    const lifecycleId = "goal:cmd-recovered-goal-continuation";
+    await setHarnessGoal(harness, {
+      commandId: "cmd-recovered-goal-continuation",
+      objective: "Survive provider acceptance before session projection",
+      createdAt: "2026-07-20T05:20:00.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.continue",
+        commandId: CommandId.makeUnsafe("cmd-recovered-goal-continuation-send"),
+        threadId,
+        expectedGoalLifecycleKey: lifecycleId,
+        sourceTurnId: asTurnId("turn-before-recovered-continuation"),
+        createdAt: "2026-07-20T05:20:01.000Z",
+      }),
+    );
+
+    const providerSession: ProviderSession = {
+      provider: "codex",
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      activeTurnId: turnId,
+      createdAt: "2026-07-20T05:20:01.000Z",
+      updatedAt: "2026-07-20T05:20:02.000Z",
+    };
+    harness.setProviderSession(providerSession);
+    harness.setProviderReconciliations([
+      {
+        threadId,
+        provider: "codex",
+        session: providerSession,
+        resumeState: "resumed",
+        runtimeMode: "approval-required",
+        lastError: null,
+      },
+    ]);
+
+    await harness.restartIngestion();
+    let thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "running" &&
+        entry.session?.activeTurnId === turnId &&
+        entry.session?.goalLifecycleKey === lifecycleId,
+    );
+    expect(thread.latestTurn).toMatchObject({
+      turnId,
+      state: "running",
+    });
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-recovered-goal-continuation-usage"),
+      provider: "codex",
+      threadId,
+      turnId,
+      createdAt: "2026-07-20T05:20:03.000Z",
+      payload: { usage: { usedTokens: 77, processedTokensDelta: 77 } },
+    });
+    thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 77);
+    expect(thread.goal?.lifecycleId).toBe(lifecycleId);
+  });
+
+  it("keeps request-time goal ownership when mode changes before turn.started", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-request-mode-race");
+    const lifecycleId = "goal:cmd-goal-request-mode-race";
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-request-mode-race",
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    await requestHarnessTurn(harness, {
+      commandId: "cmd-turn-request-mode-race",
+      interactionMode: "default",
+      createdAt: "2026-07-21T00:00:01.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-plan-before-provider-start"),
+        threadId: asThreadId("thread-1"),
+        interactionMode: "plan",
+        createdAt: "2026-07-21T00:00:02.000Z",
+      }),
+    );
+    await startHarnessGoalTurn(harness, {
+      provider: "gemini",
+      turnId,
+      startedAt: "2026-07-21T00:00:03.000Z",
+    });
+
+    let thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.goalLifecycleKey === lifecycleId,
+    );
+    expect(thread.interactionMode).toBe("plan");
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-request-mode-race-usage"),
+      provider: "gemini",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-21T00:00:04.000Z",
+      payload: { usage: { usedTokens: 111, processedTokensDelta: 111 } },
+    });
+    thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 111);
+    expect(thread.goal?.lifecycleId).toBe(lifecycleId);
+  });
+
+  it("does not bind a plan request when default mode is restored before turn.started", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-plan-request-mode-race");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-plan-request-mode-race-goal",
+      createdAt: "2026-07-21T01:00:00.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-plan-before-request"),
+        threadId: asThreadId("thread-1"),
+        interactionMode: "plan",
+        createdAt: "2026-07-21T01:00:01.000Z",
+      }),
+    );
+    await requestHarnessTurn(harness, {
+      commandId: "cmd-plan-turn-request",
+      interactionMode: "plan",
+      createdAt: "2026-07-21T01:00:02.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-default-before-provider-start"),
+        threadId: asThreadId("thread-1"),
+        interactionMode: "default",
+        createdAt: "2026-07-21T01:00:03.000Z",
+      }),
+    );
+    await startHarnessGoalTurn(harness, {
+      provider: "cursor",
+      turnId,
+      startedAt: "2026-07-21T01:00:04.000Z",
+    });
+
+    const running = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.activeTurnId === turnId,
+    );
+    expect(running.session?.goalLifecycleKey).toBeNull();
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-plan-request-mode-race-usage"),
+      provider: "cursor",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-21T01:00:05.000Z",
+      payload: { usage: { usedTokens: 222, processedTokensDelta: 222 } },
+    });
+    await harness.drain();
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(thread?.goal?.tokensUsed).toBe(0);
+  });
+
+  it("does not let an old failed turn block its replacement lifecycle", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-replaced-before-provider-start");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-old-goal-before-provider-start",
+      objective: "Old objective",
+      createdAt: "2026-07-21T02:00:00.000Z",
+    });
+    await requestHarnessTurn(harness, {
+      commandId: "cmd-old-goal-turn-request",
+      interactionMode: "default",
+      createdAt: "2026-07-21T02:00:01.000Z",
+    });
+    await setHarnessGoal(harness, {
+      commandId: "cmd-new-goal-before-provider-start",
+      objective: "Replacement objective",
+      createdAt: "2026-07-21T02:00:02.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "glm",
+      turnId,
+      startedAt: "2026-07-21T02:00:03.000Z",
+    });
+    expect(
+      (await Effect.runPromise(harness.engine.getReadModel())).threads[0]?.session
+        ?.goalLifecycleKey,
+    ).toBe("goal:cmd-old-goal-before-provider-start");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-old-goal-turn-failed"),
+      provider: "glm",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-21T02:00:04.000Z",
+      payload: { state: "failed", errorMessage: "old lifecycle failed" },
+    });
+    await harness.drain();
+
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+    expect(thread?.goal).toMatchObject({
+      lifecycleId: "goal:cmd-new-goal-before-provider-start",
+      status: "active",
+      objective: "Replacement objective",
+    });
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread.goal-continuation-requested" &&
+          event.payload.expectedGoalLifecycleKey === "goal:cmd-new-goal-before-provider-start",
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["session-state", "runtime-error"] as const)(
+    "continues a replacement after an old turn emits %s without a later exit",
+    async (kind) => {
+      const harness = await createHarness();
+      const turnId = asTurnId(`turn-replacement-${kind}`);
+      await setHarnessGoal(harness, {
+        commandId: `cmd-replacement-${kind}-a`,
+        objective: "Lifecycle A",
+        createdAt: "2026-07-21T02:10:00.000Z",
+      });
+      await startHarnessGoalTurn(harness, {
+        provider: "codex",
+        turnId,
+        startedAt: "2026-07-21T02:10:01.000Z",
+      });
+      await setHarnessGoal(harness, {
+        commandId: `cmd-replacement-${kind}-b`,
+        objective: "Lifecycle B",
+        createdAt: "2026-07-21T02:10:02.000Z",
+      });
+
+      if (kind === "session-state") {
+        harness.emit({
+          type: "session.state.changed",
+          eventId: asEventId("evt-replacement-session-state-error"),
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-07-21T02:10:03.000Z",
+          payload: { state: "error", reason: "old turn failed" },
+        });
+      } else {
+        harness.emit({
+          type: "runtime.error",
+          eventId: asEventId("evt-replacement-runtime-error"),
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          turnId,
+          createdAt: "2026-07-21T02:10:03.000Z",
+          payload: { message: "old turn failed", class: "provider_error" },
+        });
+      }
+      await harness.drain();
+
+      const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0];
+      expect(thread?.goal).toMatchObject({
+        lifecycleId: `goal:cmd-replacement-${kind}-b`,
+        status: "active",
+      });
+      expect(thread?.session?.activeTurnId).toBeNull();
+      const events = await Effect.runPromise(
+        Stream.runCollect(harness.engine.readEvents(0)).pipe(
+          Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+        ),
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "thread.goal-continuation-requested" &&
+            event.payload.expectedGoalLifecycleKey === `goal:cmd-replacement-${kind}-b`,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("accounts late usage after the bound turn completes and ingestion restarts", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-late-goal-usage");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-late-goal-usage",
+      createdAt: "2026-07-21T03:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "claudeAgent",
+      turnId,
+      startedAt: "2026-07-21T03:00:01.000Z",
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-late-goal-usage-completed"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-21T03:00:10.000Z",
+      payload: { state: "completed" },
+    });
+    await waitForThread(harness.engine, (entry) => entry.session?.activeTurnId === null);
+    harness.setProviderSession({
+      provider: "claudeAgent",
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-07-21T03:00:01.000Z",
+      updatedAt: "2026-07-21T03:00:10.000Z",
+    });
+    await harness.restartIngestion();
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-late-goal-usage-final"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-21T03:00:11.000Z",
+      payload: { usage: { usedTokens: 333, processedTokensDelta: 333 } },
+    });
+    await harness.drain();
+    const thread = (await Effect.runPromise(harness.engine.getReadModel())).threads[0]!;
+    expect(thread.goal?.tokensUsed).toBe(333);
+    expect(thread.goal?.timeUsedSeconds).toBe(9);
+  });
+
+  it("moves an active harness goal to budgetLimited when token usage reaches its budget", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-budget-limit");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-budget-limit",
+      tokenBudget: 1_000,
+      tokensUsed: 900,
+      createdAt: "2026-07-04T02:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "claudeAgent",
+      turnId,
+      startedAt: "2026-07-04T02:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-budget-limit"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T02:00:10.000Z",
+      payload: {
+        usage: {
+          usedTokens: 150,
+          processedTokensDelta: 150,
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.goal?.status === "budgetLimited",
+    );
+    expect(thread.goal).toMatchObject({
+      status: "budgetLimited",
+      tokenBudget: 1_000,
+      tokensUsed: 1_050,
+    });
+  });
+
+  it("records a provider usage event only once when the same event is delivered twice", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-usage-idempotent");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-usage-idempotent",
+      createdAt: "2026-07-04T03:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "cursor",
+      turnId,
+      startedAt: "2026-07-04T03:00:05.000Z",
+    });
+
+    const usageEvent = {
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-usage-idempotent"),
+      provider: "cursor",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T03:00:10.000Z",
+      payload: {
+        usage: {
+          usedTokens: 250,
+          processedTokensDelta: 250,
+        },
+      },
+    } as const;
+    harness.emit(usageEvent);
+    harness.emit(usageEvent);
+    await harness.drain();
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 250);
+    expect(thread.goal?.tokensUsed).toBe(250);
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "thread.goal-updated" &&
+          event.commandId ===
+            "server:harness-goal-usage:thread-1:goal:cmd-goal-usage-idempotent:turn-goal-usage-idempotent:tokens:evt-goal-usage-idempotent",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("counts distinct provider usage events even when their token deltas are equal", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-usage-equal-deltas");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-usage-equal-deltas",
+      createdAt: "2026-07-04T03:10:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "gemini",
+      turnId,
+      startedAt: "2026-07-04T03:10:05.000Z",
+    });
+
+    const makeUsageEvent = (eventId: string, createdAt: string) =>
+      ({
+        type: "thread.token-usage.updated",
+        eventId: asEventId(eventId),
+        provider: "gemini",
+        threadId: asThreadId("thread-1"),
+        turnId,
+        createdAt,
+        payload: {
+          usage: {
+            usedTokens: 250,
+            processedTokensDelta: 250,
+          },
+        },
+      }) as const;
+
+    harness.emit(makeUsageEvent("evt-goal-usage-equal-delta-1", "2026-07-04T03:10:10.000Z"));
+    harness.emit(makeUsageEvent("evt-goal-usage-equal-delta-2", "2026-07-04T03:10:11.000Z"));
+    await harness.drain();
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 500);
+    expect(thread.goal?.tokensUsed).toBe(500);
+  });
+
+  it("does not charge delayed usage from an older goal lifecycle to its replacement", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-replaced");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-before-replacement",
+      objective: "Original lifecycle",
+      createdAt: "2026-07-04T04:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "glm",
+      turnId,
+      startedAt: "2026-07-04T04:00:05.000Z",
+    });
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-replacement",
+      objective: "Replacement lifecycle",
+      createdAt: "2026-07-04T04:00:20.000Z",
+    });
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-delayed-before-replacement"),
+      provider: "glm",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T04:00:10.000Z",
+      payload: {
+        usage: {
+          usedTokens: 400,
+          processedTokensDelta: 400,
+        },
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.goal?.objective === "Replacement lifecycle",
+    );
+    expect(thread.goal).toMatchObject({
+      lifecycleId: "goal:cmd-goal-replacement",
+      objective: "Replacement lifecycle",
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: "2026-07-04T04:00:20.000Z",
+    });
+  });
+
+  it("replaces the cached turn binding after a successful mid-turn goal rebind", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-mid-turn-rebind");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-before-mid-turn-rebind",
+      objective: "Original lifecycle",
+      createdAt: "2026-07-04T04:10:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt: "2026-07-04T04:10:05.000Z",
+    });
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-after-mid-turn-rebind",
+      objective: "Rebound lifecycle",
+      createdAt: "2026-07-04T04:10:10.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-mid-turn-rebind"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          goalLifecycleKey: "goal:cmd-goal-after-mid-turn-rebind",
+          lastError: null,
+          updatedAt: "2026-07-04T04:10:11.000Z",
+        },
+        createdAt: "2026-07-04T04:10:11.000Z",
+      }),
+    );
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-mid-turn-rebind-usage"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T04:10:12.000Z",
+      payload: { usage: { usedTokens: 125, processedTokensDelta: 125 } },
+    });
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.goal?.lifecycleId === "goal:cmd-goal-after-mid-turn-rebind" &&
+        entry.goal.tokensUsed === 125,
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-mid-turn-rebind-failed"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T04:10:15.000Z",
+      payload: { state: "failed", errorMessage: "rebound lifecycle failed" },
+    });
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.status === "blocked");
+    expect(thread.goal).toMatchObject({
+      lifecycleId: "goal:cmd-goal-after-mid-turn-rebind",
+      tokensUsed: 125,
+      status: "blocked",
+    });
+  });
+
+  it("accounts for a goal even when the client clock is ahead of provider events", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-future-client-clock");
+    await setHarnessGoal(harness, {
+      commandId: "cmd-goal-future-client-clock",
+      createdAt: "2036-07-04T04:00:20.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "codex",
+      turnId,
+      startedAt: "2026-07-04T04:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-future-client-clock"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T04:00:10.000Z",
+      payload: { usage: { usedTokens: 250, processedTokensDelta: 250 } },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.tokensUsed === 250);
+    expect(thread.goal?.tokensUsed).toBe(250);
+  });
+
+  it.each([
+    {
+      interactionMode: "plan" as const,
+      status: "active" as const,
+      label: "plan mode",
+    },
+    {
+      interactionMode: "default" as const,
+      status: "paused" as const,
+      label: "paused goal",
+    },
+    {
+      interactionMode: "default" as const,
+      status: "complete" as const,
+      label: "complete goal",
+    },
+  ])("does not account provider usage for $label", async ({ interactionMode, status }) => {
+    const harness = await createHarness();
+    const turnId = asTurnId(`turn-goal-excluded-${interactionMode}-${status}`);
+    if (interactionMode === "plan") {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.makeUnsafe("cmd-goal-accounting-plan-mode"),
+          threadId: asThreadId("thread-1"),
+          interactionMode,
+          createdAt: "2026-07-04T05:00:00.000Z",
+        }),
+      );
+    }
+    await setHarnessGoal(harness, {
+      commandId: `cmd-goal-accounting-excluded-${interactionMode}-${status}`,
+      status,
+      createdAt: "2026-07-04T05:00:01.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "kimiCode",
+      turnId,
+      startedAt: "2026-07-04T05:00:05.000Z",
+    });
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId(`evt-goal-accounting-excluded-${interactionMode}-${status}`),
+      provider: "kimiCode",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T05:00:10.000Z",
+      payload: {
+        usage: {
+          usedTokens: 500,
+          processedTokensDelta: 500,
+        },
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.goal?.status === status);
+    expect(thread.goal?.tokensUsed).toBe(0);
+  });
+
+  it("preserves final turn accounting after update_goal completes the active lifecycle", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-goal-completed-during-turn");
+    const commandId = "cmd-goal-completed-during-turn";
+    await setHarnessGoal(harness, {
+      commandId,
+      createdAt: "2026-07-04T06:00:00.000Z",
+    });
+    await startHarnessGoalTurn(harness, {
+      provider: "claudeAgent",
+      turnId,
+      startedAt: "2026-07-04T06:00:01.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.goal.status.report",
+        commandId: CommandId.makeUnsafe("cmd-goal-tool-complete"),
+        threadId: asThreadId("thread-1"),
+        expectedGoalLifecycleKey: `goal:${commandId}`,
+        status: "complete",
+        turnId,
+        createdAt: "2026-07-04T06:00:05.000Z",
+      }),
+    );
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-goal-final-usage-after-complete"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T06:00:06.000Z",
+      payload: {
+        usage: { usedTokens: 700, processedTokensDelta: 700 },
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-goal-terminal-after-complete"),
+      provider: "claudeAgent",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      createdAt: "2026-07-04T06:00:11.000Z",
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.goal?.status === "complete" &&
+        entry.goal.tokensUsed === 700 &&
+        entry.goal.timeUsedSeconds === 10,
+    );
+    expect(thread.goal).toMatchObject({
+      status: "complete",
+      tokensUsed: 700,
+      timeUsedSeconds: 10,
+    });
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -3021,6 +5033,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: now,
           lastError: null,
         },
@@ -3219,6 +5232,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: now,
           lastError: null,
         },
@@ -3281,6 +5295,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: now,
           lastError: null,
         },
@@ -3392,6 +5407,7 @@ describe("ProviderRuntimeIngestion", () => {
           providerName: "kimiCode",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           updatedAt: now,
           lastError: null,
         },

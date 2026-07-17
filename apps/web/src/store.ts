@@ -888,7 +888,10 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         goal: event.payload.goal,
-        updatedAt: event.payload.goal.updatedAt,
+        updatedAt:
+          event.payload.goal.updatedAt > (thread.updatedAt ?? "")
+            ? event.payload.goal.updatedAt
+            : thread.updatedAt,
       }));
     }
 
@@ -896,7 +899,10 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         goal: null,
-        updatedAt: event.payload.clearedAt,
+        updatedAt:
+          event.payload.clearedAt > (thread.updatedAt ?? "")
+            ? event.payload.clearedAt
+            : thread.updatedAt,
       }));
     }
 

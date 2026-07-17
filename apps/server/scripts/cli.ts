@@ -35,23 +35,16 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Comm
   }
 });
 
-interface PublishIconBackup {
-  readonly targetPath: string;
-  readonly backupPath: string;
-}
-
 const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(function* (
   repoRoot: string,
-  serverDir: string,
+  packageDir: string,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const backups: PublishIconBackup[] = [];
 
   for (const override of PUBLISH_ICON_OVERRIDES) {
     const sourcePath = path.join(repoRoot, override.sourceRelativePath);
-    const targetPath = path.join(serverDir, override.targetRelativePath);
-    const backupPath = `${targetPath}.publish-bak`;
+    const targetPath = path.join(packageDir, override.targetRelativePath);
 
     if (!(yield* fs.exists(sourcePath))) {
       return yield* new CliError({
@@ -64,25 +57,10 @@ const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(functio
       });
     }
 
-    yield* fs.copyFile(targetPath, backupPath);
     yield* fs.copyFile(sourcePath, targetPath);
-    backups.push({ targetPath, backupPath });
   }
 
   yield* Effect.log("[cli] Applied publish icon overrides to dist/client");
-  return backups as ReadonlyArray<PublishIconBackup>;
-});
-
-const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(function* (
-  backups: ReadonlyArray<PublishIconBackup>,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  for (const backup of backups) {
-    if (!(yield* fs.exists(backup.backupPath))) {
-      continue;
-    }
-    yield* fs.rename(backup.backupPath, backup.targetPath);
-  }
 });
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
@@ -165,6 +143,7 @@ const publishCmd = Command.make(
     appVersion: Flag.string("app-version").pipe(Flag.optional),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
+    packDestination: Flag.string("pack-destination").pipe(Flag.optional),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
@@ -173,11 +152,9 @@ const publishCmd = Command.make(
       const fs = yield* FileSystem.FileSystem;
       const repoRoot = yield* RepoRoot;
       const serverDir = path.join(repoRoot, "apps/server");
-      const packageJsonPath = path.join(serverDir, "package.json");
-      const backupPath = `${packageJsonPath}.bak`;
 
       // Assert build assets exist
-      for (const relPath of ["dist/index.mjs", "dist/client/index.html"]) {
+      for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
           return yield* new CliError({
@@ -186,66 +163,62 @@ const publishCmd = Command.make(
         }
       }
 
-      yield* Effect.acquireUseRelease(
-        // Acquire: backup package.json, resolve catalog: deps, strip devDependencies/scripts
-        Effect.gen(function* () {
-          // Resolve catalog dependencies before any file mutations. If this throws,
-          // acquire fails and no release hook runs, so filesystem must still be untouched.
-          const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
-          const pkg = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
-            type: serverPackageJson.type,
-            version,
-            engines: serverPackageJson.engines,
-            files: serverPackageJson.files,
-            dependencies: serverPackageJson.dependencies as Record<string, unknown>,
-          };
+      // Stage outside the monorepo. npm 11 can mis-pack a temporarily rewritten
+      // workspace package, and publishing from an isolated directory also keeps
+      // release-time asset overrides from mutating the working tree.
+      const packageDir = yield* fs.makeTempDirectoryScoped({ prefix: "shioricode-publish-" });
+      const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+      const pkg = {
+        name: serverPackageJson.name,
+        description: serverPackageJson.description,
+        license: serverPackageJson.license,
+        repository: serverPackageJson.repository,
+        bin: serverPackageJson.bin,
+        type: serverPackageJson.type,
+        version,
+        engines: serverPackageJson.engines,
+        files: serverPackageJson.files,
+        publishConfig: serverPackageJson.publishConfig,
+        dependencies: Object.fromEntries(
+          Object.entries(serverPackageJson.dependencies).filter(
+            ([, spec]) => !spec.startsWith("workspace:"),
+          ),
+        ) as Record<string, unknown>,
+      };
 
-          pkg.dependencies = resolveCatalogDependencies(
-            pkg.dependencies,
-            rootPackageJson.workspaces.catalog,
-            "apps/server dependencies",
-          );
+      pkg.dependencies = resolveCatalogDependencies(
+        pkg.dependencies,
+        rootPackageJson.workspaces.catalog,
+        "apps/server dependencies",
+      );
 
-          const original = yield* fs.readFileString(packageJsonPath);
-          yield* fs.writeFileString(backupPath, original);
-          yield* fs.writeFileString(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
-          yield* Effect.log("[cli] Resolved package.json for publish");
+      yield* fs.copy(path.join(serverDir, "dist"), path.join(packageDir, "dist"));
+      yield* fs.copyFile(path.join(serverDir, "README.md"), path.join(packageDir, "README.md"));
+      yield* fs.writeFileString(
+        path.join(packageDir, "package.json"),
+        `${JSON.stringify(pkg, null, 2)}\n`,
+      );
+      yield* Effect.log("[cli] Staged resolved package for publish");
+      yield* applyPublishIconOverrides(repoRoot, packageDir);
 
-          const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
-          return { iconBackups };
+      const args = Option.match(config.packDestination, {
+        onNone: () => ["publish", "--access", config.access, "--tag", config.tag],
+        onSome: (destination) => ["pack", "--pack-destination", destination],
+      });
+      if (Option.isNone(config.packDestination)) {
+        if (config.provenance) args.push("--provenance");
+        if (config.dryRun) args.push("--dry-run");
+      }
+
+      yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+      yield* runCommand(
+        ChildProcess.make("npm", [...args], {
+          cwd: packageDir,
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          // Windows needs shell mode to resolve .cmd shims.
+          shell: process.platform === "win32",
         }),
-        // Use: npm publish
-        () =>
-          Effect.gen(function* () {
-            const args = ["publish", "--access", config.access, "--tag", config.tag];
-            if (config.provenance) args.push("--provenance");
-            if (config.dryRun) args.push("--dry-run");
-
-            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
-            yield* runCommand(
-              ChildProcess.make("npm", [...args], {
-                cwd: serverDir,
-                stdout: config.verbose ? "inherit" : "ignore",
-                stderr: "inherit",
-                // Windows needs shell mode to resolve .cmd shims.
-                shell: process.platform === "win32",
-              }),
-            );
-          }),
-        // Release: restore
-        (resource: { readonly iconBackups: ReadonlyArray<PublishIconBackup> }) =>
-          Effect.gen(function* () {
-            yield* restorePublishIconOverrides(resource.iconBackups).pipe(
-              Effect.catch((error) =>
-                Effect.logError(`[cli] Failed to restore publish icon overrides: ${String(error)}`),
-              ),
-            );
-            yield* fs.rename(backupPath, packageJsonPath);
-            if (config.verbose) yield* Effect.log("[cli] Restored original package.json");
-          }),
       );
     }),
 ).pipe(Command.withDescription("Publish the server package to npm."));

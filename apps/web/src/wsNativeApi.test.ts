@@ -21,6 +21,7 @@ const showContextMenuFallbackMock =
       position?: { x: number; y: number },
     ) => Promise<T | null>
   >();
+const assertThreadLeaseMock = vi.fn<(threadId: ThreadId) => Promise<void>>();
 
 function registerListener<T>(listeners: Set<(event: T) => void>, listener: (event: T) => void) {
   listeners.add(listener);
@@ -137,6 +138,10 @@ vi.mock("./wsRpcClient", () => {
 
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
+}));
+
+vi.mock("./lib/threadLease", () => ({
+  assertThreadLease: assertThreadLeaseMock,
 }));
 
 function emitEvent<T>(listeners: Set<(event: T) => void>, event: T) {
@@ -319,6 +324,34 @@ describe("wsNativeApi", () => {
     await api.orchestration.dispatchCommand(command);
 
     expect(rpcClientMock.orchestration.dispatchCommand).toHaveBeenCalledWith(command);
+  });
+
+  it("requires the thread lease for goal set and clear commands", async () => {
+    rpcClientMock.orchestration.dispatchCommand.mockResolvedValue({ sequence: 1 });
+    assertThreadLeaseMock.mockResolvedValue();
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const threadId = ThreadId.makeUnsafe("thread-goal");
+
+    await api.orchestration.dispatchCommand({
+      type: "thread.goal.set",
+      commandId: CommandId.makeUnsafe("command-goal-set"),
+      threadId,
+      objective: "Ship reliable goals",
+      tokenBudget: null,
+      expectedGoalLifecycleKey: null,
+      createdAt: "2026-07-16T10:00:00.000Z",
+    });
+    await api.orchestration.dispatchCommand({
+      type: "thread.goal.clear",
+      commandId: CommandId.makeUnsafe("command-goal-clear"),
+      threadId,
+      expectedGoalLifecycleKey: null,
+      createdAt: "2026-07-16T10:01:00.000Z",
+    });
+
+    expect(assertThreadLeaseMock).toHaveBeenNthCalledWith(1, threadId);
+    expect(assertThreadLeaseMock).toHaveBeenNthCalledWith(2, threadId);
   });
 
   it("forwards workspace file writes to the project RPC", async () => {

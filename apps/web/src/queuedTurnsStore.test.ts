@@ -1,5 +1,9 @@
 import { ThreadId } from "contracts";
 import { beforeEach, describe, expect, it } from "vitest";
+import {
+  buildQueuedTurnDispatchCommands,
+  decideQueuedTurnProcessing,
+} from "./components/chat/QueuedTurnsProcessor";
 import { type QueuedTurnDraft, useQueuedTurnsStore } from "./queuedTurnsStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
@@ -20,6 +24,7 @@ function makeQueuedTurn(overrides: Partial<EnqueueQueuedTurnInput> = {}) {
       } as const),
     runtimeMode: overrides.runtimeMode ?? "full-access",
     interactionMode: overrides.interactionMode ?? "default",
+    goalIntent: overrides.goalIntent ?? null,
     titleSeed: overrides.titleSeed ?? "Thread",
     createdAt: overrides.createdAt ?? "2026-04-15T00:00:00.000Z",
     composerSnapshot:
@@ -55,6 +60,101 @@ describe("queuedTurnsStore", () => {
 
     expect(queuedTurns).toEqual([first, second]);
     expect(queuedTurns?.every((queuedTurn) => queuedTurn.status === "queued")).toBe(true);
+  });
+
+  it("keeps goal intent attached to a queued turn until dispatch", () => {
+    const goalIntent = {
+      objective: "Ship the queue goal",
+      status: "active" as const,
+      tokenBudget: null,
+      expectedGoalLifecycleKey: null,
+    };
+    const queuedTurn = useQueuedTurnsStore
+      .getState()
+      .enqueueQueuedTurn(makeQueuedTurn({ goalIntent }));
+
+    expect(queuedTurn.goalIntent).toEqual(goalIntent);
+    expect(
+      useQueuedTurnsStore.getState().queuedTurnsByThreadId[THREAD_ID]?.[0]?.goalIntent,
+    ).toEqual(goalIntent);
+  });
+
+  it("rehydrates a persisted goal turn and dispatches its original lifecycle CAS intent", async () => {
+    const originalStorage = useQueuedTurnsStore.persist.getOptions().storage;
+    const goalIntent = {
+      objective: "Ship the durable queue goal",
+      status: "active" as const,
+      tokenBudget: 25_000,
+      expectedGoalLifecycleKey: "goal-lifecycle-existing",
+    };
+    const persistedTurn = {
+      ...makeQueuedTurn({ goalIntent }),
+      status: "sending" as const,
+      errorMessage: null,
+    };
+
+    useQueuedTurnsStore.persist.setOptions({
+      storage: {
+        getItem: () => ({
+          state: {
+            queuedTurnsByThreadId: {
+              [THREAD_ID]: [persistedTurn],
+            },
+          },
+          version: 1,
+        }),
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+    });
+
+    try {
+      await useQueuedTurnsStore.persist.rehydrate();
+      const rehydratedTurn = useQueuedTurnsStore.getState().queuedTurnsByThreadId[THREAD_ID]?.[0];
+
+      expect(rehydratedTurn).toMatchObject({
+        status: "queued",
+        errorMessage: null,
+        goalIntent,
+      });
+
+      const decision = decideQueuedTurnProcessing({
+        thread: {
+          id: THREAD_ID,
+          archivedAt: null,
+          latestTurn: null,
+          session: null,
+          messages: [],
+          activities: [],
+          error: null,
+        },
+        queuedTurns: rehydratedTurn ? [rehydratedTurn] : [],
+        pendingLocalDispatch: null,
+      });
+      expect(decision.kind).toBe("dispatch");
+      if (decision.kind !== "dispatch") {
+        throw new Error("Expected the rehydrated goal turn to be dispatchable");
+      }
+
+      const commands = buildQueuedTurnDispatchCommands({
+        queuedTurn: decision.queuedTurn,
+        thread: {
+          id: THREAD_ID,
+          modelSelection: decision.queuedTurn.modelSelection,
+          runtimeMode: decision.queuedTurn.runtimeMode,
+          interactionMode: decision.queuedTurn.interactionMode,
+        },
+        dispatchCreatedAt: "2026-04-15T00:01:00.000Z",
+      });
+
+      expect(commands.at(-1)).toMatchObject({
+        type: "thread.turn.start",
+        goalIntent,
+      });
+    } finally {
+      useQueuedTurnsStore.persist.setOptions({ storage: originalStorage });
+      useQueuedTurnsStore.setState({ queuedTurnsByThreadId: {} });
+    }
   });
 
   it("tracks sending and failed queue states", () => {

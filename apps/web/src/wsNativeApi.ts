@@ -19,6 +19,8 @@ const THREAD_LEASED_COMMAND_TYPES = new Set<ClientOrchestrationCommand["type"]>(
   "thread.meta.update",
   "thread.runtime-mode.set",
   "thread.interaction-mode.set",
+  "thread.goal.set",
+  "thread.goal.clear",
   "thread.turn.start",
   "thread.turn.steer",
   "thread.turn.interrupt",

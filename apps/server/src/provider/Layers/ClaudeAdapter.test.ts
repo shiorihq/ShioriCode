@@ -100,8 +100,15 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     this.applyFlagSettingsCalls.push(settings);
   };
 
-  readonly mcpServerStatus = async (): Promise<McpServerStatus[]> =>
-    this.mcpServerStatusImpl ? this.mcpServerStatusImpl() : [];
+  public readonly mcpServerStatus = async (): Promise<McpServerStatus[]> =>
+    this.mcpServerStatusImpl
+      ? this.mcpServerStatusImpl()
+      : [
+          {
+            name: "shioricode-thread-goal",
+            status: "connected",
+          },
+        ];
 
   readonly close = (): void => {
     this.closeCalls += 1;
@@ -147,11 +154,16 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly fetchUsage?: ClaudeAdapterLiveOptions["fetchUsage"];
   readonly materializeMcpServers?: ClaudeAdapterLiveOptions["materializeMcpServers"];
+  readonly mcpServerReadyTimeout?: ClaudeAdapterLiveOptions["mcpServerReadyTimeout"];
+  readonly mcpServerStatusPollInterval?: ClaudeAdapterLiveOptions["mcpServerStatusPollInterval"];
+  readonly queries?: ReadonlyArray<FakeClaudeQuery>;
   readonly cwd?: string;
   readonly baseDir?: string;
   readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
 }) {
-  const query = new FakeClaudeQuery();
+  const query = config?.queries?.[0] ?? new FakeClaudeQuery();
+  const queries = config?.queries ?? [query];
+  let queryIndex = 0;
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -162,7 +174,7 @@ function makeHarness(config?: {
   const adapterOptions: ClaudeAdapterLiveOptions = {
     createQuery: (input) => {
       createInput = input;
-      return query;
+      return queries[Math.min(queryIndex++, queries.length - 1)]!;
     },
     ...(config?.nativeEventLogger
       ? {
@@ -183,6 +195,12 @@ function makeHarness(config?: {
       ? {
           materializeMcpServers: config.materializeMcpServers,
         }
+      : {}),
+    ...(config?.mcpServerReadyTimeout
+      ? { mcpServerReadyTimeout: config.mcpServerReadyTimeout }
+      : {}),
+    ...(config?.mcpServerStatusPollInterval
+      ? { mcpServerStatusPollInterval: config.mcpServerStatusPollInterval }
       : {}),
   };
 
@@ -207,11 +225,16 @@ function makeGlmHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly fetchUsage?: ClaudeAdapterLiveOptions["fetchUsage"];
   readonly materializeMcpServers?: ClaudeAdapterLiveOptions["materializeMcpServers"];
+  readonly mcpServerReadyTimeout?: ClaudeAdapterLiveOptions["mcpServerReadyTimeout"];
+  readonly mcpServerStatusPollInterval?: ClaudeAdapterLiveOptions["mcpServerStatusPollInterval"];
+  readonly queries?: ReadonlyArray<FakeClaudeQuery>;
   readonly cwd?: string;
   readonly baseDir?: string;
   readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
 }) {
-  const query = new FakeClaudeQuery();
+  const query = config?.queries?.[0] ?? new FakeClaudeQuery();
+  const queries = config?.queries ?? [query];
+  let queryIndex = 0;
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -222,7 +245,7 @@ function makeGlmHarness(config?: {
   const adapterOptions: ClaudeAdapterLiveOptions = {
     createQuery: (input) => {
       createInput = input;
-      return query;
+      return queries[Math.min(queryIndex++, queries.length - 1)]!;
     },
     ...(config?.nativeEventLogger
       ? {
@@ -243,6 +266,12 @@ function makeGlmHarness(config?: {
       ? {
           materializeMcpServers: config.materializeMcpServers,
         }
+      : {}),
+    ...(config?.mcpServerReadyTimeout
+      ? { mcpServerReadyTimeout: config.mcpServerReadyTimeout }
+      : {}),
+    ...(config?.mcpServerStatusPollInterval
+      ? { mcpServerStatusPollInterval: config.mcpServerStatusPollInterval }
       : {}),
   };
 
@@ -374,6 +403,32 @@ delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_BUNDLE_PATH;
 delete process.env.SHIORICODE_COMPUTER_USE_HOST_APP_DISPLAY_NAME;
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("retires the prior runtime only after its replacement is ready", () => {
+    const first = new FakeClaudeQuery();
+    const second = new FakeClaudeQuery();
+    const harness = makeHarness({ queries: [first, second] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(first.closeCalls, 1);
+      assert.equal(second.closeCalls, 0);
+      assert.equal((yield* adapter.listSessions()).length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -754,7 +809,10 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), ["Good"]);
+      assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), [
+        "Good",
+        "shioricode-thread-goal",
+      ]);
 
       const startupEvents = Array.from(
         yield* Stream.take(adapter.streamEvents, 5).pipe(Stream.runCollect),
@@ -804,6 +862,7 @@ describe("ClaudeAdapterLive", () => {
 
         const createInput = harness.getLastCreateQueryInput();
         assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), [
+          "shioricode-thread-goal",
           "shiori-computer-use",
         ]);
         const computerServer = createInput?.options.mcpServers?.["shiori-computer-use"];
@@ -921,6 +980,41 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("allows the capability-scoped thread-goal tools without a user approval", () => {
+    const harness = makeHarness({ serverSettings: { mcpServers: { servers: [] } } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "approval-required",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const canUseTool = createInput?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) return;
+
+      const result = yield* Effect.promise(() =>
+        canUseTool(
+          "mcp__shioricode-thread-goal__update_goal",
+          { goal_id: "goal-a", status: "complete" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "thread-goal-tool-use-1",
+          },
+        ),
+      );
+      assert.deepEqual(result, {
+        behavior: "allow",
+        updatedInput: { goal_id: "goal-a", status: "complete" },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the first duplicate Claude MCP server deterministically", () => {
     const harness = makeHarness({
       serverSettings: {
@@ -953,12 +1047,11 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.deepEqual(createInput?.options.mcpServers, {
-        Dup: {
-          type: "stdio",
-          command: "first",
-        },
+      assert.deepEqual(createInput?.options.mcpServers?.Dup, {
+        type: "stdio",
+        command: "first",
       });
+      assert.equal("shioricode-thread-goal" in (createInput?.options.mcpServers ?? {}), true);
 
       const startupEvents = Array.from(
         yield* Stream.take(adapter.streamEvents, 4).pipe(Stream.runCollect),
@@ -1019,7 +1112,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("keeps failed Claude MCP status probes out of user-facing warnings", () => {
+  it.effect("fails closed when the required Claude goal MCP status probe fails", () => {
     const harness = makeHarness();
     harness.query.mcpServerStatusImpl = async () => {
       throw new Error("status endpoint unavailable");
@@ -1027,27 +1120,183 @@ describe("ClaudeAdapterLive", () => {
 
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      yield* adapter.startSession({
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure" && result.failure._tag === "ProviderAdapterRequestError") {
+        assert.equal(result.failure.provider, "claudeAgent");
+        assert.equal(result.failure.method, "mcp/status");
+        assert.equal(result.failure.detail.includes("status endpoint unavailable"), true);
+      }
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+      assert.deepEqual(yield* adapter.listSessions(), []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails closed when the required Claude goal MCP status is missing", () => {
+    const harness = makeHarness();
+    harness.query.mcpServerStatusImpl = async () => [];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure" && result.failure._tag === "ProviderAdapterRequestError") {
+        assert.equal(result.failure.detail.includes("missing"), true);
+      }
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails closed for every terminally unhealthy Claude goal MCP status", () => {
+    const statuses = ["failed", "disabled", "needs-auth"] as const;
+
+    return Effect.forEach(statuses, (status) => {
+      const harness = makeHarness();
+      harness.query.mcpServerStatusImpl = async () => [
+        {
+          name: "shioricode-thread-goal",
+          status,
+          ...(status === "failed" ? { error: "goal control unavailable" } : {}),
+        },
+      ];
+
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const result = yield* adapter
+          .startSession({
+            threadId: THREAD_ID,
+            provider: "claudeAgent",
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure" && result.failure._tag === "ProviderAdapterRequestError") {
+          assert.equal(result.failure.detail.includes(status), true);
+        }
+        assert.equal(harness.query.closeCalls, 1);
+        assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provideService(Random.Random, makeDeterministicRandomService()));
+  });
+
+  it.live("waits for the required Claude goal MCP to connect before publishing ready", () => {
+    const harness = makeHarness({
+      mcpServerReadyTimeout: "1 second",
+      mcpServerStatusPollInterval: "1 millis",
+    });
+    let probes = 0;
+    harness.query.mcpServerStatusImpl = async () => {
+      probes += 1;
+      return [
+        {
+          name: "shioricode-thread-goal",
+          status: probes === 1 ? "pending" : "connected",
+        },
+      ];
+    };
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
         runtimeMode: "full-access",
       });
 
+      assert.equal(session.status, "ready");
+      assert.equal(probes, 2);
+      assert.equal(harness.query.closeCalls, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.live("closes a Claude query when the required goal MCP remains pending", () => {
+    const harness = makeHarness({
+      mcpServerReadyTimeout: "5 millis",
+      mcpServerStatusPollInterval: "1 millis",
+    });
+    harness.query.mcpServerStatusImpl = async () => [
+      {
+        name: "shioricode-thread-goal",
+        status: "pending",
+      },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure" && result.failure._tag === "ProviderAdapterRequestError") {
+        assert.equal(result.failure.detail.includes("Timed out"), true);
+      }
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps an unhealthy optional Claude MCP warning-only", () => {
+    const harness = makeHarness();
+    harness.query.mcpServerStatusImpl = async () => [
+      { name: "shioricode-thread-goal", status: "connected" },
+      { name: "Remote", status: "failed", error: "remote unavailable" },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      assert.equal(session.status, "ready");
+
       const startupEvents = Array.from(
-        yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runCollect),
+        yield* Stream.take(adapter.streamEvents, 4).pipe(Stream.runCollect),
       );
       assert.equal(
         startupEvents.some(
           (event) =>
             event.type === "runtime.warning" &&
-            event.payload.message === "Failed to read Claude MCP server status.",
+            event.payload.message === "Claude MCP server 'Remote' is failed.",
         ),
-        false,
+        true,
       );
-
-      const nextEventFiber = yield* adapter.streamEvents.pipe(Stream.runHead, Effect.forkScoped);
-      yield* Effect.yieldNow;
-      assert.equal(nextEventFiber.pollUnsafe(), undefined);
+      assert.equal(harness.query.closeCalls, 0);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2275,6 +2524,7 @@ describe("ClaudeAdapterLive", () => {
         assert.deepEqual(usageEvent.payload, {
           usage: {
             usedTokens: 24542,
+            processedTokensDelta: 24542,
             lastUsedTokens: 24542,
             inputTokens: 23863,
             outputTokens: 679,
@@ -4182,6 +4432,75 @@ describe("ClaudeAdapterLive", () => {
 });
 
 describe("GlmAdapterLive", () => {
+  it.effect("preserves the prior runtime when its replacement is not ready", () => {
+    const first = new FakeClaudeQuery();
+    const failedReplacement = new FakeClaudeQuery();
+    failedReplacement.mcpServerStatusImpl = async () => [];
+    const harness = makeGlmHarness({
+      queries: [first, failedReplacement],
+      mcpServerReadyTimeout: "10 millis",
+      mcpServerStatusPollInterval: "1 millis",
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* GlmAdapter;
+      const original = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "glm",
+        runtimeMode: "full-access",
+      });
+      yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "glm",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(first.closeCalls, 0);
+      assert.equal(failedReplacement.closeCalls, 1);
+      assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, original.resumeCursor);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails closed when the required GLM goal MCP is not connected", () => {
+    const harness = makeGlmHarness();
+    harness.query.mcpServerStatusImpl = async () => [
+      {
+        name: "shioricode-thread-goal",
+        status: "failed",
+        error: "goal control process exited",
+      },
+    ];
+
+    return Effect.gen(function* () {
+      const adapter = yield* GlmAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "glm",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure" && result.failure._tag === "ProviderAdapterRequestError") {
+        assert.equal(result.failure.provider, "glm");
+        assert.equal(result.failure.method, "mcp/status");
+        assert.equal(result.failure.detail.includes("goal control process exited"), true);
+      }
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+      assert.deepEqual(yield* adapter.listSessions(), []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("starts GLM sessions with Z.AI runtime env mapped to the selected 1M model", () => {
     const harness = makeGlmHarness({
       serverSettings: {

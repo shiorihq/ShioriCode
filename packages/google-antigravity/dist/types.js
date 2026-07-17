@@ -358,6 +358,7 @@ export class McpStdioServer extends BaseMcpServerConfig {
     type = "stdio";
     command;
     args;
+    env;
     constructor(init) {
         super(init);
         if (typeof init.command !== "string") {
@@ -365,6 +366,7 @@ export class McpStdioServer extends BaseMcpServerConfig {
         }
         this.command = init.command;
         this.args = init.args ?? [];
+        this.env = init.env ? { ...init.env } : undefined;
     }
     toJSON() {
         return {
@@ -372,6 +374,7 @@ export class McpStdioServer extends BaseMcpServerConfig {
             type: this.type,
             command: this.command,
             args: this.args,
+            env: this.env,
         };
     }
 }

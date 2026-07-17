@@ -65,6 +65,8 @@ import {
 import { KeybindingsConfigError } from "./keybindings";
 import { OnboardingCompleteStepInput, OnboardingError, OnboardingState } from "./onboarding";
 import {
+  RemoteBeginLinkSignInInput,
+  RemoteBeginLinkSignInResult,
   RemoteError,
   RemoteProbeResult,
   RemoteRevokeSessionInput,
@@ -184,6 +186,8 @@ export const WS_METHODS = {
   remoteGetStatus: "remote.getStatus",
   remoteSetCredentials: "remote.setCredentials",
   remoteSetExposure: "remote.setExposure",
+  remoteBeginLinkSignIn: "remote.beginLinkSignIn",
+  remoteDisconnectLinkAccount: "remote.disconnectLinkAccount",
   remoteRevokeSession: "remote.revokeSession",
   remoteTestConnection: "remote.testConnection",
 
@@ -312,6 +316,18 @@ export const WsRemoteSetCredentialsRpc = Rpc.make(WS_METHODS.remoteSetCredential
 
 export const WsRemoteSetExposureRpc = Rpc.make(WS_METHODS.remoteSetExposure, {
   payload: RemoteSetExposureInput,
+  success: RemoteStatus,
+  error: RemoteError,
+});
+
+export const WsRemoteBeginLinkSignInRpc = Rpc.make(WS_METHODS.remoteBeginLinkSignIn, {
+  payload: RemoteBeginLinkSignInInput,
+  success: RemoteBeginLinkSignInResult,
+  error: RemoteError,
+});
+
+export const WsRemoteDisconnectLinkAccountRpc = Rpc.make(WS_METHODS.remoteDisconnectLinkAccount, {
+  payload: Schema.Struct({}),
   success: RemoteStatus,
   error: RemoteError,
 });
@@ -728,6 +744,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsRemoteGetStatusRpc,
   WsRemoteSetCredentialsRpc,
   WsRemoteSetExposureRpc,
+  WsRemoteBeginLinkSignInRpc,
+  WsRemoteDisconnectLinkAccountRpc,
   WsRemoteRevokeSessionRpc,
   WsRemoteTestConnectionRpc,
   WsOnboardingGetStateRpc,

@@ -429,6 +429,8 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           return yield* remoteAccess.getStatus();
         }),
       [WS_METHODS.remoteSetExposure]: (input) => remoteAccess.setExposure(input),
+      [WS_METHODS.remoteBeginLinkSignIn]: (input) => remoteAccess.beginLinkSignIn(input),
+      [WS_METHODS.remoteDisconnectLinkAccount]: (_input) => remoteAccess.disconnectLinkAccount(),
       [WS_METHODS.remoteRevokeSession]: (input) =>
         Effect.gen(function* () {
           environmentAuth.revokeSession(input.sessionId);

@@ -233,27 +233,31 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
             orderedProjectIds.push(matchedProjectId);
           }
 
-          for (const project of mappedProjects) {
-            if (usedProjectIds.has(project.id)) {
-              continue;
-            }
-            orderedProjectIds.push(project.id);
-          }
+          const newProjectIds = mappedProjects
+            .filter((project) => !usedProjectIds.has(project.id))
+            .map((project) => project.id);
 
-          return orderedProjectIds;
+          return [...newProjectIds, ...orderedProjectIds];
         })()
       : mappedProjects
           .map((project) => ({
             id: project.id,
             incomingIndex: project.incomingIndex,
-            orderIndex:
-              persistedOrderByCwd.get(project.cwd) ??
-              persistedProjectOrderCwds.length + project.incomingIndex,
+            persistedOrderIndex: persistedOrderByCwd.get(project.cwd),
           }))
           .toSorted((left, right) => {
-            const byOrder = left.orderIndex - right.orderIndex;
-            if (byOrder !== 0) {
-              return byOrder;
+            const leftPersistedOrder = left.persistedOrderIndex;
+            const rightPersistedOrder = right.persistedOrderIndex;
+            const leftIsNew = leftPersistedOrder === undefined;
+            const rightIsNew = rightPersistedOrder === undefined;
+            if (leftIsNew !== rightIsNew) {
+              return leftIsNew ? -1 : 1;
+            }
+            if (leftPersistedOrder !== undefined && rightPersistedOrder !== undefined) {
+              const byPersistedOrder = leftPersistedOrder - rightPersistedOrder;
+              if (byPersistedOrder !== 0) {
+                return byPersistedOrder;
+              }
             }
             return left.incomingIndex - right.incomingIndex;
           })

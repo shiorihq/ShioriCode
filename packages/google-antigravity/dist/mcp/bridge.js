@@ -55,6 +55,7 @@ async function defaultClientFactory(serverConfig) {
             transport = new StdioClientTransport({
                 command: serverConfig.command,
                 args: serverConfig.args,
+                env: serverConfig.env,
             });
             break;
         case "sse":

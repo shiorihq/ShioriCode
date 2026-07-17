@@ -1,6 +1,8 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -24,7 +26,7 @@ import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
-import { makeRoutesLayer } from "./server.ts";
+import { makeRoutesLayer, withHttpRoutesReadySignal } from "./server.ts";
 import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
 import { RemoteAccessLive } from "./remote/RemoteAccess";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
@@ -205,6 +207,7 @@ const buildAppUnderTest = (options?: {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
+      withHttpRoutesReadySignal(config),
       Layer.provide(
         Layer.mock(Keybindings)({
           streamChanges: Stream.empty,
@@ -323,7 +326,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ServerRuntimeStartup)({
           awaitCommandReady: Effect.void,
-          markHttpListening: Effect.void,
+          markHttpRoutesReady: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
         }),
@@ -398,17 +401,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("redirects to dev URL when configured", () =>
+  it.effect("signals HTTP readiness only after the routed application can respond", () =>
     Effect.gen(function* () {
+      let readinessSignals = 0;
+
       yield* buildAppUnderTest({
-        config: { devUrl: new URL("http://127.0.0.1:5173") },
+        layers: {
+          serverRuntimeStartup: {
+            markHttpRoutesReady: Effect.sync(() => {
+              readinessSignals += 1;
+            }),
+          },
+        },
       });
 
-      const url = yield* getHttpServerUrl("/foo/bar");
-      const response = yield* Effect.promise(() => fetch(url, { redirect: "manual" }));
+      assert.equal(readinessSignals, 1);
+      const url = yield* getHttpServerUrl("/api/internal/thread-goal");
+      const routeStatus = yield* Effect.promise(async () => {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            Connection: "close",
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+          signal: AbortSignal.timeout(1_000),
+        });
+        await response.text();
+        return response.status;
+      });
+      assert.equal(routeStatus, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
 
-      assert.equal(response.status, 302);
-      assert.equal(response.headers.get("location"), "http://127.0.0.1:5173/");
+  it.effect("proxies the requested path to the dev URL without leaking loopback redirects", () =>
+    Effect.gen(function* () {
+      const upstream = createServer((request, response) => {
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ url: request.url }));
+      });
+      yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              upstream.once("error", reject);
+              upstream.listen(0, "127.0.0.1", resolve);
+            }),
+        ),
+        () =>
+          Effect.promise(
+            () =>
+              new Promise<void>((resolve, reject) => {
+                upstream.close((error) => (error ? reject(error) : resolve()));
+              }),
+          ),
+      );
+      const upstreamAddress = upstream.address() as AddressInfo;
+      yield* buildAppUnderTest({
+        config: { devUrl: new URL(`http://127.0.0.1:${upstreamAddress.port}`) },
+      });
+
+      const url = yield* getHttpServerUrl("/foo/bar?theme=dark");
+      const response = yield* Effect.promise(() => fetch(url));
+
+      assert.equal(response.status, 200);
+      assert.deepStrictEqual(yield* Effect.promise(() => response.json()), {
+        url: "/foo/bar?theme=dark",
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1211,6 +1270,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(dispatchResult.sequence, 8);
       assert.deepEqual(closeInputs, [{ threadId }]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects harness-only goal commands at the websocket boundary", () =>
+    Effect.gen(function* () {
+      let dispatchCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.sync(() => {
+                dispatchCalls += 1;
+                return { sequence: 9 };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.exit(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.goal.status.report",
+              commandId: CommandId.makeUnsafe("server:forged-goal-status"),
+              threadId: ThreadId.makeUnsafe("thread-1"),
+              expectedGoalLifecycleKey: "goal:lifecycle-1",
+              status: "complete",
+              createdAt: "2026-07-16T10:00:00.000Z",
+            } as never),
+          ),
+        ),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assert.equal(dispatchCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

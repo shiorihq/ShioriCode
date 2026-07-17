@@ -1,7 +1,12 @@
 import type { DesktopBridge, NativeApi } from "contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { __resetNativeApiForTests, ensureNativeApi, hasDesktopNativeBridge } from "./nativeApi";
+import {
+  __resetNativeApiForTests,
+  ensureNativeApi,
+  hasDesktopNativeBridge,
+  isRemoteDesktopConnection,
+} from "./nativeApi";
 
 vi.mock("./wsNativeApi", () => ({
   __resetWsNativeApiForTests: vi.fn(),
@@ -33,14 +38,26 @@ describe("hasDesktopNativeBridge", () => {
     expect(hasDesktopNativeBridge()).toBe(true);
   });
 
-  it("returns true when a native api is injected directly", () => {
+  it("does not trust a nativeApi global injected into a regular browser", () => {
     getWindowForTest().nativeApi = {} as NativeApi;
 
-    expect(hasDesktopNativeBridge()).toBe(true);
+    expect(hasDesktopNativeBridge()).toBe(false);
   });
 
   it("returns false when neither desktop bridge nor native api is available", () => {
     expect(hasDesktopNativeBridge()).toBe(false);
+  });
+
+  it("distinguishes a remote desktop target from its loopback backend", () => {
+    getWindowForTest().desktopBridge = {
+      getWsUrl: () => "wss://sc-example.link.shiori.codes/ws",
+    } as unknown as DesktopBridge;
+    expect(isRemoteDesktopConnection()).toBe(true);
+
+    getWindowForTest().desktopBridge = {
+      getWsUrl: () => "ws://127.0.0.1:3773/ws?token=local",
+    } as unknown as DesktopBridge;
+    expect(isRemoteDesktopConnection()).toBe(false);
   });
 
   it("creates the ws native api immediately when the Electron preload bridge exists", () => {

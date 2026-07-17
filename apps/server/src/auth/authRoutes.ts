@@ -13,6 +13,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import { parseCookies, serializeCookie } from "./cookies";
 import { EnvironmentAuth, SESSION_COOKIE_NAME } from "./EnvironmentAuth";
+import { authClientMetadata, isSecureAuthRequest } from "./httpAuth";
+import { RemoteAccess } from "../remote/RemoteAccess";
 
 class AuthRouteError extends Data.TaggedError("AuthRouteError")<{
   readonly message: string;
@@ -34,22 +36,6 @@ const LoginRequest = Schema.Struct({
   label: Schema.optional(Schema.String),
 });
 
-/**
- * Whether the session cookie should be marked Secure. Tracks the real request
- * scheme (via the reverse proxy's X-Forwarded-Proto, falling back to the request
- * URL) so the cookie is Secure over HTTPS but still works over a plain-HTTP hop
- * on a trusted private network (e.g. a Tailscale `serve --http` endpoint, which
- * is WireGuard-encrypted on the wire regardless).
- */
-function isSecureRequest(request: HttpServerRequest.HttpServerRequest): boolean {
-  const forwardedProto = request.headers["x-forwarded-proto"];
-  if (forwardedProto) {
-    return forwardedProto.split(",")[0]?.trim().toLowerCase() === "https";
-  }
-  const url = HttpServerRequest.toURL(request);
-  return Option.isSome(url) && url.value.protocol === "https:";
-}
-
 function readBearer(request: HttpServerRequest.HttpServerRequest): string | null {
   const authorization = request.headers.authorization;
   if (!authorization) {
@@ -57,16 +43,6 @@ function readBearer(request: HttpServerRequest.HttpServerRequest): string | null
   }
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   return match?.[1]?.trim() || null;
-}
-
-function clientMetadata(request: HttpServerRequest.HttpServerRequest, label?: string) {
-  const forwardedFor = request.headers["x-forwarded-for"];
-  const ip = forwardedFor ? forwardedFor.split(",")[0]?.trim() : undefined;
-  return {
-    label: label ?? undefined,
-    userAgent: request.headers["user-agent"] ?? undefined,
-    ip: ip || undefined,
-  };
 }
 
 const loginRoute = HttpRouter.add(
@@ -91,13 +67,13 @@ const loginRoute = HttpRouter.add(
     const outcome = auth.login({
       username: input.username,
       password: input.password,
-      metadata: clientMetadata(request, input.label),
+      metadata: authClientMetadata(request, input.label),
     });
     if (!outcome) {
       return jsonResponse({ success: false, error: "Invalid username or password." }, 401);
     }
     const cookie = serializeCookie(SESSION_COOKIE_NAME, outcome.token, {
-      secure: isSecureRequest(request),
+      secure: isSecureAuthRequest(request),
       sameSite: "Lax",
       maxAgeSeconds: auth.cookieMaxAgeSeconds,
     });
@@ -135,7 +111,7 @@ const logoutRoute = HttpRouter.add(
     const cookieToken = parseCookies(request.headers.cookie)[SESSION_COOKIE_NAME] ?? null;
     auth.logout(cookieToken ?? readBearer(request));
     const cleared = serializeCookie(SESSION_COOKIE_NAME, "", {
-      secure: isSecureRequest(request),
+      secure: isSecureAuthRequest(request),
       sameSite: "Lax",
       maxAgeSeconds: 0,
     });
@@ -149,11 +125,19 @@ const sessionRoute = HttpRouter.add(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const auth = yield* EnvironmentAuth;
+    const remote = yield* RemoteAccess;
     const url = HttpServerRequest.toURL(request);
     const principal = Option.isSome(url)
       ? auth.authenticateRequest({ request, url: url.value })
       : null;
-    return jsonResponse({ success: true, session: auth.describe(principal) });
+    const hostedLink = yield* remote.linkHostedAccessAvailable();
+    return jsonResponse({
+      success: true,
+      session: {
+        ...auth.describe(principal),
+        authMode: hostedLink ? "shioricode-link" : "credentials",
+      },
+    });
   }),
 );
 

@@ -21,6 +21,8 @@ import * as Effect from "effect/Effect";
 import type {
   DesktopCompanionCliInstallResult,
   DesktopCompanionCliState,
+  DesktopRemoteConnectionResult,
+  DesktopRemoteConnectionState,
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
@@ -62,6 +64,8 @@ import { MACOS_TRAFFIC_LIGHT_POSITION, resolveDesktopWindowControlsInset } from 
 import {
   extractDesktopDeepLinkArg,
   normalizeDesktopDeepLink,
+  parseDesktopLinkAuthCallback,
+  parseDesktopProjectDeepLink,
   resolveDesktopDeepLinkWindowUrl,
 } from "./deepLink";
 import {
@@ -76,6 +80,12 @@ import {
   normalizeComputerUsePermissionActionInput,
   parseComputerUseHelperOutput,
 } from "./computerUsePermissionBridge";
+import {
+  desktopRemoteWsUrl,
+  LOCAL_DESKTOP_CONNECTION,
+  normalizeDesktopRemoteUrl,
+  rememberDesktopRemote,
+} from "./remoteConnection";
 
 syncShellEnvironment();
 
@@ -93,6 +103,9 @@ const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const COMPANION_CLI_GET_STATE_CHANNEL = "desktop:companion-cli-get-state";
 const COMPANION_CLI_INSTALL_CHANNEL = "desktop:companion-cli-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const GET_REMOTE_CONNECTION_CHANNEL = "desktop:get-remote-connection";
+const CONNECT_TO_REMOTE_CHANNEL = "desktop:connect-to-remote";
+const DISCONNECT_FROM_REMOTE_CHANNEL = "desktop:disconnect-from-remote";
 const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
@@ -104,9 +117,9 @@ const OPAQUE_WINDOW_BACKGROUND_COLOR = "#FFFFFFFF";
 const BASE_DIR = process.env.SHIORICODE_HOME?.trim() || Path.join(OS.homedir(), ".shiori");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
-const DESKTOP_SCHEME = "shioricode";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const DESKTOP_SCHEME = isDevelopment ? "shioricode-dev" : "shioricode";
 const APP_DISPLAY_NAME = isDevelopment ? "ShioriCode (Dev)" : "ShioriCode";
 const APP_USER_MODEL_ID = "com.shioritools.shioricode";
 const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "shioricode-dev.desktop" : "shioricode.desktop";
@@ -123,8 +136,8 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
-const COMPANION_CLI_PACKAGE_NAME = "shiori-cli";
-const COMPANION_CLI_BINARY_NAME = "shiori";
+const COMPANION_CLI_PACKAGE_NAME = "shioricode";
+const COMPANION_CLI_BINARY_NAME = "shioricode";
 const TOGGLE_DEVTOOLS_ACCELERATOR =
   process.platform === "darwin" ? "Command+Option+I" : "Ctrl+Shift+I";
 const COMPUTER_USE_HELPER_TIMEOUT_MS = 30_000;
@@ -142,6 +155,8 @@ let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
+let localBackendWsUrl = "";
+let remoteConnection: DesktopRemoteConnectionState = LOCAL_DESKTOP_CONNECTION;
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -152,6 +167,7 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let quitConfirmationApproved = false;
 let quitConfirmationInFlight = false;
+let remoteLoadFailureDialogOpen = false;
 let companionCliState: DesktopCompanionCliState = {
   status: "not-installed",
   version: null,
@@ -165,6 +181,9 @@ let pendingDesktopDeepLinkUrl: string | null = extractDesktopDeepLinkArg(
   process.argv,
   DESKTOP_SCHEME,
 );
+let pendingLocalProjectDeepLink =
+  pendingDesktopDeepLinkUrl !== null &&
+  parseDesktopProjectDeepLink(pendingDesktopDeepLinkUrl, DESKTOP_SCHEME) !== null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -175,10 +194,104 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
 
-function defaultDesktopWindowUrl(): string {
+function localDesktopWindowUrl(): string {
   return isDevelopment
     ? (process.env.VITE_DEV_SERVER_URL as string)
     : `${DESKTOP_SCHEME}://app/index.html`;
+}
+
+function defaultDesktopWindowUrl(): string {
+  return remoteConnection.remoteUrl ?? localDesktopWindowUrl();
+}
+
+function desktopConnectionPath(): string {
+  return Path.join(app.getPath("userData"), "remote-connection.json");
+}
+
+function readDesktopRemoteConnection(): DesktopRemoteConnectionState {
+  try {
+    const raw = JSON.parse(FS.readFileSync(desktopConnectionPath(), "utf8")) as {
+      remoteUrl?: unknown;
+      savedRemoteUrls?: unknown;
+    };
+    const savedRemoteUrls = Array.isArray(raw.savedRemoteUrls)
+      ? raw.savedRemoteUrls.flatMap((candidate) => {
+          if (typeof candidate !== "string") return [];
+          const normalized = normalizeDesktopRemoteUrl(candidate, {
+            allowInsecureLoopback: isDevelopment,
+          });
+          return normalized ? [normalized] : [];
+        })
+      : [];
+    if (typeof raw.remoteUrl !== "string") {
+      return { ...LOCAL_DESKTOP_CONNECTION, savedRemoteUrls };
+    }
+    const remoteUrl = normalizeDesktopRemoteUrl(raw.remoteUrl, {
+      allowInsecureLoopback: isDevelopment,
+    });
+    return remoteUrl
+      ? {
+          mode: "remote",
+          remoteUrl,
+          savedRemoteUrls: rememberDesktopRemote(savedRemoteUrls, remoteUrl),
+        }
+      : { ...LOCAL_DESKTOP_CONNECTION, savedRemoteUrls };
+  } catch {
+    return LOCAL_DESKTOP_CONNECTION;
+  }
+}
+
+function persistDesktopRemoteConnection(state: DesktopRemoteConnectionState): void {
+  const filePath = desktopConnectionPath();
+  FS.mkdirSync(Path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  FS.writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  FS.renameSync(tempPath, filePath);
+}
+
+function applyDesktopRemoteConnection(state: DesktopRemoteConnectionState): void {
+  remoteConnection = state;
+  backendWsUrl = state.remoteUrl ? desktopRemoteWsUrl(state.remoteUrl) : localBackendWsUrl;
+  persistDesktopRemoteConnection(state);
+  configureApplicationMenu();
+}
+
+function loadActiveDesktopConnection(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  void mainWindow.loadURL(defaultDesktopWindowUrl()).catch((error) => {
+    console.warn("[desktop] failed to load connection target", error);
+  });
+}
+
+async function probeDesktopRemote(remoteUrl: string): Promise<string | null> {
+  try {
+    const probeUrl = new URL("/api/auth/session", remoteUrl);
+    const response = await fetch(probeUrl, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return `Server returned HTTP ${response.status}.`;
+    const body = (await response.json()) as { session?: unknown };
+    if (!body || typeof body !== "object" || typeof body.session !== "object") {
+      return "This URL did not identify itself as a ShioriCode server.";
+    }
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The remote server could not be reached.";
+  }
+}
+
+function useLocalDesktopConnection(
+  options: { readonly reload?: boolean } = {},
+): DesktopRemoteConnectionState {
+  applyDesktopRemoteConnection({
+    ...LOCAL_DESKTOP_CONNECTION,
+    savedRemoteUrls: remoteConnection.savedRemoteUrls,
+  });
+  if (options.reload !== false) {
+    setTimeout(loadActiveDesktopConnection, 0);
+  }
+  return remoteConnection;
 }
 
 function resolvePendingDesktopWindowUrl(): string | null {
@@ -226,6 +339,21 @@ function handleDesktopDeepLink(rawUrl: string): void {
   if (!normalized) {
     return;
   }
+  if (new URL(normalized).searchParams.get("link-auth") === "callback") {
+    const linkAuth = parseDesktopLinkAuthCallback(normalized, DESKTOP_SCHEME);
+    if (linkAuth) {
+      void completeLinkAuthCallback(linkAuth);
+    } else {
+      handleDesktopDeepLink(`${DESKTOP_SCHEME}://app/index.html?link-auth=error`);
+    }
+    return;
+  }
+  if (parseDesktopProjectDeepLink(normalized, DESKTOP_SCHEME)) {
+    pendingLocalProjectDeepLink = true;
+    if (app.isReady() && localBackendWsUrl) {
+      useLocalDesktopConnection({ reload: false });
+    }
+  }
 
   pendingDesktopDeepLinkUrl = normalized;
   if (!app.isReady()) {
@@ -246,6 +374,36 @@ function handleDesktopDeepLink(rawUrl: string): void {
   }
 
   applyPendingDesktopDeepLink(targetWindow);
+}
+
+async function completeLinkAuthCallback(input: {
+  readonly state: string;
+  readonly token?: string;
+  readonly refreshToken?: string;
+  readonly error?: string;
+}): Promise<void> {
+  let success = false;
+  try {
+    if (!backendPort || !backendAuthToken) {
+      throw new Error("ShioriCode backend is not ready");
+    }
+    const response = await fetch(`http://127.0.0.1:${backendPort}/api/remote/link-auth-callback`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${backendAuthToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(10_000),
+    });
+    success = response.ok;
+  } catch {
+    success = false;
+  }
+
+  handleDesktopDeepLink(
+    `${DESKTOP_SCHEME}://app/index.html?link-auth=${success ? "success" : "error"}`,
+  );
 }
 
 function registerDesktopProtocolClient(): void {
@@ -605,7 +763,7 @@ async function installCompanionCli(): Promise<DesktopCompanionCliInstallResult> 
           status: "error",
           installCommand,
           lastError:
-            "Install completed, but `shiori --version` could not be resolved from a fresh shell.",
+            "Install completed, but `shioricode --version` could not be resolved from a fresh shell.",
         }),
       };
     }
@@ -632,6 +790,7 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.SHIORICODE_NO_BROWSER;
   delete env.SHIORICODE_HOST;
   delete env.SHIORICODE_DESKTOP_WS_URL;
+  env.SHIORICODE_DESKTOP_SCHEME = DESKTOP_SCHEME;
   const computerUseHelperPath = resolveComputerUseHelperPath(ROOT_DIR);
   if (computerUseHelperPath) {
     env.SHIORICODE_COMPUTER_USE_HELPER_BINARY = computerUseHelperPath;
@@ -1169,6 +1328,22 @@ function configureApplicationMenu(): void {
               { type: "separator" as const },
             ]),
         { role: process.platform === "darwin" ? "close" : "quit" },
+      ],
+    },
+    {
+      label: "Connection",
+      submenu: [
+        {
+          label: "Connect to Remote…",
+          click: () => dispatchMenuAction("open-settings-remote"),
+        },
+        {
+          label: "Use This Mac",
+          enabled: remoteConnection.mode === "remote",
+          click: () => {
+            useLocalDesktopConnection();
+          },
+        },
       ],
     },
     { role: "editMenu" },
@@ -1898,6 +2073,49 @@ function registerIpcHandlers(): void {
   ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
     event.returnValue = backendWsUrl;
   });
+
+  ipcMain.removeHandler(GET_REMOTE_CONNECTION_CHANNEL);
+  ipcMain.handle(GET_REMOTE_CONNECTION_CHANNEL, async () => remoteConnection);
+
+  ipcMain.removeHandler(CONNECT_TO_REMOTE_CHANNEL);
+  ipcMain.handle(CONNECT_TO_REMOTE_CHANNEL, async (_event, rawUrl: unknown) => {
+    if (typeof rawUrl !== "string") {
+      return {
+        ok: false,
+        state: remoteConnection,
+        error: "Enter a valid HTTPS ShioriCode URL.",
+      } satisfies DesktopRemoteConnectionResult;
+    }
+    const remoteUrl = normalizeDesktopRemoteUrl(rawUrl, {
+      allowInsecureLoopback: isDevelopment,
+    });
+    if (!remoteUrl) {
+      return {
+        ok: false,
+        state: remoteConnection,
+        error: "Enter a valid HTTPS ShioriCode URL.",
+      } satisfies DesktopRemoteConnectionResult;
+    }
+    const probeError = await probeDesktopRemote(remoteUrl);
+    if (probeError) {
+      return {
+        ok: false,
+        state: remoteConnection,
+        error: probeError,
+      } satisfies DesktopRemoteConnectionResult;
+    }
+
+    applyDesktopRemoteConnection({
+      mode: "remote",
+      remoteUrl,
+      savedRemoteUrls: rememberDesktopRemote(remoteConnection.savedRemoteUrls, remoteUrl),
+    });
+    setTimeout(loadActiveDesktopConnection, 0);
+    return { ok: true, state: remoteConnection } satisfies DesktopRemoteConnectionResult;
+  });
+
+  ipcMain.removeHandler(DISCONNECT_FROM_REMOTE_CHANNEL);
+  ipcMain.handle(DISCONNECT_FROM_REMOTE_CHANNEL, async () => useLocalDesktopConnection());
   registerBrowserPanelIpcHandlers();
 
   ipcMain.removeHandler(GET_WINDOW_CONTROLS_INSET_CHANNEL);
@@ -2276,6 +2494,41 @@ function createWindow(): BrowserWindow {
     emitUpdateState();
     applyPendingDesktopDeepLink(window);
   });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, _errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || !remoteConnection.remoteUrl || remoteLoadFailureDialogOpen) return;
+      let failedRemoteOrigin: string;
+      try {
+        failedRemoteOrigin = new URL(validatedUrl).origin;
+      } catch {
+        return;
+      }
+      if (failedRemoteOrigin !== new URL(remoteConnection.remoteUrl).origin) return;
+
+      remoteLoadFailureDialogOpen = true;
+      void dialog
+        .showMessageBox(window, {
+          type: "warning",
+          title: "Remote unavailable",
+          message: "ShioriCode couldn't reach the remote server.",
+          detail: errorDescription,
+          buttons: ["Retry", "Use This Mac"],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then(({ response }) => {
+          if (response === 0) {
+            loadActiveDesktopConnection();
+          } else {
+            useLocalDesktopConnection();
+          }
+        })
+        .finally(() => {
+          remoteLoadFailureDialogOpen = false;
+        });
+    },
+  );
   window.once("ready-to-show", () => {
     showAndFocusWindow(window);
   });
@@ -2348,7 +2601,15 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
   const baseUrl = `ws://127.0.0.1:${backendPort}`;
-  backendWsUrl = `${baseUrl}/ws?token=${encodeURIComponent(backendAuthToken)}`;
+  localBackendWsUrl = `${baseUrl}/ws?token=${encodeURIComponent(backendAuthToken)}`;
+  const savedConnection = readDesktopRemoteConnection();
+  remoteConnection = pendingLocalProjectDeepLink
+    ? { ...LOCAL_DESKTOP_CONNECTION, savedRemoteUrls: savedConnection.savedRemoteUrls }
+    : savedConnection;
+  backendWsUrl = remoteConnection.remoteUrl
+    ? desktopRemoteWsUrl(remoteConnection.remoteUrl)
+    : localBackendWsUrl;
+  configureApplicationMenu();
   writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
 
   registerIpcHandlers();

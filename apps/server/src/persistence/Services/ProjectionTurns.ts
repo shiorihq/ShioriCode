@@ -37,6 +37,7 @@ export const ProjectionTurn = Schema.Struct({
   pendingMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  goalLifecycleKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
@@ -55,6 +56,7 @@ export const ProjectionTurnById = Schema.Struct({
   pendingMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  goalLifecycleKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
@@ -72,6 +74,7 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   messageId: MessageId,
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  goalLifecycleKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
   requestedAt: IsoDateTime,
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
@@ -91,6 +94,13 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
+
+export const DeleteProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+export type DeleteProjectionPendingTurnStartInput =
+  typeof DeleteProjectionPendingTurnStartInput.Type;
 
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -113,24 +123,31 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Replaces any existing pending-start placeholder rows for a thread with exactly one latest pending-start row.
+   * Appends a pending-start placeholder unless that message is already queued for the thread.
    */
-  readonly replacePendingTurnStart: (
+  readonly enqueuePendingTurnStart: (
     row: ProjectionPendingTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Returns the newest pending-start placeholder for a thread; this is expected to be at most one row after replacement writes.
+   * Returns the oldest pending-start placeholder for a thread.
    */
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /**
-   * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.
+   * Lists pending-start placeholders for a thread in durable acceptance order.
    */
-  readonly deletePendingTurnStartByThreadId: (
+  readonly listPendingTurnStartsByThreadId: (
     input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /**
+   * Deletes one accepted pending start by its stable user-message identity.
+   */
+  readonly deletePendingTurnStart: (
+    input: DeleteProjectionPendingTurnStartInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**

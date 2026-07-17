@@ -336,6 +336,8 @@ function createFakeCodexBinary(input: {
   readonly dir: string;
   readonly logPath: string;
   readonly resumeFails?: boolean;
+  readonly threadStartFails?: boolean;
+  readonly providerThreadId?: string;
 }) {
   const binaryPath = path.join(input.dir, "fake-codex-app-server.js");
   writeFileSync(
@@ -345,6 +347,8 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 const logPath = ${JSON.stringify(input.logPath)};
 const resumeFails = ${JSON.stringify(input.resumeFails === true)};
+const threadStartFails = ${JSON.stringify(input.threadStartFails === true)};
+const providerThreadId = ${JSON.stringify(input.providerThreadId ?? "provider_started")};
 if (process.argv.includes("--version")) {
   console.log("codex 0.37.0");
   process.exit(0);
@@ -387,8 +391,12 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "thread/start") {
-    send({ method: "thread/started", params: { thread: { id: "provider_started" } } });
-    send({ id: message.id, result: { thread: { id: "provider_started" } } });
+    if (threadStartFails) {
+      send({ id: message.id, error: { message: "replacement thread open failed" } });
+      return;
+    }
+    send({ method: "thread/started", params: { thread: { id: providerThreadId } } });
+    send({ id: message.id, result: { thread: { id: providerThreadId } } });
     return;
   }
   if (message.method === "turn/start") {
@@ -928,8 +936,8 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
-  it("forces stdio transport for codex app-server", () => {
-    expect(buildCodexAppServerArgs()).toEqual(["app-server"]);
+  it("forces stdio transport and disables Codex-native goals", () => {
+    expect(buildCodexAppServerArgs()).toEqual(["-c", "features.goals=false", "app-server"]);
   });
 
   it("allows a longer initialize timeout for slow codex app-server startup", () => {
@@ -1114,6 +1122,190 @@ describe("startSession", () => {
     } finally {
       manager.stopAll();
       rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the healthy session and kills the staged process when replacement startup fails", async () => {
+    const firstWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-replace-old-"));
+    const replacementWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-replace-failed-"));
+    const firstLogPath = path.join(firstWorkspaceDir, "calls.jsonl");
+    const replacementLogPath = path.join(replacementWorkspaceDir, "calls.jsonl");
+    const firstBinaryPath = createFakeCodexBinary({
+      dir: firstWorkspaceDir,
+      logPath: firstLogPath,
+      providerThreadId: "provider_old",
+    });
+    const replacementBinaryPath = createFakeCodexBinary({
+      dir: replacementWorkspaceDir,
+      logPath: replacementLogPath,
+      threadStartFails: true,
+    });
+    const manager = new CodexAppServerManager();
+    const contexts: Array<{
+      child: EventEmitter & { killed: boolean };
+      stopping: boolean;
+    }> = [];
+    const managerInternals = manager as unknown as {
+      attachProcessListeners: (context: unknown) => void;
+    };
+    const attachProcessListeners = managerInternals.attachProcessListeners.bind(manager);
+    vi.spyOn(managerInternals, "attachProcessListeners").mockImplementation((context) => {
+      contexts.push(
+        context as {
+          child: EventEmitter & { killed: boolean };
+          stopping: boolean;
+        },
+      );
+      attachProcessListeners(context);
+    });
+    const threadId = asThreadId("thread-replacement-failure");
+
+    try {
+      const firstSession = await manager.startSession({
+        threadId,
+        provider: "codex",
+        cwd: firstWorkspaceDir,
+        runtimeMode: "full-access",
+        binaryPath: firstBinaryPath,
+      });
+
+      await expect(
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          cwd: replacementWorkspaceDir,
+          runtimeMode: "full-access",
+          binaryPath: replacementBinaryPath,
+        }),
+      ).rejects.toThrow("replacement thread open failed");
+
+      expect(contexts).toHaveLength(2);
+      expect(contexts[0]?.stopping).toBe(false);
+      expect(contexts[0]?.child.killed).toBe(false);
+      expect(contexts[1]?.stopping).toBe(true);
+      expect(contexts[1]?.child.killed).toBe(true);
+      expect(manager.listSessions()).toEqual([
+        expect.objectContaining({
+          threadId,
+          status: "ready",
+          resumeCursor: { threadId: "provider_old" },
+        }),
+      ]);
+
+      const turn = await manager.sendTurn({ threadId, input: "still healthy" });
+      expect(firstSession.resumeCursor).toEqual({ threadId: "provider_old" });
+      expect(turn.resumeCursor).toEqual({ threadId: "provider_old" });
+      expect(readJsonl(firstLogPath).some((call) => call.method === "turn/start")).toBe(true);
+      expect(readJsonl(replacementLogPath).some((call) => call.method === "turn/start")).toBe(
+        false,
+      );
+    } finally {
+      manager.stopAll();
+      rmSync(firstWorkspaceDir, { recursive: true, force: true });
+      rmSync(replacementWorkspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes a usable replacement before retiring the old process", async () => {
+    const firstWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-replace-first-"));
+    const replacementWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-replace-second-"));
+    const firstLogPath = path.join(firstWorkspaceDir, "calls.jsonl");
+    const replacementLogPath = path.join(replacementWorkspaceDir, "calls.jsonl");
+    const firstBinaryPath = createFakeCodexBinary({
+      dir: firstWorkspaceDir,
+      logPath: firstLogPath,
+      providerThreadId: "provider_first",
+    });
+    const replacementBinaryPath = createFakeCodexBinary({
+      dir: replacementWorkspaceDir,
+      logPath: replacementLogPath,
+      providerThreadId: "provider_replacement",
+    });
+    const manager = new CodexAppServerManager();
+    const contexts: Array<{
+      child: EventEmitter & { killed: boolean };
+      stopping: boolean;
+    }> = [];
+    const managerInternals = manager as unknown as {
+      attachProcessListeners: (context: unknown) => void;
+      stopContext: (context: unknown, options?: { readonly emitClosed?: boolean }) => void;
+    };
+    const attachProcessListeners = managerInternals.attachProcessListeners.bind(manager);
+    vi.spyOn(managerInternals, "attachProcessListeners").mockImplementation((context) => {
+      contexts.push(
+        context as {
+          child: EventEmitter & { killed: boolean };
+          stopping: boolean;
+        },
+      );
+      attachProcessListeners(context);
+    });
+    const threadId = asThreadId("thread-replacement-success");
+
+    try {
+      await manager.startSession({
+        threadId,
+        provider: "codex",
+        cwd: firstWorkspaceDir,
+        runtimeMode: "full-access",
+        binaryPath: firstBinaryPath,
+      });
+      const firstContext = contexts[0];
+      expect(firstContext).toBeDefined();
+
+      const retirementSnapshots: ProviderSession[] = [];
+      const stopContext = managerInternals.stopContext.bind(manager);
+      vi.spyOn(managerInternals, "stopContext").mockImplementation((context, options) => {
+        if (context === firstContext) {
+          retirementSnapshots.push(...manager.listSessions());
+        }
+        stopContext(context, options);
+      });
+
+      const replacementSession = await manager.startSession({
+        threadId,
+        provider: "codex",
+        cwd: replacementWorkspaceDir,
+        runtimeMode: "full-access",
+        binaryPath: replacementBinaryPath,
+      });
+
+      expect(replacementSession.resumeCursor).toEqual({ threadId: "provider_replacement" });
+      expect(retirementSnapshots).toEqual([
+        expect.objectContaining({
+          threadId,
+          status: "ready",
+          resumeCursor: { threadId: "provider_replacement" },
+        }),
+      ]);
+      expect(firstContext?.stopping).toBe(true);
+      expect(firstContext?.child.killed).toBe(true);
+      expect(contexts[1]?.stopping).toBe(false);
+      expect(contexts[1]?.child.killed).toBe(false);
+
+      // A delayed exit callback from the superseded identity must not evict
+      // the replacement now stored under the same canonical thread id.
+      if (firstContext) {
+        firstContext.stopping = false;
+        firstContext.child.emit("exit", 1, null);
+        firstContext.stopping = true;
+      }
+      expect(manager.listSessions()).toEqual([
+        expect.objectContaining({
+          threadId,
+          status: "ready",
+          resumeCursor: { threadId: "provider_replacement" },
+        }),
+      ]);
+
+      const turn = await manager.sendTurn({ threadId, input: "use replacement" });
+      expect(turn.resumeCursor).toEqual({ threadId: "provider_replacement" });
+      expect(readJsonl(replacementLogPath).some((call) => call.method === "turn/start")).toBe(true);
+      expect(readJsonl(firstLogPath).some((call) => call.method === "turn/start")).toBe(false);
+    } finally {
+      manager.stopAll();
+      rmSync(firstWorkspaceDir, { recursive: true, force: true });
+      rmSync(replacementWorkspaceDir, { recursive: true, force: true });
     }
   });
 });
@@ -2663,6 +2855,34 @@ describe("respondToUserInput", () => {
 });
 
 describe("collab child conversation routing", () => {
+  it.each(["thread/goal/updated", "thread/goal/cleared"])(
+    "drops native Codex notification %s before it reaches the provider boundary",
+    (method) => {
+      const { manager, context, emitEvent, updateSession } = createCollabNotificationHarness();
+
+      (
+        manager as unknown as {
+          handleServerNotification: (
+            context: unknown,
+            notification: Record<string, unknown>,
+          ) => void;
+        }
+      ).handleServerNotification(context, {
+        method,
+        params: {
+          threadId: "provider_parent",
+          goal: {
+            objective: "native goal that must stay isolated",
+            status: "active",
+          },
+        },
+      });
+
+      expect(emitEvent).not.toHaveBeenCalled();
+      expect(updateSession).not.toHaveBeenCalled();
+    },
+  );
+
   it("rewrites child notification turn ids onto the parent turn", () => {
     const { manager, context, emitEvent } = createCollabNotificationHarness();
 
@@ -2787,23 +3007,6 @@ describe("collab child conversation routing", () => {
         params: {
           threadId: "child_provider_1",
           threadSettings: { model: "gpt-5.3-codex" },
-        },
-      },
-      {
-        method: "thread/goal/updated",
-        params: {
-          threadId: "child_provider_1",
-          goal: {
-            threadId: "child_provider_1",
-            objective: "child work",
-            status: "active",
-          },
-        },
-      },
-      {
-        method: "thread/goal/cleared",
-        params: {
-          threadId: "child_provider_1",
         },
       },
       {

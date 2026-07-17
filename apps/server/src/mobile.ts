@@ -42,6 +42,7 @@ import {
 } from "shared/orchestrationSession";
 
 import { EnvironmentAuth } from "./auth/EnvironmentAuth";
+import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -56,6 +57,9 @@ const PAIRING_SESSION_TTL_MS = 5 * 60 * 1000;
 const DEVICE_TOKEN_BYTES = 32;
 const MOBILE_DEVICES_FILE = "mobile-devices.json";
 const MOBILE_DISABLED_MESSAGE = "ShioriCode mobile app is disabled.";
+const MOBILE_DEVICE_LAST_SEEN_WRITE_INTERVAL_MS = 30_000;
+const MOBILE_SNAPSHOT_MAX_WAIT_MS = 25_000;
+const MOBILE_SNAPSHOT_POLL_INTERVAL_MS = 250;
 
 class MobileRouteError extends Data.TaggedError("MobileRouteError")<{
   readonly message: string;
@@ -225,9 +229,38 @@ async function authorizeMobileDevice(input: {
     return null;
   }
 
-  device.lastSeenAt = new Date().toISOString();
-  await writeDeviceStore(input.config, store);
+  const now = Date.now();
+  if (shouldPersistMobileLastSeen(device.lastSeenAt, now)) {
+    device.lastSeenAt = new Date(now).toISOString();
+    await writeDeviceStore(input.config, store);
+  }
   return device;
+}
+
+export function shouldPersistMobileLastSeen(lastSeenAt: string, now: number): boolean {
+  const previous = Date.parse(lastSeenAt);
+  return !Number.isFinite(previous) || now - previous >= MOBILE_DEVICE_LAST_SEEN_WRITE_INTERVAL_MS;
+}
+
+export function mobileSnapshotWaitOptions(url: URL): {
+  readonly afterSequence: number | null;
+  readonly waitMs: number;
+} {
+  const afterRaw = url.searchParams.get("after");
+  if (afterRaw === null) {
+    return { afterSequence: null, waitMs: 0 };
+  }
+
+  const afterSequence = Number.parseInt(afterRaw, 10);
+  if (!Number.isFinite(afterSequence) || afterSequence < 0) {
+    return { afterSequence: null, waitMs: 0 };
+  }
+
+  const requestedWaitMs = Number.parseInt(url.searchParams.get("waitMs") ?? "0", 10);
+  const waitMs = Number.isFinite(requestedWaitMs)
+    ? Math.min(Math.max(requestedWaitMs, 0), MOBILE_SNAPSHOT_MAX_WAIT_MS)
+    : 0;
+  return { afterSequence, waitMs };
 }
 
 function requestUrl(request: HttpServerRequest.HttpServerRequest): URL | null {
@@ -1251,12 +1284,23 @@ const mobileSnapshotRouteLayer = HttpRouter.add(
   "GET",
   "/api/mobile/snapshot",
   requireMobileAuth.pipe(
-    Effect.flatMap(() =>
+    Effect.flatMap(({ url }) =>
       Effect.gen(function* () {
         const engine = yield* OrchestrationEngineService;
         const providerRegistry = yield* ProviderRegistry;
         const serverSettings = yield* ServerSettingsService;
-        const readModel = yield* engine.getReadModel();
+        const { afterSequence, waitMs } = mobileSnapshotWaitOptions(url);
+        const deadline = Date.now() + waitMs;
+        let readModel = yield* engine.getReadModel();
+
+        if (afterSequence !== null) {
+          while (readModel.snapshotSequence <= afterSequence && Date.now() < deadline) {
+            const remainingMs = deadline - Date.now();
+            yield* Effect.sleep(Math.min(MOBILE_SNAPSHOT_POLL_INTERVAL_MS, remainingMs));
+            readModel = yield* engine.getReadModel();
+          }
+        }
+
         const providers = yield* providerRegistry.getProviders;
         const settings = yield* serverSettings.getSettings;
         const defaultModelSelection = resolveDefaultModelSelection(
@@ -1296,6 +1340,48 @@ const mobileEventsRouteLayer = HttpRouter.add(
   ),
 );
 
+const mobileThreadDiffRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/mobile/thread/diff",
+  requireMobileAuth.pipe(
+    Effect.flatMap(({ url }) =>
+      Effect.gen(function* () {
+        const threadIdRaw = url.searchParams.get("threadId");
+        if (!threadIdRaw) {
+          return errorResponse("Missing threadId.", 400);
+        }
+
+        const threadId = ThreadId.makeUnsafe(threadIdRaw);
+        const engine = yield* OrchestrationEngineService;
+        const readModel = yield* engine.getReadModel();
+        const thread = readModel.threads.find((candidate) => candidate.id === threadId);
+        if (!thread) {
+          return errorResponse("Thread not found.", 404);
+        }
+
+        const toTurnCount = thread.checkpoints.reduce(
+          (latest, checkpoint) => Math.max(latest, checkpoint.checkpointTurnCount),
+          0,
+        );
+        if (toTurnCount === 0) {
+          return successResponse({ diff: "" });
+        }
+
+        const checkpointDiffQuery = yield* CheckpointDiffQuery;
+        const result = yield* checkpointDiffQuery.getFullThreadDiff({ threadId, toTurnCount });
+        return successResponse({ diff: result.diff });
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.succeed(
+        error instanceof Error
+          ? errorResponse(error.message, routeErrorStatus(error, 400))
+          : errorResponse("Thread diff failed.", 400),
+      ),
+    ),
+  ),
+);
+
 const mobileWorkspaceEntriesRouteLayer = HttpRouter.add(
   "GET",
   "/api/mobile/workspace/entries",
@@ -1307,8 +1393,9 @@ const mobileWorkspaceEntriesRouteLayer = HttpRouter.add(
           return errorResponse("Missing projectId.", 400);
         }
         const query = (url.searchParams.get("query") ?? "").trim();
+        const relativePath = (url.searchParams.get("relativePath") ?? "").trim();
         const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "25", 10);
-        const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 25;
+        const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 25;
 
         const engine = yield* OrchestrationEngineService;
         const readModel = yield* engine.getReadModel();
@@ -1321,6 +1408,7 @@ const mobileWorkspaceEntriesRouteLayer = HttpRouter.add(
         if (!query) {
           const listing = yield* workspaceEntries.listDirectory({
             cwd: project.workspaceRoot,
+            ...(relativePath ? { relativePath } : {}),
           });
           return successResponse({
             entries: listing.entries.slice(0, limit),
@@ -1382,6 +1470,7 @@ export const mobileRoutesLayer = Layer.mergeAll(
   mobileConnectionRouteLayer,
   mobileSnapshotRouteLayer,
   mobileEventsRouteLayer,
+  mobileThreadDiffRouteLayer,
   mobileWorkspaceEntriesRouteLayer,
   mobileCommandRouteLayer,
 );

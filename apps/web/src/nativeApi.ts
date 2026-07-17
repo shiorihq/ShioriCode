@@ -1,6 +1,7 @@
 import type { NativeApi } from "contracts";
 
 import { __resetWsNativeApiForTests, createWsNativeApi } from "./wsNativeApi";
+import { isElectron } from "./env";
 
 let cachedApi: NativeApi | undefined;
 // The app is local/BYO-key only: there is no hosted sign-in gate, so the web
@@ -29,7 +30,18 @@ export function hasDesktopNativeBridge(): boolean {
     return false;
   }
 
-  return window.nativeApi !== undefined || window.desktopBridge !== undefined;
+  return window.desktopBridge !== undefined || (isElectron && window.nativeApi !== undefined);
+}
+
+export function isRemoteDesktopConnection(): boolean {
+  if (typeof window === "undefined" || !window.desktopBridge) return false;
+  const rawUrl = window.desktopBridge.getWsUrl();
+  if (!rawUrl) return false;
+  try {
+    return !isLoopbackHostname(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -45,7 +57,7 @@ export function readNativeApi(): NativeApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;
 
-  if (window.nativeApi) {
+  if (isElectron && window.nativeApi) {
     cachedApi = window.nativeApi;
     return cachedApi;
   }

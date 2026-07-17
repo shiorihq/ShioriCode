@@ -61,6 +61,15 @@ function updateThread(
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
 }
 
+function nonRegressingThreadUpdatedAt(
+  threads: ReadonlyArray<OrchestrationThread>,
+  threadId: ThreadId,
+  candidate: string,
+): string {
+  const current = threads.find((thread) => thread.id === threadId)?.updatedAt;
+  return current !== undefined && current > candidate ? current : candidate;
+}
+
 function updateKanbanItem(
   items: ReadonlyArray<KanbanItem>,
   itemId: KanbanItemId,
@@ -556,7 +565,11 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             goal: payload.goal,
-            updatedAt: payload.goal.updatedAt,
+            updatedAt: nonRegressingThreadUpdatedAt(
+              nextBase.threads,
+              payload.threadId,
+              payload.goal.updatedAt,
+            ),
           }),
         })),
       );
@@ -567,7 +580,11 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             goal: null,
-            updatedAt: payload.clearedAt,
+            updatedAt: nonRegressingThreadUpdatedAt(
+              nextBase.threads,
+              payload.threadId,
+              payload.clearedAt,
+            ),
           }),
         })),
       );
