@@ -1,9 +1,9 @@
 import type { ThreadGoal, ThreadGoalStatus, ThreadGoalUserStatus } from "contracts";
-import { Loader2 } from "lucide-react";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   IconChequeredFlagOutline24 as GoalIcon,
   IconPencilOutline24 as PencilIcon,
+  IconSpinnerLoaderOutline24 as Loader2,
   IconXmarkOutline24 as XIcon,
 } from "nucleo-core-outline-24";
 
