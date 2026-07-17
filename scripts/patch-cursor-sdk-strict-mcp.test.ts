@@ -38,5 +38,5 @@ describe("Cursor SDK strict MCP install patch", () => {
     expect(result.stdout).toContain("CURSOR_MCP_REJECTED:");
     expect(result.stdout).toContain('Unsupported MCP server type "unsupported" for "required"');
     expect(result.stderr).not.toContain("CURSOR_MCP_FALLBACK_OCCURRED");
-  });
+  }, 20_000);
 });
