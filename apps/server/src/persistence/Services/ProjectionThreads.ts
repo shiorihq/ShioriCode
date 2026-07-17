@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadGoal,
   ThreadId,
   TurnId,
 } from "contracts";
@@ -41,6 +42,7 @@ export const ProjectionThread = Schema.Struct({
     Schema.withDecodingDefault(() => "resumed" as const),
   ),
   latestTurnId: Schema.NullOr(TurnId),
+  goal: Schema.NullOr(ThreadGoal),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   pinnedAt: Schema.NullOr(IsoDateTime),

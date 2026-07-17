@@ -218,6 +218,66 @@ describe("store read model sync", () => {
     expect(next.bootstrapComplete).toBe(true);
   });
 
+  it("projects goal snapshots and incremental goal events equivalently", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const goal = {
+      threadId,
+      lifecycleId: "goal-lifecycle-1",
+      objective: "Ship provider-neutral goals",
+      status: "active" as const,
+      tokenBudget: 50_000,
+      tokensUsed: 1_250,
+      timeUsedSeconds: 42,
+      createdAt: "2026-02-27T00:01:00.000Z",
+      updatedAt: "2026-02-27T00:02:00.000Z",
+    };
+    const initialState = makeState(makeThread());
+    const selectGoalProjection = (state: AppState) => ({
+      thread: state.threads[0]?.goal ?? null,
+      sidebar: state.sidebarThreadsById[threadId]?.goal ?? null,
+    });
+
+    const snapshotWithGoal = syncServerReadModel(
+      initialState,
+      makeReadModel(
+        makeReadModelThread({
+          goal,
+          updatedAt: goal.updatedAt,
+        }),
+      ),
+    );
+    const eventsWithGoal = applyOrchestrationEvent(
+      initialState,
+      makeEvent("thread.goal-updated", {
+        threadId,
+        goal,
+      }),
+    );
+
+    expect(selectGoalProjection(eventsWithGoal)).toEqual(selectGoalProjection(snapshotWithGoal));
+
+    const clearedAt = "2026-02-27T00:03:00.000Z";
+    const snapshotCleared = syncServerReadModel(
+      snapshotWithGoal,
+      makeReadModel(
+        makeReadModelThread({
+          goal: null,
+          updatedAt: clearedAt,
+        }),
+      ),
+    );
+    const eventsCleared = applyOrchestrationEvent(
+      eventsWithGoal,
+      makeEvent("thread.goal-cleared", {
+        threadId,
+        goalLifecycleKey: goal.lifecycleId,
+        clearedAt,
+      }),
+    );
+
+    expect(selectGoalProjection(eventsCleared)).toEqual(selectGoalProjection(snapshotCleared));
+  });
+
   it("preserves claude model slugs without an active session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
@@ -248,6 +308,7 @@ describe("store read model sync", () => {
           providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: "2026-02-27T00:00:00.000Z",
         },
@@ -269,6 +330,7 @@ describe("store read model sync", () => {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: "stale resume failure",
           updatedAt: "2026-02-27T00:00:00.000Z",
         },
@@ -291,6 +353,7 @@ describe("store read model sync", () => {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: "runtime exploded",
           updatedAt: "2026-02-27T00:00:00.000Z",
         },
@@ -1012,6 +1075,7 @@ describe("incremental orchestration updates", () => {
             providerName: "codex",
             runtimeMode: "full-access",
             activeTurnId: TurnId.makeUnsafe("turn-1"),
+            goalLifecycleKey: null,
             lastError: null,
             updatedAt: "2026-02-27T00:00:02.000Z",
           },
@@ -1053,6 +1117,7 @@ describe("incremental orchestration updates", () => {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: "runtime exploded",
           updatedAt: "2026-02-27T00:00:02.000Z",
         },
@@ -1077,6 +1142,7 @@ describe("incremental orchestration updates", () => {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: "runtime exploded",
           updatedAt: "2026-02-27T00:00:02.000Z",
         },
@@ -1553,6 +1619,7 @@ describe("incremental orchestration updates", () => {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: TurnId.makeUnsafe("turn-3"),
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: "2026-02-27T00:00:04.000Z",
         },

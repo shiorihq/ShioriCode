@@ -37,7 +37,7 @@
     "start:mock-update-server": "bun run scripts/mock-update-server.ts",
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=marketing",
-    "build:cli": "turbo run build --filter=shiori-cli",
+    "build:cli": "turbo run build --filter=shioricode",
     "build:agent": "turbo run build --filter=shiori-agent",
     "start:agent": "cd apps/agent && bun run start",
     "build:desktop": "turbo run build --filter=desktop --filter=shioricode",
@@ -58,7 +58,7 @@
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "trash node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
-    "prepare": "effect-language-service patch"
+    "prepare": "node scripts/patch-cursor-sdk-strict-mcp.mjs && effect-language-service patch"
   },
   "devDependencies": {
     "@auth/core": "^0.41.2",

@@ -105,6 +105,7 @@ async function defaultClientFactory(serverConfig: McpServerConfig): Promise<McpC
       transport = new StdioClientTransport({
         command: serverConfig.command,
         args: serverConfig.args,
+        env: serverConfig.env,
       });
       break;
     case "sse":

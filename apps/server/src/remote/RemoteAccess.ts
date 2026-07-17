@@ -2,11 +2,10 @@
  * RemoteAccess - drives the Settings ▸ Remote panel.
  *
  * Owns how this machine's server is exposed beyond loopback: Tailscale Serve
- * (private — only devices on the owner's tailnet) or Tailscale Funnel (a
- * public link, gated by the owner sign-in). Tailscale is deliberately the
- * only supported transport: it needs no ports, DNS, or certificates, and both
- * modes stay behind auth. The server keeps running locally; this only manages
- * what sits in front of it.
+ * (private — only devices on the owner's tailnet), Tailscale Funnel, or the
+ * hosted ShioriCode Link relay. Every transport is outbound-only and stays
+ * behind the environment owner sign-in. The server keeps running locally;
+ * this only manages what sits in front of it.
  *
  * Stability model:
  * - The owner's intent is persisted (`remote/remoteStateStore.ts`) and
@@ -26,6 +25,8 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  RemoteBeginLinkSignInInput,
+  RemoteBeginLinkSignInResult,
   RemoteExposureMethod,
   RemoteProbeResult,
   RemoteSetExposureInput,
@@ -40,6 +41,11 @@ import { EnvironmentAuth } from "../auth/EnvironmentAuth";
 import { ServerConfig } from "../config";
 import { RemoteStateStore } from "./remoteStateStore";
 import {
+  LinkRemote,
+  type LinkAuthCallbackInput,
+  type LinkHostedAccessPrincipal,
+} from "./LinkRemote";
+import {
   applyExposure,
   detectTailscale,
   findTailscaleCli,
@@ -50,6 +56,14 @@ import {
 export interface RemoteAccessApi {
   getStatus(): Effect.Effect<RemoteStatus>;
   setExposure(input: RemoteSetExposureInput): Effect.Effect<RemoteStatus, RemoteError>;
+  beginLinkSignIn(
+    input: RemoteBeginLinkSignInInput,
+  ): Effect.Effect<RemoteBeginLinkSignInResult, RemoteError>;
+  completeLinkSignIn(input: LinkAuthCallbackInput): Effect.Effect<void, RemoteError>;
+  linkHostedAccessAvailable(): Effect.Effect<boolean>;
+  beginLinkHostedAccess(state: string): Effect.Effect<string, RemoteError>;
+  exchangeLinkHostedAccess(code: string): Effect.Effect<LinkHostedAccessPrincipal, RemoteError>;
+  disconnectLinkAccount(): Effect.Effect<RemoteStatus, RemoteError>;
   testConnection(): Effect.Effect<RemoteProbeResult>;
 }
 
@@ -115,7 +129,7 @@ async function probeUrl(url: string, bootId: string): Promise<RemoteProbeResult>
 }
 
 function reachabilityFor(method: RemoteExposureMethod): RemoteStatus["reachability"] {
-  if (method === "tailscale-funnel") return "public";
+  if (method === "tailscale-funnel" || method === "shiori-link") return "public";
   if (method === "tailscale-serve") return "tailnet";
   return "loopback";
 }
@@ -126,6 +140,7 @@ function noticeFor(input: {
   requireAuth: boolean;
   authConfigured: boolean;
   tailscale: RemoteTailscaleStatus;
+  link: RemoteStatus["link"];
   url: string | null;
 }): string | null {
   const exposed = input.method !== "off";
@@ -135,14 +150,21 @@ function noticeFor(input: {
   if (exposed && !input.authConfigured) {
     return "This machine is exposed but no sign-in is set. Set a username and password now.";
   }
-  const desired = input.desiredMethod !== "off";
-  if (desired && !input.tailscale.installed) {
+  const desiredTailscale =
+    input.desiredMethod === "tailscale-serve" || input.desiredMethod === "tailscale-funnel";
+  if (input.desiredMethod === "shiori-link" && !input.link.accountLinked) {
+    return "Sign in to Shiori to restore this link environment.";
+  }
+  if (input.desiredMethod === "shiori-link" && input.method === "off") {
+    return input.link.lastError ?? "The link connector is not running. Use Repair below.";
+  }
+  if (desiredTailscale && !input.tailscale.installed) {
     return "Remote access is turned on, but Tailscale is no longer installed on this machine.";
   }
-  if (desired && !input.tailscale.running) {
+  if (desiredTailscale && !input.tailscale.running) {
     return "Tailscale isn't connected — open the Tailscale app or run `tailscale up`, then use Repair below.";
   }
-  if (desired && input.method === "off") {
+  if (desiredTailscale && input.method === "off") {
     return "Tailscale stopped serving ShioriCode (its config was reset elsewhere). Use Repair to turn it back on.";
   }
   if (exposed && input.url?.startsWith("http://")) {
@@ -157,7 +179,12 @@ export const RemoteAccessLive = Layer.effect(
     const config = yield* ServerConfig;
     const auth = yield* EnvironmentAuth;
     const store = new RemoteStateStore({ stateDir: config.stateDir });
-    const cli = findTailscaleCli();
+    const link = new LinkRemote({ stateDir: config.stateDir, localPort: config.port });
+    yield* Effect.addFinalizer(() => Effect.promise(() => link.dispose()));
+    // Tailscale may be installed after ShioriCode starts, especially on a
+    // freshly provisioned headless host. Re-discover it until it appears.
+    let discoveredCli = findTailscaleCli();
+    const tailscaleCli = () => (discoveredCli ??= findTailscaleCli());
     const port = config.port;
 
     // Serialize exposure mutations: concurrent clicks must not interleave
@@ -170,11 +197,14 @@ export const RemoteAccessLive = Layer.effect(
     };
 
     const buildStatus = async (): Promise<RemoteStatus> => {
+      const cli = tailscaleCli();
       const desiredMethod = store.method;
       const [tailscale, serve] = await Promise.all([detectTailscale(cli), readServe(cli, port)]);
-
-      const method: RemoteExposureMethod = serve.method;
-      const url = serve.url;
+      const linkStatus = link.status();
+      const method: RemoteExposureMethod = linkStatus.connectorRunning
+        ? "shiori-link"
+        : serve.method;
+      const url = method === "shiori-link" ? linkStatus.endpoint : serve.url;
 
       // Fail closed: exposure observed or desired means auth must be on. This
       // only ever raises; only an explicit "off" lowers it.
@@ -192,6 +222,7 @@ export const RemoteAccessLive = Layer.effect(
         authConfigured: auth.authConfigured,
         username: auth.username,
         port,
+        link: linkStatus,
         tailscale,
         sessions: auth.listSessions().map((session) => ({
           id: session.id,
@@ -207,16 +238,21 @@ export const RemoteAccessLive = Layer.effect(
           requireAuth: auth.requireAuth,
           authConfigured: auth.authConfigured,
           tailscale,
+          link: linkStatus,
           url,
         }),
       };
     };
 
     const applyDesiredExposure = async (method: RemoteExposureMethod): Promise<RemoteStatus> => {
+      const cli = tailscaleCli();
       if (method !== "off" && !auth.authConfigured && !config.unsafeNoAuth) {
         throw new Error("Set a username and password first — remote access requires a sign-in.");
       }
       if (method === "off") {
+        await Promise.all([releaseServeIfOurs(cli, port), link.disable()]);
+      } else if (method === "shiori-link") {
+        await link.enable();
         await releaseServeIfOurs(cli, port);
       } else {
         const tailscale = await detectTailscale(cli);
@@ -229,6 +265,7 @@ export const RemoteAccessLive = Layer.effect(
           );
         }
         await applyExposure(cli, method, port, tailscale.httpsEnabled);
+        await link.disable();
       }
       store.set(method);
       auth.setRemoteExposed(method !== "off");
@@ -244,16 +281,20 @@ export const RemoteAccessLive = Layer.effect(
     if (desiredAtBoot !== "off") {
       if (auth.authConfigured || config.unsafeNoAuth) {
         auth.setRemoteExposed(true);
-        const reconcileTailscale = Effect.gen(function* () {
+        const reconcileExposure = Effect.gen(function* () {
           for (let attempt = 0; attempt < 8; attempt++) {
             const done = yield* Effect.promise(() =>
               withExposureLock(async () => {
                 if (store.method !== desiredAtBoot) {
                   return true; // the owner changed exposure meanwhile; stand down
                 }
+                if (desiredAtBoot === "shiori-link") {
+                  if (link.running) return true;
+                  return await link.restore();
+                }
                 const [tailscale, serve] = await Promise.all([
-                  detectTailscale(cli),
-                  readServe(cli, port),
+                  detectTailscale(tailscaleCli()),
+                  readServe(tailscaleCli(), port),
                 ]);
                 if (serve.method === desiredAtBoot) {
                   return true;
@@ -262,7 +303,7 @@ export const RemoteAccessLive = Layer.effect(
                   return false; // wait for tailscaled to come up
                 }
                 try {
-                  await applyExposure(cli, desiredAtBoot, port, tailscale.httpsEnabled);
+                  await applyExposure(tailscaleCli(), desiredAtBoot, port, tailscale.httpsEnabled);
                   return true;
                 } catch {
                   return false;
@@ -274,11 +315,11 @@ export const RemoteAccessLive = Layer.effect(
             }
             yield* Effect.sleep("15 seconds");
           }
-          yield* Effect.logWarning("remote access: could not restore Tailscale exposure", {
+          yield* Effect.logWarning("remote access: could not restore exposure", {
             desired: desiredAtBoot,
           });
         });
-        yield* Effect.forkDetach(reconcileTailscale);
+        yield* Effect.forkDetach(reconcileExposure);
       } else {
         // Fail closed: exposure was desired but the credentials are gone.
         // Tear the tunnel down rather than coming up reachable-but-open.
@@ -287,7 +328,11 @@ export const RemoteAccessLive = Layer.effect(
           "remote access: disabled at startup because no credentials are configured",
         );
         yield* Effect.forkDetach(
-          Effect.promise(() => withExposureLock(() => releaseServeIfOurs(cli, port))),
+          Effect.promise(() =>
+            withExposureLock(async () => {
+              await Promise.all([releaseServeIfOurs(tailscaleCli(), port), link.disable()]);
+            }),
+          ),
         );
       }
     }
@@ -303,9 +348,66 @@ export const RemoteAccessLive = Layer.effect(
               cause,
             }),
         }),
+      beginLinkSignIn: (input) =>
+        Effect.try({
+          try: () => link.beginSignIn(input),
+          catch: (cause) =>
+            new RemoteError({
+              message: cause instanceof Error ? cause.message : "Could not start Shiori sign-in.",
+              cause,
+            }),
+        }),
+      completeLinkSignIn: (input) =>
+        Effect.try({
+          try: () => link.completeSignIn(input),
+          catch: (cause) =>
+            new RemoteError({
+              message:
+                cause instanceof Error ? cause.message : "Could not complete Shiori sign-in.",
+              cause,
+            }),
+        }),
+      linkHostedAccessAvailable: () => Effect.sync(() => link.hostedAccessAvailable),
+      beginLinkHostedAccess: (state) =>
+        Effect.try({
+          try: () => link.beginHostedAccess(state),
+          catch: (cause) =>
+            new RemoteError({
+              message: cause instanceof Error ? cause.message : "Could not start hosted sign-in.",
+              cause,
+            }),
+        }),
+      exchangeLinkHostedAccess: (code) =>
+        Effect.tryPromise({
+          try: () => link.exchangeHostedAccess(code),
+          catch: (cause) =>
+            new RemoteError({
+              message:
+                cause instanceof Error ? cause.message : "Could not complete hosted sign-in.",
+              cause,
+            }),
+        }),
+      disconnectLinkAccount: () =>
+        Effect.tryPromise({
+          try: () =>
+            withExposureLock(async () => {
+              await link.disconnectAccount();
+              if (store.method === "shiori-link") {
+                store.set("off");
+                auth.setRemoteExposed(false);
+              }
+              return await buildStatus();
+            }),
+          catch: (cause) =>
+            new RemoteError({
+              message:
+                cause instanceof Error ? cause.message : "Could not disconnect Shiori account.",
+              cause,
+            }),
+        }),
       testConnection: () =>
         Effect.promise(async () => {
-          const url = (await readServe(cli, port)).url;
+          const url = (await buildStatus()).url;
           if (!url) {
             return {
               ok: false,

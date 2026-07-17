@@ -36,4 +36,18 @@ describe("fixPath", () => {
     expect(readPath).not.toHaveBeenCalled();
     expect(env.PATH).toBe("C:\\Windows\\System32");
   });
+
+  it("keeps the explicit service PATH without starting a login shell", () => {
+    const env: NodeJS.ProcessEnv = {
+      SHIORICODE_SERVICE: "1",
+      SHELL: "/bin/bash",
+      PATH: "/usr/local/bin:/usr/bin",
+    };
+    const readPath = vi.fn(() => "/unexpected");
+
+    fixPath({ env, platform: "linux", readPath });
+
+    expect(readPath).not.toHaveBeenCalled();
+    expect(env.PATH).toBe("/usr/local/bin:/usr/bin");
+  });
 });

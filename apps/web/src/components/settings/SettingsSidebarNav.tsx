@@ -19,12 +19,14 @@ import {
 
 import {
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "../ui/sidebar";
+import { SettingsShioriCodeLinkButton } from "./SettingsShioriCodeLinkButton";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -96,43 +98,50 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const itemClassName = "h-7 gap-1.5 px-2 py-0 text-left text-sm transition-none";
 
   return (
-    <SidebarContent className="overflow-x-hidden">
-      <SidebarGroup className="px-2 pt-3 pb-0">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="sm" className={itemClassName} onClick={navigateBack}>
-              <ArrowLeftIcon className="size-4" />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroup>
-      {SETTINGS_NAV_SECTIONS.map((section) => (
-        <SidebarGroup key={section.label} className="px-2 pt-3 pb-0 last:pb-3">
-          <SidebarGroupLabel className="h-7 px-2 font-medium text-muted-foreground text-xs">
-            {section.label}
-          </SidebarGroupLabel>
+    <>
+      <SidebarContent className="overflow-x-hidden">
+        <SidebarGroup className="px-2 pt-3 pb-0">
           <SidebarMenu>
-            {section.items.map((item) => {
-              const Icon = item.icon;
-              const isActive = pathname === item.to;
-              return (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton
-                    size="sm"
-                    isActive={isActive}
-                    className={itemClassName}
-                    onClick={() => void navigate({ to: item.to, replace: true })}
-                  >
-                    <Icon className="size-4 shrink-0" />
-                    <span className="truncate">{item.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
+            <SidebarMenuItem>
+              <SidebarMenuButton size="sm" className={itemClassName} onClick={navigateBack}>
+                <ArrowLeftIcon className="size-4" />
+                <span>Back</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
-      ))}
-    </SidebarContent>
+        {SETTINGS_NAV_SECTIONS.map((section) => (
+          <SidebarGroup key={section.label} className="px-2 pt-3 pb-0 last:pb-3">
+            <SidebarGroupLabel className="h-7 px-2 font-medium text-muted-foreground text-xs">
+              {section.label}
+            </SidebarGroupLabel>
+            <SidebarMenu>
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = pathname === item.to;
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton
+                      size="sm"
+                      isActive={isActive}
+                      className={itemClassName}
+                      onClick={() => void navigate({ to: item.to, replace: true })}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroup>
+        ))}
+      </SidebarContent>
+      <SidebarFooter className="mt-auto p-2 pt-1">
+        <SettingsShioriCodeLinkButton
+          onClick={() => void navigate({ to: "/settings/remote", replace: true })}
+        />
+      </SidebarFooter>
+    </>
   );
 }

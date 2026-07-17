@@ -27,6 +27,11 @@ export interface CliContext {
   readonly snapshot: OrchestrationReadModel;
 }
 
+export interface RecordedBackendConnection {
+  readonly record: ReturnType<typeof decodeServerInstanceRecord>;
+  readonly rpc: WsRpcClient;
+}
+
 export interface StartupThreadSelectionInput {
   readonly rpc: WsRpcClient;
   readonly snapshot: OrchestrationReadModel;
@@ -75,7 +80,7 @@ export async function withCliContext<T>(
 export async function connectOrStartBackend(baseDir: string): Promise<WsRpcClient> {
   const existing = await connectToRecordedBackend(baseDir);
   if (existing) {
-    return existing;
+    return existing.rpc;
   }
 
   await startBackend(baseDir);
@@ -114,7 +119,10 @@ async function withProbeTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
   }
 }
 
-async function connectToRecordedBackend(baseDir: string): Promise<WsRpcClient | null> {
+export async function connectToRecordedBackend(
+  baseDir: string,
+  options: { readonly launcher?: string } = {},
+): Promise<RecordedBackendConnection | null> {
   const instancePath = getServerInstancePath(baseDir);
   if (!fs.existsSync(instancePath)) {
     return null;
@@ -124,6 +132,9 @@ async function connectToRecordedBackend(baseDir: string): Promise<WsRpcClient | 
   try {
     const raw = await fs.promises.readFile(instancePath, "utf8");
     const record = decodeServerInstanceRecord(JSON.parse(raw));
+    if (options.launcher !== undefined && record.launcher !== options.launcher) {
+      return null;
+    }
     if (!isPidAlive(record.pid)) {
       return null;
     }
@@ -131,7 +142,7 @@ async function connectToRecordedBackend(baseDir: string): Promise<WsRpcClient | 
     // The RPC socket layer retries refused connections indefinitely, so the
     // probe must be bounded or a stale instance record hangs the caller.
     await withProbeTimeout(rpc.server.getConfig(), BACKEND_PROBE_TIMEOUT_MS);
-    return rpc;
+    return { record, rpc };
   } catch {
     await rpc?.dispose().catch(() => undefined);
     return null;
@@ -192,10 +203,9 @@ function resolveBackendEntry(): string {
     const packageJsonPath = require.resolve("shioricode/package.json");
     return path.join(path.dirname(packageJsonPath), "dist", "bin.mjs");
   } catch (error) {
-    throw new Error(
-      "Could not resolve the Shiori backend. Reinstall shiori-cli or install the shioricode package alongside it.",
-      { cause: error },
-    );
+    throw new Error("Could not resolve the ShioriCode backend. Reinstall the shioricode package.", {
+      cause: error,
+    });
   }
 }
 
@@ -205,11 +215,31 @@ async function waitForBackend(baseDir: string, timeoutMs = 60_000): Promise<WsRp
   while (Date.now() < deadline) {
     const existing = await connectToRecordedBackend(baseDir);
     if (existing) {
-      return existing;
+      return existing.rpc;
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
+  return null;
+}
+
+export async function waitForRecordedBackend(
+  baseDir: string,
+  options: {
+    readonly launcher?: string;
+    readonly timeoutMs?: number;
+  } = {},
+): Promise<RecordedBackendConnection | null> {
+  const deadline = Date.now() + (options.timeoutMs ?? 30_000);
+  while (Date.now() < deadline) {
+    const existing = await connectToRecordedBackend(baseDir, {
+      ...(options.launcher === undefined ? {} : { launcher: options.launcher }),
+    });
+    if (existing) {
+      return existing;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
   return null;
 }
 

@@ -36,8 +36,8 @@ interface RemoteSetupWizardProps {
 }
 
 /**
- * Guided setup for remote access over Tailscale: pick who can reach the
- * machine (tailnet-only Serve or a public Funnel link), satisfy the
+ * Guided setup for remote access over ShioriCode Link or Tailscale: pick
+ * who can reach the machine, satisfy the
  * prerequisites (with live re-checking), create the owner sign-in (and sign
  * this browser in silently so it survives the auth flip), then turn exposure
  * on and verify it.
@@ -49,7 +49,7 @@ export function RemoteSetupWizard({
   initialMethod,
 }: RemoteSetupWizardProps) {
   const [step, setStep] = useState<WizardStepId>("method");
-  const [method, setMethod] = useState<WizardMethod>(initialMethod ?? "tailscale-serve");
+  const [method, setMethod] = useState<WizardMethod>(initialMethod ?? "shiori-link");
   const [username, setUsername] = useState(status.username ?? "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -95,6 +95,22 @@ export function RemoteSetupWizard({
   const continueFromPrerequisites = useCallback(() => {
     setError(null);
     setStep("credentials");
+  }, []);
+
+  const signInToShiori = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await getWsRpcClient().remote.beginLinkSignIn({ provider: "github" });
+      const opened = await window.desktopBridge?.openExternal(result.authUrl);
+      if (opened === false || window.desktopBridge === undefined) {
+        window.open(result.authUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't start Shiori sign-in.");
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
   const continueFromCredentials = useCallback(async () => {
@@ -263,6 +279,13 @@ export function RemoteSetupWizard({
             <RefreshIcon className="size-3 animate-spin [animation-duration:3s]" />
             Checking automatically — finish the steps above and they'll turn green.
           </p>
+          {method === "shiori-link" && !status.link.accountLinked ? (
+            <Button size="sm" disabled={busy} onClick={() => void signInToShiori()}>
+              {busy ? <LoaderIcon className="size-3.5 animate-spin" /> : null}
+              Sign in with GitHub
+              <ExternalLinkIcon className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -338,7 +361,9 @@ export function RemoteSetupWizard({
                 required for every device.
                 {method === "tailscale-funnel"
                   ? " The first public request can take a minute while Tailscale provisions the TLS certificate."
-                  : ""}
+                  : method === "shiori-link"
+                    ? " The first setup downloads a checksum-verified connector and can take a moment."
+                    : ""}
               </p>
               <Button disabled={busy} onClick={() => void turnOn()}>
                 {busy ? <LoaderIcon className="size-3.5 animate-spin" /> : null}

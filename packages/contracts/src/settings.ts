@@ -231,13 +231,6 @@ export const MobileAppSettings = Schema.Struct({
 });
 export type MobileAppSettings = typeof MobileAppSettings.Type;
 
-export const DEFAULT_GOALS_ENABLED = true;
-
-export const GoalsSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => DEFAULT_GOALS_ENABLED)),
-});
-export type GoalsSettings = typeof GoalsSettings.Type;
-
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -437,7 +430,6 @@ export const ServerSettings = Schema.Struct({
   computerUse: ComputerUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   browserUse: BrowserUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   mobileApp: MobileAppSettings.pipe(Schema.withDecodingDefault(() => ({}))),
-  goals: GoalsSettings.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -595,10 +587,6 @@ const MobileAppSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
-const GoalsSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-});
-
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   generateMemories: Schema.optionalKey(Schema.Boolean),
@@ -612,7 +600,6 @@ export const ServerSettingsPatch = Schema.Struct({
   computerUse: Schema.optionalKey(ComputerUseSettingsPatch),
   browserUse: Schema.optionalKey(BrowserUseSettingsPatch),
   mobileApp: Schema.optionalKey(MobileAppSettingsPatch),
-  goals: Schema.optionalKey(GoalsSettingsPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

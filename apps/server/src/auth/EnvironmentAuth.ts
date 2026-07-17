@@ -20,7 +20,7 @@
 import { Effect, Layer, Option, ServiceMap } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { ServerConfig, type ServerConfigShape } from "../config";
+import { ServerConfig } from "../config";
 import { CredentialStore } from "./credentialStore";
 import { parseCookies } from "./cookies";
 import {
@@ -85,6 +85,10 @@ export interface EnvironmentAuthApi {
     readonly password: string;
     readonly metadata?: SessionMetadata;
   }): LoginOutcome | null;
+  createSession(input: {
+    readonly username: string;
+    readonly metadata?: SessionMetadata;
+  }): LoginOutcome;
   /** Verify owner credentials without minting a session (used by the mobile API). */
   verifyCredentials(input: { readonly username: string; readonly password: string }): boolean;
   /** Set (or rotate) the owner credentials, persisted 0600. */
@@ -135,11 +139,8 @@ function readAuthorizationBearer(request: HttpServerRequest.HttpServerRequest): 
   return match?.[1]?.trim() || null;
 }
 
-function resolveAllowedOrigins(config: ServerConfigShape): ReadonlySet<string> {
+function resolveConfiguredAllowedOrigins(): ReadonlySet<string> {
   const origins = new Set<string>();
-  if (config.devUrl) {
-    origins.add(config.devUrl.origin);
-  }
   const raw = process.env.SHIORICODE_ALLOWED_ORIGINS;
   if (raw) {
     for (const entry of raw.split(",")) {
@@ -150,6 +151,23 @@ function resolveAllowedOrigins(config: ServerConfigShape): ReadonlySet<string> {
     }
   }
   return origins;
+}
+
+export function isRemoteWebSocketOriginAllowed(input: {
+  readonly origin: URL | null;
+  readonly requestUrl: URL;
+  readonly devOrigin: string | null;
+  readonly configuredAllowedOrigins: ReadonlySet<string>;
+}): boolean {
+  const { origin, requestUrl, devOrigin, configuredAllowedOrigins } = input;
+  if (!origin || configuredAllowedOrigins.size === 0) {
+    return true;
+  }
+  return (
+    origin.origin === requestUrl.origin ||
+    origin.origin === devOrigin ||
+    configuredAllowedOrigins.has(origin.origin)
+  );
 }
 
 export const EnvironmentAuthLive = Layer.effect(
@@ -163,7 +181,8 @@ export const EnvironmentAuthLive = Layer.effect(
     });
     const sessions = new SessionStore({ stateDir: config.stateDir });
     const legacyToken = config.authToken ?? null;
-    const allowedOrigins = resolveAllowedOrigins(config);
+    const configuredAllowedOrigins = resolveConfiguredAllowedOrigins();
+    const devOrigin = config.devUrl?.origin ?? null;
 
     // Dynamic exposure state: the config flags are the floor (a `--remote`
     // start always requires auth); RemoteAccess raises/lowers the runtime bit
@@ -238,7 +257,9 @@ export const EnvironmentAuthLive = Layer.effect(
       }
 
       const originAllowed = (candidate: URL): boolean =>
-        candidate.origin === url.origin || allowedOrigins.has(candidate.origin);
+        candidate.origin === url.origin ||
+        candidate.origin === devOrigin ||
+        configuredAllowedOrigins.has(candidate.origin);
 
       if (!isAuthRequired()) {
         // Loopback dev: defeat DNS rebinding by requiring a loopback Host, and
@@ -249,7 +270,7 @@ export const EnvironmentAuthLive = Layer.effect(
           isLoopbackHostname(hostname) ||
           (config.host !== undefined &&
             hostname === config.host.replace(/^\[/, "").replace(/\]$/, "")) ||
-          allowedOrigins.has(`${url.protocol}//${hostHeader}`);
+          configuredAllowedOrigins.has(`${url.protocol}//${hostHeader}`);
         if (!hostAllowed) {
           return false;
         }
@@ -262,7 +283,14 @@ export const EnvironmentAuthLive = Layer.effect(
       // Remote: the session credential + SameSite cookie is the real boundary.
       // If an allowlist is configured, enforce it as defense-in-depth; otherwise
       // accept (a reverse proxy obscures the browser-facing origin).
-      if (origin && allowedOrigins.size > 0 && !originAllowed(origin)) {
+      if (
+        !isRemoteWebSocketOriginAllowed({
+          origin,
+          requestUrl: url,
+          devOrigin,
+          configuredAllowedOrigins,
+        })
+      ) {
         return false;
       }
       return true;
@@ -297,6 +325,7 @@ export const EnvironmentAuthLive = Layer.effect(
           ? sessions.create({ username, metadata: input.metadata })
           : sessions.create({ username });
       },
+      createSession: (input) => sessions.create(input),
       verifyCredentials: (input) => credentials.verify(input.username, input.password),
       setCredentials: (input) => credentials.setCredentials(input.username, input.password),
       logout: (token) => {

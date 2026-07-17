@@ -99,7 +99,7 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { BrailleLoader, pickRandomBrailleSpinnerName } from "../ui/braille-loader";
+import { RandomDotMatrixLoader } from "../ui/dot-matrix-loader";
 import { type TimestampFormat } from "contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
@@ -1767,14 +1767,10 @@ const AssistantMessageMeta = memo(function AssistantMessageMeta(props: {
 const WorkingIndicator = memo(function WorkingIndicator(props: { createdAt: string | null }) {
   const nowIso = useLiveNowIso(props.createdAt !== null);
   const label = formatWorkingTimer(props.createdAt, nowIso);
-  const spinnerNameRef = useRef<ReturnType<typeof pickRandomBrailleSpinnerName> | null>(null);
-  if (spinnerNameRef.current === null) {
-    spinnerNameRef.current = pickRandomBrailleSpinnerName();
-  }
 
   return (
-    <p className={cn(CHAT_THREAD_BODY_CLASS, "text-foreground")}>
-      <BrailleLoader className="mr-1.5 text-foreground" spinnerName={spinnerNameRef.current} />
+    <p className={cn(CHAT_THREAD_BODY_CLASS, "flex items-center text-foreground")}>
+      <RandomDotMatrixLoader className="mr-1.5" />
       <span className="shimmer shimmer-spread-200">{label}</span>
     </p>
   );

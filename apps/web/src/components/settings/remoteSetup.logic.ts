@@ -1,12 +1,12 @@
 /**
- * Pure logic for the remote-access setup wizard: the two Tailscale exposure
- * modes, their prerequisite checks against a RemoteStatus snapshot, and
+ * Pure logic for the remote-access setup wizard: hosted Link and the two
+ * Tailscale exposure modes, their prerequisite checks against a RemoteStatus snapshot, and
  * client-side input validation. Kept free of React so it can be unit-tested
  * directly.
  */
 import type { RemoteStatus } from "contracts";
 
-export type WizardMethod = "tailscale-serve" | "tailscale-funnel";
+export type WizardMethod = "shiori-link" | "tailscale-serve" | "tailscale-funnel";
 
 export type WizardStepId = "method" | "prerequisites" | "credentials" | "enable";
 
@@ -23,6 +23,13 @@ export const METHOD_CHOICES: ReadonlyArray<{
   badge: string;
   description: string;
 }> = [
+  {
+    value: "shiori-link",
+    label: "ShioriCode Link",
+    badge: "Recommended · no Tailscale",
+    description:
+      "Get a stable shiori.codes link through Shiori's hosted relay. Sign in once; this machine only makes an outbound encrypted connection.",
+  },
   {
     value: "tailscale-serve",
     label: "Only my devices",
@@ -52,8 +59,21 @@ export interface PrereqCheck {
 /** Prerequisite checklist for a method, derived from the latest status. */
 export function prerequisiteChecks(
   method: WizardMethod,
-  status: Pick<RemoteStatus, "tailscale">,
+  status: Pick<RemoteStatus, "link" | "tailscale">,
 ): PrereqCheck[] {
+  if (method === "shiori-link") {
+    return [
+      {
+        id: "shiori-account",
+        label: "Shiori account is connected",
+        ok: status.link.accountLinked,
+        hint: status.link.accountLinked
+          ? null
+          : "Sign in to Shiori in your browser, then return here.",
+        href: null,
+      },
+    ];
+  }
   const tailscale = status.tailscale;
   const checks: PrereqCheck[] = [
     {
@@ -91,7 +111,7 @@ export function prerequisiteChecks(
 
 export function prerequisitesSatisfied(
   method: WizardMethod,
-  status: Pick<RemoteStatus, "tailscale">,
+  status: Pick<RemoteStatus, "link" | "tailscale">,
 ): boolean {
   return prerequisiteChecks(method, status).every((check) => check.ok);
 }

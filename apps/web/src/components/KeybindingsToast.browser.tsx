@@ -76,7 +76,6 @@ function createBaseServerConfig(): ServerConfig {
       computerUse: { enabled: false },
       browserUse: { enabled: false },
       mobileApp: { enabled: false },
-      goals: { enabled: false },
       mcpServers: { servers: [] },
       providers: {
         kimiCode: { enabled: true, binaryPath: "kimi", shareDir: "", customModels: [] },
@@ -161,6 +160,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
+          goalLifecycleKey: null,
           lastError: null,
           updatedAt: NOW_ISO,
         },

@@ -1,19 +1,24 @@
 {
   "name": "shioricode",
-  "version": "0.4.20",
+  "version": "0.5.1",
+  "description": "Run ShioriCode locally or publish it securely through ShioriCode Link.",
   "license": "Elastic-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/shiorihq/shioricode",
+    "url": "git+https://github.com/shiorihq/shioricode.git",
     "directory": "apps/server"
   },
   "bin": {
-    "shioricode": "./dist/bin.mjs"
+    "shioricode": "dist/bin.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun run src/bin.ts",
     "dev:bundle": "tsdown --watch",
@@ -23,31 +28,32 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cursor/sdk": "1.0.17",
+    "node-pty": "^1.1.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
     "@ai-sdk/mcp": "^2.0.0-beta.18",
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
-    "@cursor/sdk": "1.0.17",
+    "@effect/language-service": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
+    "@effect/vitest": "catalog:",
     "@moonshot-ai/kimi-agent-sdk": "^0.1.8",
     "@pierre/diffs": "^1.1.0-beta.16",
-    "ai": "^6.0.141",
-    "effect": "catalog:",
-    "google-antigravity": "workspace:*",
-    "node-pty": "^1.1.0",
-    "open": "^10.1.0",
-    "smol-toml": "^1.6.0",
-    "uploadthing": "^7.7.4"
-  },
-  "devDependencies": {
-    "@effect/language-service": "catalog:",
-    "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
+    "ai": "^6.0.141",
     "contracts": "workspace:*",
+    "effect": "catalog:",
+    "google-antigravity": "workspace:*",
+    "open": "^10.1.0",
     "shared": "workspace:*",
+    "smol-toml": "^1.6.0",
     "tsdown": "catalog:",
     "typescript": "catalog:",
+    "uploadthing": "^7.7.4",
     "vitest": "catalog:",
     "web": "workspace:*"
   },

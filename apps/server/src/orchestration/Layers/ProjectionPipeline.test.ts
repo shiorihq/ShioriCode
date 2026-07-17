@@ -196,6 +196,128 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-thread-goal-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("persists goal updates and clears in the thread projection", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.makeUnsafe("thread-goal-projection");
+        const createdAt = "2026-07-01T00:00:00.000Z";
+        const goalUpdatedAt = "2026-07-01T00:00:01.000Z";
+        const clearedAt = "2026-07-01T00:00:02.000Z";
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe("event-thread-goal-created"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.makeUnsafe("command-thread-goal-created"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("command-thread-goal-created"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.makeUnsafe("project-thread-goal"),
+            title: "Goal projection thread",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.goal-updated",
+          eventId: EventId.makeUnsafe("event-thread-goal-updated"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: goalUpdatedAt,
+          commandId: CommandId.makeUnsafe("command-thread-goal-updated"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("command-thread-goal-updated"),
+          metadata: {},
+          payload: {
+            threadId,
+            goal: {
+              threadId,
+              objective: "Survive a server restart",
+              status: "active",
+              tokenBudget: 25_000,
+              tokensUsed: 1_000,
+              timeUsedSeconds: 60,
+              createdAt: goalUpdatedAt,
+              updatedAt: goalUpdatedAt,
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const goalRows = yield* sql<{
+          readonly goal: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT
+            goal_json AS "goal",
+            updated_at AS "updatedAt"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepStrictEqual(JSON.parse(goalRows[0]?.goal ?? "null"), {
+          threadId: "thread-goal-projection",
+          objective: "Survive a server restart",
+          status: "active",
+          tokenBudget: 25_000,
+          tokensUsed: 1_000,
+          timeUsedSeconds: 60,
+          createdAt: goalUpdatedAt,
+          updatedAt: goalUpdatedAt,
+        });
+        assert.equal(goalRows[0]?.updatedAt, goalUpdatedAt);
+
+        const clearEvent = yield* eventStore.append({
+          type: "thread.goal-cleared",
+          eventId: EventId.makeUnsafe("event-thread-goal-cleared"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: clearedAt,
+          commandId: CommandId.makeUnsafe("command-thread-goal-cleared"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("command-thread-goal-cleared"),
+          metadata: {},
+          payload: {
+            threadId,
+            clearedAt,
+          },
+        });
+        yield* projectionPipeline.projectEvent(clearEvent);
+
+        const clearedRows = yield* sql<{
+          readonly goal: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT
+            goal_json AS "goal",
+            updated_at AS "updatedAt"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.equal(clearedRows[0]?.goal, null);
+        assert.equal(clearedRows[0]?.updatedAt, clearedAt);
+      }),
+    );
+  },
+);
+
 it("bootstraps from a shared replay stream instead of scanning once per projector", async () => {
   const readCounter = await Effect.runPromise(Ref.make(0));
   const now = new Date().toISOString();
@@ -1796,7 +1918,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
-it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
+it.effect("restores multiple pending turn starts in acceptance order across restart", () =>
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
@@ -1810,8 +1932,10 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
     );
 
     const threadId = ThreadId.makeUnsafe("thread-restart");
-    const turnId = TurnId.makeUnsafe("turn-restart");
-    const messageId = MessageId.makeUnsafe("message-restart");
+    const firstTurnId = TurnId.makeUnsafe("turn-restart-first");
+    const secondTurnId = TurnId.makeUnsafe("turn-restart-second");
+    const firstMessageId = MessageId.makeUnsafe("message-restart-first");
+    const secondMessageId = MessageId.makeUnsafe("message-restart-second");
     const sourcePlanThreadId = ThreadId.makeUnsafe("thread-plan-source");
     const sourcePlanId = "plan-source";
     const turnStartedAt = "2026-02-26T14:00:00.000Z";
@@ -1833,12 +1957,32 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         metadata: {},
         payload: {
           threadId,
-          messageId,
+          messageId: firstMessageId,
           sourceProposedPlan: {
             threadId: sourcePlanThreadId,
             planId: sourcePlanId,
           },
           runtimeMode: "approval-required",
+          goalLifecycleKey: "goal:first",
+          createdAt: turnStartedAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.turn-start-requested",
+        eventId: EventId.makeUnsafe("evt-restart-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: turnStartedAt,
+        commandId: CommandId.makeUnsafe("cmd-restart-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-restart-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId: secondMessageId,
+          runtimeMode: "approval-required",
+          goalLifecycleKey: "goal:second",
           createdAt: turnStartedAt,
         },
       });
@@ -1853,13 +1997,13 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 
       yield* eventStore.append({
         type: "thread.session-set",
-        eventId: EventId.makeUnsafe("evt-restart-2"),
+        eventId: EventId.makeUnsafe("evt-restart-3"),
         aggregateKind: "thread",
         aggregateId: threadId,
         occurredAt: sessionSetAt,
-        commandId: CommandId.makeUnsafe("cmd-restart-2"),
+        commandId: CommandId.makeUnsafe("cmd-restart-3"),
         causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-restart-2"),
+        correlationId: CorrelationId.makeUnsafe("cmd-restart-3"),
         metadata: {},
         payload: {
           threadId,
@@ -1868,7 +2012,8 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
             status: "running",
             providerName: "codex",
             runtimeMode: "approval-required",
-            activeTurnId: turnId,
+            activeTurnId: firstTurnId,
+            goalLifecycleKey: "goal:first",
             lastError: null,
             updatedAt: sessionSetAt,
           },
@@ -1877,20 +2022,121 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 
       yield* projectionPipeline.bootstrap;
 
-      const pendingRows = yield* sql<{ readonly threadId: string }>`
-        SELECT thread_id AS "threadId"
+      const pendingRows = yield* sql<{
+        readonly messageId: string;
+        readonly goalLifecycleKey: string | null;
+      }>`
+        SELECT
+          pending_message_id AS "messageId",
+          goal_lifecycle_key AS "goalLifecycleKey"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+        ORDER BY row_id ASC
+      `;
+      assert.deepEqual(pendingRows, [
+        {
+          messageId: "message-restart-second",
+          goalLifecycleKey: "goal:second",
+        },
+      ]);
+
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      // A repeated running update for the same physical turn must not consume
+      // the next queued request.
+      yield* appendAndProject({
+        type: "thread.session-set",
+        eventId: EventId.makeUnsafe("evt-restart-4"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-26T14:00:06.000Z",
+        commandId: CommandId.makeUnsafe("cmd-restart-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-restart-4"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: firstTurnId,
+            goalLifecycleKey: "goal:first",
+            lastError: null,
+            updatedAt: "2026-02-26T14:00:06.000Z",
+          },
+        },
+      });
+      yield* appendAndProject({
+        type: "thread.session-set",
+        eventId: EventId.makeUnsafe("evt-restart-5"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-26T14:00:07.000Z",
+        commandId: CommandId.makeUnsafe("cmd-restart-5"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-restart-5"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            goalLifecycleKey: null,
+            lastError: null,
+            updatedAt: "2026-02-26T14:00:07.000Z",
+          },
+        },
+      });
+      yield* appendAndProject({
+        type: "thread.session-set",
+        eventId: EventId.makeUnsafe("evt-restart-6"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-26T14:00:08.000Z",
+        commandId: CommandId.makeUnsafe("cmd-restart-6"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-restart-6"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: secondTurnId,
+            goalLifecycleKey: "goal:second",
+            lastError: null,
+            updatedAt: "2026-02-26T14:00:08.000Z",
+          },
+        },
+      });
+
+      const remainingPendingRows = yield* sql<{ readonly messageId: string }>`
+        SELECT pending_message_id AS "messageId"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
           AND state = 'pending'
       `;
-      assert.deepEqual(pendingRows, []);
+      assert.deepEqual(remainingPendingRows, []);
 
       return yield* sql<{
         readonly turnId: string;
         readonly userMessageId: string | null;
         readonly sourceProposedPlanThreadId: string | null;
         readonly sourceProposedPlanId: string | null;
+        readonly goalLifecycleKey: string | null;
         readonly startedAt: string;
       }>`
         SELECT
@@ -1898,18 +2144,30 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
           pending_message_id AS "userMessageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          goal_lifecycle_key AS "goalLifecycleKey",
           started_at AS "startedAt"
         FROM projection_turns
-        WHERE turn_id = ${turnId}
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NOT NULL
+        ORDER BY row_id ASC
       `;
     }).pipe(Effect.provide(secondProjectionLayer));
 
     assert.deepEqual(turnRows, [
       {
-        turnId: "turn-restart",
-        userMessageId: "message-restart",
+        turnId: "turn-restart-first",
+        userMessageId: "message-restart-first",
         sourceProposedPlanThreadId: "thread-plan-source",
         sourceProposedPlanId: "plan-source",
+        goalLifecycleKey: "goal:first",
+        startedAt: turnStartedAt,
+      },
+      {
+        turnId: "turn-restart-second",
+        userMessageId: "message-restart-second",
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        goalLifecycleKey: "goal:second",
         startedAt: turnStartedAt,
       },
     ]);
@@ -1923,6 +2181,213 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
       ),
     ),
   ),
+);
+
+it.effect(
+  "keeps explicit null goal ownership when a newer plan turn retires a stale continuation",
+  () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      const projectScenario = (input: {
+        readonly suffix: "existing" | "new";
+        readonly precreateConcreteTurn: boolean;
+      }) =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.makeUnsafe(`thread-plan-null-${input.suffix}`);
+          const turnId = TurnId.makeUnsafe(`turn-plan-null-${input.suffix}`);
+          const continuationMessageId = MessageId.makeUnsafe(
+            `goal-continuation:plan-null-${input.suffix}`,
+          );
+          const planMessageId = MessageId.makeUnsafe(`message-plan-null-${input.suffix}`);
+          const continuationAt = "2026-07-16T15:00:00.000Z";
+          const planRequestedAt = "2026-07-16T15:00:01.000Z";
+          const assistantAt = "2026-07-16T15:00:02.000Z";
+          const runningAt = "2026-07-16T15:00:03.000Z";
+
+          yield* appendAndProject({
+            type: "thread.goal-continuation-requested",
+            eventId: EventId.makeUnsafe(`event-plan-null-${input.suffix}-continuation`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: continuationAt,
+            commandId: CommandId.makeUnsafe(`command-plan-null-${input.suffix}-continuation`),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe(
+              `command-plan-null-${input.suffix}-continuation`,
+            ),
+            metadata: {},
+            payload: {
+              threadId,
+              expectedGoalLifecycleKey: `goal:stale-${input.suffix}`,
+              messageId: continuationMessageId,
+              createdAt: continuationAt,
+            },
+          });
+          yield* appendAndProject({
+            type: "thread.turn-start-requested",
+            eventId: EventId.makeUnsafe(`event-plan-null-${input.suffix}-plan`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: planRequestedAt,
+            commandId: CommandId.makeUnsafe(`command-plan-null-${input.suffix}-plan`),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe(`command-plan-null-${input.suffix}-plan`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: planMessageId,
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              goalLifecycleKey: null,
+              createdAt: planRequestedAt,
+            },
+          });
+
+          if (input.precreateConcreteTurn) {
+            yield* appendAndProject({
+              type: "thread.message-sent",
+              eventId: EventId.makeUnsafe(`event-plan-null-${input.suffix}-assistant`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: assistantAt,
+              commandId: CommandId.makeUnsafe(`command-plan-null-${input.suffix}-assistant`),
+              causationEventId: null,
+              correlationId: CorrelationId.makeUnsafe(
+                `command-plan-null-${input.suffix}-assistant`,
+              ),
+              metadata: {},
+              payload: {
+                threadId,
+                messageId: MessageId.makeUnsafe(`assistant-plan-null-${input.suffix}`),
+                role: "assistant",
+                text: "",
+                turnId,
+                streaming: true,
+                createdAt: assistantAt,
+                updatedAt: assistantAt,
+              },
+            });
+          }
+
+          yield* appendAndProject({
+            type: "thread.session-set",
+            eventId: EventId.makeUnsafe(`event-plan-null-${input.suffix}-running`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: runningAt,
+            commandId: CommandId.makeUnsafe(`command-plan-null-${input.suffix}-running`),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe(`command-plan-null-${input.suffix}-running`),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: turnId,
+                goalLifecycleKey: null,
+                lastError: null,
+                updatedAt: runningAt,
+              },
+            },
+          });
+        });
+
+      yield* projectScenario({ suffix: "new", precreateConcreteTurn: false });
+      yield* projectScenario({ suffix: "existing", precreateConcreteTurn: true });
+
+      const pendingRows = yield* sql<{
+        readonly threadId: string;
+        readonly messageId: string;
+        readonly goalLifecycleKey: string | null;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          goal_lifecycle_key AS "goalLifecycleKey"
+        FROM projection_turns
+        WHERE thread_id IN ('thread-plan-null-existing', 'thread-plan-null-new')
+          AND turn_id IS NULL
+          AND state = 'pending'
+        ORDER BY thread_id ASC
+      `;
+      assert.deepEqual(pendingRows, [
+        {
+          threadId: "thread-plan-null-existing",
+          messageId: "message-plan-null-existing",
+          goalLifecycleKey: null,
+        },
+        {
+          threadId: "thread-plan-null-new",
+          messageId: "message-plan-null-new",
+          goalLifecycleKey: null,
+        },
+      ]);
+
+      const concreteRows = yield* sql<{
+        readonly threadId: string;
+        readonly turnId: string;
+        readonly goalLifecycleKey: string | null;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          goal_lifecycle_key AS "goalLifecycleKey"
+        FROM projection_turns
+        WHERE thread_id IN ('thread-plan-null-existing', 'thread-plan-null-new')
+          AND turn_id IS NOT NULL
+        ORDER BY thread_id ASC
+      `;
+      assert.deepEqual(concreteRows, [
+        {
+          threadId: "thread-plan-null-existing",
+          turnId: "turn-plan-null-existing",
+          goalLifecycleKey: null,
+        },
+        {
+          threadId: "thread-plan-null-new",
+          turnId: "turn-plan-null-new",
+          goalLifecycleKey: null,
+        },
+      ]);
+
+      const sessionRows = yield* sql<{
+        readonly threadId: string;
+        readonly activeTurnId: string;
+        readonly goalLifecycleKey: string | null;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          active_turn_id AS "activeTurnId",
+          goal_lifecycle_key AS "goalLifecycleKey"
+        FROM projection_thread_sessions
+        WHERE thread_id IN ('thread-plan-null-existing', 'thread-plan-null-new')
+        ORDER BY thread_id ASC
+      `;
+      assert.deepEqual(sessionRows, [
+        {
+          threadId: "thread-plan-null-existing",
+          activeTurnId: "turn-plan-null-existing",
+          goalLifecycleKey: null,
+        },
+        {
+          threadId: "thread-plan-null-new",
+          activeTurnId: "turn-plan-null-new",
+          goalLifecycleKey: null,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(makeProjectionPipelinePrefixedTestLayer("t3-projection-plan-null-goal-test-")),
+    ),
 );
 
 it.effect(
@@ -2017,6 +2482,7 @@ it.effect(
               providerName: "codex",
               runtimeMode: "full-access",
               activeTurnId: turnId,
+              goalLifecycleKey: null,
               lastError: null,
               updatedAt: startedAt,
             },
@@ -2083,6 +2549,7 @@ it.effect(
               providerName: "codex",
               runtimeMode: "full-access",
               activeTurnId: null,
+              goalLifecycleKey: null,
               lastError: null,
               updatedAt: settledAt,
             },

@@ -1,8 +1,14 @@
-/**
- * True when running inside the Electron preload bridge, false in a regular browser.
- * Desktop preload exposes `window.desktopBridge` immediately; `window.nativeApi`
- * may be populated later by the web app once auth allows the WS-backed client.
- */
+export function detectElectronRuntime(input: {
+  readonly userAgent: string;
+  readonly hasDesktopBridge: boolean;
+}): boolean {
+  return input.hasDesktopBridge || /\bElectron\/[\d.]+/i.test(input.userAgent);
+}
+
+/** True only for the Electron runtime, never for similarly named browser globals. */
 export const isElectron =
   typeof window !== "undefined" &&
-  (window.desktopBridge !== undefined || window.nativeApi !== undefined);
+  detectElectronRuntime({
+    userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+    hasDesktopBridge: window.desktopBridge !== undefined,
+  });

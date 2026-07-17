@@ -6,6 +6,11 @@ export interface AuthSessionDescriptor {
   readonly authenticated: boolean;
   readonly username: string | null;
   readonly sessionId: string | null;
+  readonly authMode: "credentials" | "shioricode-link";
+}
+
+export function hostedLinkSignInUrl(): string {
+  return authUrl("/api/auth/link/start");
 }
 
 /** Resolve an HTTP(S) URL on the server origin (derived from the WebSocket URL). */

@@ -14,8 +14,6 @@ import {
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
-  type ThreadGoal,
-  type ThreadGoalStatus,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -54,6 +52,7 @@ import { fetchCodexOAuthUsageSnapshot } from "../codexUsage.ts";
 import {
   loadCodexManagedMcpServers,
   prepareCodexHomeWithManagedMcpServers,
+  requireThreadGoalMcpServerEntry,
 } from "../mcpServers.ts";
 import {
   resolvePreferredCodexBinaryPath,
@@ -83,6 +82,7 @@ export interface CodexAdapterLiveOptions {
       | undefined,
   ) => Promise<CodexUsageSnapshot | null>;
   readonly loadManagedMcpServers?: typeof loadCodexManagedMcpServers;
+  readonly prepareManagedMcpHome?: typeof prepareCodexHomeWithManagedMcpServers;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -213,7 +213,18 @@ function isFatalCodexProcessStderrMessage(message: string): boolean {
   return FATAL_CODEX_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet));
 }
 
-function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | undefined {
+function codexCumulativeProcessedTokens(value: unknown): number | undefined {
+  const usage = asObject(value);
+  const totalUsage = asObject(usage?.total_token_usage ?? usage?.total);
+  return (
+    asNonNegativeInteger(totalUsage?.total_tokens) ?? asNonNegativeInteger(totalUsage?.totalTokens)
+  );
+}
+
+function normalizeCodexTokenUsage(
+  value: unknown,
+  processedTokensDelta?: number,
+): ThreadTokenUsageSnapshot | undefined {
   const usage = asObject(value);
   const totalUsage = asObject(usage?.total_token_usage ?? usage?.total);
   const lastUsage = asObject(usage?.last_token_usage ?? usage?.last);
@@ -239,6 +250,7 @@ function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | un
     ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
       ? { totalProcessedTokens }
       : {}),
+    ...(processedTokensDelta !== undefined ? { processedTokensDelta } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
@@ -252,82 +264,6 @@ function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | un
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
-  };
-}
-
-function normalizeCodexGoalTimestamp(value: unknown): string | undefined {
-  const text = asString(value)?.trim();
-  if (text) {
-    const timestamp = Date.parse(text);
-    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
-  }
-
-  const number = asNumber(value);
-  if (number === undefined || number < 0) {
-    return undefined;
-  }
-
-  const milliseconds = number > 10_000_000_000 ? number : number * 1000;
-  const date = new Date(milliseconds);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
-}
-
-function toThreadGoalStatus(value: unknown): ThreadGoalStatus | undefined {
-  switch (value) {
-    case "active":
-    case "paused":
-    case "blocked":
-    case "usageLimited":
-    case "budgetLimited":
-    case "complete":
-      return value;
-    default:
-      return undefined;
-  }
-}
-
-function normalizeCodexThreadGoal(
-  value: unknown,
-  fallbackThreadId: ThreadId,
-): ThreadGoal | undefined {
-  const goal = asObject(value);
-  if (!goal) {
-    return undefined;
-  }
-
-  const objective = asString(goal.objective)?.trim();
-  const status = toThreadGoalStatus(goal.status);
-  const tokensUsed = asNonNegativeInteger(goal.tokensUsed ?? goal.tokens_used);
-  const timeUsedSeconds = asNonNegativeInteger(goal.timeUsedSeconds ?? goal.time_used_seconds);
-  const createdAt = normalizeCodexGoalTimestamp(goal.createdAt ?? goal.created_at);
-  const updatedAt = normalizeCodexGoalTimestamp(goal.updatedAt ?? goal.updated_at);
-
-  if (
-    !objective ||
-    !status ||
-    tokensUsed === undefined ||
-    timeUsedSeconds === undefined ||
-    !createdAt ||
-    !updatedAt
-  ) {
-    return undefined;
-  }
-
-  const tokenBudgetValue = goal.tokenBudget ?? goal.token_budget;
-  const tokenBudget =
-    tokenBudgetValue === null ? null : (asNonNegativeInteger(tokenBudgetValue) ?? null);
-
-  return {
-    threadId: ThreadId.makeUnsafe(
-      asString(goal.threadId ?? goal.thread_id) ?? String(fallbackThreadId),
-    ),
-    objective,
-    status,
-    tokenBudget,
-    tokensUsed,
-    timeUsedSeconds,
-    createdAt,
-    updatedAt,
   };
 }
 
@@ -1227,6 +1163,7 @@ function mapAutoApprovalReview(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  options?: { readonly processedTokensDelta?: number },
 ): ReadonlyArray<ProviderRuntimeEvent> {
   const payload = asObject(event.payload);
   const turn = asObject(payload?.turn);
@@ -1452,37 +1389,12 @@ function mapToRuntimeEvents(
     ];
   }
 
-  if (event.method === "thread/goal/updated") {
-    const goal = normalizeCodexThreadGoal(payload?.goal, canonicalThreadId);
-    if (!goal) {
-      return [];
-    }
-    return [
-      {
-        type: "thread.goal.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          goal,
-        },
-      },
-    ];
-  }
-
-  if (event.method === "thread/goal/cleared") {
-    return [
-      {
-        type: "thread.goal.cleared",
-        ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          clearedAt: event.createdAt,
-        },
-      },
-    ];
-  }
-
   if (event.method === "thread/tokenUsage/updated") {
     const tokenUsage = asObject(payload?.tokenUsage);
-    const normalizedUsage = normalizeCodexTokenUsage(tokenUsage ?? event.payload);
+    const normalizedUsage = normalizeCodexTokenUsage(
+      tokenUsage ?? event.payload,
+      options?.processedTokensDelta,
+    );
     if (!normalizedUsage) {
       return [];
     }
@@ -2482,26 +2394,39 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
   });
 
-  const temporaryCodexHomesRef = yield* Ref.make(
+  const preparedCodexHomesRef = yield* Ref.make(
     new Map<ThreadId, { cleanup: () => Promise<void> }>(),
   );
+  // Codex reports a cumulative processed-token total. Keep the last observed
+  // total per live adapter session so every exposed delta is safe to sum. A
+  // resumed session starts without a baseline; its first replayed snapshot only
+  // establishes one and therefore intentionally has no delta.
+  const cumulativeProcessedTokensByThread = new Map<ThreadId, number | undefined>();
 
-  const rememberTemporaryCodexHome = (threadId: ThreadId, cleanup: () => Promise<void>) =>
-    Ref.update(temporaryCodexHomesRef, (existing) => {
+  const replacePreparedCodexHome = (
+    threadId: ThreadId,
+    cleanup: (() => Promise<void>) | undefined,
+  ) =>
+    Ref.modify(preparedCodexHomesRef, (existing) => {
       const next = new Map(existing);
-      next.set(threadId, { cleanup });
-      return next;
-    }).pipe(Effect.asVoid);
+      const replaced = next.get(threadId)?.cleanup;
+      if (cleanup) {
+        next.set(threadId, { cleanup });
+      } else {
+        next.delete(threadId);
+      }
+      return [replaced, next] as const;
+    });
 
-  const releaseTemporaryCodexHome = (threadId: ThreadId) =>
-    Ref.modify(temporaryCodexHomesRef, (existing) => {
+  const releasePreparedCodexHome = (threadId: ThreadId) =>
+    Ref.modify(preparedCodexHomesRef, (existing) => {
       const next = new Map(existing);
       const removed = next.get(threadId);
       next.delete(threadId);
       return [removed?.cleanup, next] as const;
     });
 
-  const releaseAllTemporaryCodexHomes = Ref.modify(temporaryCodexHomesRef, (existing) => [
+  const releaseAllPreparedCodexHomes = Ref.modify(preparedCodexHomesRef, (existing) => [
     [...existing.values()].map((entry) => entry.cleanup),
     new Map<ThreadId, { cleanup: () => Promise<void> }>(),
   ]);
@@ -2513,7 +2438,7 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       } catch {
         // Finalizers should never fail and block shutdown.
       }
-      const cleanups = yield* releaseAllTemporaryCodexHomes;
+      const cleanups = yield* releaseAllPreparedCodexHomes;
       yield* Effect.forEach(
         cleanups,
         (cleanup) => Effect.promise(cleanup).pipe(Effect.ignore({ log: false })),
@@ -2547,36 +2472,39 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       const codexSettings = settings.providers.codex;
       const binaryPath = resolvePreferredCodexBinaryPath(codexSettings.binaryPath);
       const supportsReasoningSummary = supportsCodexReasoningSummary(binaryPath);
-      const preparedHome = yield* Effect.tryPromise(() =>
-        (options?.loadManagedMcpServers ?? loadCodexManagedMcpServers)({
-          settings,
-          ...(input.cwd ? { cwd: input.cwd } : {}),
-        }).then(async (effectiveServers) => {
-          const prepared = await prepareCodexHomeWithManagedMcpServers({
-            threadId: String(input.threadId),
-            runtimeRootDir: serverConfig.stateDir,
-            homePath: codexSettings.homePath,
-            servers: effectiveServers.servers,
-            oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
-          });
-          return {
-            prepared,
-            warnings: effectiveServers.warnings,
-          };
-        }),
-      ).pipe(
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning(
-              "codex mcp configuration preparation failed; continuing without managed MCP servers",
-            );
-            yield* Effect.logWarning(
-              toMessage(cause, "Failed to prepare the Codex MCP configuration."),
-            );
-            return { prepared: null, warnings: [] };
+      const preparedHome = yield* Effect.tryPromise({
+        try: () =>
+          (options?.loadManagedMcpServers ?? loadCodexManagedMcpServers)({
+            settings,
+            ...(input.cwd ? { cwd: input.cwd } : {}),
+            threadGoal: { config: serverConfig, threadId: input.threadId },
+          }).then(async (effectiveServers) => {
+            requireThreadGoalMcpServerEntry({
+              provider: PROVIDER,
+              servers: effectiveServers.servers,
+            });
+            const prepared = await (
+              options?.prepareManagedMcpHome ?? prepareCodexHomeWithManagedMcpServers
+            )({
+              threadId: String(input.threadId),
+              runtimeRootDir: serverConfig.stateDir,
+              homePath: codexSettings.homePath,
+              servers: effectiveServers.servers,
+              oauthStorageDir: path.join(serverConfig.stateDir, "mcp-oauth"),
+            });
+            return {
+              prepared,
+              warnings: effectiveServers.warnings,
+            };
           }),
-        ),
-      );
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: toMessage(cause, "Failed to prepare the required Codex MCP configuration."),
+            cause,
+          }),
+      });
       for (const warning of preparedHome.warnings) {
         yield* Effect.logWarning("codex mcp arbitration warning", {
           threadId: input.threadId,
@@ -2601,6 +2529,14 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
       };
 
+      const initializedUsageBaseline = !cumulativeProcessedTokensByThread.has(input.threadId);
+      if (initializedUsageBaseline) {
+        cumulativeProcessedTokensByThread.set(
+          input.threadId,
+          input.resumeCursor === undefined ? 0 : undefined,
+        );
+      }
+
       return yield* Effect.tryPromise({
         try: () => manager.startSession(managerInput),
         catch: (cause) =>
@@ -2612,13 +2548,26 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           }),
       }).pipe(
         Effect.tap(() =>
-          preparedHome.prepared
-            ? rememberTemporaryCodexHome(input.threadId, preparedHome.prepared.cleanup)
-            : Effect.void,
+          Effect.gen(function* () {
+            const replacedCleanup = yield* replacePreparedCodexHome(
+              input.threadId,
+              preparedHome.prepared?.cleanup,
+            );
+            if (replacedCleanup && replacedCleanup !== preparedHome.prepared?.cleanup) {
+              yield* Effect.promise(replacedCleanup).pipe(Effect.ignore({ log: false }));
+            }
+          }),
         ),
         Effect.tapError(() =>
           preparedHome.prepared
             ? Effect.promise(preparedHome.prepared.cleanup).pipe(Effect.ignore({ log: false }))
+            : Effect.void,
+        ),
+        Effect.tapError(() =>
+          initializedUsageBaseline
+            ? Effect.sync(() => {
+                cumulativeProcessedTokensByThread.delete(input.threadId);
+              })
             : Effect.void,
         ),
       );
@@ -2767,8 +2716,9 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.gen(function* () {
       yield* Effect.sync(() => {
         manager.stopSession(threadId);
+        cumulativeProcessedTokensByThread.delete(threadId);
       });
-      const cleanup = yield* releaseTemporaryCodexHome(threadId);
+      const cleanup = yield* releasePreparedCodexHome(threadId);
       if (cleanup) {
         yield* Effect.promise(cleanup).pipe(Effect.ignore({ log: false }));
       }
@@ -2853,8 +2803,9 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.gen(function* () {
       yield* Effect.sync(() => {
         manager.stopAll();
+        cumulativeProcessedTokensByThread.clear();
       });
-      const cleanups = yield* releaseAllTemporaryCodexHomes;
+      const cleanups = yield* releaseAllPreparedCodexHomes;
       yield* Effect.forEach(
         cleanups,
         (cleanup) => Effect.promise(cleanup).pipe(Effect.ignore({ log: false })),
@@ -2874,8 +2825,25 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const registerListener = Effect.fn("registerListener")(function* () {
     const services = yield* Effect.services<never>();
     const listenerEffect = Effect.fn("listener")(function* (event: ProviderEvent) {
+      let processedTokensDelta: number | undefined;
+      if (event.method === "thread/tokenUsage/updated") {
+        const payload = asObject(event.payload);
+        const tokenUsage = asObject(payload?.tokenUsage) ?? event.payload;
+        const cumulativeTotal = codexCumulativeProcessedTokens(tokenUsage);
+        if (cumulativeTotal !== undefined) {
+          const previousTotal = cumulativeProcessedTokensByThread.get(event.threadId);
+          cumulativeProcessedTokensByThread.set(event.threadId, cumulativeTotal);
+          if (previousTotal !== undefined && cumulativeTotal > previousTotal) {
+            processedTokensDelta = cumulativeTotal - previousTotal;
+          }
+        }
+      }
       yield* writeNativeEvent(event);
-      const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+      const runtimeEvents = mapToRuntimeEvents(
+        event,
+        event.threadId,
+        processedTokensDelta !== undefined ? { processedTokensDelta } : undefined,
+      );
       if (runtimeEvents.length === 0) {
         yield* Effect.logDebug("ignoring unhandled Codex provider event", {
           method: event.method,

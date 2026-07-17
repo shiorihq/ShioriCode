@@ -230,6 +230,7 @@ export function cloneMcpServerConfig(config: McpServerConfig): McpServerConfig {
       name: config.name,
       command: config.command,
       args: [...config.args],
+      env: config.env ? { ...config.env } : undefined,
       ...filters,
     });
   }

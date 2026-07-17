@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@shioritools/monorepo",
@@ -58,7 +57,7 @@
     },
     "apps/desktop": {
       "name": "desktop",
-      "version": "0.4.19",
+      "version": "0.5.0",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -81,48 +80,49 @@
       },
       "devDependencies": {
         "@astrojs/check": "^0.9.7",
-        "typescript": "catalog:",
+        "typescript": "^5.9.3",
       },
     },
     "apps/server": {
       "name": "shioricode",
-      "version": "0.4.19",
+      "version": "0.5.1",
       "bin": {
-        "shioricode": "./dist/bin.mjs",
+        "shioricode": "dist/bin.mjs",
       },
       "dependencies": {
+        "@cursor/sdk": "1.0.17",
+        "node-pty": "^1.1.0",
+        "sqlite3": "^5.1.7",
+      },
+      "devDependencies": {
         "@ai-sdk/mcp": "^2.0.0-beta.18",
         "@anthropic-ai/claude-agent-sdk": "^0.2.77",
-        "@cursor/sdk": "1.0.17",
+        "@effect/language-service": "catalog:",
         "@effect/platform-bun": "catalog:",
         "@effect/platform-node": "catalog:",
         "@effect/sql-sqlite-bun": "catalog:",
+        "@effect/vitest": "catalog:",
         "@moonshot-ai/kimi-agent-sdk": "^0.1.8",
         "@pierre/diffs": "^1.1.0-beta.16",
-        "ai": "^6.0.141",
-        "effect": "catalog:",
-        "google-antigravity": "workspace:*",
-        "node-pty": "^1.1.0",
-        "open": "^10.1.0",
-        "smol-toml": "^1.6.0",
-        "uploadthing": "^7.7.4",
-      },
-      "devDependencies": {
-        "@effect/language-service": "catalog:",
-        "@effect/vitest": "catalog:",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
+        "ai": "^6.0.141",
         "contracts": "workspace:*",
+        "effect": "catalog:",
+        "google-antigravity": "workspace:*",
+        "open": "^10.1.0",
         "shared": "workspace:*",
+        "smol-toml": "^1.6.0",
         "tsdown": "catalog:",
         "typescript": "catalog:",
+        "uploadthing": "^7.7.4",
         "vitest": "catalog:",
         "web": "workspace:*",
       },
     },
     "apps/web": {
       "name": "web",
-      "version": "0.4.19",
+      "version": "0.5.0",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
         "@dnd-kit/core": "^6.3.1",
@@ -175,7 +175,6 @@
         "playwright": "^1.58.2",
         "tailwindcss": "^4.0.0",
         "typescript": "catalog:",
-        "unicode-animations": "^1.0.3",
         "vite": "^8.0.0",
         "vitest": "catalog:",
         "vitest-browser-react": "^2.0.5",
@@ -187,7 +186,7 @@
     },
     "packages/contracts": {
       "name": "contracts",
-      "version": "0.4.19",
+      "version": "0.5.0",
       "dependencies": {
         "effect": "catalog:",
       },
@@ -229,7 +228,7 @@
     },
     "packages/shared": {
       "name": "shared",
-      "version": "0.4.19",
+      "version": "0.5.0",
       "dependencies": {
         "contracts": "workspace:*",
         "effect": "catalog:",
@@ -395,6 +394,10 @@
     "@dnd-kit/sortable": ["@dnd-kit/sortable@10.0.0", "", { "dependencies": { "@dnd-kit/utilities": "^3.2.2", "tslib": "^2.0.0" }, "peerDependencies": { "@dnd-kit/core": "^6.3.0", "react": ">=16.8.0" } }, "sha512-+xqhmIIzvAYMGfBYYnbKuNicfSsk4RksY2XdmJhT+HAC01nix6fHCztU68jooFiMUB01Ky3F0FyOvhG/BZrWkg=="],
 
     "@dnd-kit/utilities": ["@dnd-kit/utilities@3.2.2", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg=="],
+
+    "@edge-runtime/primitives": ["@edge-runtime/primitives@4.1.0", "", {}, "sha512-Vw0lbJ2lvRUqc7/soqygUX216Xb8T3WBZ987oywz6aJqRxcwSVWwr9e+Nqo2m9bxobA9mdbWNNoRY6S9eko1EQ=="],
+
+    "@edge-runtime/vm": ["@edge-runtime/vm@3.2.0", "", { "dependencies": { "@edge-runtime/primitives": "4.1.0" } }, "sha512-0dEVyRLM/lG4gp1R/Ik5bfPl/1wX00xFwd5KcNH602tzBa09oF7pbTKETEhR1GjZ75K6OJnYFu8II2dyMhONMw=="],
 
     "@effect/atom-react": ["@effect/atom-react@4.0.0-beta.43", "", { "peerDependencies": { "effect": "^4.0.0-beta.43", "react": "^19.2.4", "scheduler": "*" } }, "sha512-xSrRbGXuo4d0g4ph66TQST1GNSjtQZrZj8V7OiAQFuzMYcZ0kwRIPUUFwOBtbWHK43/zNENdNWOnlXh/iYM1dw=="],
 
@@ -2255,8 +2258,6 @@
     "undici": ["undici@7.24.4", "", {}, "sha512-BM/JzwwaRXxrLdElV2Uo6cTLEjhSb3WXboncJamZ15NgUURmvlXvxa6xkwIOILIjPNo9i8ku136ZvWV0Uly8+w=="],
 
     "undici-types": ["undici-types@7.16.0", "", {}, "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw=="],
-
-    "unicode-animations": ["unicode-animations@1.0.3", "", { "dependencies": { "unicode-animations": "^1.0.1" }, "bin": { "unicode-animations": "scripts/demo.cjs" } }, "sha512-+klB2oWwcYZjYWhwP4Pr8UZffWDFVx6jKeIahE6z0QYyM2dwDeDPyn5nevCYbyotxvtT9lh21cVURO1RX0+YMg=="],
 
     "unified": ["unified@11.0.5", "", { "dependencies": { "@types/unist": "^3.0.0", "bail": "^2.0.0", "devlop": "^1.0.0", "extend": "^3.0.0", "is-plain-obj": "^4.0.0", "trough": "^2.0.0", "vfile": "^6.0.0" } }, "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA=="],
 

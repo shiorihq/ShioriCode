@@ -16,7 +16,6 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
-  type ThreadGoalStatus,
 } from "contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "shared/model";
 import { truncate } from "shared/String";
@@ -200,6 +199,8 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveGoalSendModeForQueuedDraftRestore,
+  deriveGoalIntentForSend,
   getVisibleChatProviderStatus,
   hasServerAcknowledgedLocalDispatch,
   PullRequestDialogState,
@@ -207,6 +208,7 @@ import {
   reconcileMountedTerminalThreadIds,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldConfirmGoalReplacement,
   threadHasStarted,
   waitForServerThread,
   waitForStartedServerThread,
@@ -365,6 +367,7 @@ function buildUnsupportedImageAttachmentMessage(modelName: string): string {
 const REVIEW_RECENT_CHANGES_PROMPT = "Review the recent changes and suggest improvements.";
 const COMPACT_THREAD_CONTEXT_PROMPT =
   "Compact this thread's context. Preserve the current goal, constraints, important files, decisions, unfinished work, and the best next steps so we can continue cleanly later.";
+const GOAL_MUTATION_UNAVAILABLE_MESSAGE = "Connect to ShioriCode and open a synced thread first.";
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 
 const extendReplacementRangeForTrailingSpace = (
@@ -2529,6 +2532,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       setComposerDraftModelSelection(queuedDraft.threadId, queuedDraft.modelSelection);
       setComposerDraftRuntimeMode(queuedDraft.threadId, queuedDraft.runtimeMode);
       setComposerDraftInteractionMode(queuedDraft.threadId, queuedDraft.interactionMode);
+      setGoalSendMode(deriveGoalSendModeForQueuedDraftRestore(queuedDraft));
       setComposerCursor(collapseExpandedComposerCursor(restoredPrompt, restoredPrompt.length));
       setComposerTrigger(detectComposerTrigger(restoredPrompt, restoredPrompt.length));
       setThreadError(queuedDraft.threadId, null);
@@ -2701,12 +2705,34 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       setComposerDraftInteractionMode(threadId, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, { interactionMode: mode });
+      } else if (isServerThread) {
+        const api = readNativeApi();
+        if (api) {
+          void api.orchestration
+            .dispatchCommand({
+              type: "thread.interaction-mode.set",
+              commandId: newCommandId(),
+              threadId,
+              interactionMode: mode,
+              createdAt: new Date().toISOString(),
+            })
+            .catch((error: unknown) => {
+              setComposerDraftInteractionMode(threadId, interactionMode);
+              toastManager.add({
+                type: "warning",
+                title: "Could not change interaction mode",
+                description:
+                  error instanceof Error ? error.message : "The mode update was rejected.",
+              });
+            });
+        }
       }
       scheduleComposerFocus();
     },
     [
       interactionMode,
       isLocalDraftThread,
+      isServerThread,
       scheduleComposerFocus,
       setComposerDraftInteractionMode,
       setDraftThreadContext,
@@ -2742,58 +2768,72 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   const handleGoalSet = useCallback(
     async (patch: {
       objective?: string;
-      status?: ThreadGoalStatus;
+      status?: "active" | "paused" | "complete";
       tokenBudget?: number | null;
     }) => {
       const api = readNativeApi();
       if (!api || !(await ensureThreadForGoalMode())) {
+        const error = new Error(GOAL_MUTATION_UNAVAILABLE_MESSAGE);
         toastManager.add({
           type: "warning",
-          title: "Goal mode is unavailable",
-          description: "Start or reconnect this thread before setting a goal.",
+          title: "Goal update is unavailable",
+          description: error.message,
         });
-        return;
+        throw error;
       }
       await api.orchestration.dispatchCommand({
         type: "thread.goal.set",
         commandId: newCommandId(),
         threadId,
+        expectedGoalLifecycleKey: activeThread?.goal
+          ? (activeThread.goal.lifecycleId ?? activeThread.goal.createdAt)
+          : null,
         ...(patch.objective !== undefined ? { objective: patch.objective } : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.tokenBudget !== undefined ? { tokenBudget: patch.tokenBudget } : {}),
         createdAt: new Date().toISOString(),
       });
     },
-    [ensureThreadForGoalMode, threadId],
+    [activeThread?.goal, ensureThreadForGoalMode, threadId],
   );
   const handleGoalClear = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !(await ensureThreadForGoalMode())) {
+      const error = new Error(GOAL_MUTATION_UNAVAILABLE_MESSAGE);
       toastManager.add({
         type: "warning",
-        title: "Goal mode is unavailable",
-        description: "Start or reconnect this thread before clearing a goal.",
+        title: "Goal update is unavailable",
+        description: error.message,
       });
-      return;
+      throw error;
     }
     await api.orchestration.dispatchCommand({
       type: "thread.goal.clear",
       commandId: newCommandId(),
       threadId,
+      expectedGoalLifecycleKey: activeThread?.goal
+        ? (activeThread.goal.lifecycleId ?? activeThread.goal.createdAt)
+        : null,
       createdAt: new Date().toISOString(),
     });
-  }, [ensureThreadForGoalMode, threadId]);
-  const handleGoalStatusChange = useCallback(
-    (status: ThreadGoalStatus) => handleGoalSet({ status }),
-    [handleGoalSet],
-  );
+  }, [activeThread?.goal, ensureThreadForGoalMode, threadId]);
   const toggleGoalSendMode = useCallback(() => {
+    if (interactionMode === "plan") {
+      setGoalSendMode(false);
+      scheduleComposerFocus();
+      return;
+    }
     setGoalSendMode((prev) => !prev);
     scheduleComposerFocus();
-  }, [scheduleComposerFocus]);
+  }, [interactionMode, scheduleComposerFocus]);
   useEffect(() => {
     setGoalSendMode(false);
   }, [threadId]);
+  useEffect(() => {
+    if (interactionMode === "plan") {
+      setGoalSendMode(false);
+    }
+  }, [interactionMode]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -4018,12 +4058,31 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
 
     sendInFlightRef.current = true;
 
-    // When goal-send mode is active, the submitted prompt becomes this thread's
-    // goal objective. Capture the intent before the composer is cleared, then
-    // dispatch it once the turn is on its way (see each send path below).
-    const sendAsGoal = goalSendMode;
-    const goalObjective = sendAsGoal ? trimmed : "";
-    if (sendAsGoal) {
+    const goalIntent = deriveGoalIntentForSend({
+      goalSendMode,
+      objective: trimmed,
+      interactionMode,
+      standaloneSlashCommand,
+      expectedGoalLifecycleKey: activeThread.goal
+        ? (activeThread.goal.lifecycleId ?? activeThread.goal.createdAt)
+        : null,
+    });
+    if (goalIntent && shouldConfirmGoalReplacement(activeThread.goal ?? null)) {
+      const confirmed = await api.dialogs
+        .confirm(`Replace goal?\n\nNew objective: ${truncate(goalIntent.objective, 200)}`)
+        .catch((error: unknown) => {
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error ? error.message : "Could not confirm goal replacement.",
+          );
+          return false;
+        });
+      if (!confirmed) {
+        sendInFlightRef.current = false;
+        return;
+      }
+    }
+    if (goalIntent) {
       setGoalSendMode(false);
     }
 
@@ -4119,6 +4178,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               role: "user",
               text: outgoingMessageText,
             },
+            ...(goalIntent ? { goalIntent } : {}),
             createdAt: messageCreatedAt,
           })
           .catch((err: unknown) => {
@@ -4139,10 +4199,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               threadIdForSend,
               err instanceof Error ? err.message : "Failed to steer the running turn.",
             );
+            if (goalIntent) {
+              setGoalSendMode(true);
+            }
           });
-        if (goalObjective) {
-          void handleGoalSet({ objective: goalObjective });
-        }
         sendInFlightRef.current = false;
         resetLocalDispatch();
         return;
@@ -4161,6 +4221,32 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         });
       }
 
+      if (activeThread.goal?.status === "active") {
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.goal.set",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            expectedGoalLifecycleKey: activeThread.goal.lifecycleId ?? activeThread.goal.createdAt,
+            status: "paused",
+            createdAt: new Date().toISOString(),
+          });
+        } catch (error) {
+          setThreadError(
+            threadIdForSend,
+            error instanceof Error
+              ? error.message
+              : "Could not pause the active goal before queuing this message.",
+          );
+          if (goalIntent) {
+            setGoalSendMode(true);
+          }
+          sendInFlightRef.current = false;
+          resetLocalDispatch();
+          return;
+        }
+      }
+
       flushSync(() => {
         enqueueQueuedTurn({
           id: randomUUID(),
@@ -4171,6 +4257,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           modelSelection: selectedModelSelection,
           runtimeMode,
           interactionMode,
+          goalIntent,
           titleSeed: activeThread.title.trim() || "New Thread",
           createdAt: messageCreatedAt,
           composerSnapshot: {
@@ -4192,12 +4279,12 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
       toastManager.add({
         type: "info",
         title: "Message queued",
-        description: "It will send automatically when the current turn finishes.",
+        description:
+          activeThread.goal?.status === "active"
+            ? "The active goal was paused; this message will send when the current turn stops."
+            : "It will send automatically when the current turn finishes.",
         data: { icon: HourglassIcon },
       });
-      if (goalObjective) {
-        void handleGoalSet({ objective: goalObjective });
-      }
       sendInFlightRef.current = false;
       resetLocalDispatch();
       return;
@@ -4340,12 +4427,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         titleSeed: title,
         runtimeMode,
         interactionMode,
+        ...(goalIntent ? { goalIntent } : {}),
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
-      if (goalObjective) {
-        await handleGoalSet({ objective: goalObjective }).catch(() => undefined);
-      }
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
@@ -4381,6 +4466,9 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
         threadIdForSend,
         err instanceof Error ? err.message : "Failed to send message.",
       );
+      if (!turnStartSucceeded && goalIntent) {
+        setGoalSendMode(true);
+      }
     });
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
@@ -5990,7 +6078,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             <GoalStatusMenu
                               goal={activeThread.goal}
                               disabled={!activeThread}
-                              onSetStatus={handleGoalStatusChange}
+                              onUpdateGoal={handleGoalSet}
                               onClearGoal={handleGoalClear}
                             />
                           ) : null}

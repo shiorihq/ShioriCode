@@ -321,29 +321,6 @@ export function MobilePairingPanel() {
                 </div>
               </div>
             </SettingsRow>
-
-            {session?.candidates.length ? (
-              <SettingsRow
-                title="Network addresses"
-                description="The addresses bundled into this code. Your iPhone connects to one of them."
-              >
-                <ul className="mt-1 divide-y divide-border overflow-hidden rounded-lg border border-border">
-                  {session.candidates.map((candidate) => (
-                    <li
-                      key={candidate.apiBaseUrl}
-                      className="flex min-w-0 items-center justify-between gap-3 bg-muted/20 px-3 py-2"
-                    >
-                      <code className="min-w-0 truncate text-xs text-foreground">
-                        {candidate.apiBaseUrl}
-                      </code>
-                      <span className="shrink-0 rounded-full border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground">
-                        {candidate.label}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </SettingsRow>
-            ) : null}
           </>
         )}
       </SettingsSection>

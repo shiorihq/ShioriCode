@@ -210,15 +210,18 @@ export declare class McpStdioServer extends BaseMcpServerConfig {
     readonly type = "stdio";
     command: string;
     args: string[];
+    env?: Record<string, string>;
     constructor(init: {
         name: string;
         command: string;
         args?: string[];
+        env?: Record<string, string>;
     } & McpToolFilters);
     toJSON(): ReturnType<BaseMcpServerConfig["toBaseJSON"]> & {
         type: "stdio";
         command: string;
         args: string[];
+        env?: Record<string, string>;
     };
 }
 export declare class McpSseServer extends BaseMcpServerConfig {

@@ -99,6 +99,11 @@ function isUserInputRequestMethod(method: string): method is CodexUserInputReque
   return CODEX_SERVER_REQUEST_HANDLERS[method as CodexServerRequestMethod] === "user-input";
 }
 
+const CODEX_NATIVE_GOAL_NOTIFICATION_METHODS = new Set<string>([
+  "thread/goal/updated",
+  "thread/goal/cleared",
+]);
+
 const CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_METHODS = new Set<string>([
   "thread/started",
   "thread/status/changed",
@@ -108,8 +113,6 @@ const CHILD_CONVERSATION_SUPPRESSED_NOTIFICATION_METHODS = new Set<string>([
   "thread/compacted",
   "thread/name/updated",
   "thread/settings/updated",
-  "thread/goal/updated",
-  "thread/goal/cleared",
   "thread/tokenUsage/updated",
   "thread/realtime/started",
   "thread/realtime/sdp",
@@ -422,7 +425,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         stopping: false,
       };
 
-      this.sessions.set(threadId, context);
       this.attachProcessListeners(context);
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
@@ -528,6 +530,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         status: "ready",
         resumeCursor,
       });
+
       this.emitLifecycleEvent(
         context,
         "session/threadOpenResolved",
@@ -540,7 +543,33 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         resolvedThreadId: providerThreadId,
         requestedRuntimeMode: input.runtimeMode,
       }).pipe(this.runPromise);
-      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
+
+      // Keep an existing healthy session routable until its replacement has
+      // completed the full initialize + thread-open handshake. Publish the
+      // ready context before retiring the exact process it superseded.
+      const replacedContext = this.sessions.get(threadId);
+      this.sessions.set(threadId, context);
+      try {
+        this.emitLifecycleEvent(
+          context,
+          "session/ready",
+          `Connected to thread ${providerThreadId}`,
+        );
+      } catch (error) {
+        if (this.sessions.get(threadId) === context) {
+          if (replacedContext) {
+            this.sessions.set(threadId, replacedContext);
+          } else {
+            this.sessions.delete(threadId);
+          }
+        }
+        throw error;
+      }
+      if (replacedContext && replacedContext !== context) {
+        // Replacing the transport is not a logical session close, so avoid a
+        // stale session/closed event after the replacement's ready event.
+        this.stopContext(replacedContext, { emitClosed: false });
+      }
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -549,8 +578,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           status: "error",
           lastError: message,
         });
-        this.emitErrorEvent(context, "session/startFailed", message);
-        this.stopSession(threadId);
+        try {
+          this.emitErrorEvent(context, "session/startFailed", message);
+        } finally {
+          // The staged context was never the logical session, so its teardown
+          // must neither evict nor emit a close for a healthy prior context.
+          this.stopContext(context, { emitClosed: false });
+        }
       } else {
         this.emitEvent({
           id: EventId.makeUnsafe(randomUUID()),
@@ -852,6 +886,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return;
     }
 
+    this.stopContext(context);
+  }
+
+  private stopContext(
+    context: CodexSessionContext,
+    options: { readonly emitClosed?: boolean } = {},
+  ): void {
+    const threadId = context.session.threadId;
+    if (context.stopping) {
+      if (this.sessions.get(threadId) === context) {
+        this.sessions.delete(threadId);
+      }
+      return;
+    }
+
     context.stopping = true;
 
     this.failPendingRequests(context, "Session stopped before request completed.");
@@ -866,8 +915,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       status: "closed",
       activeTurnId: undefined,
     });
-    this.emitLifecycleEvent(context, "session/closed", "Session stopped");
-    this.sessions.delete(threadId);
+    if (options.emitClosed !== false) {
+      this.emitLifecycleEvent(context, "session/closed", "Session stopped");
+    }
+    if (this.sessions.get(threadId) === context) {
+      this.sessions.delete(threadId);
+    }
   }
 
   listSessions(): ProviderSession[] {
@@ -938,6 +991,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     context.child.on("error", (error) => {
+      if (context.stopping) {
+        return;
+      }
+
       const message = error.message || "codex app-server process errored.";
       this.updateSession(context, {
         status: "error",
@@ -960,7 +1017,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
       this.failPendingRequests(context, message);
       this.emitLifecycleEvent(context, "session/exited", message);
-      this.sessions.delete(context.session.threadId);
+      if (this.sessions.get(context.session.threadId) === context) {
+        this.sessions.delete(context.session.threadId);
+      }
     });
   }
 
@@ -1012,6 +1071,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context: CodexSessionContext,
     notification: JsonRpcNotification,
   ): void {
+    // ShioriCode owns thread goals for every provider. Ignore any native Codex
+    // goal notification even if an upstream version fails to honor the launch
+    // override that disables its goal engine.
+    if (CODEX_NATIVE_GOAL_NOTIFICATION_METHODS.has(notification.method)) {
+      return;
+    }
     const rawRoute = this.readRouteFields(notification.params);
     const resolvedPendingRequest =
       notification.method === "serverRequest/resolved"

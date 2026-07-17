@@ -24,6 +24,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
 
   return {
     start,
+    reconcileAfterHttpListening: providerCommandReactor.reconcile,
   } satisfies OrchestrationReactorShape;
 });
 

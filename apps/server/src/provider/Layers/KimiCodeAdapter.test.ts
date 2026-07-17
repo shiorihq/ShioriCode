@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { ThreadId } from "contracts";
-import type { StreamEvent } from "@moonshot-ai/kimi-agent-sdk";
+import { type McpServerEntry, ThreadId } from "contracts";
+import type { InitializeResult, ProtocolClient, StreamEvent } from "@moonshot-ai/kimi-agent-sdk";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect, Layer, ManagedRuntime } from "effect";
 
+import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import { KimiCodeAdapter } from "../Services/KimiCodeAdapter.ts";
 import {
+  buildKimiTerminalTokenUsage,
   buildKimiSessionFingerprint,
   buildKimiExecutableWrapperScript,
   evaluateKimiToolLoopGuard,
@@ -16,6 +22,7 @@ import {
   mapKimiRequestKindToCanonical,
   rememberKimiShioriApprovalDecision,
   normalizeKimiQuestionAnswers,
+  recordKimiProcessedTokenUsage,
   resolveKimiExternalToolTimeoutMsFromEnv,
   resolveKimiLoopControlFromEnv,
   resolveKimiThinking,
@@ -26,6 +33,8 @@ import {
   shouldAvoidKimiToolsForUserInput,
   shouldOmitKimiCompletedToolData,
   turnSnapshotFromEvents,
+  type KimiCodeAdapterLiveOptions,
+  makeKimiCodeAdapterLive,
 } from "./KimiCodeAdapter.ts";
 import { evaluateKimiCliWireCompatibility, parseKimiInfoOutput } from "./KimiCodeProvider.ts";
 
@@ -37,6 +46,372 @@ function makeKimiShareDir(defaultThinking: boolean): string {
   );
   return shareDir;
 }
+
+const KIMI_GOAL_TOOL_NAMES = [
+  "mcp__shioricode-thread-goal__get_goal",
+  "mcp__shioricode-thread-goal__update_goal",
+] as const;
+
+function makeKimiGoalServer(overrides: Partial<McpServerEntry> = {}): McpServerEntry {
+  return {
+    name: "shioricode-thread-goal",
+    transport: "stdio",
+    command: process.execPath,
+    args: ["server.js", "thread-goal-mcp"],
+    env: {
+      SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
+      SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: "kimi-test-capability",
+    },
+    enabled: true,
+    providers: ["kimiCode"],
+    ...overrides,
+  };
+}
+
+function makeKimiProtocolClientFactory(
+  starts: Array<Parameters<ProtocolClient["start"]>[0]>,
+): () => ProtocolClient {
+  return () => {
+    let running = false;
+    return {
+      get isRunning() {
+        return running;
+      },
+      start: async (options: Parameters<ProtocolClient["start"]>[0]) => {
+        running = true;
+        starts.push(options);
+        return {
+          protocol_version: "1.7",
+          server: { name: "kimi-test", version: "1.0.0" },
+          slash_commands: [],
+          external_tools: {
+            accepted: options.externalTools?.map((tool) => tool.name) ?? [],
+            rejected: [],
+          },
+        } satisfies InitializeResult;
+      },
+      stop: async () => {
+        running = false;
+      },
+    } as unknown as ProtocolClient;
+  };
+}
+
+function makeEmptyKimiSkillRuntime() {
+  return {
+    descriptors: [],
+    executors: new Map(),
+    warnings: [],
+    skillPrompt: undefined,
+    close: async () => undefined,
+  };
+}
+
+async function runKimiStartSession(options: KimiCodeAdapterLiveOptions, threadId: string) {
+  const testRoot = mkdtempSync(path.join(tmpdir(), "shioricode-kimi-adapter-goal-"));
+  const runtime = ManagedRuntime.make(
+    makeKimiCodeAdapterLive(options).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(testRoot, testRoot)),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  );
+  try {
+    return await runtime.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* KimiCodeAdapter;
+        const result = yield* adapter
+          .startSession({
+            provider: "kimiCode",
+            threadId: ThreadId.makeUnsafe(threadId),
+            cwd: testRoot,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+        if (result._tag === "Success") {
+          yield* adapter.stopSession(result.success.threadId);
+        }
+        return result;
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
+function makeKimiRotationHarness(failStartCall?: number) {
+  const startedClients: Array<{ readonly stop: ReturnType<typeof vi.fn> }> = [];
+  const resourceClosers: Array<ReturnType<typeof vi.fn>> = [];
+  let startCall = 0;
+  const options: KimiCodeAdapterLiveOptions = {
+    loadEffectiveMcpServers: async () => ({ servers: [makeKimiGoalServer()], warnings: [] }),
+    buildMcpToolRuntime: async () => {
+      const close = vi.fn(async () => undefined);
+      resourceClosers.push(close);
+      return {
+        descriptors: KIMI_GOAL_TOOL_NAMES.map((name) => ({
+          name,
+          description: name,
+          inputSchema: { type: "object" },
+        })),
+        executors: new Map(
+          KIMI_GOAL_TOOL_NAMES.map((name) => [
+            name,
+            { title: name, execute: async () => ({ ok: true }) },
+          ]),
+        ),
+        warnings: [],
+        close,
+      };
+    },
+    buildSkillRuntime: async () => makeEmptyKimiSkillRuntime(),
+    createProtocolClient: () => {
+      let running = false;
+      const stop = vi.fn(async () => {
+        running = false;
+      });
+      return {
+        get isRunning() {
+          return running;
+        },
+        start: async () => {
+          startCall += 1;
+          if (startCall === failStartCall) throw new Error("replacement failed");
+          running = true;
+          startedClients.push({ stop });
+          return {
+            protocol_version: "1.7",
+            server: { name: "kimi-test", version: "1.0.0" },
+            slash_commands: [],
+            external_tools: { accepted: [...KIMI_GOAL_TOOL_NAMES], rejected: [] },
+          } satisfies InitializeResult;
+        },
+        stop,
+      } as unknown as ProtocolClient;
+    },
+  };
+  return { options, resourceClosers, startedClients };
+}
+
+describe("KimiCodeAdapter thread-goal provider boundary", () => {
+  it("retires a Kimi runtime only after its replacement is ready", async () => {
+    const harness = makeKimiRotationHarness();
+    const testRoot = mkdtempSync(path.join(tmpdir(), "shioricode-kimi-rotation-"));
+    const runtime = ManagedRuntime.make(
+      makeKimiCodeAdapterLive(harness.options).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(testRoot, testRoot)),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* KimiCodeAdapter;
+          const threadId = ThreadId.makeUnsafe("thread-kimi-replacement");
+          yield* adapter.startSession({
+            provider: "kimiCode",
+            threadId,
+            cwd: testRoot,
+            runtimeMode: "full-access",
+          });
+          yield* adapter.startSession({
+            provider: "kimiCode",
+            threadId,
+            cwd: testRoot,
+            runtimeMode: "full-access",
+          });
+          expect(harness.startedClients[0]?.stop).toHaveBeenCalledOnce();
+          expect(harness.startedClients[1]?.stop).not.toHaveBeenCalled();
+          expect(yield* adapter.listSessions()).toHaveLength(1);
+        }),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a Kimi runtime and cleans staged resources when replacement startup fails", async () => {
+    const harness = makeKimiRotationHarness(2);
+    const testRoot = mkdtempSync(path.join(tmpdir(), "shioricode-kimi-rotation-failure-"));
+    const runtime = ManagedRuntime.make(
+      makeKimiCodeAdapterLive(harness.options).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(testRoot, testRoot)),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* KimiCodeAdapter;
+          const threadId = ThreadId.makeUnsafe("thread-kimi-failed-replacement");
+          const original = yield* adapter.startSession({
+            provider: "kimiCode",
+            threadId,
+            cwd: testRoot,
+            runtimeMode: "full-access",
+          });
+          yield* adapter
+            .startSession({
+              provider: "kimiCode",
+              threadId,
+              cwd: testRoot,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.flip);
+          expect(harness.startedClients[0]?.stop).not.toHaveBeenCalled();
+          expect((yield* adapter.listSessions())[0]?.resumeCursor).toEqual(original.resumeCursor);
+          expect(yield* adapter.hasSession(threadId)).toBe(true);
+          expect(harness.resourceClosers[1]).toHaveBeenCalledOnce();
+        }),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("starts only after exposing both harness goal tools to Kimi", async () => {
+    const protocolStarts: Array<Parameters<ProtocolClient["start"]>[0]> = [];
+    const closeMcp = vi.fn(async () => undefined);
+    const loadEffectiveMcpServers = vi.fn(
+      async (
+        _input: Parameters<NonNullable<KimiCodeAdapterLiveOptions["loadEffectiveMcpServers"]>>[0],
+      ) => ({
+        servers: [makeKimiGoalServer()],
+        warnings: [],
+      }),
+    );
+    const buildMcpToolRuntime = vi.fn(
+      async (
+        _input: Parameters<NonNullable<KimiCodeAdapterLiveOptions["buildMcpToolRuntime"]>>[0],
+        _options?: Parameters<NonNullable<KimiCodeAdapterLiveOptions["buildMcpToolRuntime"]>>[1],
+      ) => ({
+        descriptors: KIMI_GOAL_TOOL_NAMES.map((name) => ({
+          name,
+          description: name,
+          inputSchema: { type: "object" },
+        })),
+        executors: new Map(
+          KIMI_GOAL_TOOL_NAMES.map((name) => [
+            name,
+            { title: name, execute: async () => ({ ok: true }) },
+          ]),
+        ),
+        warnings: [],
+        close: closeMcp,
+      }),
+    );
+
+    const result = await runKimiStartSession(
+      {
+        loadEffectiveMcpServers,
+        buildMcpToolRuntime,
+        buildSkillRuntime: async () => makeEmptyKimiSkillRuntime(),
+        createProtocolClient: makeKimiProtocolClientFactory(protocolStarts),
+      },
+      "thread-kimi-goal-tools",
+    );
+
+    expect(result._tag).toBe("Success");
+    expect(loadEffectiveMcpServers).toHaveBeenCalledOnce();
+    expect(loadEffectiveMcpServers.mock.calls[0]?.[0]).toMatchObject({
+      provider: "kimiCode",
+      threadGoal: { threadId: "thread-kimi-goal-tools" },
+    });
+    expect(buildMcpToolRuntime).toHaveBeenCalledOnce();
+    expect(buildMcpToolRuntime.mock.calls[0]?.[0].servers).toHaveLength(1);
+    expect(buildMcpToolRuntime.mock.calls[0]?.[0].servers[0]).toMatchObject({
+      name: "shioricode-thread-goal",
+      command: process.execPath,
+      args: expect.arrayContaining(["thread-goal-mcp"]),
+      env: {
+        SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
+        SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: "kimi-test-capability",
+      },
+    });
+    expect(protocolStarts).toHaveLength(1);
+    expect(protocolStarts[0]?.externalTools?.map((tool) => tool.name)).toEqual(
+      KIMI_GOAL_TOOL_NAMES,
+    );
+    expect(closeMcp).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["missing", []],
+    ["invalid", [makeKimiGoalServer({ command: "not-the-shiori-entrypoint" })]],
+    ["duplicate", [makeKimiGoalServer(), makeKimiGoalServer()]],
+  ] as const)("fails closed for a %s harness goal server", async (_label, servers) => {
+    const protocolStarts: Array<Parameters<ProtocolClient["start"]>[0]> = [];
+    const buildMcpToolRuntime = vi.fn(async () => {
+      throw new Error("The invalid server must be rejected before MCP initialization.");
+    });
+
+    const result = await runKimiStartSession(
+      {
+        loadEffectiveMcpServers: async () => ({ servers, warnings: [] }),
+        buildMcpToolRuntime,
+        buildSkillRuntime: async () => makeEmptyKimiSkillRuntime(),
+        createProtocolClient: makeKimiProtocolClientFactory(protocolStarts),
+      },
+      `thread-kimi-${_label}-goal-server`,
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      if (result.failure._tag !== "ProviderAdapterProcessError") {
+        throw new Error(`Expected ProviderAdapterProcessError, received ${result.failure._tag}.`);
+      }
+      expect(result.failure.detail).toMatch(/thread-goal.*(?:received|invalid)/iu);
+    }
+    expect(buildMcpToolRuntime).not.toHaveBeenCalled();
+    expect(protocolStarts).toHaveLength(0);
+  });
+
+  it("fails closed and closes MCP resources when a required goal tool is missing", async () => {
+    const protocolStarts: Array<Parameters<ProtocolClient["start"]>[0]> = [];
+    const closeMcp = vi.fn(async () => undefined);
+    const getGoalTool = KIMI_GOAL_TOOL_NAMES[0];
+    const result = await runKimiStartSession(
+      {
+        loadEffectiveMcpServers: async () => ({
+          servers: [makeKimiGoalServer()],
+          warnings: [],
+        }),
+        buildMcpToolRuntime: async () => ({
+          descriptors: [
+            {
+              name: getGoalTool,
+              description: getGoalTool,
+              inputSchema: { type: "object" },
+            },
+          ],
+          executors: new Map([
+            [getGoalTool, { title: getGoalTool, execute: async () => ({ ok: true }) }],
+          ]),
+          warnings: [],
+          close: closeMcp,
+        }),
+        buildSkillRuntime: async () => makeEmptyKimiSkillRuntime(),
+        createProtocolClient: makeKimiProtocolClientFactory(protocolStarts),
+      },
+      "thread-kimi-missing-goal-tool",
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      if (result.failure._tag !== "ProviderAdapterProcessError") {
+        throw new Error(`Expected ProviderAdapterProcessError, received ${result.failure._tag}.`);
+      }
+      expect(result.failure.detail).toContain("mcp__shioricode-thread-goal__update_goal");
+    }
+    expect(closeMcp).toHaveBeenCalledOnce();
+    expect(protocolStarts).toHaveLength(0);
+  });
+});
 
 describe("KimiCodeAdapter helpers", () => {
   it("uses stable turn ids when rebuilding snapshots from Kimi wire events", () => {
@@ -60,6 +435,55 @@ describe("KimiCodeAdapter helpers", () => {
     expect(second.turns.map((turn) => String(turn.id))).toEqual(
       first.turns.map((turn) => String(turn.id)),
     );
+  });
+
+  it("deduplicates cumulative Kimi usage by provider message id", () => {
+    const processedTokensByMessageId = new Map<string, number>();
+
+    recordKimiProcessedTokenUsage({
+      processedTokensByMessageId,
+      messageId: "message-1",
+      usedTokens: 100,
+    });
+    recordKimiProcessedTokenUsage({
+      processedTokensByMessageId,
+      messageId: "message-1",
+      usedTokens: 140,
+    });
+    recordKimiProcessedTokenUsage({
+      processedTokensByMessageId,
+      messageId: "message-1",
+      usedTokens: 120,
+    });
+    recordKimiProcessedTokenUsage({
+      processedTokensByMessageId,
+      messageId: "message-2",
+      usedTokens: 60,
+    });
+    recordKimiProcessedTokenUsage({
+      processedTokensByMessageId,
+      messageId: undefined,
+      usedTokens: 999,
+    });
+
+    expect(Object.fromEntries(processedTokensByMessageId)).toEqual({
+      __unkeyed__: 999,
+      "message-1": 140,
+      "message-2": 60,
+    });
+    expect(
+      buildKimiTerminalTokenUsage({
+        processedTokensByMessageId,
+        lastTokenUsage: {
+          usedTokens: 60,
+          lastUsedTokens: 60,
+        },
+      }),
+    ).toEqual({
+      usedTokens: 60,
+      lastUsedTokens: 60,
+      processedTokensDelta: 1_199,
+    });
   });
 
   it("keeps pending Kimi text as assistant output even around tools", () => {

@@ -38,6 +38,9 @@ describe("OrchestrationReactor", () => {
               started.push("provider-command-reactor");
               return Effect.void;
             },
+            reconcile: Effect.sync(() => {
+              started.push("provider-command-reconcile");
+            }),
             drain: Effect.void,
           }),
         ),
@@ -72,6 +75,9 @@ describe("OrchestrationReactor", () => {
       "checkpoint-reactor",
       "goal-prompt-reactor",
     ]);
+
+    await Effect.runPromise(reactor.reconcileAfterHttpListening.pipe(Scope.provide(scope)));
+    expect(started.at(-1)).toBe("provider-command-reconcile");
 
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });

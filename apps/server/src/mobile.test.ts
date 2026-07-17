@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { type ServerConfigShape } from "./config";
-import { mobilePairingCandidates } from "./mobile";
+import {
+  mobilePairingCandidates,
+  mobileSnapshotWaitOptions,
+  shouldPersistMobileLastSeen,
+} from "./mobile";
 
 function config(overrides: Partial<ServerConfigShape>): ServerConfigShape {
   return {
@@ -81,5 +85,48 @@ describe("mobilePairingCandidates", () => {
         label: "Current browser address",
       },
     ]);
+  });
+});
+
+describe("mobileSnapshotWaitOptions", () => {
+  it("keeps legacy snapshot requests immediate", () => {
+    expect(mobileSnapshotWaitOptions(new URL("http://localhost/api/mobile/snapshot"))).toEqual({
+      afterSequence: null,
+      waitMs: 0,
+    });
+  });
+
+  it("accepts a bounded long-poll cursor", () => {
+    expect(
+      mobileSnapshotWaitOptions(
+        new URL("http://localhost/api/mobile/snapshot?after=42&waitMs=20000"),
+      ),
+    ).toEqual({ afterSequence: 42, waitMs: 20_000 });
+  });
+
+  it("rejects invalid cursors and caps excessive waits", () => {
+    expect(
+      mobileSnapshotWaitOptions(
+        new URL("http://localhost/api/mobile/snapshot?after=-1&waitMs=20000"),
+      ),
+    ).toEqual({ afterSequence: null, waitMs: 0 });
+    expect(
+      mobileSnapshotWaitOptions(
+        new URL("http://localhost/api/mobile/snapshot?after=5&waitMs=999999"),
+      ),
+    ).toEqual({ afterSequence: 5, waitMs: 25_000 });
+  });
+});
+
+describe("shouldPersistMobileLastSeen", () => {
+  const now = Date.parse("2026-07-17T00:00:30.000Z");
+
+  it("throttles presence writes inside the persistence interval", () => {
+    expect(shouldPersistMobileLastSeen("2026-07-17T00:00:01.000Z", now)).toBe(false);
+  });
+
+  it("persists stale or malformed presence values", () => {
+    expect(shouldPersistMobileLastSeen("2026-07-17T00:00:00.000Z", now)).toBe(true);
+    expect(shouldPersistMobileLastSeen("invalid", now)).toBe(true);
   });
 });

@@ -67,7 +67,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
-  it.effect("stores JSON for thread model options", () =>
+  it.effect("stores JSON for thread model options and goals", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;
       const sql = yield* SqlClient.SqlClient;
@@ -90,6 +90,16 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         worktreePath: null,
         tag: null,
         latestTurnId: null,
+        goal: {
+          threadId: ThreadId.makeUnsafe("thread-null-options"),
+          objective: "Finish the projection persistence work",
+          status: "active",
+          tokenBudget: 10_000,
+          tokensUsed: 250,
+          timeUsedSeconds: 30,
+          createdAt: "2026-03-24T00:00:00.000Z",
+          updatedAt: "2026-03-24T00:00:01.000Z",
+        },
         pinnedAt: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -99,8 +109,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const rows = yield* sql<{
         readonly modelSelection: string | null;
+        readonly goal: string | null;
       }>`
-        SELECT model_selection_json AS "modelSelection"
+        SELECT
+          model_selection_json AS "modelSelection",
+          goal_json AS "goal"
         FROM projection_threads
         WHERE thread_id = 'thread-null-options'
       `;
@@ -116,6 +129,16 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "claude-opus-4-6",
         }),
       );
+      assert.deepStrictEqual(JSON.parse(row.goal ?? "null"), {
+        threadId: "thread-null-options",
+        objective: "Finish the projection persistence work",
+        status: "active",
+        tokenBudget: 10_000,
+        tokensUsed: 250,
+        timeUsedSeconds: 30,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:01.000Z",
+      });
 
       const persisted = yield* threads.getById({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
@@ -123,6 +146,16 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
+      });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.goal, {
+        threadId: ThreadId.makeUnsafe("thread-null-options"),
+        objective: "Finish the projection persistence work",
+        status: "active",
+        tokenBudget: 10_000,
+        tokensUsed: 250,
+        timeUsedSeconds: 30,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:01.000Z",
       });
     }),
   );

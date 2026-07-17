@@ -505,26 +505,37 @@ export class McpStdioServer extends BaseMcpServerConfig {
   readonly type = "stdio";
   command: string;
   args: string[];
+  env?: Record<string, string>;
 
-  constructor(init: { name: string; command: string; args?: string[] } & McpToolFilters) {
+  constructor(
+    init: {
+      name: string;
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    } & McpToolFilters,
+  ) {
     super(init);
     if (typeof init.command !== "string") {
       throw new Error("McpStdioServer.command is required.");
     }
     this.command = init.command;
     this.args = init.args ?? [];
+    this.env = init.env ? { ...init.env } : undefined;
   }
 
   toJSON(): ReturnType<BaseMcpServerConfig["toBaseJSON"]> & {
     type: "stdio";
     command: string;
     args: string[];
+    env?: Record<string, string>;
   } {
     return {
       ...this.toBaseJSON(),
       type: this.type,
       command: this.command,
       args: this.args,
+      env: this.env,
     };
   }
 }

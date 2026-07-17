@@ -123,10 +123,10 @@ This is a Bun monorepo managed with Turborepo.
 ```text
 apps/
   agent/       Terminal agent UI
-  cli/         CLI tooling
+  cli/         Legacy CLI compatibility package (superseded by shioricode)
   desktop/     Electron desktop shell
   marketing/   Astro marketing site
-  server/      Node.js WebSocket server and provider broker
+  server/      Unified shioricode CLI, WebSocket server, and provider broker
   web/         React/Vite app
 packages/
   contracts/   Effect schemas and TypeScript contracts
@@ -170,6 +170,9 @@ ShioriCode is a fork of [t3code](https://github.com/pingdotgg/t3code). We are gr
 ## License
 
 ShioriCode is source-available under the [Elastic License 2.0](./LICENSE).
+
+The hosted ShioriCode Link control plane, API, relay, and infrastructure are proprietary services.
+This repository contains only the client and protocol integration required to connect to them.
 
 You may use ShioriCode for personal, internal, professional, and commercial work. You may not sell, resell, white-label, rebrand, or offer ShioriCode as a hosted or managed service without a separate commercial license from the maintainers.
 

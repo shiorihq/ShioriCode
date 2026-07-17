@@ -2,9 +2,12 @@ import {
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type ThreadGoalIntent,
+  ThreadGoalIntent as ThreadGoalIntentSchema,
   type ThreadId,
   type UploadChatAttachment,
 } from "contracts";
+import { Schema } from "effect";
 import { type PersistedComposerImageAttachment } from "./composerDraftStore";
 import { type TerminalContextDraft } from "./lib/terminalContext";
 import { create } from "zustand";
@@ -32,6 +35,7 @@ export interface QueuedTurnDraft {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly goalIntent: ThreadGoalIntent | null;
   readonly titleSeed: string;
   readonly createdAt: string;
   readonly composerSnapshot: QueuedTurnComposerSnapshot;
@@ -125,6 +129,7 @@ function normalizeQueuedTurnDraft(value: unknown): QueuedTurnDraft | null {
   const modelSelection = value.modelSelection as ModelSelection | undefined;
   const runtimeMode = value.runtimeMode as RuntimeMode | undefined;
   const interactionMode = value.interactionMode as ProviderInteractionMode | undefined;
+  const goalIntent = Schema.is(ThreadGoalIntentSchema)(value.goalIntent) ? value.goalIntent : null;
   if (
     !modelSelection ||
     (runtimeMode !== "approval-required" && runtimeMode !== "full-access") ||
@@ -142,6 +147,7 @@ function normalizeQueuedTurnDraft(value: unknown): QueuedTurnDraft | null {
     modelSelection,
     runtimeMode,
     interactionMode,
+    goalIntent,
     titleSeed,
     createdAt,
     composerSnapshot: {
@@ -183,6 +189,7 @@ function normalizePersistedQueuedTurnsState(persistedState: unknown): PersistedQ
               modelSelection: queuedTurn.modelSelection,
               runtimeMode: queuedTurn.runtimeMode,
               interactionMode: queuedTurn.interactionMode,
+              goalIntent: queuedTurn.goalIntent,
               titleSeed: queuedTurn.titleSeed,
               createdAt: queuedTurn.createdAt,
               composerSnapshot: queuedTurn.composerSnapshot,

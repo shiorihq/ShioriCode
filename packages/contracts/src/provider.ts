@@ -22,7 +22,6 @@ import {
   ProviderSandboxMode,
   ProviderUserInputAnswers,
   RuntimeMode,
-  ThreadGoal,
 } from "./orchestration";
 
 const ProviderSessionStatus = Schema.Literals([
@@ -71,7 +70,6 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
-  goal: Schema.optional(Schema.NullOr(ThreadGoal)),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

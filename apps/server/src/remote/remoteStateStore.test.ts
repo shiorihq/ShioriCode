@@ -34,6 +34,12 @@ describe("RemoteStateStore", () => {
     expect(reloaded.method).toBe("tailscale-funnel");
   });
 
+  it("round-trips link exposure intent", () => {
+    const stateDir = makeStateDir();
+    new RemoteStateStore({ stateDir }).set("shiori-link");
+    expect(new RemoteStateStore({ stateDir }).method).toBe("shiori-link");
+  });
+
   it("falls back to off on a corrupt or unknown file", () => {
     const stateDir = makeStateDir();
     fs.writeFileSync(path.join(stateDir, "remote.json"), "{not json");

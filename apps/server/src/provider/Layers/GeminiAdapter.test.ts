@@ -2,20 +2,23 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
   LocalAgentConfig,
+  McpStdioServer,
   Step,
   StepSource,
   StepStatus,
   StepTarget,
   StepType,
+  UsageMetadata,
 } from "google-antigravity";
 import type { Agent } from "google-antigravity";
 import { ThreadId } from "contracts";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterProcessError } from "../Errors.ts";
 import { GeminiAdapter } from "../Services/GeminiAdapter.ts";
-import { makeGeminiAdapterLive } from "./GeminiAdapter.ts";
+import { makeGeminiAdapterLive, normalizeGeminiStepUsage } from "./GeminiAdapter.ts";
 
 function makeFakeAgent(
   config: LocalAgentConfig,
@@ -49,19 +52,31 @@ function makeFakeAgent(
 function makeHarness(options?: {
   readonly settings?: Record<string, unknown>;
   readonly omitAgentConversationId?: boolean;
+  readonly startAgent?: (config: LocalAgentConfig, callIndex: number) => Promise<Agent>;
+  readonly verifyGoalMcpServer?: NonNullable<
+    Parameters<typeof makeGeminiAdapterLive>[0]
+  >["verifyGoalMcpServer"];
 }) {
   const configs: LocalAgentConfig[] = [];
+  const agents: Agent[] = [];
   let sessionIndex = 0;
   const startAgent = vi.fn(async (config: LocalAgentConfig) => {
     configs.push(config);
     sessionIndex += 1;
-    return makeFakeAgent(
-      config,
-      `antigravity-session-${sessionIndex}`,
-      options?.omitAgentConversationId ? { omitAgentConversationId: true } : undefined,
-    );
+    const agent = options?.startAgent
+      ? await options.startAgent(config, sessionIndex)
+      : makeFakeAgent(
+          config,
+          `antigravity-session-${sessionIndex}`,
+          options?.omitAgentConversationId ? { omitAgentConversationId: true } : undefined,
+        );
+    agents.push(agent);
+    return agent;
   });
-  const layer = makeGeminiAdapterLive({ startAgent }).pipe(
+  const layer = makeGeminiAdapterLive({
+    startAgent,
+    verifyGoalMcpServer: options?.verifyGoalMcpServer ?? (() => Promise.resolve()),
+  }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(
       ServerSettingsService.layerTest({
@@ -76,7 +91,7 @@ function makeHarness(options?: {
     ),
     Layer.provideMerge(NodeServices.layer),
   );
-  return { layer, configs, startAgent };
+  return { layer, configs, startAgent, agents };
 }
 
 function policyNames(config: LocalAgentConfig | undefined): ReadonlyArray<string> {
@@ -92,6 +107,127 @@ function mcpServerByName(config: LocalAgentConfig | undefined, name: string) {
 }
 
 describe("GeminiAdapterLive", () => {
+  it.effect("replaces a ready session only after its successor starts", () => {
+    const harness = makeHarness();
+    const threadId = ThreadId.makeUnsafe("thread-gemini-replacement");
+    return Effect.gen(function* () {
+      const adapter = yield* GeminiAdapter;
+      const first = yield* adapter.startSession({
+        threadId,
+        provider: "gemini",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const second = yield* adapter.startSession({
+        threadId,
+        provider: "gemini",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      assert.notEqual(JSON.stringify(first.resumeCursor), JSON.stringify(second.resumeCursor));
+      assert.strictEqual(
+        (harness.agents[0] as unknown as { stop: ReturnType<typeof vi.fn> }).stop.mock.calls.length,
+        1,
+      );
+      assert.strictEqual((yield* adapter.listSessions()).length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("preserves a ready session when its replacement fails to start", () => {
+    const harness = makeHarness({
+      startAgent: async (config, callIndex) => {
+        if (callIndex === 2) throw new Error("replacement failed");
+        return makeFakeAgent(config, "antigravity-stable");
+      },
+    });
+    const threadId = ThreadId.makeUnsafe("thread-gemini-failed-replacement");
+    return Effect.gen(function* () {
+      const adapter = yield* GeminiAdapter;
+      const first = yield* adapter.startSession({
+        threadId,
+        provider: "gemini",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter
+        .startSession({
+          threadId,
+          provider: "gemini",
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.deepStrictEqual((yield* adapter.listSessions())[0]?.resumeCursor, first.resumeCursor);
+      assert.strictEqual(
+        (harness.agents[0] as unknown as { stop: ReturnType<typeof vi.fn> }).stop.mock.calls.length,
+        0,
+      );
+      assert.strictEqual(yield* adapter.hasSession(threadId), true);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect(
+    "fails closed before Agent.start when the exact goal MCP tool contract is invalid",
+    () => {
+      const harness = makeHarness({
+        verifyGoalMcpServer: () =>
+          Promise.reject(
+            new Error(
+              "Required 'shioricode-thread-goal' MCP tool contract mismatch (missing: update_goal).",
+            ),
+          ),
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* GeminiAdapter;
+        const error = yield* adapter
+          .startSession({
+            threadId: ThreadId.makeUnsafe("thread-gemini-invalid-goal-tools"),
+            provider: "gemini",
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.flip);
+
+        assert.ok(Schema.is(ProviderAdapterProcessError)(error));
+        assert.match(error.detail, /tool contract mismatch.*missing: update_goal/u);
+        assert.strictEqual(harness.startAgent.mock.calls.length, 0);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it("marks Antigravity per-step usage as a processed-token delta", () => {
+    const usage = normalizeGeminiStepUsage(
+      new Step({
+        id: "step-with-usage",
+        stepIndex: 1,
+        usageMetadata: new UsageMetadata({
+          promptTokenCount: 100,
+          cachedContentTokenCount: 20,
+          candidatesTokenCount: 30,
+          thoughtsTokenCount: 7,
+          totalTokenCount: 157,
+        }),
+      }),
+    );
+
+    assert.deepStrictEqual(usage, {
+      usedTokens: 157,
+      totalProcessedTokens: 157,
+      processedTokensDelta: 157,
+      inputTokens: 100,
+      cachedInputTokens: 20,
+      outputTokens: 30,
+      reasoningOutputTokens: 7,
+      lastUsedTokens: 157,
+      lastInputTokens: 100,
+      lastCachedInputTokens: 20,
+      lastOutputTokens: 30,
+      lastReasoningOutputTokens: 7,
+    });
+  });
+
   it.effect("passes resumeCursor through as the Antigravity conversation id", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -136,7 +272,45 @@ describe("GeminiAdapterLive", () => {
       });
 
       assert.strictEqual(policyNames(harness.configs[0]).includes("shiori_approval"), true);
+      assert.strictEqual(
+        policyNames(harness.configs[0]).includes("shioricode_thread_goal_get"),
+        true,
+      );
+      assert.strictEqual(
+        policyNames(harness.configs[0]).includes("shioricode_thread_goal_update"),
+        true,
+      );
       assert.strictEqual(policyNames(harness.configs[1]).includes("allow_all"), true);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("keeps the required thread-goal MCP credentials out of process arguments", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* GeminiAdapter;
+
+      yield* adapter.startSession({
+        threadId: ThreadId.makeUnsafe("thread-gemini-goal-mcp"),
+        provider: "gemini",
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const goalServer = mcpServerByName(harness.configs[0], "shioricode-thread-goal");
+      assert.ok(goalServer instanceof McpStdioServer);
+      assert.strictEqual(goalServer.command, process.execPath);
+      assert.strictEqual(goalServer.args.includes("thread-goal-mcp"), true);
+      const capabilityToken = goalServer.env?.SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN;
+      assert.ok(capabilityToken);
+      assert.ok(goalServer.env?.SHIORICODE_THREAD_GOAL_CONTROL_URL);
+      assert.strictEqual(
+        goalServer.args.some((arg) => arg.includes(capabilityToken)),
+        false,
+      );
+      assert.strictEqual(
+        goalServer.args.some((arg) => arg.startsWith("SHIORICODE_THREAD_GOAL_")),
+        false,
+      );
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -222,12 +396,10 @@ describe("GeminiAdapterLive", () => {
       ) {
         assert.fail("Expected shiori-computer-use to be a stdio MCP server.");
       }
-      const stdioServer = computerServer as {
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      };
-      assert.strictEqual(stdioServer.command, "/usr/bin/env");
-      assert.deepStrictEqual(stdioServer.args.slice(0, 1), ["SHIORICODE_COMPUTER_USE_ENABLED=1"]);
+      const stdioServer = computerServer as McpStdioServer;
+      assert.strictEqual(stdioServer.command, process.execPath);
+      assert.strictEqual(stdioServer.env?.SHIORICODE_COMPUTER_USE_ENABLED, "1");
+      assert.strictEqual(stdioServer.args.includes("SHIORICODE_COMPUTER_USE_ENABLED=1"), false);
       assert.strictEqual(stdioServer.args.includes("computer-use-mcp"), true);
       assert.strictEqual(policyNames(harness.configs[0]).includes("shiori_approval"), true);
     }).pipe(Effect.provide(harness.layer));

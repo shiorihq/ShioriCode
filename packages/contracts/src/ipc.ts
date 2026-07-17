@@ -180,8 +180,23 @@ export interface DesktopCompanionCliInstallResult {
   state: DesktopCompanionCliState;
 }
 
+export interface DesktopRemoteConnectionState {
+  mode: "local" | "remote";
+  remoteUrl: string | null;
+  savedRemoteUrls: readonly string[];
+}
+
+export interface DesktopRemoteConnectionResult {
+  ok: boolean;
+  state: DesktopRemoteConnectionState;
+  error?: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getRemoteConnection?: () => Promise<DesktopRemoteConnectionState>;
+  connectToRemote?: (url: string) => Promise<DesktopRemoteConnectionResult>;
+  disconnectFromRemote?: () => Promise<DesktopRemoteConnectionState>;
   getWindowControlsInset?: () => Promise<DesktopWindowControlsInset | null>;
   listSystemFonts?: () => Promise<string[]>;
   pickFolder: () => Promise<string | null>;

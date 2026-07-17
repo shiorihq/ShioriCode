@@ -33,10 +33,11 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   TurnId,
   type UserInputQuestion,
 } from "contracts";
-import { Effect, FileSystem, Layer, Option, PubSub, Ref, Stream } from "effect";
+import { Effect, FileSystem, Layer, PubSub, Ref, Stream } from "effect";
 import {
   classifyProviderToolLifecycleItemType,
   classifyProviderToolRequestKind,
@@ -49,8 +50,6 @@ import {
 import { buildAssistantSettingsAppendix } from "../../assistantPersonality.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeGoalProviderToolRuntime } from "../../goals/providerTools.ts";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
@@ -61,17 +60,24 @@ import {
 import {
   buildProviderMcpToolRuntime,
   loadEffectiveMcpServersForProvider,
+  requireThreadGoalMcpServerEntry,
+  THREAD_GOAL_MCP_SERVER_NAME,
   type ProviderMcpDescriptor,
   type ProviderMcpToolExecutor,
   type ProviderMcpToolRuntime,
 } from "../mcpServers.ts";
 import { normalizeProviderApprovalDecision } from "../providerApprovalDecision.ts";
+import { commitPreparedSessionReplacement } from "../sessionReplacement.ts";
 import { buildSkillToolRuntime, type ProviderSkillRuntime } from "../skills.ts";
 import type { ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { KimiCodeAdapter, type KimiCodeAdapterShape } from "../Services/KimiCodeAdapter.ts";
 import { normalizeUserInputAnswersByQuestionText } from "../userInputAnswers.ts";
 
 const PROVIDER = "kimiCode" as const;
+const REQUIRED_THREAD_GOAL_TOOL_NAMES = [
+  `mcp__${THREAD_GOAL_MCP_SERVER_NAME}__get_goal`,
+  `mcp__${THREAD_GOAL_MCP_SERVER_NAME}__update_goal`,
+] as const;
 const DEFAULT_MODEL = "kimi2.7-code";
 const KIMI_REASONING_ITEM_TITLE = "Reasoning";
 const KIMI_ASSISTANT_ITEM_TITLE = "Assistant response";
@@ -89,6 +95,13 @@ const KIMI_COMPUTER_USE_APPROVAL_EXEMPT_TOOL_NAMES = new Set([
   "computer_request_permission",
   "computer_open_permission_guide",
 ]);
+
+export interface KimiCodeAdapterLiveOptions {
+  readonly loadEffectiveMcpServers?: typeof loadEffectiveMcpServersForProvider;
+  readonly buildMcpToolRuntime?: typeof buildProviderMcpToolRuntime;
+  readonly buildSkillRuntime?: typeof buildSkillToolRuntime;
+  readonly createProtocolClient?: () => ProtocolClient;
+}
 
 type KimiResumeCursor = {
   readonly sessionId: string;
@@ -180,6 +193,8 @@ type ActiveTurnState = {
   readonly items: Array<unknown>;
   readonly toolCalls: Map<string, ToolInFlight>;
   readonly lastToolCallIdByParent: Map<string, string>;
+  readonly processedTokensByMessageId: Map<string, number>;
+  lastTokenUsage: ThreadTokenUsageSnapshot | undefined;
   pendingAssistantText: string;
   toolCallSeen: boolean;
   assistantStarted: boolean;
@@ -239,6 +254,37 @@ function requestKimiLoopGuardCancel(context: KimiSessionContext, turn: ActiveTur
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+export function recordKimiProcessedTokenUsage(input: {
+  readonly processedTokensByMessageId: Map<string, number>;
+  readonly messageId: string | null | undefined;
+  readonly usedTokens: number;
+}): void {
+  if (!Number.isInteger(input.usedTokens) || input.usedTokens < 0) {
+    return;
+  }
+  const messageId = input.messageId?.trim() || "__unkeyed__";
+  const previous = input.processedTokensByMessageId.get(messageId) ?? 0;
+  input.processedTokensByMessageId.set(messageId, Math.max(previous, input.usedTokens));
+}
+
+function totalKimiProcessedTokens(processedTokensByMessageId: ReadonlyMap<string, number>): number {
+  let total = 0;
+  for (const tokens of processedTokensByMessageId.values()) {
+    total += tokens;
+  }
+  return total;
+}
+
+export function buildKimiTerminalTokenUsage(input: {
+  readonly processedTokensByMessageId: ReadonlyMap<string, number>;
+  readonly lastTokenUsage: ThreadTokenUsageSnapshot | undefined;
+}): ThreadTokenUsageSnapshot | undefined {
+  const processedTokensDelta = totalKimiProcessedTokens(input.processedTokensByMessageId);
+  return input.lastTokenUsage && processedTokensDelta > 0
+    ? { ...input.lastTokenUsage, processedTokensDelta }
+    : undefined;
 }
 
 function nextEventId(): EventId {
@@ -1023,11 +1069,13 @@ function isKimiModelConfigEqual(input: {
   );
 }
 
-const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
+const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* (
+  options?: KimiCodeAdapterLiveOptions,
+) {
   const serverConfig = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const serverSettingsService = yield* ServerSettingsService;
-  const orchestrationEngineOption = yield* Effect.serviceOption(OrchestrationEngineService);
+  const createProtocolClient = options?.createProtocolClient ?? (() => new ProtocolClient());
   const runtimeEvents = yield* Effect.acquireRelease(
     PubSub.unbounded<ProviderRuntimeEvent>(),
     PubSub.shutdown,
@@ -1279,10 +1327,11 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
 
     const effectiveMcpServers = yield* Effect.tryPromise({
       try: () =>
-        loadEffectiveMcpServersForProvider({
+        (options?.loadEffectiveMcpServers ?? loadEffectiveMcpServersForProvider)({
           provider: PROVIDER,
           settings,
           cwd: input.cwd,
+          threadGoal: { config: serverConfig, threadId: input.threadId },
         }),
       catch: (cause) =>
         new ProviderAdapterProcessError({
@@ -1293,9 +1342,24 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         }),
     });
 
+    yield* Effect.try({
+      try: () =>
+        requireThreadGoalMcpServerEntry({
+          provider: PROVIDER,
+          servers: effectiveMcpServers.servers,
+        }),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail: toMessage(cause, "Required Kimi thread-goal MCP server is invalid."),
+          cause,
+        }),
+    });
+
     const mcpRuntime = yield* Effect.tryPromise({
       try: () =>
-        buildProviderMcpToolRuntime(
+        (options?.buildMcpToolRuntime ?? buildProviderMcpToolRuntime)(
           {
             provider: PROVIDER,
             servers: effectiveMcpServers.servers,
@@ -1313,39 +1377,19 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           cause,
         }),
     });
-    const goalRuntime = settings.goals.enabled
-      ? Option.match(orchestrationEngineOption, {
-          onSome: (orchestrationEngine) =>
-            makeGoalProviderToolRuntime({
-              orchestrationEngine,
-              provider: PROVIDER,
-              threadId: input.threadId,
-            }),
-          onNone: () =>
-            ({
-              descriptors: [],
-              executors: new Map(),
-              warnings: [],
-              close: async () => undefined,
-            }) satisfies ProviderMcpToolRuntime,
-        })
-      : ({
-          descriptors: [],
-          executors: new Map(),
-          warnings: [],
-          close: async () => undefined,
-        } satisfies ProviderMcpToolRuntime);
-    const mergedMcpRuntime: ProviderMcpToolRuntime = {
-      descriptors: [...mcpRuntime.descriptors, ...goalRuntime.descriptors],
-      executors: new Map([...mcpRuntime.executors, ...goalRuntime.executors]),
-      warnings: [...mcpRuntime.warnings, ...goalRuntime.warnings],
-      close: async () => {
-        await Promise.allSettled([mcpRuntime.close(), goalRuntime.close()]);
-      },
-    };
-
+    const missingThreadGoalTools = REQUIRED_THREAD_GOAL_TOOL_NAMES.filter(
+      (toolName) => !mcpRuntime.executors.has(toolName),
+    );
+    if (missingThreadGoalTools.length > 0) {
+      yield* Effect.promise(() => mcpRuntime.close()).pipe(Effect.ignore({ log: false }));
+      return yield* new ProviderAdapterProcessError({
+        provider: PROVIDER,
+        threadId: input.threadId,
+        detail: `The required ShioriCode thread-goal tools failed to initialize: ${missingThreadGoalTools.join(", ")}.${mcpRuntime.warnings.length > 0 ? ` ${mcpRuntime.warnings.join(" ")}` : ""}`,
+      });
+    }
     const skillRuntime = yield* Effect.tryPromise({
-      try: () => buildSkillToolRuntime({ cwd: input.cwd }),
+      try: () => (options?.buildSkillRuntime ?? buildSkillToolRuntime)({ cwd: input.cwd }),
       catch: (cause) =>
         new ProviderAdapterProcessError({
           provider: PROVIDER,
@@ -1385,12 +1429,12 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     };
 
     const externalTools: ExternalTool[] = [
-      ...mergedMcpRuntime.descriptors.map((descriptor) => ({
+      ...mcpRuntime.descriptors.map((descriptor) => ({
         name: descriptor.name,
         description: descriptor.description,
         parameters: descriptor.inputSchema,
         handler: async (params: Record<string, unknown>) => {
-          const executor = mergedMcpRuntime.executors.get(descriptor.name);
+          const executor = mcpRuntime.executors.get(descriptor.name);
           if (!executor) {
             return {
               output: `Missing executor for tool ${descriptor.name}`,
@@ -1568,7 +1612,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       agentFilePath,
       externalTools,
       toolRuntime: {
-        mcp: mergedMcpRuntime,
+        mcp: mcpRuntime,
         skill: skillRuntime,
         signature,
       },
@@ -1681,10 +1725,79 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       Effect.runPromise(handleKimiToolLoopGuardHook(context, request)),
   });
 
+  const publishSessionStarted = Effect.fn("publishKimiSessionStarted")(function* (input: {
+    readonly context: KimiSessionContext;
+    readonly initializeResult: InitializeResult;
+    readonly timestamp: string;
+    readonly resumePayload?: unknown;
+  }) {
+    const { context, initializeResult, timestamp } = input;
+    yield* publish({
+      type: "session.started",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: context.session.threadId,
+      createdAt: timestamp,
+      payload: input.resumePayload !== undefined ? { resume: input.resumePayload } : {},
+      providerRefs: {},
+    });
+    yield* publish({
+      type: "session.configured",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: context.session.threadId,
+      createdAt: timestamp,
+      payload: {
+        config: {
+          workDir: context.workDir,
+          sessionId: context.sessionId,
+          ...(context.model ? { model: context.model } : {}),
+          thinking: context.thinking,
+          yoloMode: context.yoloMode,
+          ...(initializeResult.server.version
+            ? { cliVersion: initializeResult.server.version }
+            : {}),
+          ...(initializeResult.protocol_version
+            ? { wireVersion: initializeResult.protocol_version }
+            : {}),
+          ...(initializeResult.capabilities !== undefined
+            ? { capabilities: initializeResult.capabilities }
+            : {}),
+        },
+      },
+      providerRefs: {},
+    });
+    yield* publish({
+      type: "thread.started",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: context.session.threadId,
+      createdAt: timestamp,
+      payload: {
+        providerThreadId: context.sessionId,
+      },
+      providerRefs: {
+        providerTurnId: context.sessionId,
+      },
+    });
+    yield* publish({
+      type: "session.state.changed",
+      eventId: nextEventId(),
+      provider: PROVIDER,
+      threadId: context.session.threadId,
+      createdAt: timestamp,
+      payload: {
+        state: "ready",
+      },
+      providerRefs: {},
+    });
+  });
+
   const startClient = Effect.fn("startClient")(function* (
     context: KimiSessionContext,
     options?: {
       readonly emitLifecycle?: boolean;
+      readonly persist?: boolean;
       readonly resumePayload?: unknown;
     },
   ) {
@@ -1701,7 +1814,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       });
     }
 
-    context.client = new ProtocolClient();
+    context.client = createProtocolClient();
     const initializeResult = yield* Effect.tryPromise({
       try: () =>
         context.client.start({
@@ -1742,69 +1855,19 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       updatedAt: timestamp,
       lastError: undefined,
     };
-    yield* persistSession(context);
+    if (options?.persist !== false) {
+      yield* persistSession(context);
+    }
 
     if (options?.emitLifecycle !== false) {
-      yield* publish({
-        type: "session.started",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId: context.session.threadId,
-        createdAt: timestamp,
-        payload: options?.resumePayload !== undefined ? { resume: options.resumePayload } : {},
-        providerRefs: {},
-      });
-      yield* publish({
-        type: "session.configured",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId: context.session.threadId,
-        createdAt: timestamp,
-        payload: {
-          config: {
-            workDir: context.workDir,
-            sessionId: context.sessionId,
-            ...(context.model ? { model: context.model } : {}),
-            thinking: context.thinking,
-            yoloMode: context.yoloMode,
-            ...(initializeResult.server.version
-              ? { cliVersion: initializeResult.server.version }
-              : {}),
-            ...(initializeResult.protocol_version
-              ? { wireVersion: initializeResult.protocol_version }
-              : {}),
-            ...(initializeResult.capabilities !== undefined
-              ? { capabilities: initializeResult.capabilities }
-              : {}),
-          },
-        },
-        providerRefs: {},
-      });
-      yield* publish({
-        type: "thread.started",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId: context.session.threadId,
-        createdAt: timestamp,
-        payload: {
-          providerThreadId: context.sessionId,
-        },
-        providerRefs: {
-          providerTurnId: context.sessionId,
-        },
-      });
-      yield* publish({
-        type: "session.state.changed",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId: context.session.threadId,
-        createdAt: timestamp,
-        payload: {
-          state: "ready",
-        },
-        providerRefs: {},
+      yield* publishSessionStarted({
+        context,
+        initializeResult,
+        timestamp,
+        ...(options?.resumePayload !== undefined ? { resumePayload: options.resumePayload } : {}),
       });
     }
+    return initializeResult;
   });
 
   const restartClientIfNeeded = Effect.fn("restartClientIfNeeded")(function* (
@@ -2299,6 +2362,25 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         payload.token_usage.input_cache_read +
         payload.token_usage.input_cache_creation;
       if (usedTokens > 0) {
+        const usage: ThreadTokenUsageSnapshot = {
+          usedTokens,
+          inputTokens: payload.token_usage.input_other,
+          cachedInputTokens: payload.token_usage.input_cache_read,
+          outputTokens: payload.token_usage.output,
+          lastUsedTokens: usedTokens,
+          lastInputTokens: payload.token_usage.input_other,
+          lastCachedInputTokens: payload.token_usage.input_cache_read,
+          lastOutputTokens: payload.token_usage.output,
+        };
+        input.turn.lastTokenUsage = usage;
+        // Status updates can be repeated for one model message. Retain the
+        // largest cumulative value per provider message and expose the sum only
+        // once, when the turn reaches its authoritative terminal result.
+        recordKimiProcessedTokenUsage({
+          processedTokensByMessageId: input.turn.processedTokensByMessageId,
+          messageId: payload.message_id,
+          usedTokens,
+        });
         yield* publish({
           type: "thread.token-usage.updated",
           eventId: nextEventId(),
@@ -2307,16 +2389,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           createdAt: nowIso(),
           turnId: input.turn.turnId,
           payload: {
-            usage: {
-              usedTokens,
-              inputTokens: payload.token_usage.input_other,
-              cachedInputTokens: payload.token_usage.input_cache_read,
-              outputTokens: payload.token_usage.output,
-              lastUsedTokens: usedTokens,
-              lastInputTokens: payload.token_usage.input_other,
-              lastCachedInputTokens: payload.token_usage.input_cache_read,
-              lastOutputTokens: payload.token_usage.output,
-            },
+            usage,
           },
           providerRefs: {},
           raw: rawEvent("StatusUpdate", payload),
@@ -2538,6 +2611,23 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     };
     yield* persistSession(input.context);
     input.context.interrupting = false;
+
+    const terminalUsage = buildKimiTerminalTokenUsage(input.turn);
+    if (terminalUsage) {
+      yield* publish({
+        type: "thread.token-usage.updated",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: input.context.session.threadId,
+        createdAt: nowIso(),
+        turnId: input.turn.turnId,
+        payload: {
+          usage: terminalUsage,
+        },
+        providerRefs: {},
+        raw: rawEvent("TurnEnd", input.result),
+      });
+    }
 
     if (input.result.status === "max_steps_reached") {
       const loopControl = resolveKimiLoopControlFromEnv();
@@ -2770,6 +2860,48 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     } satisfies ContentPart;
   });
 
+  const stopSessionContext = Effect.fn("stopSessionContext")(function* (
+    context: KimiSessionContext,
+    options?: { readonly emitExitEvent?: boolean },
+  ) {
+    if (context.stopped) return;
+    context.stopped = true;
+    context.pendingApprovals.clear();
+    context.pendingQuestions.clear();
+    yield* closeSessionResources(context);
+    if (context.client.isRunning) {
+      yield* Effect.promise(() => context.client.stop()).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Kimi Code runtime stop failed during session teardown", {
+            threadId: context.session.threadId,
+            cause,
+          }),
+        ),
+      );
+    }
+    context.session = {
+      ...context.session,
+      status: "closed",
+      updatedAt: nowIso(),
+    };
+    if (options?.emitExitEvent !== false) {
+      yield* publish({
+        type: "session.exited",
+        eventId: nextEventId(),
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        createdAt: nowIso(),
+        payload: {
+          reason: "Session stopped",
+          recoverable: false,
+          exitKind: "graceful",
+        },
+        providerRefs: {},
+      });
+    }
+    yield* removeSession(context.session.threadId);
+  });
+
   const startSession: KimiCodeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
       const settings = yield* serverSettingsService.getSettings.pipe(
@@ -2845,7 +2977,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
           timestamp,
         ),
         sessionId,
-        client: new ProtocolClient(),
+        client: createProtocolClient(),
         workDir,
         executablePath,
         shareDir,
@@ -2869,11 +3001,33 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
         })),
       };
 
-      if (shouldResume) {
-        yield* startClient(context, { resumePayload: input.resumeCursor });
-      } else {
-        yield* startClient(context);
-      }
+      const initializeResult = yield* startClient(context, {
+        emitLifecycle: false,
+        persist: false,
+      }).pipe(
+        Effect.onError(() =>
+          Effect.gen(function* () {
+            yield* closeSessionResources(context);
+            if (context.client.isRunning) {
+              yield* Effect.tryPromise(() => context.client.stop()).pipe(
+                Effect.ignore({ log: true }),
+              );
+            }
+          }),
+        ),
+      );
+      yield* commitPreparedSessionReplacement({
+        replacement: context,
+        readCurrent: getSessions().pipe(Effect.map((sessions) => sessions.get(input.threadId))),
+        retire: (previous) => stopSessionContext(previous, { emitExitEvent: false }),
+        publish: persistSession,
+      });
+      yield* publishSessionStarted({
+        context,
+        initializeResult,
+        timestamp: context.session.updatedAt,
+        ...(shouldResume ? { resumePayload: input.resumeCursor } : {}),
+      });
       if (fingerprintMismatch) {
         yield* publish({
           type: "runtime.warning",
@@ -3026,6 +3180,8 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
       items: [],
       toolCalls: new Map(),
       lastToolCallIdByParent: new Map(),
+      processedTokensByMessageId: new Map(),
+      lastTokenUsage: undefined,
       pendingAssistantText: "",
       toolCallSeen: false,
       assistantStarted: false,
@@ -3206,44 +3362,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
     });
 
   const stopSession: KimiCodeAdapterShape["stopSession"] = (threadId) =>
-    Effect.gen(function* () {
-      const context = yield* requireSession(threadId);
-      context.stopped = true;
-      context.pendingApprovals.clear();
-      context.pendingQuestions.clear();
-      yield* closeSessionResources(context);
-      if (context.client.isRunning) {
-        yield* Effect.tryPromise({
-          try: () => context.client.stop(),
-          catch: (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId,
-              detail: toMessage(cause, "Failed to stop Kimi Code runtime."),
-              cause,
-            }),
-        });
-      }
-      context.session = {
-        ...context.session,
-        status: "closed",
-        updatedAt: nowIso(),
-      };
-      yield* publish({
-        type: "session.exited",
-        eventId: nextEventId(),
-        provider: PROVIDER,
-        threadId,
-        createdAt: nowIso(),
-        payload: {
-          reason: "Session stopped",
-          recoverable: false,
-          exitKind: "graceful",
-        },
-        providerRefs: {},
-      });
-      yield* removeSession(threadId);
-    });
+    requireSession(threadId).pipe(Effect.flatMap(stopSessionContext));
 
   const listSessions: KimiCodeAdapterShape["listSessions"] = () =>
     getSessions().pipe(
@@ -3318,7 +3437,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
             })).sessionId;
 
       context.sessionId = nextSessionId;
-      context.client = new ProtocolClient();
+      context.client = createProtocolClient();
       context.turns =
         keepTurns <= 0
           ? []
@@ -3402,3 +3521,7 @@ const makeKimiCodeAdapter = Effect.fn("makeKimiCodeAdapter")(function* () {
 });
 
 export const KimiCodeAdapterLive = Layer.effect(KimiCodeAdapter, makeKimiCodeAdapter());
+
+export function makeKimiCodeAdapterLive(options?: KimiCodeAdapterLiveOptions) {
+  return Layer.effect(KimiCodeAdapter, makeKimiCodeAdapter(options));
+}

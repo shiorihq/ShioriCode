@@ -209,6 +209,8 @@ export interface WsRpcClient {
     readonly getStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.remoteGetStatus>;
     readonly setCredentials: RpcUnaryMethod<typeof WS_METHODS.remoteSetCredentials>;
     readonly setExposure: RpcUnaryMethod<typeof WS_METHODS.remoteSetExposure>;
+    readonly beginLinkSignIn: RpcUnaryMethod<typeof WS_METHODS.remoteBeginLinkSignIn>;
+    readonly disconnectLinkAccount: RpcUnaryMethod<typeof WS_METHODS.remoteDisconnectLinkAccount>;
     readonly revokeSession: RpcUnaryMethod<typeof WS_METHODS.remoteRevokeSession>;
     readonly testConnection: RpcUnaryNoArgMethod<typeof WS_METHODS.remoteTestConnection>;
   };
@@ -332,6 +334,10 @@ export function createWsRpcClient(options: {
         transport.request((client) => client[WS_METHODS.remoteSetCredentials](input)),
       setExposure: (input) =>
         transport.request((client) => client[WS_METHODS.remoteSetExposure](input)),
+      beginLinkSignIn: (input) =>
+        transport.request((client) => client[WS_METHODS.remoteBeginLinkSignIn](input)),
+      disconnectLinkAccount: (input) =>
+        transport.request((client) => client[WS_METHODS.remoteDisconnectLinkAccount](input)),
       revokeSession: (input) =>
         transport.request((client) => client[WS_METHODS.remoteRevokeSession](input)),
       testConnection: () =>

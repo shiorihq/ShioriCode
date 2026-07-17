@@ -91,13 +91,6 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
       watch: {
         ignored: ["**/src/routeTree.gen.ts"],
       },
-      hmr: {
-        // Explicit config so Vite's HMR WebSocket connects reliably
-        // inside Electron's BrowserWindow. Vite 8 uses console.debug for
-        // connection logs — enable "Verbose" in DevTools to see them.
-        protocol: "ws",
-        host,
-      },
     },
     build: {
       outDir: "dist",

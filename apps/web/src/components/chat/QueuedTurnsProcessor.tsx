@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type ProviderKind,
   type ServerProvider,
+  type ThreadGoalIntent,
   type ThreadId,
   type UploadChatAttachment,
 } from "contracts";
@@ -68,6 +69,7 @@ type QueuedTurnForDispatch = {
   modelSelection: ModelSelection;
   runtimeMode: Thread["runtimeMode"];
   interactionMode: Thread["interactionMode"];
+  goalIntent: ThreadGoalIntent | null;
   titleSeed: string;
 };
 
@@ -121,6 +123,7 @@ export function buildQueuedTurnDispatchCommands(input: {
     titleSeed: input.queuedTurn.titleSeed,
     runtimeMode: input.queuedTurn.runtimeMode,
     interactionMode: input.queuedTurn.interactionMode,
+    ...(input.queuedTurn.goalIntent ? { goalIntent: input.queuedTurn.goalIntent } : {}),
     createdAt: input.dispatchCreatedAt,
   });
 

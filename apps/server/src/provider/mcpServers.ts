@@ -34,6 +34,11 @@ import type {
   ThreadId,
 } from "contracts";
 import type { ServerConfigShape } from "../config";
+import { issueThreadGoalCapability } from "../threadGoalCapability.ts";
+import { THREAD_GOAL_CONTROL_PATH } from "../threadGoalControl.ts";
+
+export const THREAD_GOAL_MCP_SERVER_NAME = "shioricode-thread-goal";
+export const THREAD_GOAL_MCP_TOOL_NAMES = ["get_goal", "update_goal"] as const;
 
 export interface ProviderMcpDescriptor {
   readonly name: string;
@@ -70,6 +75,50 @@ export interface BuildProviderMcpToolRuntimeOptions {
 export interface EffectiveMcpServersResult {
   readonly servers: ReadonlyArray<McpServerEntry>;
   readonly warnings: ReadonlyArray<string>;
+}
+
+/**
+ * Returns the single harness-owned thread-goal server or throws when provider
+ * resource arbitration dropped or replaced it.
+ *
+ * The name alone is not sufficient: user configuration uses the same schema,
+ * so callers also verify the stdio entrypoint and capability-bearing
+ * environment that distinguish ShioriCode's built-in server.
+ */
+export function requireThreadGoalMcpServerEntry(input: {
+  readonly provider: ProviderKind;
+  readonly servers: ReadonlyArray<McpServerEntry>;
+}): McpServerEntry {
+  const matches = input.servers.filter(
+    (server) => server.name.trim().toLowerCase() === THREAD_GOAL_MCP_SERVER_NAME,
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one built-in '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server for provider '${input.provider}', received ${matches.length}.`,
+    );
+  }
+
+  const server = matches[0]!;
+  const issues = [
+    !server.enabled ? "disabled" : null,
+    server.transport !== "stdio" ? "not stdio" : null,
+    server.command !== process.execPath ? "unexpected executable" : null,
+    !server.args?.includes("thread-goal-mcp") ? "missing thread-goal-mcp entrypoint" : null,
+    !server.env?.SHIORICODE_THREAD_GOAL_CONTROL_URL?.trim() ? "missing control URL" : null,
+    !server.env?.SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN?.trim()
+      ? "missing capability token"
+      : null,
+    server.providers.length > 0 && !server.providers.includes(input.provider)
+      ? `not enabled for '${input.provider}'`
+      : null,
+  ].filter((issue): issue is string => issue !== null);
+  if (issues.length > 0) {
+    throw new Error(
+      `Required built-in '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server for provider '${input.provider}' is invalid: ${issues.join(", ")}.`,
+    );
+  }
+
+  return server;
 }
 
 export interface EffectiveMcpServerRowsResult {
@@ -418,10 +467,13 @@ export async function discoverClaudeMcpServers(input: {
   return await readMcpServersFromFiles(filePaths, readClaudeMcpServersFile);
 }
 
-function mergeMcpServers(servers: ReadonlyArray<McpServerEntry>): McpServerEntry[] {
+export function mergeMcpServers(servers: ReadonlyArray<McpServerEntry>): McpServerEntry[] {
   const byName = new Map<string, McpServerEntry>();
   for (const server of servers) {
-    byName.set(server.name, server);
+    const normalizedName = server.name.trim().toLowerCase();
+    const key =
+      normalizedName === THREAD_GOAL_MCP_SERVER_NAME ? THREAD_GOAL_MCP_SERVER_NAME : server.name;
+    byName.set(key, server);
   }
   return [...byName.values()];
 }
@@ -508,12 +560,17 @@ export async function loadEffectiveMcpServersForProvider(input: {
   readonly provider: ProviderKind;
   readonly settings: ServerSettings;
   readonly cwd?: string;
+  readonly threadGoal?: {
+    readonly config: ServerConfigShape;
+    readonly threadId: ThreadId;
+  };
 }): Promise<EffectiveMcpServersResult> {
   const servers = mergeMcpServers([
     ...input.settings.mcpServers.servers,
     ...builtInShioriMcpServers({
       provider: input.provider,
       settings: input.settings,
+      ...(input.threadGoal ? { threadGoal: input.threadGoal } : {}),
     }),
   ]);
   return {
@@ -570,6 +627,10 @@ export async function loadCodexManagedMcpServers(input: {
   readonly cwd?: string;
   readonly claudeHomePath?: string;
   readonly claudeDesktopConfigPath?: string;
+  readonly threadGoal?: {
+    readonly config: ServerConfigShape;
+    readonly threadId: ThreadId;
+  };
 }): Promise<EffectiveMcpServersResult> {
   const sourceHome = resolveCodexHomePath(input.settings.providers.codex.homePath);
   const globalCodexConfigPath = path.resolve(sourceHome, "config.toml");
@@ -594,7 +655,11 @@ export async function loadCodexManagedMcpServers(input: {
     ...input.settings.mcpServers.servers,
     ...projectCodexServers.map((server) => retargetMcpServerForProvider(server, "codex")),
     ...claude.servers.map((server) => retargetMcpServerForProvider(server, "codex")),
-    ...builtInShioriMcpServers({ provider: "codex", settings: input.settings }),
+    ...builtInShioriMcpServers({
+      provider: "codex",
+      settings: input.settings,
+      ...(input.threadGoal ? { threadGoal: input.threadGoal } : {}),
+    }),
   ]);
 
   return {
@@ -906,10 +971,19 @@ export function toAcpMcpServers(
       readonly config: ServerConfigShape;
       readonly threadId: ThreadId;
     };
+    readonly threadGoal?: {
+      readonly config: ServerConfigShape;
+      readonly threadId: ThreadId;
+    };
   },
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   const acpServers: EffectAcpSchema.McpServer[] = [];
-  for (const server of filterMcpServersForProvider(provider, settings.mcpServers.servers)) {
+  const builtIns = options?.threadGoal ? [threadGoalMcpServerEntry(options.threadGoal)] : [];
+  const effectiveServers = mergeMcpServers([
+    ...filterMcpServersForProvider(provider, settings.mcpServers.servers),
+    ...builtIns,
+  ]);
+  for (const server of effectiveServers) {
     switch (server.transport) {
       case "stdio": {
         const command = server.command?.trim();
@@ -984,10 +1058,18 @@ export function builtInShioriMcpServers(input: {
     readonly config: ServerConfigShape;
     readonly threadId: ThreadId;
   };
+  readonly threadGoal?: {
+    readonly config: ServerConfigShape;
+    readonly threadId: ThreadId;
+  };
 }): McpServerEntry[] {
   const servers: McpServerEntry[] = [];
   const browserUse = input.settings.browserUse ?? { enabled: false };
   const computerUse = input.settings.computerUse ?? { enabled: false };
+
+  if (input.threadGoal) {
+    servers.push(threadGoalMcpServerEntry(input.threadGoal));
+  }
 
   if (browserUse.enabled && input.browserPanel) {
     servers.push(
@@ -1050,6 +1132,16 @@ function makeBuiltInStdioMcpServerEntry(
   return env ? { ...entry, env } : entry;
 }
 
+function threadGoalMcpServerEntry(input: {
+  readonly config: ServerConfigShape;
+  readonly threadId: ThreadId;
+}): McpServerEntry {
+  return makeBuiltInStdioMcpServerEntry(THREAD_GOAL_MCP_SERVER_NAME, "thread-goal-mcp", {
+    SHIORICODE_THREAD_GOAL_CONTROL_URL: threadGoalControlUrl(input.config),
+    SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: issueThreadGoalCapability(input.threadId),
+  });
+}
+
 function serverEntrypointArgs(): ReadonlyArray<string> {
   return process.argv[1] ? [process.argv[1]] : [];
 }
@@ -1060,6 +1152,14 @@ function browserPanelControlUrl(config: ServerConfigShape): string {
     configHost === "0.0.0.0" || configHost === "::" || configHost === "" ? "127.0.0.1" : configHost;
   const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   return `http://${urlHost}:${config.port}/api/browser-panel/command`;
+}
+
+export function threadGoalControlUrl(config: ServerConfigShape): string {
+  const configHost = config.host ?? "127.0.0.1";
+  const host =
+    configHost === "0.0.0.0" || configHost === "::" || configHost === "" ? "127.0.0.1" : configHost;
+  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${urlHost}:${config.port}${THREAD_GOAL_CONTROL_PATH}`;
 }
 
 function sanitizeIdentifier(value: string, fallback: string): string {
@@ -1797,6 +1897,62 @@ export async function buildProviderMcpToolRuntime(
   };
 }
 
+/**
+ * Verifies the provider-neutral thread-goal MCP contract before a provider
+ * session is allowed to publish readiness.
+ *
+ * The built-in server is intentionally strict: a connection that succeeds but
+ * exposes a partial or expanded tool surface is not a usable goal control
+ * channel. Callers still initialize their provider-native MCP runtime after
+ * this probe, so this check complements (rather than replaces) provider startup.
+ */
+export async function verifyThreadGoalMcpServer(
+  input: {
+    readonly provider: ProviderKind;
+    readonly servers: ReadonlyArray<McpServerEntry>;
+    readonly cwd?: string;
+  },
+  options: BuildProviderMcpToolRuntimeOptions = {},
+): Promise<void> {
+  const goalServer = requireThreadGoalMcpServerEntry(input);
+
+  const runtime = await buildProviderMcpToolRuntime(
+    {
+      provider: input.provider,
+      servers: [goalServer],
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    },
+    options,
+  );
+  try {
+    if (runtime.warnings.length > 0) {
+      throw new Error(runtime.warnings.join("; "));
+    }
+
+    const expected = new Set(
+      THREAD_GOAL_MCP_TOOL_NAMES.map(
+        (toolName) => `mcp__${THREAD_GOAL_MCP_SERVER_NAME}__${toolName}`,
+      ),
+    );
+    const observed = new Set(runtime.descriptors.map((descriptor) => descriptor.name));
+    const missing = [...expected].filter((name) => !observed.has(name));
+    const unexpected = [...observed].filter((name) => !expected.has(name));
+    if (missing.length > 0 || unexpected.length > 0) {
+      const details = [
+        missing.length > 0 ? `missing: ${missing.join(", ")}` : null,
+        unexpected.length > 0 ? `unexpected: ${unexpected.join(", ")}` : null,
+      ]
+        .filter((detail): detail is string => detail !== null)
+        .join("; ");
+      throw new Error(
+        `Required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP tool contract mismatch (${details}).`,
+      );
+    }
+  } finally {
+    await runtime.close();
+  }
+}
+
 function escapeTomlString(value: string): string {
   return `"${value
     .replace(/\\/g, "\\\\")
@@ -1840,6 +1996,10 @@ export function buildCodexManagedMcpConfigFragment(
       lines.push(`command = ${escapeTomlString(command)}`);
       if (server.args && server.args.length > 0) {
         lines.push(`args = [${server.args.map(escapeTomlString).join(", ")}]`);
+      }
+      if (server.name.trim().toLowerCase() === THREAD_GOAL_MCP_SERVER_NAME) {
+        lines.push(`required = true`);
+        lines.push(`default_tools_approval_mode = "approve"`);
       }
       if (server.env && Object.keys(server.env).length > 0) {
         lines.push(`[${tablePath}.env]`);

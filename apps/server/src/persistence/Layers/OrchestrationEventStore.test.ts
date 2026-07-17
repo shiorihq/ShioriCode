@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "contracts";
+import { CommandId, EventId, ProjectId, ThreadId } from "contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -114,6 +114,83 @@ layer("OrchestrationEventStore", (it) => {
           ),
         );
       }
+    }),
+  );
+
+  it.effect("normalizes historical goal facts while leaving the event log immutable", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-07-16T12:00:00.000Z";
+      const canonicalThreadId = ThreadId.makeUnsafe("thread-historical-goal");
+      const cursorRows = yield* sql<{ readonly sequence: number }>`
+        SELECT COALESCE(MAX(sequence), 0) AS sequence
+        FROM orchestration_events
+      `;
+      const cursor = cursorRows[0]?.sequence ?? 0;
+      const payloadJson = JSON.stringify({
+        threadId: canonicalThreadId,
+        goal: {
+          threadId: "provider-thread-id",
+          objective: "x".repeat(4_001),
+          status: "active",
+          tokenBudget: 0,
+          tokensUsed: 10,
+          timeUsedSeconds: 5,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.makeUnsafe("evt-store-historical-goal")},
+          ${"thread"},
+          ${canonicalThreadId},
+          ${0},
+          ${"thread.goal-updated"},
+          ${now},
+          ${CommandId.makeUnsafe("cmd-store-historical-goal")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${payloadJson},
+          ${"{}"}
+        )
+      `;
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(cursor, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      const event = replayed[0];
+      assert.equal(event?.type, "thread.goal-updated");
+      if (event?.type !== "thread.goal-updated") {
+        return assert.fail("Expected a historical goal event");
+      }
+      assert.equal(event.payload.goal.threadId, canonicalThreadId);
+      assert.equal(Array.from(event.payload.goal.objective).length, 4_000);
+      assert.equal(event.payload.goal.tokenBudget, null);
+
+      const stored = yield* sql<{ readonly payloadJson: string }>`
+        SELECT payload_json AS "payloadJson"
+        FROM orchestration_events
+        WHERE event_id = 'evt-store-historical-goal'
+      `;
+      assert.equal(stored[0]?.payloadJson, payloadJson);
     }),
   );
 });

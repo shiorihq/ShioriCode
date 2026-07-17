@@ -6,7 +6,7 @@ import path from "node:path";
 
 import type { MCPClient } from "@ai-sdk/mcp";
 import type { McpServerEntry } from "contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildCodexLeanAppServerConfig,
@@ -23,7 +23,9 @@ import {
   prepareCodexHomeWithManagedMcpServers,
   removeExternalMcpServer,
   toAcpMcpServers,
+  verifyThreadGoalMcpServer,
 } from "./mcpServers.ts";
+import { commitThreadGoalCapability, verifyThreadGoalCapability } from "../threadGoalCapability.ts";
 
 const TEMP_DIRS = new Set<string>();
 
@@ -75,6 +77,73 @@ function makeFakeMcpClient(input: {
   } as unknown as MCPClient;
 }
 
+function makeExecutableMcpTool(name: string) {
+  return {
+    name,
+    inputSchema: { type: "object" },
+    execute: () => ({ ok: true }),
+  };
+}
+
+describe("verifyThreadGoalMcpServer", () => {
+  const goalServer: McpServerEntry = {
+    name: "shioricode-thread-goal",
+    transport: "stdio",
+    command: process.execPath,
+    args: ["server.js", "thread-goal-mcp"],
+    env: {
+      SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
+      SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: "test-capability",
+    },
+    enabled: true,
+    providers: ["gemini"],
+  };
+  it("accepts exactly get_goal and update_goal", async () => {
+    const close = vi.fn(async () => undefined);
+    await expect(
+      verifyThreadGoalMcpServer(
+        { provider: "gemini", servers: [goalServer], cwd: "/tmp/project" },
+        {
+          createClient: async () =>
+            makeFakeMcpClient({
+              tools: [makeExecutableMcpTool("get_goal"), makeExecutableMcpTool("update_goal")],
+              close,
+            }),
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      label: "a missing update_goal tool",
+      tools: [makeExecutableMcpTool("get_goal")],
+      expected: /missing: mcp__shioricode-thread-goal__update_goal/u,
+    },
+    {
+      label: "an unexpected extra tool",
+      tools: [
+        makeExecutableMcpTool("get_goal"),
+        makeExecutableMcpTool("update_goal"),
+        makeExecutableMcpTool("reset_goal"),
+      ],
+      expected: /unexpected: mcp__shioricode-thread-goal__reset_goal/u,
+    },
+  ])("rejects $label and closes the probe", async ({ tools, expected }) => {
+    const close = vi.fn(async () => undefined);
+    await expect(
+      verifyThreadGoalMcpServer(
+        { provider: "gemini", servers: [goalServer], cwd: "/tmp/project" },
+        {
+          createClient: async () => makeFakeMcpClient({ tools, close }),
+        },
+      ),
+    ).rejects.toThrow(expected);
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
 describe("filterMcpServersForProvider", () => {
   it("includes enabled global servers and provider-targeted servers only", () => {
     const servers: McpServerEntry[] = [
@@ -111,6 +180,73 @@ describe("filterMcpServersForProvider", () => {
 });
 
 describe("toAcpMcpServers", () => {
+  it.each(["codex", "claudeAgent", "glm", "kimiCode", "gemini", "cursor"] as const)(
+    "adds the thread-scoped goal MCP for %s without a feature toggle",
+    (provider) => {
+      const servers = builtInShioriMcpServers({
+        provider,
+        settings: {
+          browserUse: { enabled: false },
+          computerUse: { enabled: false },
+          mcpServers: { servers: [] },
+        } as never,
+        threadGoal: {
+          config: { host: "0.0.0.0", port: 4321 } as never,
+          threadId: "thread-goal-a" as never,
+        },
+      });
+
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({
+        name: "shioricode-thread-goal",
+        transport: "stdio",
+        command: process.execPath,
+        args: expect.arrayContaining(["thread-goal-mcp"]),
+        providers: [provider],
+        env: {
+          SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
+          SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: expect.any(String),
+        },
+      });
+      commitThreadGoalCapability("thread-goal-a" as never);
+      expect(
+        verifyThreadGoalCapability(servers[0]?.env?.SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN ?? ""),
+      ).toBe("thread-goal-a");
+    },
+  );
+
+  it("does not let a user MCP entry shadow the built-in thread-goal server", async () => {
+    const result = await loadEffectiveMcpServersForProvider({
+      provider: "codex",
+      settings: {
+        browserUse: { enabled: false },
+        computerUse: { enabled: false },
+        mcpServers: {
+          servers: [
+            {
+              name: "SHIORICODE-THREAD-GOAL",
+              transport: "stdio",
+              command: "/tmp/untrusted",
+              enabled: true,
+              providers: [],
+            },
+          ],
+        },
+      } as never,
+      threadGoal: {
+        config: { host: "127.0.0.1", port: 4321 } as never,
+        threadId: "thread-goal-a" as never,
+      },
+    });
+
+    expect(result.servers).toHaveLength(1);
+    expect(result.servers[0]).toMatchObject({
+      name: "shioricode-thread-goal",
+      command: process.execPath,
+      args: expect.arrayContaining(["thread-goal-mcp"]),
+    });
+  });
+
   it("adds built-in browser and computer MCP servers when enabled", () => {
     const servers = toAcpMcpServers(
       "gemini",
@@ -379,6 +515,23 @@ describe("buildCodexManagedMcpConfigFragment", () => {
     assert.match(fragment, /X-Team = "MCP_TEAM"/);
     assert.match(fragment, /\[mcp_servers\.shioricode_events\]/);
     assert.match(fragment, /transport = "sse"/);
+  });
+
+  it("requires and auto-approves the trusted thread-goal server", () => {
+    const fragment = buildCodexManagedMcpConfigFragment([
+      {
+        name: "shioricode-thread-goal",
+        transport: "stdio",
+        command: "node",
+        args: ["server.js", "thread-goal-mcp"],
+        enabled: true,
+        providers: ["codex"],
+      },
+    ]);
+
+    assert.ok(fragment);
+    assert.match(fragment, /required = true/);
+    assert.match(fragment, /default_tools_approval_mode = "approve"/);
   });
 });
 

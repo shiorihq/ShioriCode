@@ -724,7 +724,7 @@ function AboutVersionSection() {
   );
 }
 
-const COMPANION_CLI_MANUAL_COMMAND = "npm install --global shiori-cli";
+const COMPANION_CLI_MANUAL_COMMAND = "npm install --global shioricode";
 
 function CompanionCliSection() {
   const [state, setState] = useState<DesktopCompanionCliState | null>(null);
@@ -779,7 +779,7 @@ function CompanionCliSection() {
         if (!result.completed) {
           toastManager.add({
             type: "error",
-            title: "Could not install Shiori CLI",
+            title: "Could not install ShioriCode CLI",
             description: result.state.lastError ?? "Install failed.",
           });
         }
@@ -795,7 +795,7 @@ function CompanionCliSection() {
         }));
         toastManager.add({
           type: "error",
-          title: "Could not install Shiori CLI",
+          title: "Could not install ShioriCode CLI",
           description,
         });
       })
@@ -811,8 +811,8 @@ function CompanionCliSection() {
 
   return (
     <SettingsRow
-      title="Shiori CLI"
-      description="Install the companion `shiori` CLI for thread, session, and project commands."
+      title="ShioriCode CLI"
+      description="Install the unified `shioricode` CLI to open projects and control local or hosted ShioriCode."
       status={
         <div className="space-y-1">
           {canUseDesktopInstall ? (

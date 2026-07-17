@@ -15,6 +15,9 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const COMPANION_CLI_GET_STATE_CHANNEL = "desktop:companion-cli-get-state";
 const COMPANION_CLI_INSTALL_CHANNEL = "desktop:companion-cli-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const GET_REMOTE_CONNECTION_CHANNEL = "desktop:get-remote-connection";
+const CONNECT_TO_REMOTE_CHANNEL = "desktop:connect-to-remote";
+const DISCONNECT_FROM_REMOTE_CHANNEL = "desktop:disconnect-from-remote";
 const GET_WINDOW_CONTROLS_INSET_CHANNEL = "desktop:get-window-controls-inset";
 const LIST_SYSTEM_FONTS_CHANNEL = "desktop:list-system-fonts";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
@@ -28,6 +31,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const result = ipcRenderer.sendSync(GET_WS_URL_CHANNEL);
     return typeof result === "string" ? result : null;
   },
+  getRemoteConnection: () => ipcRenderer.invoke(GET_REMOTE_CONNECTION_CHANNEL),
+  connectToRemote: (url: string) => ipcRenderer.invoke(CONNECT_TO_REMOTE_CHANNEL, url),
+  disconnectFromRemote: () => ipcRenderer.invoke(DISCONNECT_FROM_REMOTE_CHANNEL),
   getWindowControlsInset: () => ipcRenderer.invoke(GET_WINDOW_CONTROLS_INSET_CHANNEL),
   listSystemFonts: () => ipcRenderer.invoke(LIST_SYSTEM_FONTS_CHANNEL),
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
