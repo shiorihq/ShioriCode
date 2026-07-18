@@ -16,7 +16,7 @@ describe("shouldPrewarmThreadSession", () => {
     ).toBe(true);
   });
 
-  it("does not prewarm threads that explicitly need resume", () => {
+  it("does not retry errored threads that explicitly need resume", () => {
     expect(
       shouldPrewarmThreadSession({
         session: {
@@ -24,7 +24,7 @@ describe("shouldPrewarmThreadSession", () => {
         },
         resumeState: "needs_resume",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not prewarm threads that are already being resumed", () => {

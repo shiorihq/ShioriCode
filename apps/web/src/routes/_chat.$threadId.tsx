@@ -859,11 +859,7 @@ export function shouldPrewarmThreadSession(
     return false;
   }
 
-  return (
-    thread.session === null ||
-    thread.session.orchestrationStatus === "stopped" ||
-    thread.session.orchestrationStatus === "error"
-  );
+  return thread.session === null || thread.session.orchestrationStatus === "stopped";
 }
 
 export const Route = createFileRoute("/_chat/$threadId")({

@@ -67,7 +67,9 @@ async function withRemoteRpc<T>(
     return await deps.withLocalRpc(target.baseDir, run);
   }
 
-  deps.requireAdministrator(target.service.platform);
+  if (target.service.accountMode === "dedicated") {
+    deps.requireAdministrator(target.service.platform);
+  }
   const connection = await deps.connectService(target.service.stateDir);
   if (!connection) {
     throw new Error(

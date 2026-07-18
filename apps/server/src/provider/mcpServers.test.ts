@@ -204,6 +204,7 @@ describe("toAcpMcpServers", () => {
         args: expect.arrayContaining(["thread-goal-mcp"]),
         providers: [provider],
         env: {
+          ELECTRON_RUN_AS_NODE: "1",
           SHIORICODE_THREAD_GOAL_CONTROL_URL: "http://127.0.0.1:4321/api/internal/thread-goal",
           SHIORICODE_THREAD_GOAL_CAPABILITY_TOKEN: expect.any(String),
         },

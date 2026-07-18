@@ -20,7 +20,28 @@ sudo shioricode doctor
 sudo shioricode link connect --name "Build server"
 ```
 
-`service install` creates a dedicated operating-system account and installs the native background mechanism for the host: systemd on Linux, launchd on macOS, or a startup task on Windows. ShioriCode listens on loopback and keeps a local recovery login.
+`service install` defaults to a dedicated operating-system account and installs the native background mechanism for the host: systemd on Linux, launchd on macOS, or a startup task on Windows. ShioriCode listens on loopback and keeps a local recovery login.
+
+Account selection and service paths are explicit CLI options. Reuse the invoking user when you want the service to inherit that user's provider homes and credentials:
+
+```sh
+shioricode service install --account current --no-recovery-login
+
+# Or customize a dedicated account and service layout.
+sudo shioricode service install \
+  --account dedicated \
+  --user shioricode \
+  --home-dir /var/lib/shioricode \
+  --state-dir /var/lib/shioricode \
+  --workspace-dir /srv/shioricode/workspaces \
+  --log-file /var/log/shioricode/server.log \
+  --service-path /usr/local/bin:/usr/bin:/bin \
+  --port 3773 \
+  --recovery-username owner \
+  --recovery-password-file /root/shioricode-recovery-password
+```
+
+`--account current` installs a per-user systemd service, macOS LaunchAgent, or Windows scheduled task without administrator access. `--account dedicated` installs the system-level service and still requires `sudo`/Administrator. `--no-recovery-login` keeps hosted access GitHub-only; omit it when you also want a direct/Tailscale recovery login. `--recovery-password-file` avoids exposing that password through shell history or the process list. Without either flag, installation generates a recovery password and prints it once. The selected account, paths, and port are persisted so subsequent `service`, `doctor`, `remote`, and `link` commands target the same installation.
 
 The command also stages a private, read-only copy of Node and ShioriCode beneath the service data directory. The daemon therefore keeps working even when the npm installation came from NVM, a macOS user directory, or Windows AppData. After upgrading the global npm package, run `service install` again to atomically switch the background service to the new runtime.
 

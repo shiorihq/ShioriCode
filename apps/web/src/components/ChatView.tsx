@@ -2994,9 +2994,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     const runtimeModeChanged = activeThread.runtimeMode !== runtimeMode;
     const interactionModeChanged = activeThread.interactionMode !== interactionMode;
     const needsSessionWarmup =
-      activeThread.session === null ||
-      activeThread.session.orchestrationStatus === "stopped" ||
-      activeThread.session.orchestrationStatus === "error";
+      activeThread.session === null || activeThread.session.orchestrationStatus === "stopped";
 
     if (
       !modelSelectionChanged &&
