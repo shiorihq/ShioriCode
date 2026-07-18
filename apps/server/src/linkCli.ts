@@ -102,9 +102,8 @@ async function waitForDeviceAuthorization(input: DeviceStartResponse): Promise<D
 }
 
 function serviceLinkContext() {
-  const platform = requireServiceAdministrator();
   const layout = installedServiceLayout();
-  if (layout.platform !== platform) throw new Error("Service platform changed unexpectedly");
+  if (layout.accountMode === "dedicated") requireServiceAdministrator(layout.platform);
   const store = new LinkRemoteStore({ stateDir: linkServiceStateDir(layout) });
   const client = new LinkControlPlaneClient({ store, origin: linkOrigin() });
   return { layout, store, client };

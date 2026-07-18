@@ -876,6 +876,7 @@ describe("ClaudeAdapterLive", () => {
         }
         assert.equal(computerServerArgs.includes("computer-use-mcp"), true);
         assert.deepEqual(computerServer.env, {
+          ELECTRON_RUN_AS_NODE: "1",
           SHIORICODE_COMPUTER_USE_ENABLED: "1",
         });
         assert.deepEqual(computerServer, {
@@ -883,6 +884,7 @@ describe("ClaudeAdapterLive", () => {
           command: process.execPath,
           args: computerServerArgs,
           env: {
+            ELECTRON_RUN_AS_NODE: "1",
             SHIORICODE_COMPUTER_USE_ENABLED: "1",
           },
         });
@@ -918,6 +920,7 @@ describe("ClaudeAdapterLive", () => {
         assert.fail("Expected the built-in Computer Use server to use stdio transport.");
       }
       assert.deepEqual(computerServer.env, {
+        ELECTRON_RUN_AS_NODE: "1",
         SHIORICODE_COMPUTER_USE_ENABLED: "1",
       });
 

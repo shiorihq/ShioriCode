@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { currentServicePlatform, serviceLayout } from "./serviceManager";
+import {
+  currentServicePlatform,
+  findInstalledServiceLayout,
+  serviceLayout,
+} from "./serviceManager";
 
 const execFile = promisify(execFileCallback);
 
@@ -39,20 +43,14 @@ const PROVIDERS: readonly ProviderProbe[] = [
   },
 ];
 
-function servicePath(platform: NodeJS.Platform): string {
-  if (platform === "darwin") {
-    return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-  }
-  if (platform === "linux") {
-    return "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-  }
-  return process.env.Path ?? process.env.PATH ?? "";
-}
-
-async function binaryVersion(binary: string, home: string): Promise<string | null> {
+async function binaryVersion(
+  binary: string,
+  home: string,
+  configuredPath: string,
+): Promise<string | null> {
   try {
     const result = await execFile(binary, ["--version"], {
-      env: { ...process.env, HOME: home, PATH: servicePath(process.platform) },
+      env: { ...process.env, HOME: home, PATH: configuredPath },
       timeout: 5_000,
       windowsHide: true,
     });
@@ -67,7 +65,8 @@ function hasCredentials(home: string, candidates: readonly string[]): boolean {
 }
 
 function serviceAccountCommand(command: string): string {
-  const layout = serviceLayout(currentServicePlatform());
+  const layout = findInstalledServiceLayout() ?? serviceLayout(currentServicePlatform());
+  if (layout.accountMode === "current") return command;
   if (layout.platform === "linux") {
     return `sudo -u ${layout.account} -H ${command}`;
   }
@@ -78,16 +77,16 @@ function serviceAccountCommand(command: string): string {
 }
 
 export async function providerDoctor(): Promise<string> {
-  const layout = serviceLayout(currentServicePlatform());
-  const lines = [`Service account: ${layout.account}`, `Service home: ${layout.stateDir}`, ""];
+  const layout = findInstalledServiceLayout() ?? serviceLayout(currentServicePlatform());
+  const lines = [`Service account: ${layout.account}`, `Service home: ${layout.homeDir}`, ""];
   for (const provider of PROVIDERS) {
-    const version = await binaryVersion(provider.binary, layout.stateDir);
+    const version = await binaryVersion(provider.binary, layout.homeDir, layout.servicePath);
     if (!version) {
       lines.push(`✗ ${provider.name}: not found in the service PATH`);
       lines.push(`  Install: ${provider.installHint}`);
       continue;
     }
-    const authenticated = hasCredentials(layout.stateDir, provider.credentialPaths);
+    const authenticated = hasCredentials(layout.homeDir, provider.credentialPaths);
     lines.push(`✓ ${provider.name}: ${version}`);
     lines.push(
       authenticated

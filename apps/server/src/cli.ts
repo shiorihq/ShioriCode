@@ -367,19 +367,109 @@ const serviceActionCommand = (action: ServiceAction, description: string) =>
     ),
   );
 
+const serviceAccountFlag = Flag.choice("account", ["dedicated", "current"] as const).pipe(
+  Flag.withDescription(
+    "OS account strategy: create/reuse a dedicated service user, or run as the invoking user.",
+  ),
+  Flag.withDefault("dedicated"),
+);
+const serviceUserFlag = Flag.string("user").pipe(
+  Flag.withDescription(
+    "Override the OS username. Dedicated mode creates it when missing; current mode requires it to exist.",
+  ),
+  Flag.optional,
+);
+const serviceHomeDirFlag = Flag.string("home-dir").pipe(
+  Flag.withDescription("HOME exposed to provider CLIs in the service process."),
+  Flag.optional,
+);
+const serviceStateDirFlag = Flag.string("state-dir").pipe(
+  Flag.withDescription("ShioriCode service data directory."),
+  Flag.optional,
+);
+const serviceWorkspaceDirFlag = Flag.string("workspace-dir").pipe(
+  Flag.withDescription("Default working directory for the service."),
+  Flag.optional,
+);
+const serviceLogPathFlag = Flag.string("log-file").pipe(
+  Flag.withDescription("Log file for stdout and stderr from the background service."),
+  Flag.optional,
+);
+const servicePathFlag = Flag.string("service-path").pipe(
+  Flag.withDescription(
+    "PATH used to discover provider CLIs such as codex, claude, and kimi in the service.",
+  ),
+  Flag.optional,
+);
+const servicePortFlag = Flag.integer("port").pipe(
+  Flag.withSchema(PortSchema),
+  Flag.withDescription("Loopback port for the background service."),
+  Flag.optional,
+);
+const serviceRecoveryUsernameFlag = Flag.string("recovery-username").pipe(
+  Flag.withDescription("Username for direct recovery login. Defaults to `recovery`."),
+  Flag.optional,
+);
+const serviceRecoveryPasswordFileFlag = Flag.string("recovery-password-file").pipe(
+  Flag.withDescription(
+    "Read the direct recovery password from a local file instead of generating one. The file must not be empty.",
+  ),
+  Flag.optional,
+);
+const serviceNoRecoveryLoginFlag = Flag.boolean("no-recovery-login").pipe(
+  Flag.withDescription(
+    "Disable direct username/password recovery login. ShioriCode Link remains GitHub-only.",
+  ),
+  Flag.withDefault(false),
+);
+
+const serviceInstallFlags = {
+  accountMode: serviceAccountFlag,
+  account: serviceUserFlag,
+  homeDir: serviceHomeDirFlag,
+  stateDir: serviceStateDirFlag,
+  workspaceDir: serviceWorkspaceDirFlag,
+  logPath: serviceLogPathFlag,
+  servicePath: servicePathFlag,
+  port: servicePortFlag,
+  recoveryUsername: serviceRecoveryUsernameFlag,
+  recoveryPasswordFile: serviceRecoveryPasswordFileFlag,
+  disableRecoveryLogin: serviceNoRecoveryLoginFlag,
+} as const;
+
 const serviceCommand = Command.make("service").pipe(
   Command.withDescription("Install and control the OS background service."),
   Command.withSubcommands([
-    Command.make("install").pipe(
-      Command.withDescription("Install and start ShioriCode under a dedicated OS account."),
-      Command.withHandler(() =>
+    Command.make("install", serviceInstallFlags).pipe(
+      Command.withDescription("Install and start ShioriCode as a dedicated or existing OS user."),
+      Command.withHandler((flags) =>
         Effect.promise(async () => {
-          const result = await installService();
+          const result = await installService({
+            accountMode: flags.accountMode,
+            account: Option.getOrUndefined(flags.account),
+            homeDir: Option.getOrUndefined(flags.homeDir),
+            stateDir: Option.getOrUndefined(flags.stateDir),
+            workspaceDir: Option.getOrUndefined(flags.workspaceDir),
+            logPath: Option.getOrUndefined(flags.logPath),
+            servicePath: Option.getOrUndefined(flags.servicePath),
+            port: Option.getOrUndefined(flags.port),
+            recoveryUsername: Option.getOrUndefined(flags.recoveryUsername),
+            recoveryPasswordFile: Option.getOrUndefined(flags.recoveryPasswordFile),
+            disableRecoveryLogin: flags.disableRecoveryLogin,
+          });
           console.log("ShioriCode service installed and started.\n");
           console.log(serviceSummary(result.layout));
-          console.log("\nLocal recovery credentials (store these securely):");
-          console.log(`Username: ${result.recoveryUsername}`);
-          console.log(`Password: ${result.recoveryPassword}`);
+          console.log("\nLocal recovery login:");
+          if (result.recoveryUsername === null || result.recoveryPassword === null) {
+            console.log("Disabled. Hosted access uses GitHub through ShioriCode Link.");
+          } else {
+            console.log(`Username: ${result.recoveryUsername}`);
+            console.log(
+              result.recoveryPasswordGenerated
+                ? `Generated password: ${result.recoveryPassword}\nStore it securely; it is shown once.`
+                : "Password: loaded from --recovery-password-file (not echoed)",
+            );
+          }
           console.log("\nNext: shioricode link connect");
         }),
       ),

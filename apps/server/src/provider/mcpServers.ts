@@ -1105,11 +1105,12 @@ function makeBuiltInStdioMcpServer(
   subcommand: string,
   env?: Record<string, string>,
 ): EffectAcpSchema.McpServer {
+  const childEnv = makeBuiltInStdioMcpEnvironment(env);
   return {
     name,
     command: process.execPath,
     args: [...serverEntrypointArgs(), subcommand],
-    env: Object.entries(env ?? {}).map(([envName, value]) => ({
+    env: Object.entries(childEnv).map(([envName, value]) => ({
       name: envName,
       value,
     })),
@@ -1128,8 +1129,18 @@ function makeBuiltInStdioMcpServerEntry(
     args: [...serverEntrypointArgs(), subcommand],
     enabled: true,
     providers: [],
+    env: makeBuiltInStdioMcpEnvironment(env),
   };
-  return env ? { ...entry, env } : entry;
+  return entry;
+}
+
+function makeBuiltInStdioMcpEnvironment(
+  env: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  // Packaged desktop builds use the Electron executable as process.execPath.
+  // Child MCP processes must run it in Node mode instead of opening another
+  // ShioriCode window and closing the MCP stdio handshake.
+  return { ...env, ELECTRON_RUN_AS_NODE: "1" };
 }
 
 function threadGoalMcpServerEntry(input: {
