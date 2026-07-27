@@ -3,6 +3,10 @@
   "extends": ["//"],
   "tasks": {
     "dev": {
+      // The web package imports the contracts ESM source directly. Waiting for
+      // its 1.9 MB declaration bundle added 10+ seconds before Vite could serve
+      // the desktop renderer, without providing a runtime artifact.
+      "dependsOn": [],
       "persistent": true,
     },
   },

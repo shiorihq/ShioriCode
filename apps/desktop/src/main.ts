@@ -2490,6 +2490,7 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
   });
   window.webContents.on("did-finish-load", () => {
+    writeDesktopLogHeader("renderer did-finish-load");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
     applyPendingDesktopDeepLink(window);
@@ -2530,6 +2531,7 @@ function createWindow(): BrowserWindow {
     },
   );
   window.once("ready-to-show", () => {
+    writeDesktopLogHeader("renderer ready-to-show");
     showAndFocusWindow(window);
   });
 
