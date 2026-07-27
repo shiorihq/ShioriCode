@@ -130,14 +130,20 @@ describe("EffortPicker", () => {
       expect(text).not.toContain("Fast");
     });
 
-    await page.getByRole("button").click();
+    await page.getByRole("button", { name: "Reasoning effort: High" }).click();
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Faster");
+    });
+    await page.getByRole("radio", { name: "Extra High", exact: true }).click();
 
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
-      provider: "codex",
-      options: {
-        fastMode: true,
-        reasoningEffort: "xhigh",
-      },
+    await vi.waitFor(() => {
+      expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
+        provider: "codex",
+        options: {
+          fastMode: true,
+          reasoningEffort: "xhigh",
+        },
+      });
     });
     expect(document.body.textContent ?? "").not.toContain("Fast Mode");
   });
@@ -154,11 +160,15 @@ describe("EffortPicker", () => {
       expect(document.body.textContent ?? "").toContain("Ultrathink");
     });
 
-    const button = page.getByRole("button", {
-      name: "Intelligence: Ultrathink. Click to cycle.",
+    const button = page.getByRole("button", { name: "Reasoning effort: Ultrathink" });
+    await expect.element(button).toHaveAttribute("title", "Reasoning effort: Ultrathink");
+    await button.click();
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Ultrathink is set by your prompt");
     });
-    await expect.element(button).toBeDisabled();
-    await expect.element(button).toHaveAttribute("title", "Ultrathink (controlled by prompt)");
+    const ultrathinkRadio = page.getByRole("radio", { name: "Ultrathink", exact: true });
+    await expect.element(ultrathinkRadio).toHaveAttribute("aria-checked", "true");
     expect(document.body.textContent ?? "").not.toContain("Fast Mode");
   });
 
@@ -169,33 +179,46 @@ describe("EffortPicker", () => {
       options: { effort: "medium" },
     });
 
-    await page.getByRole("button").click();
+    await page.getByRole("button", { name: "Reasoning effort: Medium" }).click();
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Faster");
+    });
+    await page.getByRole("radio", { name: "High (default)", exact: true }).click();
 
-    expect(
-      useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
-    ).toMatchObject({
-      provider: "claudeAgent",
-      options: {
-        effort: "high",
-      },
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
+      ).toMatchObject({
+        provider: "claudeAgent",
+        options: {
+          effort: "high",
+        },
+      });
     });
   });
 
-  it("cycles the effort without opening a selector", async () => {
+  it("selects effort levels from the slider popover", async () => {
     await using _ = await mountEffortPicker({
       provider: "codex",
       model: "gpt-5.4",
       options: { reasoningEffort: "high" },
     });
 
-    await page.getByRole("button").click();
+    expect(document.body.textContent ?? "").not.toContain("Faster");
 
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
-      provider: "codex",
-      options: {
-        reasoningEffort: "xhigh",
-      },
+    await page.getByRole("button", { name: "Reasoning effort: High" }).click();
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Faster");
     });
-    expect(document.body.textContent ?? "").not.toContain("Effort");
+    await page.getByRole("radio", { name: "Extra High", exact: true }).click();
+
+    await vi.waitFor(() => {
+      expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
+        provider: "codex",
+        options: {
+          reasoningEffort: "xhigh",
+        },
+      });
+    });
   });
 });

@@ -9,7 +9,7 @@ import {
   type CursorModelOptions,
   type GlmModelOptions,
 } from "contracts";
-import { isClaudeUltrathinkPrompt, resolveEffort } from "shared/model";
+import { resolveEffort } from "shared/model";
 import type { ReactNode } from "react";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { EffortPicker, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
@@ -33,9 +33,6 @@ export type ComposerProviderState = {
   provider: ProviderKind;
   promptEffort: string | null;
   modelOptionsForDispatch: ProviderModelOptions[ProviderKind] | undefined;
-  composerFrameClassName?: string;
-  composerSurfaceClassName?: string;
-  modelPickerIconClassName?: string;
 };
 
 type ProviderRegistryEntry = {
@@ -70,7 +67,7 @@ type ProviderRegistryEntry = {
 function getProviderStateFromCapabilities(
   input: ComposerProviderStateInput,
 ): ComposerProviderState {
-  const { provider, model, models, prompt, modelOptions } = input;
+  const { provider, model, models, modelOptions } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
   const providerOptions = modelOptions?.[provider];
 
@@ -110,19 +107,10 @@ function getProviderStateFromCapabilities(
                   providerOptions as ClaudeModelOptions,
                 );
 
-  // Ultrathink styling (driven by capabilities data, not provider identity)
-  const ultrathinkActive =
-    caps.promptInjectedEffortLevels.length > 0 && isClaudeUltrathinkPrompt(prompt);
-
   return {
     provider,
     promptEffort,
     modelOptionsForDispatch: normalizedOptions,
-    ...(ultrathinkActive ? { composerFrameClassName: "ultrathink-frame" } : {}),
-    ...(ultrathinkActive
-      ? { composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]" }
-      : {}),
-    ...(ultrathinkActive ? { modelPickerIconClassName: "ultrathink-chroma" } : {}),
   };
 }
 

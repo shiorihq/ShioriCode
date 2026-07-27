@@ -442,6 +442,10 @@ function normalizeProviderKind(value: unknown): ProviderKind | null {
     : null;
 }
 
+function isCodexReasoningEffort(value: unknown): value is CodexReasoningEffort {
+  return CODEX_REASONING_EFFORT_OPTIONS.some((option) => option === value);
+}
+
 function normalizeProviderModelOptions(
   value: unknown,
   provider?: ProviderKind | null,
@@ -469,19 +473,13 @@ function normalizeProviderModelOptions(
       ? (candidate.cursor as Record<string, unknown>)
       : null;
 
-  const codexReasoningEffort: CodexReasoningEffort | undefined =
-    codexCandidate?.reasoningEffort === "low" ||
-    codexCandidate?.reasoningEffort === "medium" ||
-    codexCandidate?.reasoningEffort === "high" ||
-    codexCandidate?.reasoningEffort === "xhigh"
-      ? codexCandidate.reasoningEffort
-      : provider === "codex" &&
-          (legacy?.effort === "low" ||
-            legacy?.effort === "medium" ||
-            legacy?.effort === "high" ||
-            legacy?.effort === "xhigh")
-        ? legacy.effort
-        : undefined;
+  const codexReasoningEffort: CodexReasoningEffort | undefined = isCodexReasoningEffort(
+    codexCandidate?.reasoningEffort,
+  )
+    ? codexCandidate.reasoningEffort
+    : provider === "codex" && isCodexReasoningEffort(legacy?.effort)
+      ? legacy.effort
+      : undefined;
   const codexFastMode =
     codexCandidate?.fastMode === true
       ? true
@@ -509,7 +507,9 @@ function normalizeProviderModelOptions(
     claudeCandidate?.effort === "low" ||
     claudeCandidate?.effort === "medium" ||
     claudeCandidate?.effort === "high" ||
+    claudeCandidate?.effort === "xhigh" ||
     claudeCandidate?.effort === "max" ||
+    claudeCandidate?.effort === "ultracode" ||
     claudeCandidate?.effort === "ultrathink"
       ? claudeCandidate.effort
       : undefined;

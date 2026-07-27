@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,12 +27,23 @@ const workspaceFiles = [
   "scripts/package.json",
 ] as const;
 
+// package.json resolves patchedDependencies by path, so bun install fails in
+// the fixture root unless the patches come along. Copy the directory wholesale
+// rather than naming each patch, so adding one never breaks the smoke again.
+const workspaceDirectories = ["patches"] as const;
+
 function copyWorkspaceManifestFixture(targetRoot: string): void {
   for (const relativePath of workspaceFiles) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
     cpSync(sourcePath, destinationPath);
+  }
+
+  for (const relativePath of workspaceDirectories) {
+    const sourcePath = resolve(repoRoot, relativePath);
+    if (!existsSync(sourcePath)) continue;
+    cpSync(sourcePath, resolve(targetRoot, relativePath), { recursive: true });
   }
 }
 

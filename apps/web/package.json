@@ -35,6 +35,7 @@
     "katex": "^0.16.45",
     "lexical": "^0.41.0",
     "lucide-react": "^0.564.0",
+    "metal-fx": "^1.0.4",
     "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

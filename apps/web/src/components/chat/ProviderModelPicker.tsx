@@ -24,6 +24,9 @@ import {
 } from "../ui/menu";
 import type { Icon } from "../Icons";
 import { PROVIDER_BRAND_ICON_BY_PROVIDER, providerBrandIconClassName } from "./providerBrandIcons";
+import { EffortSliderPanel } from "./EffortSlider";
+import { isMaxEffort } from "./effortRank";
+import { playFastModeBlitz } from "./fastModeBlitzFx";
 import { cn } from "~/lib/utils";
 import {
   getProviderPickerState,
@@ -32,7 +35,6 @@ import {
   getProviderSnapshot,
   isProviderDisabledSnapshot,
 } from "../../providerModels";
-import { playFastModeBlitz } from "./fastModeBlitzFx";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -145,7 +147,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   modelOptions?: ProviderModelOptions[ProviderKind];
   onModelOptionsChange?: (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => void;
-  activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
@@ -153,7 +154,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   effort?: {
     value: string;
     label: string;
-    levels: ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>;
+    levels: ReadonlyArray<{
+      value: string;
+      label: string;
+      isDefault?: boolean | undefined;
+    }>;
     onChange: (value: string) => void;
     locked?: boolean;
   } | null;
@@ -185,9 +190,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       return;
     }
     const nextFastMode = !fastModeActive;
-    if (nextFastMode !== fastModeActive) {
-      playFastModeBlitz(nextFastMode);
-    }
+    playFastModeBlitz(nextFastMode);
     props.onModelOptionsChange({
       ...(props.modelOptions as Record<string, unknown> | undefined),
       fastMode: nextFastMode,
@@ -259,7 +262,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   className={cn(
                     "absolute inset-0 size-3.5 shrink-0 opacity-0 group-hover/provider-model-picker:opacity-100 group-focus-visible/provider-model-picker:opacity-100",
                     providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
-                    props.activeProviderIconClassName,
                   )}
                 />
               </>
@@ -270,14 +272,19 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 className={cn(
                   "size-3.5 shrink-0",
                   providerBrandIconClassName(activeProvider, "text-muted-foreground/70"),
-                  props.activeProviderIconClassName,
                 )}
               />
             )}
           </span>
           <span className="shrink-0 whitespace-nowrap">{selectedModelLabel}</span>
           {props.effort ? (
-            <span className="shrink-0 whitespace-nowrap text-muted-foreground/70">
+            <span
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-[5px] bg-foreground/8 px-1.5 py-px text-[0.92em] text-muted-foreground",
+                isMaxEffort(props.effort.value, props.effort.levels) &&
+                  "bg-violet-400/15 text-violet-500 dark:text-violet-300",
+              )}
+            >
               {props.effort.label}
             </span>
           ) : null}
@@ -288,15 +295,55 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           />
         </span>
       </MenuTrigger>
-      <MenuPopup
-        align="start"
-        scrollFade={props.lockedProvider !== null}
-        className={
-          props.lockedProvider !== null ? "[--available-height:min(11rem,45vh)]" : undefined
-        }
-      >
+      <MenuPopup align="start">
+        <MenuSub>
+          <MenuSubTrigger>
+            <span className="flex-1">Model</span>
+            <span className="ms-auto max-w-36 truncate text-muted-foreground/80 text-xs">
+              {selectedModelLabel}
+            </span>
+          </MenuSubTrigger>
+          <MenuSubPopup className="[--available-height:min(16rem,45vh)]" sideOffset={4}>
+            {props.lockedProvider !== null ? (
+              <LockedProviderModelList
+                model={props.model}
+                lockedProvider={props.lockedProvider}
+                modelOptions={props.modelOptionsByProvider[props.lockedProvider]}
+                searchEnabled={shouldShowLockedProviderModelSearch(props.lockedProvider)}
+                searchQuery={searchQuery}
+                searchInputRef={searchInputRef}
+                onSearchChange={setSearchQuery}
+                onModelChange={handleModelChange}
+                onClose={() => setIsMenuOpen(false)}
+              />
+            ) : (
+              <ProviderModelMenuItems
+                provider={props.provider}
+                model={props.model}
+                providers={props.providers}
+                modelOptionsByProvider={props.modelOptionsByProvider}
+                onModelChange={handleModelChange}
+                onClose={() => setIsMenuOpen(false)}
+              />
+            )}
+          </MenuSubPopup>
+        </MenuSub>
+        {props.effort && props.effort.levels.length > 0 ? (
+          <>
+            <MenuSeparator />
+            <EffortSliderPanel
+              levels={props.effort.levels}
+              value={props.effort.value}
+              onChange={(value) => {
+                props.effort?.onChange(value);
+              }}
+              disabled={props.effort.locked === true}
+            />
+          </>
+        ) : null}
         {showFastModeToggle ? (
           <>
+            <MenuSeparator />
             <MenuCheckboxItem
               variant="switch"
               checked={fastModeActive}
@@ -307,118 +354,87 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               Fast mode
             </MenuCheckboxItem>
-            <MenuSeparator />
           </>
         ) : null}
-        {props.effort && props.effort.levels.length > 0 && !props.effort.locked ? (
-          <>
-            <MenuSub>
-              <MenuSubTrigger>
-                <span className="flex-1">Intelligence</span>
-                <span className="ms-auto text-muted-foreground/80 text-xs">
-                  {props.effort.label}
-                </span>
-              </MenuSubTrigger>
-              <MenuSubPopup className="[--available-height:min(11rem,45vh)]" sideOffset={4}>
-                <MenuRadioGroup
-                  value={props.effort.value}
-                  onValueChange={(value) => {
-                    props.effort?.onChange(value);
-                  }}
-                >
-                  {props.effort.levels.map((option) => (
-                    <MenuRadioItem key={option.value} value={option.value}>
-                      {option.label}
-                      {option.isDefault ? " (default)" : ""}
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
-              </MenuSubPopup>
-            </MenuSub>
-            <MenuSeparator />
-          </>
-        ) : null}
-        {props.lockedProvider !== null ? (
-          <LockedProviderModelList
-            model={props.model}
-            lockedProvider={props.lockedProvider}
-            modelOptions={props.modelOptionsByProvider[props.lockedProvider]}
-            searchEnabled={shouldShowLockedProviderModelSearch(props.lockedProvider)}
-            searchQuery={searchQuery}
-            searchInputRef={searchInputRef}
-            onSearchChange={setSearchQuery}
-            onModelChange={handleModelChange}
-            onClose={() => setIsMenuOpen(false)}
-          />
-        ) : (
-          <>
-            {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
-              const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
-              const liveProvider = props.providers
-                ? getProviderSnapshot(props.providers, option.value)
-                : undefined;
-              if (isProviderDisabledSnapshot(liveProvider)) {
-                return null;
-              }
-              const providerMenuState = getProviderPickerState(liveProvider);
-              if (!providerMenuState.selectable) {
-                return (
-                  <MenuItem key={option.value} disabled>
-                    <OptionIcon
-                      aria-hidden="true"
-                      className={cn(
-                        "size-4 shrink-0 opacity-80",
-                        providerBrandIconClassName(option.value, "text-muted-foreground/85"),
-                      )}
-                    />
-                    <span>{option.label}</span>
-                    <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                      {providerMenuState.badgeLabel}
-                    </span>
-                  </MenuItem>
-                );
-              }
-              return (
-                <MenuSub key={option.value}>
-                  <MenuSubTrigger>
-                    <OptionIcon
-                      aria-hidden="true"
-                      className={cn(
-                        "size-4 shrink-0",
-                        providerBrandIconClassName(option.value, "text-muted-foreground/85"),
-                      )}
-                    />
-                    {option.label}
-                    {providerMenuState.badgeLabel ? (
-                      <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
-                        {providerMenuState.badgeLabel}
-                      </span>
-                    ) : null}
-                  </MenuSubTrigger>
-                  <MenuSubPopup className="[--available-height:min(11rem,45vh)]" sideOffset={4}>
-                    <MenuGroup>
-                      <MenuRadioGroup
-                        value={props.provider === option.value ? props.model : ""}
-                        onValueChange={(value) => handleModelChange(option.value, value)}
-                      >
-                        {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                          <MenuRadioItem
-                            key={`${option.value}:${modelOption.slug}`}
-                            value={modelOption.slug}
-                            onClick={() => setIsMenuOpen(false)}
-                          >
-                            {displayModelOptionLabel(option.value, modelOption)}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                  </MenuSubPopup>
-                </MenuSub>
-              );
-            })}
-          </>
-        )}
       </MenuPopup>
     </Menu>
   );
 });
+
+function ProviderModelMenuItems(props: {
+  provider: ProviderKind;
+  model: string;
+  providers?: ReadonlyArray<ServerProvider> | undefined;
+  modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  onModelChange: (provider: ProviderKind, model: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+        const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+        const liveProvider = props.providers
+          ? getProviderSnapshot(props.providers, option.value)
+          : undefined;
+        if (isProviderDisabledSnapshot(liveProvider)) {
+          return null;
+        }
+        const providerMenuState = getProviderPickerState(liveProvider);
+        if (!providerMenuState.selectable) {
+          return (
+            <MenuItem key={option.value} disabled>
+              <OptionIcon
+                aria-hidden="true"
+                className={cn(
+                  "size-4 shrink-0 opacity-80",
+                  providerBrandIconClassName(option.value, "text-muted-foreground/85"),
+                )}
+              />
+              <span>{option.label}</span>
+              <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                {providerMenuState.badgeLabel}
+              </span>
+            </MenuItem>
+          );
+        }
+        return (
+          <MenuSub key={option.value}>
+            <MenuSubTrigger>
+              <OptionIcon
+                aria-hidden="true"
+                className={cn(
+                  "size-4 shrink-0",
+                  providerBrandIconClassName(option.value, "text-muted-foreground/85"),
+                )}
+              />
+              {option.label}
+              {providerMenuState.badgeLabel ? (
+                <span className="ms-auto text-[11px] text-muted-foreground/80 uppercase tracking-[0.08em]">
+                  {providerMenuState.badgeLabel}
+                </span>
+              ) : null}
+            </MenuSubTrigger>
+            <MenuSubPopup className="[--available-height:min(11rem,45vh)]" sideOffset={4}>
+              <MenuGroup>
+                <MenuRadioGroup
+                  value={props.provider === option.value ? props.model : ""}
+                  onValueChange={(value) => props.onModelChange(option.value, value)}
+                >
+                  {props.modelOptionsByProvider[option.value].map((modelOption) => (
+                    <MenuRadioItem
+                      key={`${option.value}:${modelOption.slug}`}
+                      value={modelOption.slug}
+                      onClick={props.onClose}
+                    >
+                      {displayModelOptionLabel(option.value, modelOption)}
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        );
+      })}
+    </>
+  );
+}

@@ -52,6 +52,9 @@ const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "low", label: "Low" },
         { value: "medium", label: "Medium" },
         { value: "high", label: "High", isDefault: true },
+        { value: "xhigh", label: "Extra High" },
+        { value: "max", label: "Max" },
+        { value: "ultracode", label: "Ultracode" },
         { value: "ultrathink", label: "Ultrathink" },
       ],
       supportsFastMode: false,
@@ -217,7 +220,29 @@ describe("getComposerProviderState", () => {
     });
   });
 
-  it("tracks Claude ultrathink from the prompt without changing dispatch effort", () => {
+  it("preserves Claude Ultracode in dispatch options", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-sonnet-5",
+      models: CLAUDE_MODELS,
+      prompt: "Investigate this failure",
+      modelOptions: {
+        claudeAgent: {
+          effort: "ultracode",
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: "ultracode",
+      modelOptionsForDispatch: {
+        effort: "ultracode",
+      },
+    });
+  });
+
+  it("keeps Claude prompt-injected ultrathink out of dispatch options", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",
       model: "claude-sonnet-5",
@@ -236,9 +261,6 @@ describe("getComposerProviderState", () => {
       modelOptionsForDispatch: {
         effort: "medium",
       },
-      composerFrameClassName: "ultrathink-frame",
-      composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
-      modelPickerIconClassName: "ultrathink-chroma",
     });
   });
 
