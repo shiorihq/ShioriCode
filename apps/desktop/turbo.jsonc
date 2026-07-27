@@ -7,7 +7,10 @@
       "outputs": ["dist-electron/**"],
     },
     "dev": {
-      "dependsOn": ["shioricode#build"],
+      // dev-desktop.mjs already starts the server's watch build and waits for
+      // its output. A full server build here duplicated that work on every
+      // launch and kept Electron off-screen for several seconds.
+      "dependsOn": [],
       "persistent": true,
     },
     "start": {

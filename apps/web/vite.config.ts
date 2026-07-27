@@ -30,6 +30,7 @@ const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 type WebViteConfigOptions = {
   includeRouterPlugin?: boolean;
+  enableReactCompiler?: boolean;
 };
 
 function sanitizeChunkSegment(value: string) {
@@ -37,6 +38,7 @@ function sanitizeChunkSegment(value: string) {
 }
 
 export function createWebViteConfig(options: WebViteConfigOptions = {}): UserConfig {
+  const enableReactCompiler = options.enableReactCompiler ?? true;
   const plugins: PluginOption[] = [
     ...(options.includeRouterPlugin === false
       ? []
@@ -46,14 +48,18 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
           }),
         ]),
     react(),
-    babel({
-      // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
-      // This is because the babel plugin only automatically parses typescript and jsx based on relative paths (e.g. "**/*.ts")
-      // whereas the previous version of the plugin parsed all files with a .ts extension.
-      // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
-      parserOpts: { plugins: ["typescript", "jsx"] },
-      presets: [reactCompilerPreset()],
-    }),
+    ...(enableReactCompiler
+      ? [
+          babel({
+            // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
+            // This is because the babel plugin only automatically parses typescript and jsx based on relative paths (e.g. "**/*.ts")
+            // whereas the previous version of the plugin parsed all files with a .ts extension.
+            // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
+            parserOpts: { plugins: ["typescript", "jsx"] },
+            presets: [reactCompilerPreset()],
+          }),
+        ]
+      : []),
     tailwindcss(),
   ];
 
@@ -164,4 +170,11 @@ export function createWebViteConfig(options: WebViteConfigOptions = {}): UserCon
   };
 }
 
-export default defineConfig(createWebViteConfig());
+export default defineConfig(({ command }) =>
+  createWebViteConfig({
+    // React Compiler remains enabled in production, where its runtime wins
+    // matter. Running Babel over the source graph during development delayed
+    // the first useful desktop paint and duplicated Vite's fast Oxc transform.
+    enableReactCompiler: command === "build",
+  }),
+);
