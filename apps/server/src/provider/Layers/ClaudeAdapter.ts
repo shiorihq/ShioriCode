@@ -131,12 +131,13 @@ type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
   "command_output" | "file_change_output"
 >;
-type ClaudeEffectiveEffort = Exclude<ClaudeCodeEffort, "ultrathink">;
+type ClaudeEffectiveEffort = Exclude<ClaudeCodeEffort, "ultracode" | "ultrathink">;
 
 interface ClaudeRuntimeConfig {
   readonly requestedModel?: string;
   readonly apiModelId?: string;
   readonly effort: ClaudeEffectiveEffort | null;
+  readonly ultracode: boolean;
   readonly fastMode: boolean;
   readonly thinking?: boolean;
   readonly contextWindow?: string;
@@ -524,7 +525,10 @@ function getEffectiveClaudeCodeEffort(
   if (!effort) {
     return null;
   }
-  return effort === "ultrathink" ? null : (effort as ClaudeEffectiveEffort);
+  if (effort === "ultrathink") {
+    return null;
+  }
+  return effort === "ultracode" ? "xhigh" : (effort as ClaudeEffectiveEffort);
 }
 
 function resolveClaudeRuntimeConfig(
@@ -570,6 +574,7 @@ function resolveClaudeRuntimeConfig(
     requestedModel: modelSelection.model,
     apiModelId,
     effort: effectiveEffort,
+    ultracode: resolvedEffort === "ultracode",
     fastMode: modelOptions?.fastMode === true && caps.supportsFastMode,
     ...(typeof modelOptions?.thinking === "boolean" && caps.supportsThinkingToggle
       ? { thinking: modelOptions.thinking }
@@ -587,6 +592,7 @@ function startupSettingsFromClaudeRuntimeConfig(
   const settings: Record<string, unknown> = {
     ...(typeof config.thinking === "boolean" ? { alwaysThinkingEnabled: config.thinking } : {}),
     ...(config.fastMode ? { fastMode: true } : {}),
+    ...(config.ultracode ? { ultracode: true } : {}),
   };
   return Object.keys(settings).length > 0 ? (settings as ClaudeSdkSettings) : undefined;
 }
@@ -599,6 +605,9 @@ function changedFlagSettings(
 
   if (previous?.effort !== next.effort && next.effort) {
     settings.effortLevel = next.effort;
+  }
+  if ((previous?.ultracode ?? false) !== next.ultracode) {
+    settings.ultracode = next.ultracode;
   }
   if ((previous?.fastMode ?? false) !== next.fastMode) {
     settings.fastMode = next.fastMode;
@@ -1892,14 +1901,16 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const awaitThreadGoalMcpConnected = Effect.fn("awaitThreadGoalMcpConnected")(function* (
     queryRuntime: ClaudeQueryRuntime,
   ) {
-    const readStatus = queryRuntime.mcpServerStatus;
-    if (!readStatus) {
+    if (!queryRuntime.mcpServerStatus) {
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "mcp/status",
         detail: `Cannot verify the required '${THREAD_GOAL_MCP_SERVER_NAME}' MCP server because this provider runtime does not expose MCP status.`,
       });
     }
+    // The SDK's `query()` returns a class instance, so its methods rely on `this`.
+    // Always invoke through the receiver — a detached reference throws at call time.
+    const readStatus = () => queryRuntime.mcpServerStatus!();
 
     const pollUntilConnected = Effect.gen(function* () {
       while (true) {
@@ -4075,11 +4086,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.turns.splice(nextLength);
       yield* updateResumeCursor(context);
 
-      const rewindFiles = context.query.rewindFiles;
-      if (fileCheckpointingEnabled && rewindFiles && checkpointUuid) {
+      if (fileCheckpointingEnabled && context.query.rewindFiles && checkpointUuid) {
         // @effect-diagnostics-next-line globalErrorInEffectCatch:off
         yield* Effect.tryPromise({
-          try: () => rewindFiles(checkpointUuid),
+          // Keep the receiver: the SDK query object is a class instance whose
+          // methods dereference `this`.
+          try: () => context.query.rewindFiles!(checkpointUuid),
           catch: (cause) => toError(cause, "Failed to rewind files for rollback."),
         }).pipe(
           Effect.catch((cause) =>

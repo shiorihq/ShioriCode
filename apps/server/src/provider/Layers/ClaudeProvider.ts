@@ -32,12 +32,14 @@ import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "contracts";
 
 const PROVIDER = "claudeAgent" as const;
-const OPUS_4_8_CAPABILITIES: ModelCapabilities = {
+const OPUS_5_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
     { value: "high", label: "High", isDefault: true },
+    { value: "xhigh", label: "Extra High" },
     { value: "max", label: "Max" },
+    { value: "ultracode", label: "Ultracode" },
     { value: "ultrathink", label: "Ultrathink" },
   ],
   supportsFastMode: true,
@@ -50,7 +52,10 @@ const OPUS_4_8_CAPABILITIES: ModelCapabilities = {
 };
 
 const OPUS_4_6_CAPABILITIES: ModelCapabilities = {
-  ...OPUS_4_8_CAPABILITIES,
+  ...OPUS_5_CAPABILITIES,
+  reasoningEffortLevels: OPUS_5_CAPABILITIES.reasoningEffortLevels.filter(
+    (level) => level.value !== "xhigh" && level.value !== "ultracode",
+  ),
   supportsFastMode: true,
 };
 
@@ -59,6 +64,9 @@ const SONNET_5_CAPABILITIES: ModelCapabilities = {
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
     { value: "high", label: "High", isDefault: true },
+    { value: "xhigh", label: "Extra High" },
+    { value: "max", label: "Max" },
+    { value: "ultracode", label: "Ultracode" },
     { value: "ultrathink", label: "Ultrathink" },
   ],
   supportsFastMode: false,
@@ -80,10 +88,10 @@ const HAIKU_4_5_CAPABILITIES: ModelCapabilities = {
 
 const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "claude-opus-4-8",
-    name: "Opus 4.8",
+    slug: "claude-opus-5",
+    name: "Opus 5",
     isCustom: false,
-    capabilities: OPUS_4_8_CAPABILITIES,
+    capabilities: OPUS_5_CAPABILITIES,
   },
   {
     slug: "claude-fable-5",
@@ -106,11 +114,13 @@ const VISIBLE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 const BUILT_IN_CAPABILITIES_BY_MODEL = new Map<string, ModelCapabilities>([
-  ["claude-opus-4-8", OPUS_4_8_CAPABILITIES],
+  ["claude-opus-5", OPUS_5_CAPABILITIES],
   ["claude-fable-5", SONNET_5_CAPABILITIES],
   ["claude-sonnet-5", SONNET_5_CAPABILITIES],
   ["claude-haiku-4-5", HAIKU_4_5_CAPABILITIES],
-  ["claude-opus-4-7", OPUS_4_8_CAPABILITIES],
+  // Legacy alias: capabilities lookup may happen before model slug normalization.
+  ["claude-opus-4-8", OPUS_5_CAPABILITIES],
+  ["claude-opus-4-7", OPUS_5_CAPABILITIES],
   ["claude-opus-4-6", OPUS_4_6_CAPABILITIES],
   // Legacy alias: capabilities lookup for any pre-migration stored slug.
   ["claude-sonnet-4-6", SONNET_5_CAPABILITIES],
@@ -455,6 +465,7 @@ interface ClaudeCapabilitiesProbeResult {
 }
 
 function effortLevelLabel(value: string): string {
+  if (value === "xhigh") return "Extra High";
   return value[0] ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
@@ -481,8 +492,14 @@ function buildSdkModelCapabilities(
         : [];
 
   const builtInPromptInjectedEfforts = builtInCapabilities?.promptInjectedEffortLevels ?? [];
+  const builtInUltracode = builtInCapabilities?.reasoningEffortLevels.find(
+    (level) => level.value === "ultracode",
+  );
   const mergedEffortLevels = [
     ...reasoningEffortLevels,
+    ...(builtInUltracode && reasoningEffortLevels.some((level) => level.value === "xhigh")
+      ? [builtInUltracode]
+      : []),
     ...builtInPromptInjectedEfforts
       .filter((value) => !reasoningEffortLevels.some((level) => level.value === value))
       .map((value) => ({ value, label: effortLevelLabel(value) })),
@@ -506,13 +523,8 @@ function resolveClaudeSdkModelSlug(model: ClaudeSdkModelInfo): string | null {
     return null;
   }
 
-  if (
-    value === "opus" ||
-    value === "opus-4-8" ||
-    value === "opus-4.8" ||
-    value === "claude-opus-4-8"
-  ) {
-    return "claude-opus-4-8";
+  if (value === "opus" || value === "opus-5" || value === "opus-5.0" || value === "claude-opus-5") {
+    return "claude-opus-5";
   }
 
   if (

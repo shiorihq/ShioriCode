@@ -496,7 +496,7 @@ describe("ProviderCommandReactor", () => {
 
   const goalProviderCases = [
     ["codex", "gpt-5-codex"],
-    ["claudeAgent", "claude-sonnet-5"],
+    ["claudeAgent", "claude-opus-5"],
     ["kimiCode", "kimi-k2"],
     ["gemini", "gemini-2.5-pro"],
     ["glm", "glm-4.5"],

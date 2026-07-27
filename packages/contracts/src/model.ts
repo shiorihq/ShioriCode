@@ -2,9 +2,24 @@ import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
 import type { ProviderKind } from "./orchestration";
 
-export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
+export const CODEX_REASONING_EFFORT_OPTIONS = [
+  "ultra",
+  "max",
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
-export const CLAUDE_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max", "ultrathink"] as const;
+export const CLAUDE_CODE_EFFORT_OPTIONS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultracode",
+  "ultrathink",
+] as const;
 export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
 export const GLM_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max"] as const;
 export type GlmCodeEffort = (typeof GLM_CODE_EFFORT_OPTIONS)[number];
@@ -85,7 +100,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   glm: "glm-5.2",
   cursor: "auto",
   codex: "gpt-5.6-luna",
-  claudeAgent: "claude-sonnet-5",
+  claudeAgent: "claude-opus-5",
 };
 
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
@@ -170,13 +185,18 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   claudeAgent: {
-    default: "claude-sonnet-5",
+    default: "claude-opus-5",
     fable: "claude-fable-5",
     "fable-5": "claude-fable-5",
     "claude-fable-5": "claude-fable-5",
-    opus: "claude-opus-4-8",
-    "opus-4.8": "claude-opus-4-8",
-    "claude-opus-4.8": "claude-opus-4-8",
+    opus: "claude-opus-5",
+    "opus-5": "claude-opus-5",
+    "opus-5.0": "claude-opus-5",
+    "claude-opus-5": "claude-opus-5",
+    // Legacy aliases: Opus 4.8 was replaced by Opus 5; redirect old selections forward.
+    "opus-4.8": "claude-opus-5",
+    "claude-opus-4.8": "claude-opus-5",
+    "claude-opus-4-8": "claude-opus-5",
     "opus-4.7": "claude-opus-4-7",
     "claude-opus-4.7": "claude-opus-4-7",
     "opus-4.6": "claude-opus-4-6",
