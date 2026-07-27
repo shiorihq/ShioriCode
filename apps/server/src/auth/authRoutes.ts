@@ -73,7 +73,7 @@ const loginRoute = HttpRouter.add(
       return jsonResponse({ success: false, error: "Invalid username or password." }, 401);
     }
     const cookie = serializeCookie(SESSION_COOKIE_NAME, outcome.token, {
-      secure: isSecureAuthRequest(request),
+      secure: auth.secureCookies || isSecureAuthRequest(request),
       sameSite: "Lax",
       maxAgeSeconds: auth.cookieMaxAgeSeconds,
     });
@@ -111,7 +111,7 @@ const logoutRoute = HttpRouter.add(
     const cookieToken = parseCookies(request.headers.cookie)[SESSION_COOKIE_NAME] ?? null;
     auth.logout(cookieToken ?? readBearer(request));
     const cleared = serializeCookie(SESSION_COOKIE_NAME, "", {
-      secure: isSecureAuthRequest(request),
+      secure: auth.secureCookies || isSecureAuthRequest(request),
       sameSite: "Lax",
       maxAgeSeconds: 0,
     });

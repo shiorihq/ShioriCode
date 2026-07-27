@@ -42,6 +42,7 @@ import {
 } from "shared/orchestrationSession";
 
 import { EnvironmentAuth } from "./auth/EnvironmentAuth";
+import { safeEqualUtf8 } from "./auth/tokens";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer";
@@ -100,6 +101,7 @@ interface MobileDeviceStoreFile {
 
 const pairingSessions = new Map<string, PairingSessionRecord>();
 const deviceStoreByStateDir = new Map<string, Promise<MobileDeviceStoreFile>>();
+const deviceWriteQueueByStateDir = new Map<string, Promise<void>>();
 
 function jsonResponse(body: unknown, status = 200) {
   return HttpServerResponse.text(`${JSON.stringify(body)}\n`, {
@@ -126,7 +128,7 @@ function hashSecret(value: string): string {
 }
 
 function timingSafeHashEquals(left: string, right: string): boolean {
-  return left.length === right.length && left === right;
+  return safeEqualUtf8(left, right);
 }
 
 function createSecret(byteLength = DEVICE_TOKEN_BYTES): string {
@@ -180,9 +182,37 @@ async function writeDeviceStore(
   config: ServerConfigShape,
   store: MobileDeviceStoreFile,
 ): Promise<void> {
-  await fs.mkdir(config.stateDir, { recursive: true });
-  await fs.writeFile(mobileDevicesPath(config), `${JSON.stringify(store, null, 2)}\n`);
-  deviceStoreByStateDir.set(config.stateDir, Promise.resolve(store));
+  const payload = `${JSON.stringify(store, null, 2)}\n`;
+  const destination = mobileDevicesPath(config);
+  const previous = deviceWriteQueueByStateDir.get(config.stateDir) ?? Promise.resolve();
+  const write = previous
+    .catch(() => undefined)
+    .then(async () => {
+      await fs.mkdir(config.stateDir, { recursive: true, mode: 0o700 });
+      const temporaryPath = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        const handle = await fs.open(temporaryPath, "wx", 0o600);
+        try {
+          await handle.writeFile(payload, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        await fs.rename(temporaryPath, destination);
+        await fs.chmod(destination, 0o600);
+      } finally {
+        await fs.rm(temporaryPath, { force: true });
+      }
+    });
+  deviceWriteQueueByStateDir.set(config.stateDir, write);
+  try {
+    await write;
+    deviceStoreByStateDir.set(config.stateDir, Promise.resolve(store));
+  } finally {
+    if (deviceWriteQueueByStateDir.get(config.stateDir) === write) {
+      deviceWriteQueueByStateDir.delete(config.stateDir);
+    }
+  }
 }
 
 function getBearerToken(request: HttpServerRequest.HttpServerRequest, url: URL): string | null {
@@ -198,17 +228,6 @@ function getBearerToken(request: HttpServerRequest.HttpServerRequest, url: URL):
 
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   return match?.[1]?.trim() || null;
-}
-
-function isDesktopAuthorized(input: {
-  readonly request: HttpServerRequest.HttpServerRequest;
-  readonly url: URL;
-  readonly config: ServerConfigShape;
-}): boolean {
-  if (!input.config.authToken) {
-    return true;
-  }
-  return getBearerToken(input.request, input.url) === input.config.authToken;
 }
 
 async function authorizeMobileDevice(input: {
@@ -1132,7 +1151,8 @@ const requireDesktopAuth = Effect.gen(function* () {
   yield* requireMobileEnabled;
   const { request, url } = yield* requireUrl;
   const config = yield* ServerConfig;
-  if (!isDesktopAuthorized({ request, url, config })) {
+  const auth = yield* EnvironmentAuth;
+  if (auth.requireAuth && !auth.authenticateRequest({ request, url })) {
     return yield* Effect.fail(new Error("Unauthorized."));
   }
   return { request, url, config };
@@ -1351,7 +1371,10 @@ const mobileThreadDiffRouteLayer = HttpRouter.add(
           return errorResponse("Missing threadId.", 400);
         }
 
-        const threadId = ThreadId.makeUnsafe(threadIdRaw);
+        const threadId = yield* Effect.try({
+          try: () => Schema.decodeUnknownSync(ThreadId)(threadIdRaw),
+          catch: (cause) => mobileRouteError("Invalid threadId.", cause),
+        });
         const engine = yield* OrchestrationEngineService;
         const readModel = yield* engine.getReadModel();
         const thread = readModel.threads.find((candidate) => candidate.id === threadId);
@@ -1399,7 +1422,11 @@ const mobileWorkspaceEntriesRouteLayer = HttpRouter.add(
 
         const engine = yield* OrchestrationEngineService;
         const readModel = yield* engine.getReadModel();
-        const project = resolveProject(readModel, ProjectId.makeUnsafe(projectIdRaw));
+        const projectId = yield* Effect.try({
+          try: () => Schema.decodeUnknownSync(ProjectId)(projectIdRaw),
+          catch: (cause) => mobileRouteError("Invalid projectId.", cause),
+        });
+        const project = resolveProject(readModel, projectId);
         if (!project) {
           return errorResponse("Project not found.", 404);
         }

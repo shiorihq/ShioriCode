@@ -228,7 +228,7 @@ export const MobileSnapshot = Schema.Struct({
 export type MobileSnapshot = typeof MobileSnapshot.Type;
 
 const MobileCommandBase = {
-  requestId: Schema.String,
+  requestId: TrimmedNonEmptyString,
 } as const;
 
 export const MobileCreateThreadCommand = Schema.Struct({

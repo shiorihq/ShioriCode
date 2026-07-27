@@ -83,7 +83,10 @@ it.layer(testLayer)("EnvironmentAuth", (it) => {
       const outcome = auth.createSession({ username: "GitHub Owner" });
 
       assert.strictEqual(outcome.session.username, "GitHub Owner");
-      assert.strictEqual(auth.listSessions()[0]?.username, "GitHub Owner");
+      assert.strictEqual(
+        auth.listSessions().find((session) => session.id === outcome.session.id)?.username,
+        "GitHub Owner",
+      );
     }),
   );
 });

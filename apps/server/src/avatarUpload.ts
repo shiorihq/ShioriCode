@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
+import { authorizeDataRequest } from "./auth/EnvironmentAuth";
 import { deleteUploadThingFileByUrl, uploadToUploadThing } from "./uploadthing";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024;
@@ -33,6 +34,8 @@ export const avatarUploadRouteLayer = HttpRouter.add(
   "POST",
   "/api/profile/avatar",
   Effect.gen(function* () {
+    const denied = yield* authorizeDataRequest;
+    if (denied) return denied;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const webRequest = request.source as Request;
 
@@ -91,6 +94,8 @@ export const avatarDeleteRouteLayer = HttpRouter.add(
   "DELETE",
   "/api/profile/avatar",
   Effect.gen(function* () {
+    const denied = yield* authorizeDataRequest;
+    if (denied) return denied;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const webRequest = request.source as Request;
 
