@@ -90,6 +90,7 @@ function SheetPopup({
               "before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
             className,
           )}
+          data-app-float-surface="dense"
           data-slot="sheet-popup"
           {...props}
         >

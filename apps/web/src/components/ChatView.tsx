@@ -243,7 +243,7 @@ const COMPOSER_VIM_MODE_LABELS = {
 function ComposerVimModeIndicator({ mode }: { mode: ComposerVimMode }) {
   return (
     <span
-      className="pointer-events-none absolute right-3 top-2 inline-flex h-5 items-center rounded-full border border-border/50 bg-card/85 px-2 font-medium text-[9px] text-muted-foreground/65 shadow-sm backdrop-blur-sm sm:right-4 sm:top-2.5"
+      className="pointer-events-none absolute right-3 top-2 inline-flex h-5 items-center rounded-full border border-hairline bg-card/85 px-2 font-medium text-[9px] text-muted-foreground/65 shadow-sm backdrop-blur-sm sm:right-4 sm:top-2.5"
       data-testid="composer-vim-mode"
     >
       {COMPOSER_VIM_MODE_LABELS[mode]}
@@ -5667,9 +5667,13 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-app-canvas"
+      data-app-chat-surface
+    >
       {/* Top bar */}
       <header
+        data-app-chrome
         className={cn(
           "px-3 sm:px-5",
           isElectron
@@ -5749,38 +5753,47 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                 onTouchEnd={onMessagesTouchEnd}
                 onTouchCancel={onMessagesTouchEnd}
               >
-                <MessagesTimeline
-                  key={messagesTimelineRenderKey}
-                  hasMessages={timelineEntries.length > 0}
-                  isWorking={isWorking}
-                  showWorkingIndicator={isWorking && !isAwaitingSendAck}
-                  activeTurnInProgress={isWorking || !latestTurnSettled}
-                  activeTurnStartedAt={timelineActiveTurnStartedAt}
-                  activeTurnId={activeTurnId}
-                  revealingBufferedAssistantMessageIds={revealingBufferedAssistantMessageIds}
-                  scrollContainer={messagesScrollElement}
-                  workGroupAutoScrollSuppressRef={workGroupAutoScrollSuppressRef}
-                  timelineEntries={timelineEntries}
-                  completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-                  completionSummary={completionSummary}
-                  turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                  showTurnDiffActions={isProjectThread}
-                  expandedWorkGroups={expandedWorkGroups}
-                  onToggleWorkGroup={onToggleWorkGroup}
-                  onOpenTurnDiff={onOpenTurnDiff}
-                  onOpenArtifact={onOpenArtifact}
-                  revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                  onRevertUserMessage={onRevertUserMessage}
-                  onRetryAssistantMessage={onRetryAssistantMessage}
-                  onEditUserMessage={onEditUserMessage}
-                  isRevertingCheckpoint={isRevertingCheckpoint}
-                  onImageExpand={onExpandTimelineImage}
-                  markdownCwd={gitCwd ?? undefined}
-                  resolvedTheme={resolvedTheme}
-                  timestampFormat={timestampFormat}
-                  workspaceRoot={activeProject?.cwd ?? undefined}
-                  {...(isComposerApprovalState ? {} : { onAddAssistantSelectionToChat })}
-                />
+                {/* No reading plate here by design. The conversation reads
+                    directly on the wallpaper: the pieces that carry sustained
+                    text (user bubbles, diff/tool cards) bring their own
+                    surface, and assistant prose leans on the wallpaper scrim
+                    plus the raised --muted-foreground from
+                    [data-app-main-content]. A sheet the height of the thread
+                    was the single largest thing hiding the photo. */}
+                <div>
+                  <MessagesTimeline
+                    key={messagesTimelineRenderKey}
+                    hasMessages={timelineEntries.length > 0}
+                    isWorking={isWorking}
+                    showWorkingIndicator={isWorking && !isAwaitingSendAck}
+                    activeTurnInProgress={isWorking || !latestTurnSettled}
+                    activeTurnStartedAt={timelineActiveTurnStartedAt}
+                    activeTurnId={activeTurnId}
+                    revealingBufferedAssistantMessageIds={revealingBufferedAssistantMessageIds}
+                    scrollContainer={messagesScrollElement}
+                    workGroupAutoScrollSuppressRef={workGroupAutoScrollSuppressRef}
+                    timelineEntries={timelineEntries}
+                    completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+                    completionSummary={completionSummary}
+                    turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                    showTurnDiffActions={isProjectThread}
+                    expandedWorkGroups={expandedWorkGroups}
+                    onToggleWorkGroup={onToggleWorkGroup}
+                    onOpenTurnDiff={onOpenTurnDiff}
+                    onOpenArtifact={onOpenArtifact}
+                    revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                    onRevertUserMessage={onRevertUserMessage}
+                    onRetryAssistantMessage={onRetryAssistantMessage}
+                    onEditUserMessage={onEditUserMessage}
+                    isRevertingCheckpoint={isRevertingCheckpoint}
+                    onImageExpand={onExpandTimelineImage}
+                    markdownCwd={gitCwd ?? undefined}
+                    resolvedTheme={resolvedTheme}
+                    timestampFormat={timestampFormat}
+                    workspaceRoot={activeProject?.cwd ?? undefined}
+                    {...(isComposerApprovalState ? {} : { onAddAssistantSelectionToChat })}
+                  />
+                </div>
               </div>
 
               {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
@@ -5789,7 +5802,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   <button
                     type="button"
                     onClick={() => scrollMessagesToBottom("smooth")}
-                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                    className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-hairline bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                   >
                     <ChevronDownIcon className="size-3.5" />
                     Scroll to bottom
@@ -5810,7 +5823,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           >
             {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
             {isEmptyThread && (
-              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[44rem]">
+              <div
+                data-app-hero-halo
+                className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[44rem]"
+              >
                 <EmptyThreadHeading projectName={activeProject?.name} />
               </div>
             )}
@@ -5862,6 +5878,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                 )}
                 <div
                   data-chat-composer-frame="true"
+                  data-chat-composer-focused={isFocusedPane ? "true" : undefined}
                   className={cn(
                     "chat-composer-depth group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
                     hasDecoratedComposerFrame
@@ -5886,14 +5903,14 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                     )}
                   >
                     {activePendingApproval ? (
-                      <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <div className="rounded-t-[19px] border-b border-hairline bg-muted/20">
                         <ComposerPendingApprovalPanel
                           approval={activePendingApproval}
                           pendingCount={pendingApprovals.length}
                         />
                       </div>
                     ) : pendingUserInputs.length > 0 ? (
-                      <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <div className="rounded-t-[19px] border-b border-hairline bg-muted/20">
                         <ComposerPendingUserInputPanel
                           pendingUserInputs={pendingUserInputs}
                           respondingRequestIds={respondingRequestIds}
@@ -5904,7 +5921,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                         />
                       </div>
                     ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                      <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <div className="rounded-t-[19px] border-b border-hairline bg-muted/20">
                         <ComposerPlanFollowUpBanner
                           key={activeProposedPlan.id}
                           planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
@@ -5924,7 +5941,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                             {composerImages.map((image) => (
                               <div
                                 key={image.id}
-                                className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                                className="relative h-16 w-16 overflow-hidden rounded-lg border border-hairline bg-background"
                               >
                                 {image.previewUrl ? (
                                   <button
@@ -6056,7 +6073,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                       >
                         <div
                           ref={composerFooterLeadingRef}
-                          className="flex min-w-0 shrink-0 items-center gap-1"
+                          className={cn(
+                            "flex min-w-0 shrink-0 items-center gap-1",
+                            activePendingProgress && "hidden",
+                          )}
                         >
                           {/* Plus menu */}
                           <ComposerPlusMenu
@@ -6121,79 +6141,85 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                           }
                           className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                         >
-                          {/* Provider/model picker */}
-                          {implementationPickerActive ? (
-                            <ProviderModelPicker
-                              compact={isComposerFooterCompact}
-                              provider={implementationProvider}
-                              model={implementationSelectedModelForPickerWithCustomFallback}
-                              lockedProvider={null}
-                              providers={providerStatuses}
-                              modelOptionsByProvider={modelOptionsByProvider}
-                              modelOptions={implementationModelSelection.options}
-                              onModelOptionsChange={onImplementationProviderModelOptionsChange}
-                              {...(implementationProviderState.modelPickerIconClassName
-                                ? {
-                                    activeProviderIconClassName:
-                                      implementationProviderState.modelPickerIconClassName,
-                                  }
-                                : {})}
-                              onProviderModelChange={onImplementationProviderModelSelect}
-                            />
-                          ) : (
-                            <ProviderModelPicker
-                              compact={isComposerFooterCompact}
-                              provider={selectedProvider}
-                              model={selectedModelForPickerWithCustomFallback}
-                              lockedProvider={lockedProvider}
-                              providers={providerStatuses}
-                              modelOptionsByProvider={modelOptionsByProvider}
-                              modelOptions={composerModelOptions?.[selectedProvider]}
-                              onModelOptionsChange={onComposerProviderModelOptionsChange}
-                              effort={composerEffortPickerProps}
-                              {...(composerProviderState.modelPickerIconClassName
-                                ? {
-                                    activeProviderIconClassName:
-                                      composerProviderState.modelPickerIconClassName,
-                                  }
-                                : {})}
-                              onProviderModelChange={onProviderModelSelect}
-                            />
-                          )}
-
-                          {!implementationPickerActive &&
-                          !isComposerFooterCompact &&
-                          providerTraitsPicker
-                            ? providerTraitsPicker
-                            : null}
-
-                          {!isComposerFooterCompact &&
-                          (activePlan || sidebarProposedPlan || planSidebarOpen) ? (
-                            <Button
-                              variant="ghost"
-                              className={cn(
-                                "shrink-0 whitespace-nowrap px-2 sm:px-2.5",
-                                planSidebarOpen
-                                  ? "text-blue-400 hover:text-blue-300"
-                                  : "text-muted-foreground/70 hover:text-foreground/80",
+                          {!activePendingProgress ? (
+                            <>
+                              {/* Provider/model picker */}
+                              {implementationPickerActive ? (
+                                <ProviderModelPicker
+                                  compact={isComposerFooterCompact}
+                                  provider={implementationProvider}
+                                  model={implementationSelectedModelForPickerWithCustomFallback}
+                                  lockedProvider={null}
+                                  providers={providerStatuses}
+                                  modelOptionsByProvider={modelOptionsByProvider}
+                                  modelOptions={implementationModelSelection.options}
+                                  onModelOptionsChange={onImplementationProviderModelOptionsChange}
+                                  {...(implementationProviderState.modelPickerIconClassName
+                                    ? {
+                                        activeProviderIconClassName:
+                                          implementationProviderState.modelPickerIconClassName,
+                                      }
+                                    : {})}
+                                  onProviderModelChange={onImplementationProviderModelSelect}
+                                />
+                              ) : (
+                                <ProviderModelPicker
+                                  compact={isComposerFooterCompact}
+                                  provider={selectedProvider}
+                                  model={selectedModelForPickerWithCustomFallback}
+                                  lockedProvider={lockedProvider}
+                                  providers={providerStatuses}
+                                  modelOptionsByProvider={modelOptionsByProvider}
+                                  modelOptions={composerModelOptions?.[selectedProvider]}
+                                  onModelOptionsChange={onComposerProviderModelOptionsChange}
+                                  effort={composerEffortPickerProps}
+                                  {...(composerProviderState.modelPickerIconClassName
+                                    ? {
+                                        activeProviderIconClassName:
+                                          composerProviderState.modelPickerIconClassName,
+                                      }
+                                    : {})}
+                                  onProviderModelChange={onProviderModelSelect}
+                                />
                               )}
-                              size="sm"
-                              type="button"
-                              onClick={togglePlanSidebar}
-                              title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
-                            >
-                              <ListTodoIcon />
-                              <span className="sr-only sm:not-sr-only">Plan</span>
-                            </Button>
-                          ) : null}
 
-                          {activeContextWindow ? (
-                            <ContextWindowMeter usage={activeContextWindow} />
-                          ) : null}
-                          {isPreparingWorktree ? (
-                            <span className="ms-1 text-muted-foreground/70 text-xs">
-                              Preparing worktree...
-                            </span>
+                              {!implementationPickerActive &&
+                              !isComposerFooterCompact &&
+                              providerTraitsPicker
+                                ? providerTraitsPicker
+                                : null}
+
+                              {!isComposerFooterCompact &&
+                              (activePlan || sidebarProposedPlan || planSidebarOpen) ? (
+                                <Button
+                                  variant="ghost"
+                                  className={cn(
+                                    "shrink-0 whitespace-nowrap px-2 sm:px-2.5",
+                                    planSidebarOpen
+                                      ? "text-blue-400 hover:text-blue-300"
+                                      : "text-muted-foreground/70 hover:text-foreground/80",
+                                  )}
+                                  size="sm"
+                                  type="button"
+                                  onClick={togglePlanSidebar}
+                                  title={
+                                    planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"
+                                  }
+                                >
+                                  <ListTodoIcon />
+                                  <span className="sr-only sm:not-sr-only">Plan</span>
+                                </Button>
+                              ) : null}
+
+                              {activeContextWindow ? (
+                                <ContextWindowMeter usage={activeContextWindow} />
+                              ) : null}
+                              {isPreparingWorktree ? (
+                                <span className="ms-1 text-muted-foreground/70 text-xs">
+                                  Preparing worktree...
+                                </span>
+                              ) : null}
+                            </>
                           ) : null}
                           <div className={activeContextWindow ? "ml-1" : undefined}>
                             <ComposerPrimaryActions
@@ -6240,7 +6266,10 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               <ProjectlessChatComposerNotice emptyThread />
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
-              <div className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[44rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-border bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5">
+              <div
+                className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[41rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-hairline bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5"
+                data-chat-composer-branch-toolbar="true"
+              >
                 <BranchToolbar
                   threadId={activeThread.id}
                   onEnvModeChange={onEnvModeChange}
@@ -6351,7 +6380,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
             <img
               src={expandedImageItem.src}
               alt={expandedImageItem.name}
-              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
+              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-hairline bg-background object-contain shadow-2xl"
               draggable={false}
             />
             <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">

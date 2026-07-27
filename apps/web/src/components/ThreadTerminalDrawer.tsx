@@ -1019,7 +1019,7 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
+      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-hairline bg-app-pane"
       style={{ height: `${drawerHeight}px` }}
     >
       <div
@@ -1032,7 +1032,7 @@ export default function ThreadTerminalDrawer({
 
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-hairline bg-background/70">
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
@@ -1078,7 +1078,7 @@ export default function ThreadTerminalDrawer({
                   <div
                     key={terminalId}
                     className={`min-h-0 min-w-0 border-l first:border-l-0 ${
-                      terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
+                      terminalId === resolvedActiveTerminalId ? "border-border" : "border-hairline"
                     }`}
                     onMouseDown={() => {
                       if (terminalId !== resolvedActiveTerminalId) {
@@ -1125,8 +1125,8 @@ export default function ThreadTerminalDrawer({
           </div>
 
           {hasTerminalSidebar && (
-            <aside className="flex w-40 min-w-40 flex-col border-l border-border/60 bg-background/50 text-[11px]">
-              <div className="flex h-[22px] items-center justify-end gap-px border-b border-border/60 px-1">
+            <aside className="flex w-40 min-w-40 flex-col border-l border-hairline bg-background/50 text-[11px]">
+              <div className="flex h-[22px] items-center justify-end gap-px border-b border-hairline px-1">
                 <TerminalActionButton
                   className={`inline-flex size-[18px] items-center justify-center rounded-sm text-muted-foreground transition-colors ${
                     hasReachedSplitLimit
@@ -1165,7 +1165,7 @@ export default function ThreadTerminalDrawer({
                   return (
                     <div
                       key={terminalGroup.id}
-                      className={groupIndex > 0 ? "mt-1 border-t border-border/40 pt-1" : ""}
+                      className={groupIndex > 0 ? "mt-1 border-t border-hairline pt-1" : ""}
                     >
                       {showGroupHeaders && (
                         <button
@@ -1187,7 +1187,7 @@ export default function ThreadTerminalDrawer({
                       )}
 
                       {showGroupHeaders && terminalGroup.terminalIds.length > 1 && (
-                        <div className="ml-1 border-l border-border/60 pl-1.5 mt-px space-y-px">
+                        <div className="ml-1 border-l border-hairline pl-1.5 mt-px space-y-px">
                           {terminalGroup.terminalIds.map((terminalId) => {
                             const isActive = terminalId === resolvedActiveTerminalId;
                             const closeTerminalLabel = `Close ${

@@ -22,7 +22,7 @@ const toggleVariants = cva(
       variant: {
         default: "border-transparent",
         outline:
-          "border-border/72 bg-transparent text-foreground/85 dark:border-border dark:bg-input/16 hover:border-border data-pressed:border-border data-pressed:bg-accent/64 data-pressed:text-foreground dark:data-pressed:bg-input/56 dark:hover:bg-input/40",
+          "border-hairline bg-transparent text-foreground/85 dark:border-border dark:bg-input/16 hover:border-border data-pressed:border-border data-pressed:bg-accent/64 data-pressed:text-foreground dark:data-pressed:bg-input/56 dark:hover:bg-input/40",
       },
     },
   },

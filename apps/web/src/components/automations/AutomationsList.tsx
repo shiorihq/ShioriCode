@@ -106,12 +106,12 @@ export function AutomationsList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center border-b border-border/40">
+      <div className="flex h-11 shrink-0 items-center border-b border-hairline">
         <div className={cn(columnClass, "flex h-full items-center justify-between gap-3")}>
           <div
             role="radiogroup"
             aria-label="Automation filter"
-            className="inline-flex items-center rounded-full border border-border/60 bg-background/60 p-[2px]"
+            className="inline-flex items-center rounded-full border border-hairline bg-background/60 p-[2px]"
           >
             {AUTOMATION_FILTER_ORDER.map((value) => {
               const isActive = value === filter;
@@ -241,7 +241,7 @@ export function AutomationsList({
                           <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-foreground">
                             {automation.title}
                           </span>
-                          <span className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[9px] font-medium uppercase tracking-wider text-muted-foreground/80">
+                          <span className="shrink-0 rounded-sm border border-hairline px-1 py-px text-[9px] font-medium uppercase tracking-wider text-muted-foreground/80">
                             {intervalLabel(automation.scheduleRrule)}
                           </span>
                         </div>

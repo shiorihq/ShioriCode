@@ -14,6 +14,7 @@ export function showContextMenuFallback<T extends string>(
     overlay.style.cssText = "position:fixed;inset:0;z-index:9999";
 
     const menu = document.createElement("div");
+    menu.setAttribute("data-app-float-surface", "");
     menu.className =
       "fixed z-[10000] min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-xl animate-in fade-in zoom-in-95";
 

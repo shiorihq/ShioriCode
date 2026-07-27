@@ -120,7 +120,7 @@ export function CreditsPanel() {
                   </button>
                   <Collapsible open={isOpen}>
                     <CollapsibleContent>
-                      <div className="border-t border-border/50 px-4 py-3 sm:px-5">
+                      <div className="border-t border-hairline px-4 py-3 sm:px-5">
                         <div className="flex items-center gap-2 pb-2">
                           <a
                             href={entry.url}

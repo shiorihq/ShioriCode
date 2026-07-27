@@ -24,6 +24,7 @@ export interface ServerDerivedPaths {
   readonly settingsPath: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
+  readonly appearanceBackgroundsDir: string;
   readonly logsDir: string;
   readonly serverLogPath: string;
   readonly providerLogsDir: string;
@@ -67,6 +68,7 @@ export const deriveServerPaths = Effect.fn(function* (
   const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
+  const appearanceBackgroundsDir = join(stateDir, "appearance-backgrounds");
   const logsDir = join(stateDir, "logs");
   const providerLogsDir = join(logsDir, "provider");
   return {
@@ -77,6 +79,7 @@ export const deriveServerPaths = Effect.fn(function* (
     settingsPath: join(stateDir, "settings.json"),
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
+    appearanceBackgroundsDir,
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
     providerLogsDir,
@@ -103,6 +106,7 @@ export const ensureServerDirectories = Effect.fn(function* (
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.appearanceBackgroundsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.worktreesDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.keybindingsConfigPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true }),

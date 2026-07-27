@@ -108,7 +108,7 @@ function ArtifactPanelHeader(props: {
         </div>
       </div>
       {data?.kind === "text" ? (
-        <div className="flex shrink-0 items-center rounded-md border border-border/70 bg-background/60 p-0.5">
+        <div className="flex shrink-0 items-center rounded-md border border-hairline bg-background/60 p-0.5">
           <Button
             aria-pressed={viewMode === "preview"}
             className={cn(

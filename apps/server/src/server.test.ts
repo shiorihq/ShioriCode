@@ -539,6 +539,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("stores and serves a custom appearance background from the host state directory", () =>
+    Effect.gen(function* () {
+      const config = yield* buildAppUnderTest();
+      const uploadUrl = yield* getHttpServerUrl("/api/appearance/background");
+      const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const uploadResponse = yield* Effect.promise(async () => {
+        const formData = new FormData();
+        formData.append("file", new File([pngBytes], "background.png", { type: "image/png" }));
+        return fetch(uploadUrl, { method: "POST", body: formData });
+      });
+
+      const uploadText = yield* Effect.promise(() => uploadResponse.text());
+      assert.equal(uploadResponse.status, 200, uploadText);
+      const uploadBody = JSON.parse(uploadText) as {
+        data: { version: string };
+        success: boolean;
+      };
+      assert.isTrue(uploadBody.success);
+      assert.match(uploadBody.data.version, /^[0-9a-f-]{36}$/i);
+
+      const savedPath = `${config.appearanceBackgroundsDir}/custom-${uploadBody.data.version}.png`;
+      const savedBytes = yield* (yield* FileSystem.FileSystem).readFile(savedPath);
+      assert.deepEqual([...savedBytes], [...pngBytes]);
+
+      const imageUrl = yield* getHttpServerUrl(
+        `/api/appearance/background/${uploadBody.data.version}`,
+      );
+      const imageResponse = yield* Effect.promise(() => fetch(imageUrl));
+      assert.equal(imageResponse.status, 200);
+      assert.deepEqual(
+        [...new Uint8Array(yield* Effect.promise(() => imageResponse.arrayBuffer()))],
+        [...pngBytes],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("requires an authenticated owner before creating a mobile pairing secret", () =>
     Effect.gen(function* () {
       const previousUsername = process.env.SHIORICODE_USERNAME;

@@ -191,12 +191,12 @@ export function PullRequestsList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-12 shrink-0 items-center border-b border-border/40">
+      <div className="flex h-12 shrink-0 items-center border-b border-hairline">
         <div className={cn(columnClass, "flex h-full items-center justify-between gap-3")}>
           <div
             role="radiogroup"
             aria-label="Pull request filter"
-            className="inline-flex h-7 items-center gap-0.5 rounded-lg border border-border/60 bg-muted/40 p-0.5"
+            className="inline-flex h-7 items-center gap-0.5 rounded-lg border border-hairline bg-muted/40 p-0.5"
           >
             {FILTER_ORDER.map((value) => {
               const isActive = value === filter;
@@ -434,9 +434,9 @@ function PullRequestRow({
       data-active={isActive || undefined}
       className={cn(
         "group/pr flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-transparent py-2 pl-2 pr-2.5 text-left",
-        "hover:bg-sidebar-accent/60 hover:border-border/50",
+        "hover:bg-sidebar-accent/60 hover:border-hairline",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        isActive && "border-border/60 bg-sidebar-accent",
+        isActive && "border-hairline bg-sidebar-accent",
       )}
     >
       <span
@@ -451,7 +451,7 @@ function PullRequestRow({
             {pullRequest.title}
           </span>
           {pullRequest.isDraft ? (
-            <span className="shrink-0 rounded border border-border/60 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="shrink-0 rounded border border-hairline px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
               Draft
             </span>
           ) : null}

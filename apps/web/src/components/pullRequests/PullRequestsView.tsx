@@ -1,7 +1,7 @@
 import type { GitPullRequestListFilter } from "contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { IconBranchMergeOutline24 as GitPullRequestIcon } from "nucleo-core-outline-24";
-import { useCallback } from "react";
+import { type CSSProperties, useCallback } from "react";
 
 import { SidebarInset } from "~/components/ui/sidebar";
 import { isElectron } from "~/env";
@@ -50,11 +50,11 @@ export function PullRequestsView({ search }: PullRequestsViewProps) {
   const columnClass = detailOpen ? "w-full px-4" : "mx-auto w-full max-w-3xl px-4";
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground">
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:paint]">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-app-canvas [contain:paint]">
           {isElectron ? (
-            <div className="drag-region flex h-[52px] shrink-0 items-center">
+            <div data-app-chrome className="drag-region flex h-[52px] shrink-0 items-center">
               <div className={cn(columnClass, "flex h-full items-center gap-2 select-none")}>
                 <GitPullRequestIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <h1 className="text-sm font-semibold tracking-tight text-foreground">
@@ -63,7 +63,7 @@ export function PullRequestsView({ search }: PullRequestsViewProps) {
               </div>
             </div>
           ) : (
-            <header className="flex h-12 shrink-0 items-center">
+            <header data-app-chrome className="flex h-12 shrink-0 items-center">
               <div className={cn(columnClass, "flex h-full items-center gap-2")}>
                 <GitPullRequestIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <h1 className="text-sm font-semibold tracking-tight text-foreground">
@@ -72,7 +72,16 @@ export function PullRequestsView({ search }: PullRequestsViewProps) {
               </div>
             </header>
           )}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            data-app-reading-plate
+            style={
+              {
+                "--app-reading-width": "100%",
+                "--app-reading-plate-radius": "0px",
+              } as CSSProperties
+            }
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
             <PullRequestsList
               filter={filter}
               selectedProjectId={selectedProjectId}

@@ -947,6 +947,7 @@ async function selectModelFromUnlockedProviderPicker(
     "Unable to find provider model picker.",
   );
   picker.click();
+  await page.getByRole("menuitem", { name: "Model" }).hover();
   await page.getByRole("menuitem", { name: providerLabel }).hover();
   await vi.waitFor(
     () => {
@@ -3489,6 +3490,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("leaves the message column unplated so the wallpaper reads through it", async () => {
+    // A thread WITH messages. The conversation deliberately carries NO reading
+    // plate: a sheet the height of the thread was the single largest thing
+    // hiding the photo, so messages read directly on the wallpaper and only
+    // the pieces with their own surface (bubbles, cards) paint anything.
+    const threadSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-background-glass-test" as MessageId,
+      targetText: "background glass test",
+    });
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: threadSnapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            appearanceBackground: {
+              kind: "preset",
+              presetId: "japanese-spring",
+              customVersion: "",
+              opacity: 100,
+              blur: 0,
+              mainOpacity: 100,
+              mainBlur: 0,
+            },
+          },
+        };
+      },
+    });
+
+    try {
+      const mainSurface = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>("[data-app-main-content] [data-app-chat-surface]"),
+        "Unable to find the main chat surface.",
+      );
+      const composerSurface = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-composer-surface="true"]'),
+        "Unable to find the composer surface.",
+      );
+
+      await vi.waitFor(() => {
+        // The page canvas no longer paints — the wallpaper shows through it.
+        expect(getComputedStyle(mainSurface).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+        // Nothing plates the conversation. This is the regression that matters:
+        // re-adding a plate host here silently re-fogs the whole thread.
+        expect(document.querySelector("[data-app-reading-plate]")).toBeNull();
+        // The composer stays glass over the wallpaper.
+        expect(getComputedStyle(composerSurface).backdropFilter).toContain("blur(");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps plan follow-up footer actions fused and aligned after a real resize", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
@@ -3554,6 +3611,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Unable to find provider model picker.",
       );
       picker.click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(
         () => {

@@ -17,6 +17,11 @@ import * as Schema from "effect/Schema";
 import { readStoredClientSettings } from "../clientSettings";
 import { applyFontSettingsToDocument } from "./fonts";
 import { randomUUID } from "./utils";
+import {
+  getActiveWallpaperLuminance,
+  isDarkLuminance,
+  scrimBoostFromLuminance,
+} from "./wallpaperLuminance";
 
 export interface ThemeRecord extends ImportedTheme {
   source: "builtin" | "imported";
@@ -816,7 +821,19 @@ function ensureUniqueImportedThemeId(
   return `${baseId}-${randomUUID().slice(0, 8).toLowerCase()}`;
 }
 
-export function resolveThemeMode(mode: ThemeMode, systemDark: boolean): ThemeAppearance {
+/**
+ * @param wallpaperDark whether the active appearance background is dark, or
+ * null when there is no wallpaper or it has not been sampled yet — in which
+ * case "wallpaper" degrades to "system" rather than guessing.
+ */
+export function resolveThemeMode(
+  mode: ThemeMode,
+  systemDark: boolean,
+  wallpaperDark: boolean | null = null,
+): ThemeAppearance {
+  if (mode === "wallpaper") {
+    return (wallpaperDark ?? systemDark) ? "dark" : "light";
+  }
   if (mode === "system") {
     return systemDark ? "dark" : "light";
   }
@@ -935,8 +952,12 @@ export function resolveThemeRecord(
   };
 }
 
-export function resolveDocumentThemeState(settings: ClientSettings, systemDark: boolean) {
-  const resolvedTheme = resolveThemeMode(settings.themeMode, systemDark);
+export function resolveDocumentThemeState(
+  settings: ClientSettings,
+  systemDark: boolean,
+  wallpaperDark: boolean | null = null,
+) {
+  const resolvedTheme = resolveThemeMode(settings.themeMode, systemDark, wallpaperDark);
   const activeTheme = resolveThemeRecord(settings, resolvedTheme);
   return {
     resolvedTheme,
@@ -1004,11 +1025,25 @@ export function applyThemeToDocument(
     return;
   }
 
-  const { activeTheme, resolvedTheme } = resolveDocumentThemeState(settings, systemDark);
+  // Read straight from the luminance store rather than threading a parameter
+  // through every caller: it is a synchronous snapshot with its own cache, and
+  // this stays the single place that writes appearance state onto the root.
+  const wallpaperLuminance = getActiveWallpaperLuminance();
+  const { activeTheme, resolvedTheme } = resolveDocumentThemeState(
+    settings,
+    systemDark,
+    wallpaperLuminance === null ? null : isDarkLuminance(wallpaperLuminance),
+  );
   applyFontSettingsToDocument(settings);
 
   withTransitionSuppression(root, suppressTransitions, () => {
     root.classList.toggle("dark", resolvedTheme === "dark");
+    // Independent of theme mode: even a hand-picked appearance needs more
+    // cover over a mid-grey photo than over an easy one.
+    root.style.setProperty(
+      "--app-scrim-boost",
+      wallpaperLuminance === null ? "0" : scrimBoostFromLuminance(wallpaperLuminance).toFixed(3),
+    );
     setThemeDataAttribute(root, "themeId", activeTheme.id);
     setThemeDataAttribute(root, "themeAppearance", activeTheme.appearance);
 

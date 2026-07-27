@@ -17,10 +17,19 @@ import {
   resolveDocumentThemeState,
   upsertImportedTheme,
 } from "../lib/theme";
+import {
+  getActiveWallpaperLuminance,
+  isDarkLuminance,
+  subscribeToWallpaperLuminance,
+} from "../lib/wallpaperLuminance";
 
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
-let lastDesktopTheme: ThemeMode | null = null;
+/** The shell only knows the three OS-level modes; "wallpaper" is resolved to a
+ * concrete appearance before it ever reaches the bridge. */
+type DesktopThemeMode = Exclude<ThemeMode, "wallpaper">;
+
+let lastDesktopTheme: DesktopThemeMode | null = null;
 
 function getSystemDark(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -41,7 +50,7 @@ function subscribeToSystemDark(listener: () => void): () => void {
   };
 }
 
-function syncDesktopTheme(theme: ThemeMode) {
+function syncDesktopTheme(theme: DesktopThemeMode) {
   const bridge = window.desktopBridge;
   if (!bridge || lastDesktopTheme === theme) {
     return;
@@ -66,10 +75,18 @@ export function useTheme() {
     ClientSettingsSchema,
   );
   const systemDark = useSyncExternalStore(subscribeToSystemDark, getSystemDark, () => false);
+  // The first sample of a new wallpaper lands asynchronously; subscribing here
+  // is what re-resolves the appearance when it does.
+  const wallpaperLuminance = useSyncExternalStore(
+    subscribeToWallpaperLuminance,
+    getActiveWallpaperLuminance,
+    () => null,
+  );
+  const wallpaperDark = wallpaperLuminance === null ? null : isDarkLuminance(wallpaperLuminance);
 
   const { activeTheme, resolvedTheme } = useMemo(
-    () => resolveDocumentThemeState(clientSettings, systemDark),
-    [clientSettings, systemDark],
+    () => resolveDocumentThemeState(clientSettings, systemDark, wallpaperDark),
+    [clientSettings, systemDark, wallpaperDark],
   );
 
   const themeOptionsByAppearance = useMemo(
@@ -86,7 +103,9 @@ export function useTheme() {
         ...current,
         themeMode: next,
       }));
-      syncDesktopTheme(next);
+      // Deliberately not syncing the shell here: "wallpaper" is not a mode the
+      // desktop bridge understands, and the effect below already reports the
+      // appearance this resolves to.
     },
     [setClientSettings],
   );
@@ -134,8 +153,13 @@ export function useTheme() {
 
   useEffect(() => {
     applyThemeToDocument(clientSettings, systemDark, true);
-    syncDesktopTheme(clientSettings.themeMode);
-  }, [clientSettings, systemDark]);
+    // The desktop shell only understands the three OS-level modes, so a
+    // wallpaper-driven appearance is reported as the concrete one it resolved
+    // to — otherwise the native window chrome disagrees with the web view.
+    syncDesktopTheme(
+      clientSettings.themeMode === "wallpaper" ? resolvedTheme : clientSettings.themeMode,
+    );
+  }, [clientSettings, resolvedTheme, systemDark, wallpaperDark]);
 
   return {
     theme: clientSettings.themeMode,

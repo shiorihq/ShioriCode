@@ -90,6 +90,23 @@
   --color-sidebar: var(--sidebar);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  /* Utility suffix must match the color name: `border-hairline` / `border-edge`. */
+  --color-hairline: var(--border-subtle);
+  --color-edge: var(--border-strong);
+  /* Page-canvas utility. `bg-app-canvas` is `--background` normally and
+   * `transparent` under a wallpaper, so route containers stop re-fogging the
+   * photo. `bg-pane-veil` dims an unfocused multi-pane in both states.
+   *
+   * `bg-app-pane` is the canvas's denser sibling, for the working surfaces
+   * that hold code and diffs: `--background` normally, a high-alpha wash of
+   * it under a wallpaper. Use it wherever a full-height working pane would
+   * otherwise be `bg-background`. */
+  --color-app-canvas: var(--app-canvas);
+  --color-app-pane: var(--app-pane);
+  --color-pane-veil: var(--app-pane-veil);
+  --shadow-e1: var(--elevation-1);
+  --shadow-e2: var(--elevation-2);
+  --shadow-e3: var(--elevation-3);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -145,8 +162,6 @@
 .dialog-backdrop-gaussian-blur {
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
-  transform: translateZ(0);
-  will-change: backdrop-filter;
 }
 
 [data-app-sidebar-shell],
@@ -154,12 +169,17 @@
   transition: filter 180ms ease;
 }
 
+/* Content is already unreadable at 12px; the extra radius was pure raster
+ * cost on a subtree that, under a wallpaper, contains a decoded photo — and
+ * it animates on every open AND close. will-change is scoped to the same
+ * predicate, so the promotion lasts exactly as long as the animation. */
 html:has([data-slot="dialog-backdrop"]:not([data-ending-style])) [data-app-sidebar-shell],
 html:has([data-slot="dialog-backdrop"]:not([data-ending-style])) [data-app-modal-blur-surface],
 html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style])) [data-app-sidebar-shell],
 html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   [data-app-modal-blur-surface] {
-  filter: blur(20px);
+  filter: blur(12px);
+  will-change: filter;
 }
 
 .shiori-expand-panel {
@@ -377,6 +397,19 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   --transition-duration-basic: 0.15s;
   --transition-duration-relaxed: 0.3s;
   --transition-ease-basic: ease;
+  /* Inert appearance-background defaults, so the no-wallpaper path is
+   * byte-identical to before. Both flip only under :root[data-app-background]. */
+  --app-canvas: var(--background);
+  --app-pane: var(--background);
+  --app-pane-veil: color-mix(in srgb, var(--foreground) 4%, transparent);
+  /* Floating surfaces (menus, dialogs, tooltips, toasts) stay flat theme
+   * colours off-wallpaper; the glass recipe below only engages under
+   * :root[data-app-background]. */
+  --app-float-surface: var(--popover);
+  --app-float-dense-surface: var(--popover);
+  --app-float-filter: none;
+  --app-float-rim: transparent;
+  --app-float-hairline: transparent;
   --app-sidebar-shell-radius: 1.375rem;
   --app-sidebar-shell-background: color-mix(in srgb, var(--color-white) 94%, transparent);
   --app-sidebar-shell-background-translucent: color-mix(
@@ -385,6 +418,7 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
     transparent
   );
   --app-sidebar-shell-border: color-mix(in srgb, var(--foreground) 17%, transparent);
+  --app-sidebar-shell-edge-highlight: color-mix(in srgb, var(--color-white) 25%, transparent);
   --app-sidebar-shell-border-translucent: color-mix(
     in srgb,
     var(--color-white) 15%,
@@ -409,7 +443,9 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
     var(--primary) 26%,
     transparent
   );
-  --background: oklch(0.992 0.003 95);
+  /* Canvas sits below the card plane so white surfaces read as raised
+     without needing an outline drawn around them. */
+  --background: oklch(0.972 0.004 95);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -434,8 +470,21 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   --accent-foreground: var(--color-neutral-800);
   --destructive: var(--color-red-500);
   --border: --alpha(var(--color-black) / 6%);
+  /* Two deliberate hairline strengths. `subtle` = dividers *inside* a surface;
+     `strong` = the edge of an interactive control. Nothing else. */
+  --border-subtle: --alpha(var(--color-black) / 5%);
+  --border-strong: --alpha(var(--color-black) / 11%);
   --input: --alpha(var(--color-black) / 8%);
   --ring: oklch(0.671 0.101 241.4);
+  /* Surfaces separate by elevation, not by outlines. */
+  --elevation-1:
+    0 1px 2px -1px --alpha(var(--color-black) / 8%), 0 1px 1px -1px --alpha(var(--color-black) / 5%);
+  --elevation-2:
+    0 2px 4px -2px --alpha(var(--color-black) / 8%),
+    0 6px 16px -6px --alpha(var(--color-black) / 10%);
+  --elevation-3:
+    0 4px 8px -4px --alpha(var(--color-black) / 10%),
+    0 16px 40px -12px --alpha(var(--color-black) / 14%);
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
@@ -456,6 +505,7 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
       transparent
     );
     --app-sidebar-shell-border: color-mix(in srgb, var(--color-white) 8.5%, transparent);
+    --app-sidebar-shell-edge-highlight: color-mix(in srgb, var(--color-white) 20%, transparent);
     --app-sidebar-shell-border-translucent: color-mix(
       in srgb,
       var(--color-white) 11.5%,
@@ -482,10 +532,12 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
     );
     --background: oklch(0.158 0.004 75);
     --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    /* Dark surfaces separate by luminance — shadows barely read on a dark
+       canvas, so the lift has to be large enough to see on its own. */
+    --card: color-mix(in srgb, var(--background) 94%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
     --sidebar: color-mix(in srgb, var(--card) 92%, var(--muted));
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --popover: color-mix(in srgb, var(--background) 91%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.771 0.101 241.4);
     --primary-foreground: var(--color-white);
@@ -501,8 +553,17 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 5%);
+    --border-subtle: --alpha(var(--color-white) / 5%);
+    --border-strong: --alpha(var(--color-white) / 12%);
     --input: --alpha(var(--color-white) / 7%);
     --ring: oklch(0.771 0.101 241.4);
+    --elevation-1: 0 1px 2px -1px --alpha(var(--color-black) / 45%);
+    --elevation-2:
+      0 2px 6px -2px --alpha(var(--color-black) / 50%),
+      0 6px 16px -6px --alpha(var(--color-black) / 40%);
+    --elevation-3:
+      0 4px 10px -4px --alpha(var(--color-black) / 55%),
+      0 16px 40px -12px --alpha(var(--color-black) / 50%);
     --destructive-foreground: var(--color-red-400);
     --info: var(--color-blue-500);
     --info-foreground: var(--color-blue-400);
@@ -518,6 +579,537 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
+}
+
+/* ── Appearance background ──────────────────────────────────────────────
+ *
+ * Four planes, and nothing else:
+ *   wallpaper  [data-app-wallpaper]        the photograph + one flat scrim
+ *   plate      [data-app-reading-plate]    a near-opaque sheet behind reading columns
+ *   chrome     [data-app-chrome]           a veil under bars that float on the photo
+ *   float      [data-app-float-surface]    glass for menus, dialogs and toasts
+ *
+ * Every plane is a named opt-in: `bg-app-canvas` for page containers,
+ * `bg-app-pane` for working panes, `data-app-float-surface` for anything
+ * portalled above the app. A component that forgets stays opaque and merely
+ * hides more of the photo — the failure mode is "less wallpaper", never
+ * "unreadable text". That is why none of this needs !important. This app is
+ * deliberately borderless (see the `border-color: transparent` rule near the
+ * end of this file), so every edge below is a box-shadow.
+ *
+ * The density ladder, from most photo to least, is the one thing to keep
+ * consistent when adding a surface: canvas (0%) → chrome veil → float glass →
+ * pane (8%) → reading plate (5%). Text weight decides the rung, not
+ * component identity. */
+
+/* The wallpaper always composites onto the theme canvas, so the opacity
+ * sliders mean the same thing on every path — otherwise the UA canvas
+ * (white even under color-scheme: dark), macOS vibrancy, or Electron's white
+ * window backing would show through at opacity < 1. */
+:root[data-app-background] [data-app-background-shell] {
+  background-color: var(--background);
+}
+
+/* One implementation for both regions. The image and the scrim are siblings,
+ * not nested, so the opacity slider can never weaken the scrim. */
+[data-app-wallpaper] {
+  /* 3σ of the 20px blur ceiling, held constant so a slider drag changes no
+   * geometry (no relayout, no `cover` re-raster) — only the Gaussian re-runs. */
+  --app-wallpaper-bleed: 60px;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Right-anchored and viewport-wide: both regions share the window's right
+ * edge and full height, so the two image boxes are identical in viewport
+ * coordinates — one scaled decode, and the photo does not jump at the
+ * sidebar seam. */
+[data-app-wallpaper-image] {
+  position: absolute;
+  top: calc(var(--app-wallpaper-bleed) * -1);
+  right: calc(var(--app-wallpaper-bleed) * -1);
+  bottom: calc(var(--app-wallpaper-bleed) * -1);
+  width: calc(100vw + var(--app-wallpaper-bleed) * 2);
+  background-image: var(--app-wallpaper-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  opacity: var(--app-wallpaper-opacity, 1);
+  filter: blur(var(--app-wallpaper-blur, 0px));
+  /* opacity only — transitioning `filter` restarts a main-thread Gaussian
+   * interpolation on every input event and fights the drag. */
+  transition: opacity 160ms ease-out;
+}
+
+/* Generated last ⇒ paints above the image sibling. No text is ever placed on
+ * this plane.
+ *
+ * The extra density the header bars need lives HERE rather than on the bars
+ * themselves. A veil confined to a header is a rectangle, and a rectangle
+ * inside a pane with a rounded corner always shows a square corner and a
+ * visible edge where it stops. Painting it into the wallpaper layer — which
+ * is a child of the rounded, overflow-hidden pane — means the whole ramp is
+ * clipped to the corner and has no edge of its own. */
+[data-app-wallpaper]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    to bottom,
+    var(--app-chrome-veil) 0,
+    var(--app-chrome-veil) 52px,
+    var(--app-scrim) 132px,
+    var(--app-scrim) 100%
+  );
+}
+
+/* Promote for a slider drag and release it afterwards. */
+:root[data-app-wallpaper-tuning] [data-app-wallpaper-image] {
+  transition: none;
+  will-change: filter, opacity;
+}
+
+:root[data-app-background] {
+  /* Page containers stop painting; the wallpaper shows through. Idempotent
+   * when stacked, unlike the old descendant `.bg-background` override. */
+  --app-canvas: transparent;
+
+  /* Ambient scrim over the whole photo (painted by [data-app-wallpaper]::after).
+   *
+   * The base covers an easy photo — one whose luminance sits near an extreme,
+   * where the theme's own ramp already has room. `--app-scrim-boost` (0..1,
+   * written onto the root by applyThemeToDocument, peaking at mid-grey) adds
+   * up to 26 points more for the hard case, where NEITHER appearance clears a
+   * comfortable margin on its own. Defaults to 0 so every no-wallpaper and
+   * not-yet-sampled path is byte-identical to the flat value it replaces. */
+  --app-scrim: color-mix(
+    in srgb,
+    var(--background) calc(24% + var(--app-scrim-boost, 0) * 26%),
+    transparent
+  );
+
+  /* One veil for every chrome surface (the five header bars AND the sidebar),
+   * painted OVER the scrim. Base coverage 1-(1-.24)(1-.53)=.643 holds solid
+   * --foreground at ≥5.7:1 over the worst possible photo pixel — but chrome
+   * MUTED text is only guaranteed 3:1, and a mid-luminance photo is where
+   * that floor gets uncomfortable. The same boost the scrim reads densifies
+   * the veil too (53% → 75% at boost 1), so the header band firms up exactly
+   * when the photo is hard and stays airy over an easy one. */
+  --app-chrome-veil: color-mix(
+    in srgb,
+    var(--background) calc(53% + var(--app-scrim-boost, 0) * 22%),
+    transparent
+  );
+  --app-chrome-muted-foreground: color-mix(in srgb, var(--foreground) 82%, var(--background));
+
+  /* Reading sheet behind message/settings columns.
+   *
+   * Not quite opaque: at 95% the photo contributes 5% × (1 - scrim) ≈ 3.8% of
+   * the final pixel, which is enough for the sheet to take a breath of the
+   * wallpaper's colour and light — the difference between "paper on a photo"
+   * and "paper lit by it" — and far too little to move syntax colours or
+   * body-text contrast off the values the theme was tuned for (a 13:1 pair
+   * lands at ~12:1 against the worst possible photo pixel). Deliberately no
+   * backdrop-filter: this sheet is as tall as the thread and re-blurring it on
+   * every scroll frame is the single most expensive thing we could do here. */
+  --app-reading-plate: color-mix(in srgb, var(--background) 88%, transparent);
+  --app-reading-width: 46.5rem;
+
+  /* Cards, wherever `bg-card` lands inside the main pane. Dense enough to hold
+   * card-foreground at full contrast, open enough that the photo's colour
+   * reaches the top of the stack instead of dying two layers down. */
+  --app-card-surface: color-mix(in srgb, var(--card) 80%, transparent);
+
+  /* Working panes (diff, terminal, artifact source). They hold monospace at
+   * 12px, so they sit one step denser than the canvas and one step lighter
+   * than the reading plate — same no-backdrop-filter reasoning. */
+  --app-pane: color-mix(in srgb, var(--background) 92%, transparent);
+  /* The sheet reads as a floating document, not a pasted rectangle: a 1px
+   * ring for the edge plus a real drop shadow to lift it off the photo. */
+  --app-reading-plate-radius: 1.25rem;
+  /* Kept deliberately light. A heavy ambient layer here does not read as
+   * elevation over a photograph — it smears a dark halo around the sheet that
+   * is most obvious where it wraps the rounded corners. The 1px ring does
+   * almost all of the separation work. */
+  --app-reading-plate-shadow:
+    0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent),
+    0 1px 2px -1px color-mix(in srgb, var(--color-black) 8%, transparent),
+    0 8px 24px -18px color-mix(in srgb, var(--color-black) 18%, transparent);
+
+  /* The sidebar shell reads the same veil as the header bars — one number. */
+  --app-sidebar-shell-background: var(--app-chrome-veil);
+  --app-sidebar-shell-background-translucent: var(--app-chrome-veil);
+  --app-sidebar-shell-edge-highlight: color-mix(in srgb, var(--foreground) 14%, transparent);
+
+  /* Liquid glass.
+   *
+   * Three things separate glass from fog, and the flat translucent fill this
+   * replaces had none of them:
+   *   1. Saturation. Real glass concentrates the colour behind it. Blur on its
+   *      own just greys the wallpaper into haze.
+   *   2. A luminance floor. The panel must carry enough of its own tint that
+   *      body text stays legible over *any* wallpaper, not just calm ones.
+   *   3. A specular rim — bright top edge, faint dark bottom edge — which is
+   *      what actually reads as a pane of glass catching light.
+   */
+  /* The tint also reads the scrim boost: the composer holds muted placeholder
+   * text, and a mid-luminance photo glowing through 18-36% open glass is the
+   * one case where that text loses its floor. Boost 1 lands 92%/80%. */
+  --glass-tint-top: color-mix(
+    in srgb,
+    var(--color-white) calc(82% + var(--app-scrim-boost, 0) * 10%),
+    transparent
+  );
+  --glass-tint-bottom: color-mix(
+    in srgb,
+    var(--color-white) calc(64% + var(--app-scrim-boost, 0) * 16%),
+    transparent
+  );
+  --glass-filter: blur(32px) saturate(1.9);
+  --glass-rim-top: color-mix(in srgb, var(--color-white) 92%, transparent);
+  --glass-rim-bottom: color-mix(in srgb, var(--color-black) 7%, transparent);
+  --glass-hairline: color-mix(in srgb, var(--color-black) 9%, transparent);
+  --glass-shadow: 0 10px 30px -12px color-mix(in srgb, var(--color-black) 32%, transparent);
+  /* Sub-panels (the branch tray) sit one step back from the primary surface. */
+  --glass-subpanel-tint: color-mix(in srgb, var(--color-white) 56%, transparent);
+
+  /* Floating surfaces — menus, selects, popovers, tooltips, dialogs, command
+   * palette, toasts. Every one of them is portalled to the document root, so
+   * they paint above the whole composite and their backdrop-filter samples the
+   * finished wallpaper. That is what makes this cheap: one small blurred rect
+   * per open popup, sized to the popup, torn down when it closes.
+   *
+   * Two densities, chosen by what the surface carries rather than by which
+   * component it is:
+   *   surface        short labels at full --foreground (menus, tooltips,
+   *                  selects). 12% photo still leaves a 13:1 pair above 8:1.
+   *   dense-surface  paragraphs and muted secondary text (dialogs, command
+   *                  palette, sheets). 5% photo keeps muted-foreground — the
+   *                  weakest text we ship — above 4.5:1 on any photo.
+   * Both mix toward --popover rather than white/black, so a theme swap moves
+   * them for free and neither needs a dark-mode counterpart. */
+  --app-float-surface: color-mix(in srgb, var(--popover) 88%, transparent);
+  --app-float-dense-surface: color-mix(in srgb, var(--popover) 95%, transparent);
+  /* Saturation is the whole trick: blur alone turns a photograph into grey
+   * haze, and grey haze behind a menu reads as a rendering bug. */
+  --app-float-filter: blur(24px) saturate(1.7);
+  --app-float-rim: color-mix(in srgb, var(--color-white) 70%, transparent);
+  --app-float-hairline: color-mix(in srgb, var(--color-black) 8%, transparent);
+}
+
+:root.dark[data-app-background] {
+  /* Dark needs a deeper ground: its failure case is a bright photo, and its
+   * low-alpha elevation shadows need something to register against. */
+  --app-scrim: color-mix(
+    in srgb,
+    var(--background) calc(34% + var(--app-scrim-boost, 0) * 26%),
+    transparent
+  );
+  /* Same boost coupling as light: 55% → 75% at boost 1. */
+  --app-chrome-veil: color-mix(
+    in srgb,
+    var(--background) calc(55% + var(--app-scrim-boost, 0) * 20%),
+    transparent
+  );
+  --app-chrome-muted-foreground: color-mix(in srgb, var(--foreground) 78%, var(--background));
+  --app-sidebar-shell-edge-highlight: color-mix(in srgb, var(--color-white) 16%, transparent);
+  --app-reading-plate-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-white) 9%, transparent),
+    0 1px 2px -1px color-mix(in srgb, var(--color-black) 30%, transparent),
+    0 8px 24px -18px color-mix(in srgb, var(--color-black) 45%, transparent);
+
+  --glass-tint-top: color-mix(in srgb, var(--color-white) 15%, transparent);
+  --glass-tint-bottom: color-mix(in srgb, var(--color-white) 8%, transparent);
+  /* Dark glass carries LIGHT text, so its boost response must darken, not
+   * whiten: more white tint here would eat the very contrast the boost is
+   * meant to protect. Deepening the brightness dim (0.78 → 0.62 at boost 1)
+   * pushes the pane toward the theme's dark ground instead. */
+  --glass-filter: blur(32px) saturate(1.7) brightness(calc(0.78 - var(--app-scrim-boost, 0) * 0.16));
+  --glass-rim-top: color-mix(in srgb, var(--color-white) 24%, transparent);
+  --glass-rim-bottom: color-mix(in srgb, var(--color-black) 42%, transparent);
+  --glass-hairline: color-mix(in srgb, var(--color-white) 10%, transparent);
+  --glass-shadow: 0 12px 34px -12px color-mix(in srgb, var(--color-black) 64%, transparent);
+  --glass-subpanel-tint: color-mix(in srgb, var(--color-white) 7%, transparent);
+
+  /* Dark's failure case is a bright photo behind a dark popup, so it gives up
+   * a little transparency and dims what it does let through. */
+  --app-float-surface: color-mix(in srgb, var(--popover) 90%, transparent);
+  --app-float-dense-surface: color-mix(in srgb, var(--popover) 96%, transparent);
+  --app-float-filter: blur(24px) saturate(1.6) brightness(0.8);
+  --app-float-rim: color-mix(in srgb, var(--color-white) 16%, transparent);
+  --app-float-hairline: color-mix(in srgb, var(--color-white) 8%, transparent);
+}
+
+/* Secondary text over glass needs a contrast floor. The default
+ * --muted-foreground is mixed toward --background, which is fine on an opaque
+ * card but disappears over a translucent panel — and much of the composer UI
+ * layers a further /70 opacity on top of it. Deriving from --foreground here
+ * lifts placeholder, branch chips, and captions in one place instead of
+ * patching each component. */
+:root[data-app-background] [data-app-main-content] {
+  --muted-foreground: color-mix(in srgb, var(--foreground) 82%, transparent);
+}
+
+/* ── Reading plate ──────────────────────────────────────────────────────
+ * `isolation: isolate` makes the host its own stacking context, so the
+ * z-index:-1 pseudo paints above the host's own background and below ALL of
+ * its content, whatever any ancestor does. */
+:root[data-app-background] [data-app-reading-plate] {
+  position: relative;
+  isolation: isolate;
+}
+
+/* The sheet is sized to its host, so the host must be the CONTENT, not a
+ * full-height flex container — otherwise a short thread renders a huge,
+ * mostly-empty slab. `--app-plate-bleed-block` pads the sheet past the
+ * content without adding layout, so text never touches its edge. */
+:root[data-app-background] [data-app-reading-plate]::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(var(--app-plate-bleed-block, 0px) * -1);
+  left: 50%;
+  z-index: -1;
+  width: min(100%, var(--app-reading-width, 46.5rem));
+  transform: translateX(-50%);
+  pointer-events: none;
+  background-color: var(--app-reading-plate);
+  border-radius: var(--app-reading-plate-radius, 0);
+  box-shadow: var(--app-reading-plate-shadow);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────
+ * Selected by utility class rather than by token: the tiers are all derived
+ * FROM --card, so shadowing --card on a subtree would make them cyclic and
+ * drop the fill entirely. The alpha variants (`bg-card/60`, `bg-card/30`) are
+ * already translucent and deliberately left alone.
+ *
+ * Scoped to the main pane so the sidebar keeps the single chrome veil it
+ * shares with the header bars — one number for all of that chrome, as before. */
+:root[data-app-background] [data-app-main-content] .bg-card {
+  background-color: var(--app-card-surface);
+}
+
+/* The empty-state heading remains readable without turning its whole column
+ * into a card. The radial veil fades into the wallpaper instead. */
+:root[data-app-background] [data-app-hero-halo] {
+  position: relative;
+  isolation: isolate;
+}
+
+:root[data-app-background] [data-app-hero-halo]::before {
+  content: "";
+  position: absolute;
+  inset: -2.5rem -3.5rem;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    58% 58% at 50% 50%,
+    color-mix(in srgb, var(--background) 88%, transparent) 0%,
+    color-mix(in srgb, var(--background) 62%, transparent) 45%,
+    transparent 75%
+  );
+}
+
+/* ── Chrome ─────────────────────────────────────────────────────────────
+ * The only text with nothing but scrimmed wallpaper behind it: the header
+ * bars and the sidebar.
+ *
+ * The header bars paint NOTHING. Their legibility comes from the density
+ * ramp built into the wallpaper's scrim above, so they contribute no
+ * rectangle, no edge and no square corner of their own. This rule only lifts
+ * their secondary text; it is declared on the element itself so it beats the
+ * composer's inherited main-content value. */
+:root[data-app-background] [data-app-chrome],
+:root[data-app-background] [data-app-sidebar-shell] {
+  --muted-foreground: var(--app-chrome-muted-foreground);
+}
+
+/* SidebarFooter paints a near-opaque bg-sidebar band over the veil and leaves
+ * a horizontal seam; drop it (mirrors the translucent-mode rule below). */
+:root[data-app-background] [data-app-sidebar-shell] [data-slot="sidebar-footer"] {
+  background: transparent;
+}
+
+/* ── Floating surfaces ──────────────────────────────────────────────────
+ * The fourth plane: everything portalled above the app — menus, selects,
+ * popovers, tooltips, dialogs, sheets, toasts, the command palette.
+ *
+ * They are marked, not enumerated. A component tags the ONE element that
+ * actually paints its fill with `data-app-float-surface`; the tier says what
+ * that element carries, not which component it is:
+ *
+ *   (default)  short labels at full --foreground — menus, tooltips, selects,
+ *              toasts. Glass: translucent tint over a live blur.
+ *   dense      paragraphs and muted secondary text — dialogs, sheets, the
+ *              command palette's result panel. Tint only, no backdrop-filter:
+ *              these are the large surfaces, 5% of photo through an unblurred
+ *              5% is imperceptible, and a full-dialog Gaussian is not.
+ *   clear      a frame whose child owns the paper — currently only the command
+ *              palette popup, so its search field floats on real wallpaper
+ *              while the results below sit on a dense panel.
+ *
+ * Everything here is inert until :root[data-app-background]; the tokens
+ * resolve to the flat theme values otherwise, so an unmarked component is
+ * merely opaque — the same "less wallpaper, never unreadable" failure mode as
+ * the canvas. Because these live at the document root they paint above the
+ * finished composite, so one small backdrop-filter per open popup samples the
+ * real wallpaper and is torn down on close. */
+/* The tiers are derived FROM --popover, so nothing here may shadow --popover
+ * on a marked element: that would make the token cyclic and drop the fill
+ * entirely. Descendants that paint their own `bg-popover` are either marked
+ * themselves or overridden by name below. */
+:root[data-app-background] [data-app-float-surface] {
+  background-color: var(--app-float-surface);
+  -webkit-backdrop-filter: var(--app-float-filter);
+  backdrop-filter: var(--app-float-filter);
+}
+
+:root[data-app-background] [data-app-float-surface="dense"] {
+  background-color: var(--app-float-dense-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:root[data-app-background] [data-app-float-surface="clear"] {
+  background-color: transparent;
+}
+
+/* (The specular rim for these lives at the very end of this file, with the
+ * reading plate's, because the borderless pass down there zeroes every
+ * ::before box-shadow in the app and both edges have to survive it.) */
+
+/* The select's overflow affordances fade to a solid --popover, which would
+ * paint two opaque bands across an otherwise translucent panel. */
+:root[data-app-background] [data-slot="select-scroll-up-arrow"]::before {
+  background-image: linear-gradient(to bottom, var(--app-float-surface) 50%, transparent);
+}
+
+:root[data-app-background] [data-slot="select-scroll-down-arrow"]::before {
+  background-image: linear-gradient(to top, var(--app-float-surface) 50%, transparent);
+}
+
+/* Muted text on glass is the same problem the composer has: --muted-foreground
+ * is mixed toward --background and vanishes once the fill is translucent. */
+:root[data-app-background] [data-app-float-surface]:not([data-app-float-surface="dense"]) {
+  --muted-foreground: color-mix(in srgb, var(--foreground) 82%, transparent);
+}
+
+/* Modal backdrops are flat black over an already-blurred main surface. Under a
+ * wallpaper that is the one place the photo gets crushed to grey, so trade a
+ * little of the scrim for the theme's own colour and let the picture stay a
+ * picture behind the dialog. */
+:root[data-app-background] [data-slot$="-backdrop"] {
+  background-color: color-mix(in srgb, var(--color-black) 14%, transparent);
+}
+
+/* ── Degraded environments ──────────────────────────────────────────────*/
+
+/* Without backdrop-filter, a translucent fill is a window onto raw photo
+ * rather than glass, so the two surfaces that lean on it go opaque. The dense
+ * tier never used a blur, so it is already correct as-is. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-app-background] {
+    --app-chrome-veil: var(--background);
+    --app-float-surface: var(--popover);
+    --app-float-dense-surface: var(--popover);
+  }
+
+  :root[data-app-background] [data-app-float-surface="clear"] {
+    background-color: var(--app-float-surface);
+  }
+}
+
+/* The whole feature is translucency; honour the OS request to reduce it. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-app-background] {
+    --app-canvas: var(--background);
+    --app-pane: var(--background);
+    --app-reading-plate: var(--background);
+    --app-card-surface: var(--card);
+    --app-scrim: var(--background);
+    --app-chrome-veil: var(--background);
+    --app-float-surface: var(--popover);
+    --app-float-dense-surface: var(--popover);
+    --app-float-filter: none;
+  }
+
+  :root[data-app-background] [data-app-float-surface="clear"] {
+    background-color: var(--app-float-surface);
+  }
+
+  [data-app-wallpaper-image] {
+    display: none;
+  }
+}
+
+/* forced-colors overrides background-COLOR but not background-IMAGE, so the
+ * photo would otherwise sit under system-coloured text. */
+@media (forced-colors: active) {
+  [data-app-wallpaper] {
+    display: none;
+  }
+
+  /* With the photo gone there is nothing left to see through, and a stray
+   * backdrop-filter would still blur the system canvas. */
+  :root[data-app-background] {
+    --app-canvas: var(--background);
+    --app-pane: var(--background);
+    --app-reading-plate: var(--background);
+    --app-card-surface: var(--card);
+    --app-float-surface: var(--popover);
+    --app-float-dense-surface: var(--popover);
+    --app-float-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-app-wallpaper-image] {
+    transition: none;
+  }
+}
+
+/* Keep the existing composer layout intact. Only its painted surfaces become
+ * translucent so the main background remains visible through a strong,
+ * localized blur. */
+:root[data-app-background] [data-chat-composer-frame="true"]:not([data-composer-frame-decorated]) {
+  background-color: transparent !important;
+}
+
+:root[data-app-background] [data-chat-composer-surface="true"] {
+  /* Transparent base + gradient image: the tint has to fall off top-to-bottom,
+   * otherwise the panel reads as a flat card rather than a lit surface. */
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    180deg,
+    var(--glass-tint-top) 0%,
+    var(--glass-tint-bottom) 100%
+  );
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-rim-top),
+    inset 0 -1px 0 0 var(--glass-rim-bottom),
+    inset 0 0 0 1px var(--glass-hairline),
+    var(--glass-shadow);
+}
+
+:root[data-app-background] [data-chat-composer-branch-toolbar="true"] {
+  background-color: var(--glass-subpanel-tint) !important;
+  /* Matches the toolbar's -mt-5 overlap. WebKit leaks backdrop-filter's
+   * offscreen buffer past clipped edges, so this attached toolbar stays
+   * translucent without owning another blur layer. */
+  clip-path: inset(1.25rem 0 0);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Preserve the toolbar's intended 1.5rem inset on each side when the open
+ * sidebar makes the chat column narrower than its 41rem max-width. */
+[data-app-chat-shell-with-sidebar] [data-chat-composer-branch-toolbar="true"] {
+  width: calc(100% - 3rem);
 }
 
 .duration-relaxed {
@@ -619,8 +1211,9 @@ body {
   left: 0;
   width: 18px;
   pointer-events: none;
+  z-index: 20;
   box-shadow:
-    inset 1px 0 0 color-mix(in srgb, var(--color-white) 25%, transparent),
+    inset 1px 0 0 var(--app-sidebar-shell-edge-highlight),
     inset 12px 0 18px -18px color-mix(in srgb, var(--color-black) 13%, transparent);
 }
 
@@ -633,6 +1226,7 @@ body {
   border-radius: var(--app-sidebar-shell-radius) 0 0 var(--app-sidebar-shell-radius);
   clip-path: inset(0 calc(100% - var(--app-sidebar-shell-radius) - 1px) 0 0);
   pointer-events: none;
+  z-index: 20;
 }
 
 :root[data-sidebar-translucent] [data-app-chat-shell-with-sidebar]::after {
@@ -791,7 +1385,12 @@ samp {
 /* Window drag region (frameless titlebar) */
 .drag-region {
   -webkit-app-region: drag;
-  background-color: inherit;
+  /* Must NOT be `inherit`. Under the wallpaper themes the parent surface is
+   * translucent, and inheriting its computed color repaints that same
+   * translucent layer on top of it — double-coating only the titlebar's box
+   * and leaving a visible lighter band with a hard bottom edge. The parent
+   * already paints this region in every mode, so drag regions stay unpainted. */
+  background-color: transparent;
 }
 
 .no-drag {
@@ -1210,7 +1809,6 @@ samp {
   overflow: clip;
   background: color-mix(in srgb, var(--card) 92%, var(--background));
 }
-
 @keyframes ultrathink-rainbow {
   0% {
     background-position: 0% 50%;
@@ -1281,19 +1879,19 @@ samp {
 @keyframes auth-drift {
   0%,
   100% {
-    transform: translate(0, 0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
   }
 
   25% {
-    transform: translate(40px, -30px) scale(1.05);
+    transform: translate3d(40px, -30px, 0) scale(1.05);
   }
 
   50% {
-    transform: translate(-20px, -60px) scale(0.97);
+    transform: translate3d(-20px, -60px, 0) scale(0.97);
   }
 
   75% {
-    transform: translate(-40px, 20px) scale(1.03);
+    transform: translate3d(-40px, 20px, 0) scale(1.03);
   }
 }
 
@@ -1313,30 +1911,28 @@ samp {
   animation: auth-fade-in 0.5s ease-out both;
 }
 
-/* ── Onboarding screen ── */
-
 .onboarding-orb {
   position: absolute;
   border-radius: 50%;
   filter: blur(120px);
-  will-change: transform;
   pointer-events: none;
+  will-change: transform;
 }
 
 .onboarding-orb-1 {
-  width: 400px;
-  height: 400px;
   top: 10%;
   right: -10%;
+  width: 400px;
+  height: 400px;
   background: oklch(0.25 0.1 241.4 / 18%);
   animation: auth-drift 26s ease-in-out infinite;
 }
 
 .onboarding-orb-2 {
-  width: 300px;
-  height: 300px;
   bottom: 15%;
   left: -8%;
+  width: 300px;
+  height: 300px;
   background: oklch(0.2 0.08 280 / 14%);
   animation: auth-drift 30s ease-in-out infinite reverse;
 }
@@ -1354,15 +1950,6 @@ samp {
 .provider-card-connected {
   animation: onboarding-status-flash 0.6s ease-out;
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .onboarding-orb {
-    animation: none;
-    opacity: 0.12;
-  }
-}
-
-/* ── Empty thread ambient (cursor-reveal grid) ── */
 
 .empty-thread-ambient {
   z-index: 0;
@@ -1393,6 +1980,11 @@ samp {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .onboarding-orb {
+    animation: none;
+    opacity: 0.12;
+  }
+
   .empty-thread-ambient {
     display: none;
   }
@@ -1463,4 +2055,81 @@ samp {
       0 0 0 1px var(--glass-edge),
       0 6px 18px -10px color-mix(in srgb, var(--color-black) 40%, transparent);
   }
+}
+
+/* ── Borderless surfaces ─────────────────────────────────────────────────────
+ * Edges in this app are painted three different ways, so removing them takes
+ * three passes. Everything lives in this one block: to bring borders back,
+ * delete it.
+ *
+ * Border *widths* are left untouched throughout, so no element changes size
+ * or reflows.
+ *
+ * Deliberately kept: focus rings (`ring-*`, `outline-*`, and the sidebar's
+ * `:focus-visible` inset ring). They are the only keyboard affordance left
+ * once edges are gone. Elevation/ambient shadows are kept too — they read as
+ * depth, not as an outline. */
+
+/* 1. Real borders — Tailwind `border-*` / `divide-*` and the hand-written
+ *    rules above, ~300 call sites collapsed in one declaration. */
+*,
+*::before,
+*::after {
+  border-color: transparent !important;
+
+  /* 2. Hairline *colour* tokens that get piped into box-shadows rather than
+   *    into `border-color`, so pass 1 never sees them. Neutralising the token
+   *    leaves each shadow's geometry intact and just stops it painting. */
+  --glass-edge: transparent !important;
+  --glass-hairline: transparent !important;
+  --glass-rim-top: transparent !important;
+  --glass-rim-bottom: transparent !important;
+  --sidebar-border: transparent !important;
+}
+
+/* 3. Hairlines drawn with hard-coded colours, which no token can reach. Each
+ *    is restated without its 1px rim layers; the blur/elevation layers stay. */
+*::before,
+*::after {
+  /* The `ui/*` primitives (card, dialog, popover, tooltip, …) share one rim
+   * overlay: an inset pseudo-element whose only job is a 1px edge shadow. */
+  box-shadow: none !important;
+}
+
+.glass-composer::before {
+  /* A 1px-tall gradient strip, not a shadow — pass 3's rule can't reach it. */
+  display: none !important;
+}
+
+.glass-composer {
+  box-shadow:
+    0 0 8px 0 color-mix(in srgb, var(--color-black) 3%, transparent),
+    0 0 22px 0 color-mix(in srgb, var(--color-black) 5%, transparent) !important;
+}
+
+.dark .chat-composer-depth {
+  box-shadow:
+    0 0 10px 0 color-mix(in srgb, var(--color-black) 14%, transparent),
+    0 0 24px 0 color-mix(in srgb, var(--color-black) 20%, transparent) !important;
+}
+
+/* The borderless block above neutralises every ::before/::after box-shadow so
+ * the app's rim overlays stop painting. Two edges are deliberate exceptions,
+ * and both exist for the same reason: a surface laid over a photograph needs
+ * an edge or it reads as a pasted rectangle. Neither can be a border-color
+ * (pass 1 zeroes those), so both have to win here.
+ *
+ * 1. The reading plate — paper on a photo. */
+:root[data-app-background] [data-app-reading-plate]::before {
+  box-shadow: var(--app-reading-plate-shadow) !important;
+}
+
+/* 2. Floating glass — a bright top rim and a faint hairline are what make a
+ *    translucent panel read as a lit pane rather than a hole in the UI. The
+ *    pseudo is the one these primitives already position and round for their
+ *    own rim overlay, so this inherits each component's geometry for free. */
+:root[data-app-background] [data-app-float-surface]::before {
+  box-shadow:
+    inset 0 1px 0 0 var(--app-float-rim),
+    inset 0 0 0 1px var(--app-float-hairline) !important;
 }

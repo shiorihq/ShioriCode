@@ -30,8 +30,6 @@ export function OnboardingScreen({
   return (
     <LazyMotion features={domAnimation}>
       <div className="fixed inset-0 flex flex-col overflow-x-hidden overflow-y-auto bg-background text-foreground">
-        {/* ── Background layers ── */}
-        {/* Fine grid overlay */}
         <div
           className="absolute inset-0 opacity-[0.015]"
           style={{
@@ -40,15 +38,11 @@ export function OnboardingScreen({
             backgroundSize: "48px 48px",
           }}
         />
-        {/* Animated orbs */}
-        <div className="onboarding-orb onboarding-orb-1" />
-        <div className="onboarding-orb onboarding-orb-2" />
-
-        {/* Corner accents */}
+        <div aria-hidden="true" className="onboarding-orb onboarding-orb-1" />
+        <div aria-hidden="true" className="onboarding-orb onboarding-orb-2" />
         <div className="absolute top-8 left-8 size-5 border-l border-t border-foreground/[0.04]" />
         <div className="absolute right-8 bottom-8 size-5 border-r border-b border-foreground/[0.04]" />
 
-        {/* ── Content ── */}
         <div className="relative z-10 flex min-h-full flex-col px-6 py-10">
           <div className="mx-auto my-auto flex w-full max-w-[560px] flex-col items-center">
             {/* Step indicator */}

@@ -52,6 +52,7 @@ function PopoverPopup({
               "w-fit text-balance rounded-md text-xs shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]",
             className,
           )}
+          data-app-float-surface=""
           data-slot="popover-popup"
           {...props}
         >

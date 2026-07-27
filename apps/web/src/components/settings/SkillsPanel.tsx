@@ -23,7 +23,7 @@ import {
 
 function SkillCard({ skill, onDelete }: { skill: EffectiveSkillEntry; onDelete: () => void }) {
   return (
-    <div className="flex items-center gap-3 border-t border-border/60 px-4 py-2.5 pl-10 sm:px-5 sm:pl-11">
+    <div className="flex items-center gap-3 border-t border-hairline px-4 py-2.5 pl-10 sm:px-5 sm:pl-11">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-foreground">{skill.name}</span>

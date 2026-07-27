@@ -50,6 +50,7 @@ function makeServerConfig(cwd: string): ServerConfigShape {
     settingsPath: "/tmp/shioricode-test/state/settings.json",
     worktreesDir: "/tmp/shioricode-test/worktrees",
     attachmentsDir: "/tmp/shioricode-test/state/attachments",
+    appearanceBackgroundsDir: "/tmp/shioricode-test/state/appearance-backgrounds",
     logsDir: "/tmp/shioricode-test/state/logs",
     serverLogPath: "/tmp/shioricode-test/state/logs/server.log",
     providerLogsDir: "/tmp/shioricode-test/state/logs/provider",

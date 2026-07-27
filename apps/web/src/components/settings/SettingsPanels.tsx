@@ -588,6 +588,8 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
 }
 
 export function SettingsPageContainer({ children }: { children: ReactNode }) {
+  // No reading plate here: every row is a Card that carries its own paper, and
+  // wrapping them in another rounded sheet stacks surface-on-surface.
   return (
     <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="mx-auto flex w-full max-w-[56rem] flex-col gap-5 px-4 py-5 sm:px-6 sm:py-6">
@@ -880,6 +882,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.themeMode !== DEFAULT_UNIFIED_SETTINGS.themeMode ? ["Theme mode"] : []),
       ...(settings.lightThemeId !== DEFAULT_UNIFIED_SETTINGS.lightThemeId ? ["Light theme"] : []),
       ...(settings.darkThemeId !== DEFAULT_UNIFIED_SETTINGS.darkThemeId ? ["Dark theme"] : []),
+      ...(!Equal.equals(
+        settings.appearanceBackground,
+        DEFAULT_UNIFIED_SETTINGS.appearanceBackground,
+      )
+        ? ["Background image"]
+        : []),
       ...(settings.blurPersonalData !== DEFAULT_UNIFIED_SETTINGS.blurPersonalData
         ? ["Hide personal details"]
         : []),
@@ -923,6 +931,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       areProviderSettingsDirty,
       settings.blurPersonalData,
+      settings.appearanceBackground,
       settings.codeFontFamily,
       settings.composerVimMode,
       isDefaultModelDirty,
@@ -1766,7 +1775,7 @@ export function GeneralSettingsPanel() {
                     {providerCard.textFields.map((field) => (
                       <div
                         key={`${providerCard.provider}:${field.key}`}
-                        className="border-t border-border/60 px-4 py-3 sm:px-5"
+                        className="border-t border-hairline px-4 py-3 sm:px-5"
                       >
                         <label
                           htmlFor={`provider-install-${providerCard.provider}-${field.key}`}
@@ -1801,7 +1810,7 @@ export function GeneralSettingsPanel() {
                     ))}
 
                     {providerCard.homePathKey ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                      <div className="border-t border-hairline px-4 py-3 sm:px-5">
                         <label
                           htmlFor={`provider-install-${providerCard.homePathKey}`}
                           className="block"
@@ -1836,7 +1845,7 @@ export function GeneralSettingsPanel() {
                       </div>
                     ) : null}
 
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                    <div className="border-t border-hairline px-4 py-3 sm:px-5">
                       <div className="text-xs font-medium text-foreground">Models</div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         {providerCard.models.length} model

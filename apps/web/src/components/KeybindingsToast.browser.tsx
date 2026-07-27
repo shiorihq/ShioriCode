@@ -76,6 +76,14 @@ function createBaseServerConfig(): ServerConfig {
       computerUse: { enabled: false },
       browserUse: { enabled: false },
       mobileApp: { enabled: false },
+      appearanceBackground: {
+        kind: "none",
+        customVersion: "",
+        opacity: 100,
+        blur: 0,
+        mainOpacity: 100,
+        mainBlur: 0,
+      },
       mcpServers: { servers: [] },
       providers: {
         kimiCode: { enabled: true, binaryPath: "kimi", shareDir: "", customModels: [] },

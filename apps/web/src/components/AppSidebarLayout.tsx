@@ -9,7 +9,14 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { isElectron } from "~/env";
 import { useSettings } from "~/hooks/useSettings";
 import { useHandleNewThread } from "~/hooks/useHandleNewThread";
+import {
+  normalizeAppearanceBackgroundBlur,
+  normalizeAppearanceBackgroundOpacity,
+  resolveAppearanceBackgroundUrl,
+} from "~/lib/appearanceBackgrounds";
+import { setActiveWallpaperUrl } from "~/lib/wallpaperLuminance";
 
+import { AppWallpaper } from "./AppWallpaper";
 import ThreadSidebar from "./Sidebar";
 import {
   resolveAppSidebarShortcutCommand,
@@ -126,7 +133,13 @@ function AppSidebarKeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => voi
   return null;
 }
 
-function AppSidebarContent({ children }: { children: ReactNode }) {
+function AppSidebarContent({
+  wallpaper,
+  children,
+}: {
+  wallpaper: { url: string; opacity: number; blur: number } | null;
+  children: ReactNode;
+}) {
   const { isMobile, open: sidebarOpen } = useSidebar();
   const macWindowControlsInset = useDesktopWindowControlsInset();
   const titlebarWindowControlsLeftInset = resolveAppTitlebarWindowControlsLeftInset({
@@ -146,21 +159,26 @@ function AppSidebarContent({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        "flex min-h-0 min-w-0 flex-1 flex-col",
-        showCurvedSidebarEdge ? "bg-transparent" : "bg-background",
+        "relative z-10 flex min-h-0 min-w-0 flex-1 flex-col",
+        // bg-transparent when curved is load-bearing: it is the window through
+        // which the sidebar's two corner squares are seen.
+        showCurvedSidebarEdge ? "bg-transparent" : "bg-app-canvas",
       )}
       style={titlebarStyle}
     >
       <div
         className={cn(
-          "relative z-10 flex min-h-0 min-w-0 flex-1 flex-col bg-background",
-          showCurvedSidebarEdge &&
-            "-ml-px overflow-hidden rounded-l-[var(--app-sidebar-shell-radius)]",
+          // Stays opaque: this is the plane the main wallpaper composites onto.
+          "relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+          showCurvedSidebarEdge && "-ml-px rounded-l-[var(--app-sidebar-shell-radius)]",
         )}
         data-app-chat-shell-with-sidebar={showCurvedSidebarEdge || undefined}
         data-app-modal-blur-surface
       >
-        {children}
+        {wallpaper ? <AppWallpaper region="main" {...wallpaper} /> : null}
+        <div data-app-main-content className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -183,13 +201,41 @@ function useSidebarTranslucency(enabled: boolean) {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const { sidebarTranslucent } = useSettings();
+  const { appearanceBackground, sidebarTranslucent } = useSettings();
+  const appearanceBackgroundUrl = resolveAppearanceBackgroundUrl(appearanceBackground);
+  const appearanceBackgroundOpacity = normalizeAppearanceBackgroundOpacity(
+    appearanceBackground?.opacity,
+  );
+  const appearanceBackgroundBlur = normalizeAppearanceBackgroundBlur(appearanceBackground?.blur);
+  const mainBackgroundOpacity = normalizeAppearanceBackgroundOpacity(
+    appearanceBackground?.mainOpacity,
+  );
+  const mainBackgroundBlur = normalizeAppearanceBackgroundBlur(appearanceBackground?.mainBlur);
   const { open: commandKOpen, setOpen: setCommandKOpen } = useCommandK();
   const openCommandK = useCallback(() => {
     setCommandKOpen(true);
   }, [setCommandKOpen]);
-  const translucent = isElectron && sidebarTranslucent;
+  // With a wallpaper on, the photo paints inside the shell on top of the
+  // transparent window backing, fully occluding macOS vibrancy — so the two
+  // are mutually exclusive and the tuned wallpaper tint wins.
+  const translucent = isElectron && sidebarTranslucent && appearanceBackgroundUrl === null;
   useSidebarTranslucency(translucent);
+
+  useEffect(() => {
+    document.documentElement.toggleAttribute(
+      "data-app-background",
+      appearanceBackgroundUrl !== null,
+    );
+    return () => {
+      document.documentElement.removeAttribute("data-app-background");
+    };
+  }, [appearanceBackgroundUrl]);
+
+  // Feeds the luminance store that drives `themeMode: "wallpaper"` and the
+  // scrim's mid-grey boost. Samples once per URL; a no-op on every render after.
+  useEffect(() => {
+    setActiveWallpaperUrl(appearanceBackgroundUrl);
+  }, [appearanceBackgroundUrl]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -211,7 +257,19 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, openCommandK]);
 
   return (
-    <SidebarProvider defaultOpen className="h-dvh">
+    <SidebarProvider
+      defaultOpen
+      data-app-background-shell={appearanceBackgroundUrl ? "true" : undefined}
+      className="relative isolate h-dvh overflow-hidden"
+    >
+      {appearanceBackgroundUrl ? (
+        <AppWallpaper
+          region="shell"
+          url={appearanceBackgroundUrl}
+          opacity={appearanceBackgroundOpacity}
+          blur={appearanceBackgroundBlur}
+        />
+      ) : null}
       <AppSidebarKeyboardShortcuts onSearchOpen={openCommandK} />
       <CommandKModal open={commandKOpen} onOpenChange={setCommandKOpen} />
       <Sidebar
@@ -230,7 +288,19 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <ThreadSidebar onSearchClick={openCommandK} />
         <SidebarRail />
       </Sidebar>
-      <AppSidebarContent>{children}</AppSidebarContent>
+      <AppSidebarContent
+        wallpaper={
+          appearanceBackgroundUrl
+            ? {
+                url: appearanceBackgroundUrl,
+                opacity: mainBackgroundOpacity,
+                blur: mainBackgroundBlur,
+              }
+            : null
+        }
+      >
+        {children}
+      </AppSidebarContent>
     </SidebarProvider>
   );
 }

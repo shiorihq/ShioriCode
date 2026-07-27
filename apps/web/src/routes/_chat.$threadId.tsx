@@ -201,7 +201,7 @@ const RightSidebarFrame = (props: {
   };
 
   return (
-    <div className="isolate flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
+    <div className="isolate flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app-canvas">
       <div className="drag-region relative z-20 flex h-11 shrink-0 items-center gap-1 border-b border-border bg-card px-2">
         <div className="no-drag flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {props.tabs.map((tab) => {
@@ -819,7 +819,7 @@ function ChatThreadRouteView() {
 
   if (!shouldUseDiffSheet) {
     return (
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground">
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           {paneStrip}
           <SidePanelDockedSidebar
@@ -835,7 +835,7 @@ function ChatThreadRouteView() {
 
   return (
     <>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground">
         {paneStrip}
       </SidebarInset>
       <SidePanelSheet open={sidePanelOpen} onClosePanel={closeSidePanel}>

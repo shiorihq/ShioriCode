@@ -38,17 +38,15 @@ type EmptyThreadHeadingProps = {
   projectName: string | null | undefined;
 };
 
-/** Large centered headline shown above the composer on an empty thread. */
 export function EmptyThreadHeading({ projectName }: EmptyThreadHeadingProps) {
   const shouldReduceMotion = useReducedMotion();
-  const skip = !!shouldReduceMotion;
   const question = useMemo(() => pickGreeting(projectName), [projectName]);
 
   return (
     <LazyMotion features={domAnimation}>
       <m.h1
         className="px-3 text-center font-semibold tracking-[-0.02em] text-foreground/90 text-[26px] leading-[1.15] sm:text-[32px] md:text-[36px]"
-        initial={skip ? false : { opacity: 0, y: 6, filter: "blur(4px)" }}
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 6, filter: "blur(4px)" }}
         animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
         transition={{ duration: 0.55, ease: EASE }}
       >

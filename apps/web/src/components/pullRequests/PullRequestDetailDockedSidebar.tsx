@@ -564,7 +564,7 @@ function PullRequestDetailContent({
             Review
           </Button>
         </div>
-        <div className="border-t border-border/60 px-4 py-3">
+        <div className="border-t border-hairline px-4 py-3">
           {summaryQuery.isLoading ? (
             <div className="flex flex-col gap-1.5" aria-label="Loading pull request summary">
               <Skeleton className="h-3 w-11/12 rounded-full" />
@@ -773,7 +773,7 @@ function ConversationAvatar({ author }: { author: string | null }) {
         alt={`${trimmed} avatar`}
         loading="lazy"
         decoding="async"
-        className="size-7 shrink-0 rounded-full border border-border/60 bg-muted object-cover"
+        className="size-7 shrink-0 rounded-full border border-hairline bg-muted object-cover"
         onError={() => setErrored(true)}
       />
     );
@@ -805,8 +805,8 @@ function ConversationMessageCard({
   return (
     <article className="flex gap-3 text-sm">
       <ConversationAvatar author={author} />
-      <div className="min-w-0 flex-1 rounded-lg border border-border/60 bg-card/60">
-        <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="min-w-0 flex-1 rounded-lg border border-hairline bg-card/60">
+        <header className="flex items-center gap-2 border-b border-hairline px-3 py-1.5 text-xs text-muted-foreground">
           <span className="truncate font-medium text-foreground">{author ?? "Unknown user"}</span>
           {headerExtra ? <span className="truncate">{headerExtra}</span> : null}
           <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/70">

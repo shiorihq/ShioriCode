@@ -26,6 +26,7 @@ export {
   ChevronUp as IconChevronUpOutline24,
   CircleCheck as IconCircleCheckOutline24,
   CircleDashed as IconCircleDottedOutline24,
+  CircleQuestionMark as IconCircleQuestionOutline24,
   CircleAlert as IconCircleWarningOutline24,
   CircleX as IconCircleXmarkOutline24,
   Clock as IconClockOutline24,
