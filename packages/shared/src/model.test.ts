@@ -37,6 +37,8 @@ const claudeCaps: ModelCapabilities = {
   reasoningEffortLevels: [
     { value: "medium", label: "Medium" },
     { value: "high", label: "High", isDefault: true },
+    { value: "xhigh", label: "Extra High" },
+    { value: "ultracode", label: "Ultracode" },
     { value: "ultrathink", label: "Ultrathink" },
   ],
   supportsFastMode: false,
@@ -53,8 +55,9 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("fable", "claudeAgent")).toBe("claude-fable-5");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-5");
-    expect(normalizeModelSlug("default", "claudeAgent")).toBe("claude-sonnet-5");
-    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-4-8");
+    expect(normalizeModelSlug("default", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("opus-4.8", "claudeAgent")).toBe("claude-opus-5");
     expect(normalizeModelSlug("kimi-code/kimi-for-coding", "kimiCode")).toBe("kimi2.7-code");
     expect(normalizeModelSlug("kimi-k2.6", "kimiCode")).toBe("kimi2.7-code");
     expect(normalizeModelSlug("kimi-2.7-code", "kimiCode")).toBe("kimi2.7-code");
@@ -115,6 +118,7 @@ describe("resolveEffort", () => {
     expect(resolveEffort(codexCaps, "xhigh")).toBe("xhigh");
     expect(resolveEffort(codexCaps, "high")).toBe("high");
     expect(resolveEffort(claudeCaps, "medium")).toBe("medium");
+    expect(resolveEffort(claudeCaps, "ultracode")).toBe("ultracode");
   });
 
   it("falls back to default when value is unsupported", () => {
@@ -256,6 +260,17 @@ describe("resolveApiModelId", () => {
 });
 
 describe("normalize*ModelOptionsWithCapabilities", () => {
+  it("preserves Claude Ultracode for dispatch", () => {
+    expect(
+      normalizeClaudeModelOptionsWithCapabilities(claudeCaps, {
+        effort: "ultracode",
+      }),
+    ).toEqual({
+      effort: "ultracode",
+      contextWindow: "1m",
+    });
+  });
+
   it("preserves explicit false codex fast mode", () => {
     expect(
       normalizeCodexModelOptionsWithCapabilities(codexCaps, {

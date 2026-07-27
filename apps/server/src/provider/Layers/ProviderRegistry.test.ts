@@ -1168,10 +1168,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
-          assert.strictEqual(status.models[0]?.slug, "claude-opus-4-8");
+          assert.strictEqual(status.models[0]?.slug, "claude-opus-5");
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-5", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
         }).pipe(
           Effect.provide(
@@ -1233,7 +1233,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   displayName: "Opus",
                   description: "Latest Opus alias.",
                   supportsEffort: true,
-                  supportedEffortLevels: ["low", "medium", "high", "max"],
+                  supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
                   supportsFastMode: true,
                 },
                 {
@@ -1268,17 +1268,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-5", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
           assert.deepStrictEqual(
             status.models.map((model) => model.name),
-            ["Opus 4.8", "Fable 5", "Sonnet 5", "Haiku 4.5"],
+            ["Opus 5", "Fable 5", "Sonnet 5", "Haiku 4.5"],
           );
           assert.deepStrictEqual(status.models[0]?.capabilities?.reasoningEffortLevels, [
             { value: "low", label: "Low" },
             { value: "medium", label: "Medium" },
             { value: "high", label: "High", isDefault: true },
+            { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
+            { value: "ultracode", label: "Ultracode" },
             { value: "ultrathink", label: "Ultrathink" },
           ]);
           assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
@@ -1329,9 +1331,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           assert.deepStrictEqual(
             status.models.map((model) => model.slug),
-            ["claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
+            ["claude-opus-5", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5"],
           );
-          assert.strictEqual(status.models[0]?.name, "Opus 4.8");
+          assert.strictEqual(status.models[0]?.name, "Opus 5");
           assert.strictEqual(status.models[0]?.capabilities?.supportsFastMode, true);
           assert.strictEqual(status.models[2]?.capabilities?.supportsFastMode, true);
         }).pipe(

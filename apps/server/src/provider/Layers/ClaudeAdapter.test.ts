@@ -44,6 +44,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public readonly applyFlagSettingsCalls: Array<Record<string, unknown>> = [];
   public mcpServerStatusImpl: (() => Promise<McpServerStatus[]>) | undefined;
+  public readonly rewindFilesCalls: Array<string> = [];
   public closeCalls = 0;
 
   emit(message: SDKMessage): void {
@@ -80,28 +81,32 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     }
   }
 
-  readonly interrupt = async (): Promise<void> => {
+  // These are intentionally prototype methods, not bound arrow properties: the
+  // real SDK `query()` returns a class instance, so the adapter must always call
+  // them through their receiver. A detached reference throws here, just like it
+  // does in production.
+  async interrupt(): Promise<void> {
     this.interruptCalls.push(undefined);
-  };
+  }
 
-  readonly setModel = async (model?: string): Promise<void> => {
+  async setModel(model?: string): Promise<void> {
     this.setModelCalls.push(model);
-  };
+  }
 
-  readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
+  async setPermissionMode(mode: PermissionMode): Promise<void> {
     this.setPermissionModeCalls.push(mode);
-  };
+  }
 
-  readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
+  async setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void> {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
-  };
+  }
 
-  readonly applyFlagSettings = async (settings: Record<string, unknown>): Promise<void> => {
+  async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
     this.applyFlagSettingsCalls.push(settings);
-  };
+  }
 
-  public readonly mcpServerStatus = async (): Promise<McpServerStatus[]> =>
-    this.mcpServerStatusImpl
+  async mcpServerStatus(): Promise<McpServerStatus[]> {
+    return this.mcpServerStatusImpl
       ? this.mcpServerStatusImpl()
       : [
           {
@@ -109,11 +114,17 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
             status: "connected",
           },
         ];
+  }
 
-  readonly close = (): void => {
+  async rewindFiles(userMessageUuid: string): Promise<unknown> {
+    this.rewindFilesCalls.push(userMessageUuid);
+    return undefined;
+  }
+
+  close(): void {
     this.closeCalls += 1;
     this.finish();
-  };
+  }
 
   [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
     return {
@@ -589,7 +600,33 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("falls back to default effort when unsupported max is requested for Sonnet 5", () => {
+  it.effect("enables native Ultracode with xhigh effort at session startup", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-5",
+          options: {
+            effort: "ultracode",
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+      assert.deepEqual(createInput?.options.settings, { ultracode: true });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forwards max effort for Sonnet 5", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -607,7 +644,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
+      assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -936,6 +973,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "computer-tool-use-1",
+          requestId: "computer-request-1",
         },
       );
 
@@ -1005,6 +1043,7 @@ describe("ClaudeAdapterLive", () => {
           {
             signal: new AbortController().signal,
             toolUseID: "thread-goal-tool-use-1",
+            requestId: "thread-goal-request-1",
           },
         ),
       );
@@ -3246,6 +3285,7 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
           toolUseID: "tool-use-1",
+          requestId: "permission-request-1",
         },
       );
 
@@ -3324,6 +3364,7 @@ describe("ClaudeAdapterLive", () => {
           {
             signal: new AbortController().signal,
             toolUseID: "tool-agent-1",
+            requestId: "agent-request-1",
           },
         );
 
@@ -3348,6 +3389,7 @@ describe("ClaudeAdapterLive", () => {
           {
             signal: new AbortController().signal,
             toolUseID: "tool-grep-approval-1",
+            requestId: "grep-request-1",
           },
         );
 
@@ -3376,6 +3418,7 @@ describe("ClaudeAdapterLive", () => {
           {
             signal: new AbortController().signal,
             toolUseID: "tool-notebook-edit-approval-1",
+            requestId: "notebook-edit-request-1",
           },
         );
 
@@ -3730,8 +3773,50 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(harness.query.setModelCalls, ["claude-sonnet-5"]);
       assert.deepEqual(harness.query.applyFlagSettingsCalls, [
         {
-          effortLevel: "high",
           fastMode: false,
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("disables Ultracode cleanly when effort changes in-session", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-5",
+          options: {
+            effort: "ultracode",
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Use normal high effort now",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-5",
+          options: {
+            effort: "high",
+          },
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.applyFlagSettingsCalls, [
+        {
+          effortLevel: "high",
+          ultracode: false,
         },
       ]);
     }).pipe(
@@ -3778,7 +3863,7 @@ describe("ClaudeAdapterLive", () => {
           provider: "claudeAgent",
           model: "claude-sonnet-5",
           options: {
-            effort: "xhigh" as "high",
+            effort: "bogus" as "high",
           },
         },
         runtimeMode: "full-access",
@@ -3979,6 +4064,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-exit-1",
+          requestId: "exit-plan-request-1",
         },
       );
 
@@ -4134,6 +4220,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-1",
+        requestId: "ask-request-1",
       });
 
       // The adapter should emit a user-input.requested event.
@@ -4232,6 +4319,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-2",
+        requestId: "ask-request-2",
       });
 
       // Should still get user-input.requested even in full-access mode.
@@ -4299,6 +4387,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: controller.signal,
           toolUseID: "tool-ask-abort",
+          requestId: "ask-abort-request",
         },
       );
 
@@ -4641,7 +4730,11 @@ describe("ClaudeAdapterLive reliability", () => {
       const userInputPromise = canUseTool(
         "AskUserQuestion",
         { questions: [{ question: "Confirm?", options: ["Yes", "No"] }] },
-        { signal: new AbortController().signal, toolUseID: "uq-1" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "uq-1",
+          requestId: "uq-request-1",
+        },
       );
 
       // Consume the user-input.requested event so the deferred is registered.
@@ -4715,7 +4808,11 @@ describe("ClaudeAdapterLive reliability", () => {
             },
           ],
         },
-        { signal: new AbortController().signal, toolUseID: "tool-ask-after-interrupt" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-ask-after-interrupt",
+          requestId: "ask-after-interrupt-request",
+        },
       );
 
       const requested = yield* Stream.runHead(adapter.streamEvents);
@@ -4768,7 +4865,11 @@ describe("ClaudeAdapterLive reliability", () => {
       const permissionPromise = canUseTool(
         "Bash",
         { command: "rm -rf /" },
-        { signal: new AbortController().signal, toolUseID: "tool-late-approve" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-late-approve",
+          requestId: "late-approve-request",
+        },
       );
       const requested = yield* Stream.runHead(adapter.streamEvents);
       if (requested._tag !== "Some" || requested.value.type !== "request.opened") return;
