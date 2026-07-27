@@ -23,7 +23,10 @@ export const writeFileStringAtomically = (
 
     const write = Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
-      yield* fs.writeFileString(tempPath, contents);
+      // The temporary inode can live in a searchable directory. Apply the
+      // requested mode at creation time so sensitive contents are never
+      // briefly published with the process umask's default permissions.
+      yield* fs.writeFileString(tempPath, contents, { flag: "wx", mode: options?.mode });
       yield* chmodIfPossible(tempPath);
       yield* fs.rename(tempPath, targetPath);
       yield* chmodIfPossible(targetPath);

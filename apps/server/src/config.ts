@@ -86,13 +86,19 @@ export const deriveServerPaths = Effect.fn(function* (
   };
 });
 
-export const ensureServerDirectories = Effect.fn(function* (derivedPaths: ServerDerivedPaths) {
+export const ensureServerDirectories = Effect.fn(function* (
+  derivedPaths: ServerDerivedPaths,
+  options?: { readonly hardenBaseDir?: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const baseDir = path.dirname(derivedPaths.serverInstancePath);
+  const baseDirExisted = yield* fs.exists(baseDir);
 
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
+      fs.makeDirectory(baseDir, { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(derivedPaths.stateDir, { recursive: true, mode: 0o700 }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
@@ -104,6 +110,13 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
     ],
     { concurrency: "unbounded" },
   );
+
+  if (process.platform !== "win32") {
+    yield* Effect.all([
+      ...(!baseDirExisted || options?.hardenBaseDir === true ? [fs.chmod(baseDir, 0o700)] : []),
+      fs.chmod(derivedPaths.stateDir, 0o700),
+    ]);
+  }
 });
 
 /**
