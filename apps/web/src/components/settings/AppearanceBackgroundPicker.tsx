@@ -1,5 +1,8 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
-import { ImageIcon, UploadIcon } from "lucide-react";
+import {
+  IconImageOutline24 as ImageIcon,
+  IconUploadOutline24 as UploadIcon,
+} from "nucleo-core-outline-24";
 import type { AppearanceBackgroundPresetId } from "contracts/settings";
 
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
