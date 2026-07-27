@@ -5828,10 +5828,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
           >
             {isEmptyThread && <EmptyThreadAmbient promptLength={prompt.trim().length} />}
             {isEmptyThread && (
-              <div
-                data-app-hero-halo
-                className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[44rem]"
-              >
+              <div className="relative z-10 mx-auto mb-8 w-full min-w-0 max-w-[44rem]">
                 <EmptyThreadHeading projectName={activeProject?.name} />
               </div>
             )}
@@ -6256,7 +6253,7 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
             ) : null}
             {isEmptyThread && !isProjectlessChat && (
               <div
-                className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[41rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-hairline bg-[color-mix(in_srgb,var(--card)_94%,var(--muted-foreground)_6%)] px-3 pt-6 pb-1.5"
+                className="relative z-0 mx-auto -mt-5 flex w-full min-w-0 max-w-[41rem] flex-wrap items-center gap-x-1 gap-y-1 rounded-b-[20px] border border-t-0 border-hairline bg-composer-tray px-3 pt-6 pb-1.5"
                 data-chat-composer-branch-toolbar="true"
               >
                 <BranchToolbar

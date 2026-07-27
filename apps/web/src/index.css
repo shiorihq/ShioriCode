@@ -104,6 +104,11 @@
   --color-app-canvas: var(--app-canvas);
   --color-app-pane: var(--app-pane);
   --color-pane-veil: var(--app-pane-veil);
+  /* The shelf tucked under the composer. It reads as recessed *below* the
+   * canvas, so it is mixed down from `--background` rather than down from
+   * `--card`: in light mode the canvas already sits ~3% off white, so a card
+   * darkened by a few percent lands right on top of the canvas. */
+  --color-composer-tray: var(--composer-tray-surface);
   --shadow-e1: var(--elevation-1);
   --shadow-e2: var(--elevation-2);
   --shadow-e3: var(--elevation-3);
@@ -476,6 +481,7 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
+  --composer-tray-surface: color-mix(in srgb, var(--background) 95%, var(--foreground));
   --sidebar: color-mix(in srgb, var(--card) 94%, var(--muted));
   --sidebar-foreground: var(--card-foreground);
   --sidebar-border: var(--border);
@@ -563,6 +569,7 @@ html:has([data-slot="command-dialog-backdrop"]:not([data-ending-style]))
        canvas, so the lift has to be large enough to see on its own. */
     --card: color-mix(in srgb, var(--background) 94%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
+    --composer-tray-surface: color-mix(in srgb, var(--background) 92%, var(--foreground));
     --sidebar: color-mix(in srgb, var(--card) 92%, var(--muted));
     --popover: color-mix(in srgb, var(--background) 91%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
@@ -919,26 +926,10 @@ body {
   background-color: var(--app-card-surface);
 }
 
-/* The empty-state heading remains readable without turning its whole column
- * into a card. The radial veil fades into the wallpaper instead. */
-:root[data-app-background] [data-app-hero-halo] {
-  position: relative;
-  isolation: isolate;
-}
-
-:root[data-app-background] [data-app-hero-halo]::before {
-  content: "";
-  position: absolute;
-  inset: -2.5rem -3.5rem;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(
-    58% 58% at 50% 50%,
-    color-mix(in srgb, var(--background) 88%, transparent) 0%,
-    color-mix(in srgb, var(--background) 62%, transparent) 45%,
-    transparent 75%
-  );
-}
+/* The empty-state heading paints nothing of its own. It used to sit on a
+ * radial veil of `--background`; that veil read as a white smudge over the
+ * wallpaper, so the heading now rides the scrim like the assistant prose in
+ * the thread below it. */
 
 /* ── Chrome ─────────────────────────────────────────────────────────────
  * The only text with nothing but scrimmed wallpaper behind it: the header
