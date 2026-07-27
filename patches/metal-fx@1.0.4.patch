@@ -1,0 +1,16 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+index 93ff2e2beeeea960a7073331f2dcc3193f0dd560..e374fff998035e71367b0516f3c8feecac2f165a 100644
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+@@ -428,9 +428,9 @@ function et() {
+   }
+   if (!r) throw new Error("metal-fx: WebGL not supported");
+   const { program: a, buffer: s, uniforms: d } = ke(r), l = (u) => {
+-    u.preventDefault(), i && (i.contextLost = !0);
++    u.preventDefault(), i && i.gl === r && (i.contextLost = !0);
+   }, c = () => {
+-    if (!i) return;
++    if (!i || i.gl !== r) return;
+     const u = ke(i.gl);
+     i.program = u.program, i.buffer = u.buffer, i.uniforms = u.uniforms, i.presetDirty = !0, i.contextLost = !1, le == null || le();
+   };

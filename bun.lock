@@ -146,6 +146,7 @@
         "katex": "^0.16.45",
         "lexical": "^0.41.0",
         "lucide-react": "^0.564.0",
+        "metal-fx": "^1.0.4",
         "qrcode-generator": "^2.0.4",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
@@ -266,6 +267,9 @@
     "nucleo-ui-outline-18",
     "nucleo-core-outline-24",
   ],
+  "patchedDependencies": {
+    "metal-fx@1.0.4": "patches/metal-fx@1.0.4.patch",
+  },
   "overrides": {
     "vite": "^8.0.0",
   },
@@ -1709,6 +1713,7 @@
 
     "merge-descriptors": ["merge-descriptors@2.0.0", "", {}, "sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g=="],
 
+    "metal-fx": ["metal-fx@1.0.4", "", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" } }, "sha512-Zqxp3df47n2yhp7SPMZtPdKQ7Avag8ITxXX1NtbA0bWdU2GJN8MJPNJ2SKtQ2CfXpAWXtCc0CbM64UtiTor3pw=="],
 
     "micromark": ["micromark@4.0.2", "", { "dependencies": { "@types/debug": "^4.0.0", "debug": "^4.0.0", "decode-named-character-reference": "^1.0.0", "devlop": "^1.0.0", "micromark-core-commonmark": "^2.0.0", "micromark-factory-space": "^2.0.0", "micromark-util-character": "^2.0.0", "micromark-util-chunked": "^2.0.0", "micromark-util-combine-extensions": "^2.0.0", "micromark-util-decode-numeric-character-reference": "^2.0.0", "micromark-util-encode": "^2.0.0", "micromark-util-normalize-identifier": "^2.0.0", "micromark-util-resolve-all": "^2.0.0", "micromark-util-sanitize-uri": "^2.0.0", "micromark-util-subtokenize": "^2.0.0", "micromark-util-symbol": "^2.0.0", "micromark-util-types": "^2.0.0" } }, "sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA=="],
 

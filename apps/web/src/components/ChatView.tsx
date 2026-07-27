@@ -188,6 +188,8 @@ import { playFastModeBlitz } from "./chat/fastModeBlitzFx";
 import { ComposerAlertsPanel } from "./chat/ComposerAlertsPanel";
 import { EmptyThreadAmbient } from "./chat/EmptyThreadAmbient";
 import { EmptyThreadHeading } from "./chat/EmptyThreadHero";
+import { UltrathinkMetalRing } from "./chat/UltrathinkMetalRing";
+import { isMaxEffort } from "./chat/effortRank";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -5093,11 +5095,18 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
               )?.label ?? composerEffortTraits.effort),
           levels: composerEffortTraits.effortLevels,
           onChange: composerEffortTraits.handleEffortChange,
-          locked:
-            composerEffortTraits.ultrathinkInBodyText ||
-            composerEffortTraits.ultrathinkPromptControlled,
+          // Prompt-prefix ultrathink stays adjustable — picking a lower level
+          // strips the prefix. Only literal "ultrathink" in the prompt body
+          // locks the slider.
+          locked: composerEffortTraits.ultrathinkInBodyText,
         }
       : null;
+  // Peak effort is named differently per provider (ultrathink, ultra, max, …),
+  // so the composer ring keys off the model's own top level, not a literal.
+  const maxEffortActive = isMaxEffort(
+    composerEffortPickerProps?.value,
+    composerEffortPickerProps?.levels ?? [],
+  );
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
     threadId,
@@ -5411,10 +5420,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
     ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
       workspaceEntriesQuery.isLoading ||
       workspaceEntriesQuery.isFetching);
-  const hasDecoratedComposerFrame =
-    composerProviderState.composerFrameClassName !== undefined &&
-    composerProviderState.composerFrameClassName.length > 0;
-
   const onPromptChange = useCallback(
     (
       nextPrompt: string,
@@ -5880,26 +5885,22 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                   data-chat-composer-frame="true"
                   data-chat-composer-focused={isFocusedPane ? "true" : undefined}
                   className={cn(
-                    "chat-composer-depth group relative z-10 min-w-0 overflow-hidden transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
-                    hasDecoratedComposerFrame
-                      ? ["rounded-[22px] p-px", composerProviderState.composerFrameClassName]
-                      : "rounded-[20px] border border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] bg-card dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
+                    "chat-composer-depth group relative z-10 min-w-0 overflow-hidden rounded-[20px] border bg-card transition-[margin-top,color,box-shadow,border-color,background-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+                    maxEffortActive
+                      ? "border-transparent"
+                      : "border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
                   )}
                   onDragEnter={onComposerDragEnter}
                   onDragOver={onComposerDragOver}
                   onDragLeave={onComposerDragLeave}
                   onDrop={onComposerDrop}
                 >
+                  {maxEffortActive ? <UltrathinkMetalRing borderRadius={20} /> : null}
                   <div
                     data-chat-composer-surface="true"
                     className={cn(
-                      "min-w-0",
-                      !hasDecoratedComposerFrame && "rounded-[19px] bg-card",
-                      hasDecoratedComposerFrame && [
-                        "rounded-[20px] border border-[color-mix(in_srgb,var(--color-neutral-500)_16%,transparent)] bg-card shadow-sm transition-colors duration-200 dark:border-[color-mix(in_srgb,var(--color-neutral-400)_14%,transparent)]",
-                        isDragOverComposer && "bg-accent/30",
-                        composerProviderState.composerSurfaceClassName,
-                      ],
+                      "min-w-0 rounded-[19px] bg-card",
+                      isDragOverComposer && "bg-accent/30",
                     )}
                   >
                     {activePendingApproval ? (
@@ -6154,12 +6155,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                                   modelOptionsByProvider={modelOptionsByProvider}
                                   modelOptions={implementationModelSelection.options}
                                   onModelOptionsChange={onImplementationProviderModelOptionsChange}
-                                  {...(implementationProviderState.modelPickerIconClassName
-                                    ? {
-                                        activeProviderIconClassName:
-                                          implementationProviderState.modelPickerIconClassName,
-                                      }
-                                    : {})}
                                   onProviderModelChange={onImplementationProviderModelSelect}
                                 />
                               ) : (
@@ -6173,12 +6168,6 @@ export default function ChatView({ isFocusedPane = true, threadId }: ChatViewPro
                                   modelOptions={composerModelOptions?.[selectedProvider]}
                                   onModelOptionsChange={onComposerProviderModelOptionsChange}
                                   effort={composerEffortPickerProps}
-                                  {...(composerProviderState.modelPickerIconClassName
-                                    ? {
-                                        activeProviderIconClassName:
-                                          composerProviderState.modelPickerIconClassName,
-                                      }
-                                    : {})}
                                   onProviderModelChange={onProviderModelSelect}
                                 />
                               )}

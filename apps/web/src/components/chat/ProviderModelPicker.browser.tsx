@@ -207,6 +207,11 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Model");
+      });
+      await page.getByRole("menuitem", { name: "Model" }).hover();
+
+      await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
         expect(text).toContain("Codex");
         expect(text).toContain("Claude");
@@ -217,8 +222,9 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows a fast-mode switch above intelligence and updates model options", async () => {
+  it("shows the effort slider above the fast-mode switch and updates model options", async () => {
     const onModelOptionsChange = vi.fn();
+    const onEffortChange = vi.fn();
     const mounted = await mountPicker({
       provider: "claudeAgent",
       model: "claude-opus-4-6",
@@ -229,7 +235,7 @@ describe("ProviderModelPicker", () => {
         value: "high",
         label: "High",
         levels: [effort("low"), effort("medium"), effort("high", true), effort("max")],
-        onChange: vi.fn(),
+        onChange: onEffortChange,
       },
     });
 
@@ -238,12 +244,15 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
+        const effortIndex = text.indexOf("Faster");
         const fastModeIndex = text.indexOf("Fast mode");
-        const intelligenceIndex = text.indexOf("Intelligence");
+        expect(effortIndex).toBeGreaterThanOrEqual(0);
         expect(fastModeIndex).toBeGreaterThanOrEqual(0);
-        expect(intelligenceIndex).toBeGreaterThanOrEqual(0);
-        expect(fastModeIndex).toBeLessThan(intelligenceIndex);
+        expect(effortIndex).toBeLessThan(fastModeIndex);
       });
+
+      await page.getByRole("radio", { name: "max", exact: true }).click();
+      expect(onEffortChange).toHaveBeenCalledWith("max");
 
       await page.getByRole("menuitemcheckbox", { name: "Fast mode" }).click();
 
@@ -262,6 +271,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
       const providerTrigger = page.getByRole("menuitem", { name: "Codex" });
       await providerTrigger.hover();
 
@@ -402,7 +412,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows models directly when the provider is locked mid-thread", async () => {
+  it("shows locked-provider models in the model submenu without provider switching", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",
       model: "claude-opus-4-6",
@@ -411,6 +421,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
@@ -432,6 +443,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(() => {
         expect(document.body.textContent ?? "").toContain("Claude Sonnet 5");
@@ -491,6 +503,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(() => {
         expect(document.querySelector('input[placeholder="Search models…"]')).not.toBeNull();
@@ -557,6 +570,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
       await page.getByRole("menuitem", { name: "Codex" }).hover();
 
       await vi.waitFor(() => {
@@ -577,6 +591,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
       await page.getByRole("menuitem", { name: "Codex" }).hover();
 
       await vi.waitFor(() => {
@@ -596,6 +611,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
       await page.getByRole("menuitemradio", { name: "Claude Sonnet 5" }).click();
 
       expect(mounted.onProviderModelChange).toHaveBeenCalledWith("claudeAgent", "claude-sonnet-5");
@@ -626,9 +642,11 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
+        expect(text).toContain("Codex");
         expect(text).not.toContain("Claude");
         expect(text).not.toContain("Disabled");
         expect(text).not.toContain("Claude Sonnet 5");
@@ -661,6 +679,7 @@ describe("ProviderModelPicker", () => {
 
     try {
       await page.getByRole("button").click();
+      await page.getByRole("menuitem", { name: "Model" }).hover();
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";

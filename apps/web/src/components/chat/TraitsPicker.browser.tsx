@@ -268,12 +268,14 @@ describe("TraitsPicker (Claude)", () => {
     await page.getByRole("button").click();
 
     await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Low");
-      expect(text).toContain("Medium");
-      expect(text).toContain("High");
-      expect(text).not.toContain("Max");
-      expect(text).toContain("Ultrathink");
+      const labels = Array.from(
+        document.querySelectorAll('[data-chat-effort-slider="true"] [role="radio"]'),
+      ).map((element) => element.getAttribute("aria-label") ?? "");
+      expect(labels.some((label) => label.startsWith("Low"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("Medium"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("High"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("Max"))).toBe(false);
+      expect(labels.some((label) => label.startsWith("Ultrathink"))).toBe(true);
     });
   });
 
@@ -311,7 +313,7 @@ describe("TraitsPicker (Claude)", () => {
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("Effort");
+      expect(text).toContain("Faster");
       expect(text).not.toContain("ultrathink");
     });
   });
@@ -340,15 +342,17 @@ describe("TraitsPicker (Claude)", () => {
     });
 
     await page.getByRole("button").click();
-    await page.getByRole("menuitemradio", { name: "Max" }).click();
+    await page.getByRole("radio", { name: "Max", exact: true }).click();
 
-    expect(
-      useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
-    ).toMatchObject({
-      provider: "claudeAgent",
-      options: {
-        effort: "max",
-      },
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
+      ).toMatchObject({
+        provider: "claudeAgent",
+        options: {
+          effort: "max",
+        },
+      });
     });
   });
 
@@ -469,11 +473,13 @@ describe("TraitsPicker (Codex)", () => {
     await page.getByRole("button").click();
 
     await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Extra High");
-      expect(text).toContain("High");
-      expect(text).not.toContain("Low");
-      expect(text).not.toContain("Medium");
+      const labels = Array.from(
+        document.querySelectorAll('[data-chat-effort-slider="true"] [role="radio"]'),
+      ).map((element) => element.getAttribute("aria-label") ?? "");
+      expect(labels.some((label) => label.startsWith("Extra High"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("High"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("Low"))).toBe(false);
+      expect(labels.some((label) => label.startsWith("Medium"))).toBe(false);
     });
   });
 

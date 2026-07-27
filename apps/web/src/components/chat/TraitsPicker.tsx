@@ -30,9 +30,12 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
+import { EffortSliderPanel } from "./EffortSlider";
+import { orderEffortLevels } from "./effortRank";
 import { playFastModeBlitz } from "./fastModeBlitzFx";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
@@ -86,15 +89,27 @@ function buildNextOptions(
   patch: Record<string, unknown>,
 ): ProviderOptions {
   if (provider === "codex") {
-    return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
+    return {
+      ...(modelOptions as CodexModelOptions | undefined),
+      ...patch,
+    } as CodexModelOptions;
   }
   if (provider === "cursor") {
-    return { ...(modelOptions as CursorModelOptions | undefined), ...patch } as CursorModelOptions;
+    return {
+      ...(modelOptions as CursorModelOptions | undefined),
+      ...patch,
+    } as CursorModelOptions;
   }
   if (provider === "glm") {
-    return { ...(modelOptions as GlmModelOptions | undefined), ...patch } as GlmModelOptions;
+    return {
+      ...(modelOptions as GlmModelOptions | undefined),
+      ...patch,
+    } as GlmModelOptions;
   }
-  return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
+  return {
+    ...(modelOptions as ClaudeModelOptions | undefined),
+    ...patch,
+  } as ClaudeModelOptions;
 }
 
 function getSelectedTraits(
@@ -187,7 +202,9 @@ export function useUpdateModelOptions(
         persistence.onModelOptionsChange(nextOptions);
         return;
       }
-      setProviderModelOptions(persistence.threadId, provider, nextOptions, { persistSticky: true });
+      setProviderModelOptions(persistence.threadId, provider, nextOptions, {
+        persistSticky: true,
+      });
     },
     [persistence, provider, setProviderModelOptions],
   );
@@ -281,35 +298,33 @@ export function useResolvedTraits(input: {
 
 function EffortMenuGroup(props: {
   effort: string;
-  effortLevels: ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>;
+  effortLevels: ReadonlyArray<{
+    value: string;
+    label: string;
+    isDefault?: boolean | undefined;
+  }>;
   ultrathinkPromptControlled: boolean;
   ultrathinkInBodyText: boolean;
   defaultEffort: string | null;
   onValueChange: (value: string) => void;
 }) {
+  const levels = props.effortLevels.map((option) => ({
+    ...option,
+    isDefault: option.value === props.defaultEffort,
+  }));
   return (
     <MenuGroup>
-      <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">Effort</div>
-      {props.ultrathinkInBodyText ? (
-        <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-          Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change effort.
-        </div>
-      ) : null}
-      <MenuRadioGroup
+      <EffortSliderPanel
+        levels={levels}
         value={props.ultrathinkPromptControlled ? "ultrathink" : props.effort}
-        onValueChange={props.onValueChange}
-      >
-        {props.effortLevels.map((option) => (
-          <MenuRadioItem
-            key={option.value}
-            value={option.value}
-            disabled={props.ultrathinkInBodyText}
-          >
-            {option.label}
-            {option.value === props.defaultEffort ? " (default)" : ""}
-          </MenuRadioItem>
-        ))}
-      </MenuRadioGroup>
+        onChange={props.onValueChange}
+        disabled={props.ultrathinkInBodyText}
+        note={
+          props.ultrathinkInBodyText
+            ? 'Your prompt contains "ultrathink" in the text. Remove it to change effort.'
+            : null
+        }
+      />
     </MenuGroup>
   );
 }
@@ -380,7 +395,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             value={thinkingEnabled ? "on" : "off"}
             onValueChange={(value) => {
               updateModelOptions(
-                buildNextOptions(provider, modelOptions, { thinking: value === "on" }),
+                buildNextOptions(provider, modelOptions, {
+                  thinking: value === "on",
+                }),
               );
             }}
           >
@@ -402,11 +419,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             value={fastModeEnabled ? "on" : "off"}
             onValueChange={(value) => {
               const nextFastMode = value === "on";
-              if (nextFastMode !== fastModeEnabled) {
-                playFastModeBlitz(nextFastMode);
-              }
+              if (nextFastMode !== fastModeEnabled) playFastModeBlitz(nextFastMode);
               updateModelOptions(
-                buildNextOptions(provider, modelOptions, { fastMode: nextFastMode }),
+                buildNextOptions(provider, modelOptions, {
+                  fastMode: nextFastMode,
+                }),
               );
             }}
           >
@@ -526,46 +543,52 @@ export const EffortPicker = memo(function EffortPicker({
     return null;
   }
 
-  const currentIndex = effortLevels.findIndex((option) => option.value === effort);
+  const displayValue = ultrathinkPromptControlled ? "ultrathink" : effort;
+  const orderedLevels = orderEffortLevels(effortLevels);
+  const currentIndex = orderedLevels.findIndex((option) => option.value === displayValue);
   const triggerLabel = ultrathinkPromptControlled
     ? "Ultrathink"
     : (effortLevels.find((option) => option.value === effort)?.label ?? effort);
-  const isLocked = ultrathinkInBodyText || ultrathinkPromptControlled;
-  const nextLabel = !isLocked
-    ? (effortLevels[(currentIndex + 1) % effortLevels.length]?.label ?? null)
-    : null;
   const title = ultrathinkInBodyText
     ? 'Your prompt contains "ultrathink" — remove it to change effort.'
-    : ultrathinkPromptControlled
-      ? "Ultrathink (controlled by prompt)"
-      : nextLabel
-        ? `Intelligence: ${triggerLabel} — click for ${nextLabel}`
-        : `Intelligence: ${triggerLabel}`;
-
-  const handleClick = () => {
-    if (isLocked || effortLevels.length === 0) return;
-    const nextIndex = (currentIndex + 1) % effortLevels.length;
-    const next = effortLevels[nextIndex];
-    if (next) handleEffortChange(next.value);
-  };
+    : `Reasoning effort: ${triggerLabel}`;
 
   return (
-    <button
-      type="button"
-      data-chat-effort-picker="true"
-      title={title}
-      aria-label={`Intelligence: ${triggerLabel}. Click to cycle.`}
-      disabled={isLocked}
-      onClick={handleClick}
-      className={cn(
-        "group/effort-picker inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-sm font-normal text-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring sm:h-6 sm:px-2.5 sm:text-xs",
-        isLocked && "pointer-events-none opacity-60",
-        triggerClassName,
-      )}
-    >
-      <EffortBars levels={effortLevels} currentIndex={currentIndex} />
-      <span className="min-w-0 truncate">{triggerLabel}</span>
-    </button>
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            data-chat-effort-picker="true"
+            title={title}
+            aria-label={`Reasoning effort: ${triggerLabel}`}
+            className={cn(
+              "group/effort-picker inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-sm font-normal text-foreground outline-none transition-colors duration-150 ease-out hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent/60 sm:h-6 sm:px-2.5 sm:text-xs",
+              triggerClassName,
+            )}
+          />
+        }
+      >
+        <EffortBars levels={orderedLevels} currentIndex={currentIndex} />
+        <span className="min-w-0 truncate">{triggerLabel}</span>
+      </PopoverTrigger>
+      <PopoverPopup align="start" side="top" sideOffset={6}>
+        <EffortSliderPanel
+          className="p-0"
+          levels={effortLevels}
+          value={displayValue}
+          onChange={handleEffortChange}
+          disabled={ultrathinkInBodyText}
+          note={
+            ultrathinkInBodyText
+              ? 'Your prompt contains "ultrathink" in the text. Remove it to change effort.'
+              : ultrathinkPromptControlled
+                ? "Ultrathink is set by your prompt. Picking another level removes the prefix."
+                : null
+          }
+        />
+      </PopoverPopup>
+    </Popover>
   );
 });
 
