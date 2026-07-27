@@ -74,6 +74,17 @@ describe("parseServeStatusJson", () => {
     };
     expect(parseServeStatusJson(config, 3773)).toEqual({ method: "off", url: null });
   });
+
+  it("requires an exact loopback proxy hostname", () => {
+    for (const proxy of ["http://notlocalhost:3773", "http://1127.0.0.1:3773"]) {
+      const config = {
+        Web: {
+          "machine.tailnet.ts.net:443": { Handlers: { "/": { Proxy: proxy } } },
+        },
+      };
+      expect(parseServeStatusJson(config, 3773)).toEqual({ method: "off", url: null });
+    }
+  });
 });
 
 describe("parseServeStatusText", () => {
@@ -107,6 +118,23 @@ describe("parseServeStatusText", () => {
       "|-- / proxy http://127.0.0.1:9999",
     ].join("\n");
     expect(parseServeStatusText(text, 3773)).toEqual({ method: "off", url: null });
+  });
+
+  it("does not confuse a longer port with ours", () => {
+    const text = [
+      "https://machine.tailnet.ts.net (tailnet only)",
+      "|-- / proxy http://127.0.0.1:37730",
+    ].join("\n");
+    expect(parseServeStatusText(text, 3773)).toEqual({ method: "off", url: null });
+  });
+
+  it("does not match loopback-looking hostname suffixes", () => {
+    for (const proxy of ["http://notlocalhost:3773", "http://1127.0.0.1:3773"]) {
+      const text = ["https://machine.tailnet.ts.net (tailnet only)", `|-- / proxy ${proxy}`].join(
+        "\n",
+      );
+      expect(parseServeStatusText(text, 3773)).toEqual({ method: "off", url: null });
+    }
   });
 });
 

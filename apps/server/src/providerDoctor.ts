@@ -7,6 +7,7 @@ import {
   currentServicePlatform,
   findInstalledServiceLayout,
   serviceLayout,
+  type ServiceLayout,
 } from "./serviceManager";
 
 const execFile = promisify(execFileCallback);
@@ -64,8 +65,7 @@ function hasCredentials(home: string, candidates: readonly string[]): boolean {
   return candidates.some((candidate) => fs.existsSync(path.join(home, candidate)));
 }
 
-function serviceAccountCommand(command: string): string {
-  const layout = findInstalledServiceLayout() ?? serviceLayout(currentServicePlatform());
+function serviceAccountCommand(command: string, layout: ServiceLayout): string {
   if (layout.accountMode === "current") return command;
   if (layout.platform === "linux") {
     return `sudo -u ${layout.account} -H ${command}`;
@@ -77,7 +77,7 @@ function serviceAccountCommand(command: string): string {
 }
 
 export async function providerDoctor(): Promise<string> {
-  const layout = findInstalledServiceLayout() ?? serviceLayout(currentServicePlatform());
+  const layout = (await findInstalledServiceLayout()) ?? serviceLayout(currentServicePlatform());
   const lines = [`Service account: ${layout.account}`, `Service home: ${layout.homeDir}`, ""];
   for (const provider of PROVIDERS) {
     const version = await binaryVersion(provider.binary, layout.homeDir, layout.servicePath);
@@ -91,7 +91,7 @@ export async function providerDoctor(): Promise<string> {
     lines.push(
       authenticated
         ? "  Credentials detected in the service home"
-        : `  Sign in: ${serviceAccountCommand(provider.authHint)}`,
+        : `  Sign in: ${serviceAccountCommand(provider.authHint, layout)}`,
     );
   }
   lines.push("", "ShioriCode never installs provider CLIs or signs into them without you.");

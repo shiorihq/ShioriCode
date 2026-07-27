@@ -2,9 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LinkRemoteStore } from "./linkStore";
+import { hasPersistedLinkHostedAccess, LinkRemoteStore } from "./linkStore";
 
 const tempDirectories: string[] = [];
 
@@ -15,6 +15,7 @@ function makeStore(): { stateDir: string; store: LinkRemoteStore } {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of tempDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -29,6 +30,86 @@ describe("LinkRemoteStore", () => {
     expect(reloaded.instanceId).toBe(store.instanceId);
     expect(fs.statSync(filePath).ino).toBe(inode);
     expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("fsyncs the temporary state before its atomic rename", () => {
+    const fsync = vi.spyOn(fs, "fsyncSync");
+    const { store } = makeStore();
+
+    store.setAccount({ accessToken: "access", refreshToken: "refresh" });
+
+    expect(fsync).toHaveBeenCalled();
+  });
+
+  it("propagates transient read failures without overwriting persisted credentials", () => {
+    const { stateDir, store } = makeStore();
+    store.setAccount({ accessToken: "access", refreshToken: "refresh" });
+    const filePath = path.join(stateDir, "link-remote.json");
+    const before = fs.readFileSync(filePath, "utf8");
+    const failure = Object.assign(new Error("too many open files"), { code: "EMFILE" });
+    vi.spyOn(fs, "openSync").mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    expect(() => new LinkRemoteStore({ stateDir })).toThrow(failure);
+    expect(fs.readFileSync(filePath, "utf8")).toBe(before);
+  });
+
+  it("does not replace a torn or malformed state file", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "shioricode-link-store-"));
+    tempDirectories.push(stateDir);
+    const filePath = path.join(stateDir, "link-remote.json");
+    fs.writeFileSync(filePath, '{"version":1,"instanceId":', { mode: 0o600 });
+    const before = fs.readFileSync(filePath, "utf8");
+
+    expect(() => new LinkRemoteStore({ stateDir })).toThrow(SyntaxError);
+    expect(fs.readFileSync(filePath, "utf8")).toBe(before);
+  });
+
+  it("salvages valid identity and account fields when only the connector is invalid", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "shioricode-link-store-"));
+    tempDirectories.push(stateDir);
+    const filePath = path.join(stateDir, "link-remote.json");
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        instanceId: "stable-instance",
+        account: { accessToken: "access", refreshToken: "refresh" },
+        pendingAuth: null,
+        connector: {
+          environmentRecordId: "record",
+          environmentId: "environment",
+          endpoint: "https://example.link",
+          serverAddr: "relay.example.link",
+          serverPort: 70_000,
+          serverTls: true,
+          token: "secret",
+          updatedAt: new Date(0).toISOString(),
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    const store = new LinkRemoteStore({ stateDir });
+
+    expect(store.instanceId).toBe("stable-instance");
+    expect(store.account).toEqual({ accessToken: "access", refreshToken: "refresh" });
+    expect(store.connector).toBeNull();
+    expect(hasPersistedLinkHostedAccess(stateDir)).toBe(false);
+  });
+
+  it("can inspect a missing state directory without creating it", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "shioricode-link-read-only-"));
+    tempDirectories.push(parent);
+    const stateDir = path.join(parent, "userdata");
+
+    const store = new LinkRemoteStore({ stateDir, createIfMissing: false });
+
+    expect(store.account).toBeNull();
+    expect(fs.existsSync(stateDir)).toBe(false);
+    expect(hasPersistedLinkHostedAccess(stateDir)).toBe(false);
+    expect(fs.existsSync(stateDir)).toBe(false);
   });
 
   it("accepts exactly the pending non-expired auth state", () => {
@@ -55,7 +136,7 @@ describe("LinkRemoteStore", () => {
   });
 
   it("persists and clears the one-time connector credential", () => {
-    const { store } = makeStore();
+    const { stateDir, store } = makeStore();
     store.setConnector({
       environmentRecordId: "environment-record",
       environmentId: "env_12345678",
@@ -67,6 +148,8 @@ describe("LinkRemoteStore", () => {
       updatedAt: new Date(0).toISOString(),
     });
     expect(store.connector?.token).toBe("connector-secret");
+    store.setAccount({ accessToken: "access", refreshToken: "refresh" });
+    expect(hasPersistedLinkHostedAccess(stateDir)).toBe(true);
     store.clearConnector();
     expect(store.connector).toBeNull();
   });

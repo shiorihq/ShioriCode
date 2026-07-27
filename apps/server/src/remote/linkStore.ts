@@ -34,64 +34,124 @@ interface LinkStateFile {
   readonly connector: LinkConnectorCredential | null;
 }
 
-function isNonEmptyString(value: unknown): value is string {
+export function isNonEmptyLinkString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function parseState(value: unknown): LinkStateFile | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Partial<LinkStateFile>;
-  if (record.version !== 1 || !isNonEmptyString(record.instanceId)) return null;
+export function isValidLinkServerPort(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 65_535;
+}
 
-  const account = record.account;
+function parseAccount(value: unknown): LinkAccountTokens | null {
+  if (!value || typeof value !== "object") return null;
+  const account = value as Partial<LinkAccountTokens>;
+  if (!isNonEmptyLinkString(account.accessToken) || !isNonEmptyLinkString(account.refreshToken)) {
+    return null;
+  }
+  return { accessToken: account.accessToken, refreshToken: account.refreshToken };
+}
+
+function parsePendingAuth(value: unknown): PendingLinkAuth | null {
+  if (!value || typeof value !== "object") return null;
+  const pendingAuth = value as Partial<PendingLinkAuth>;
   if (
-    account !== null &&
-    (!account || !isNonEmptyString(account.accessToken) || !isNonEmptyString(account.refreshToken))
+    !isNonEmptyLinkString(pendingAuth.state) ||
+    !isNonEmptyLinkString(pendingAuth.expiresAt) ||
+    !Number.isFinite(Date.parse(pendingAuth.expiresAt))
   ) {
     return null;
   }
-  const pendingAuth = record.pendingAuth;
+  return { state: pendingAuth.state, expiresAt: pendingAuth.expiresAt };
+}
+
+function parseConnector(value: unknown): LinkConnectorCredential | null {
+  if (!value || typeof value !== "object") return null;
+  const connector = value as Partial<LinkConnectorCredential>;
   if (
-    pendingAuth !== null &&
-    (!pendingAuth ||
-      !isNonEmptyString(pendingAuth.state) ||
-      !isNonEmptyString(pendingAuth.expiresAt))
-  ) {
-    return null;
-  }
-  const connector = record.connector;
-  if (
-    connector !== null &&
-    (!connector ||
-      !isNonEmptyString(connector.environmentRecordId) ||
-      !isNonEmptyString(connector.environmentId) ||
-      !isNonEmptyString(connector.endpoint) ||
-      !isNonEmptyString(connector.serverAddr) ||
-      !Number.isInteger(connector.serverPort) ||
-      connector.serverPort < 1 ||
-      connector.serverPort > 65_535 ||
-      connector.serverTls !== true ||
-      !isNonEmptyString(connector.token) ||
-      !isNonEmptyString(connector.updatedAt))
+    !isNonEmptyLinkString(connector.environmentRecordId) ||
+    !isNonEmptyLinkString(connector.environmentId) ||
+    !isNonEmptyLinkString(connector.endpoint) ||
+    !isNonEmptyLinkString(connector.serverAddr) ||
+    !isValidLinkServerPort(connector.serverPort) ||
+    connector.serverTls !== true ||
+    !isNonEmptyLinkString(connector.token) ||
+    !isNonEmptyLinkString(connector.updatedAt)
   ) {
     return null;
   }
   return {
+    environmentRecordId: connector.environmentRecordId,
+    environmentId: connector.environmentId,
+    endpoint: connector.endpoint,
+    serverAddr: connector.serverAddr,
+    serverPort: connector.serverPort,
+    serverTls: true,
+    token: connector.token,
+    updatedAt: connector.updatedAt,
+  };
+}
+
+function parseState(value: unknown): LinkStateFile {
+  if (!value || typeof value !== "object") {
+    throw new Error("The persisted ShioriCode Link state is invalid");
+  }
+  const record = value as Partial<LinkStateFile>;
+  if (record.version !== 1 || !isNonEmptyLinkString(record.instanceId)) {
+    throw new Error("The persisted ShioriCode Link state has an invalid version or instance id");
+  }
+  return {
     version: 1,
     instanceId: record.instanceId,
-    account: account ?? null,
-    pendingAuth: pendingAuth ?? null,
-    connector: connector ?? null,
+    account: parseAccount(record.account),
+    pendingAuth: parsePendingAuth(record.pendingAuth),
+    connector: parseConnector(record.connector),
   };
+}
+
+function linkStatePath(stateDir: string): string {
+  return path.join(stateDir, LINK_STATE_FILE);
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+function readStateFile(filePath: string): LinkStateFile | null {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(filePath, "r");
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (stat.size > MAX_STATE_BYTES) {
+      throw new Error("The persisted ShioriCode Link state is unexpectedly large");
+    }
+    const contents = fs.readFileSync(descriptor);
+    if (contents.byteLength > MAX_STATE_BYTES) {
+      throw new Error("The persisted ShioriCode Link state is unexpectedly large");
+    }
+    return parseState(JSON.parse(contents.toString("utf8")));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Read persisted hosted-access readiness without creating or modifying service state. */
+export function hasPersistedLinkHostedAccess(stateDir: string): boolean {
+  const record = readStateFile(linkStatePath(stateDir));
+  return Boolean(record?.account && record.connector);
 }
 
 export class LinkRemoteStore {
   readonly #filePath: string;
   #record: LinkStateFile;
 
-  constructor(input: { readonly stateDir: string }) {
-    this.#filePath = path.join(input.stateDir, LINK_STATE_FILE);
-    const existing = this.#read();
+  constructor(input: { readonly stateDir: string; readonly createIfMissing?: boolean }) {
+    this.#filePath = linkStatePath(input.stateDir);
+    const existing = readStateFile(this.#filePath);
     if (existing) {
       this.#record = existing;
       return;
@@ -103,31 +163,24 @@ export class LinkRemoteStore {
       pendingAuth: null,
       connector: null,
     };
-    this.#persist();
-  }
-
-  #read(): LinkStateFile | null {
-    try {
-      const stat = fs.statSync(this.#filePath);
-      if (stat.size > MAX_STATE_BYTES) return null;
-      return parseState(JSON.parse(fs.readFileSync(this.#filePath, "utf8")));
-    } catch {
-      return null;
-    }
+    if (input.createIfMissing !== false) this.#persist();
   }
 
   #persist(): void {
     fs.mkdirSync(path.dirname(this.#filePath), { recursive: true });
     const temporaryPath = `${this.#filePath}.${process.pid}.${randomUUID()}.tmp`;
+    let descriptor: number | null = null;
     try {
-      fs.writeFileSync(temporaryPath, `${JSON.stringify(this.#record, null, 2)}\n`, {
-        mode: 0o600,
-        flag: "wx",
-      });
+      descriptor = fs.openSync(temporaryPath, "wx", 0o600);
+      fs.writeFileSync(descriptor, `${JSON.stringify(this.#record, null, 2)}\n`);
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = null;
       fs.chmodSync(temporaryPath, 0o600);
       fs.renameSync(temporaryPath, this.#filePath);
       fs.chmodSync(this.#filePath, 0o600);
     } finally {
+      if (descriptor !== null) fs.closeSync(descriptor);
       fs.rmSync(temporaryPath, { force: true });
     }
   }
@@ -144,6 +197,14 @@ export class LinkRemoteStore {
     return this.#record.connector;
   }
 
+  assertPendingAuth(state: string, now = Date.now()): void {
+    const pending = this.#record.pendingAuth;
+    const expiresAt = pending ? Date.parse(pending.expiresAt) : Number.NaN;
+    if (!pending || pending.state !== state || !Number.isFinite(expiresAt) || expiresAt <= now) {
+      throw new Error("Link sign-in callback is invalid or expired");
+    }
+  }
+
   setPendingAuth(input: PendingLinkAuth): void {
     this.#record = { ...this.#record, pendingAuth: input };
     this.#persist();
@@ -155,15 +216,9 @@ export class LinkRemoteStore {
     readonly refreshToken: string;
     readonly now?: number;
   }): void {
-    const pending = this.#record.pendingAuth;
     const now = input.now ?? Date.now();
-    if (
-      !pending ||
-      pending.state !== input.state ||
-      Date.parse(pending.expiresAt) <= now ||
-      !input.accessToken ||
-      !input.refreshToken
-    ) {
+    this.assertPendingAuth(input.state, now);
+    if (!input.accessToken || !input.refreshToken) {
       throw new Error("Link sign-in callback is invalid or expired");
     }
     this.#record = {

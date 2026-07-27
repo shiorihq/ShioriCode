@@ -8,6 +8,7 @@
  *
  * @module remote/remoteStateStore
  */
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -16,8 +17,9 @@ import { REMOTE_EXPOSURE_METHODS, type RemoteExposureMethod } from "contracts";
 const REMOTE_STATE_FILE = "remote.json";
 
 interface RemoteStateFile {
-  readonly version: 1;
+  readonly version: 2;
   readonly method: RemoteExposureMethod;
+  readonly tailscaleConfirmationRequired: boolean;
   readonly updatedAt: string;
 }
 
@@ -30,49 +32,153 @@ function isExposureMethod(value: unknown): value is RemoteExposureMethod {
 export class RemoteStateStore {
   private readonly filePath: string;
   private record: RemoteStateFile;
+  private cleanupRequired: boolean;
+  private tailscaleConfirmationRequired: boolean;
+  private mutationRevision = 0;
 
   constructor(input: { readonly stateDir: string }) {
     this.filePath = path.join(input.stateDir, REMOTE_STATE_FILE);
-    this.record = this.readFile() ?? {
-      version: 1,
-      method: "off",
-      updatedAt: new Date().toISOString(),
-    };
+    const loaded = this.readFile();
+    this.record =
+      loaded.record ??
+      ({
+        version: 2,
+        method: "off",
+        tailscaleConfirmationRequired: loaded.tailscaleConfirmationRequired,
+        updatedAt: new Date().toISOString(),
+      } satisfies RemoteStateFile);
+    this.cleanupRequired = loaded.cleanupRequired;
+    this.tailscaleConfirmationRequired = loaded.tailscaleConfirmationRequired;
   }
 
-  private readFile(): RemoteStateFile | null {
+  private readFile(): {
+    readonly record: RemoteStateFile | null;
+    readonly cleanupRequired: boolean;
+    readonly tailscaleConfirmationRequired: boolean;
+  } {
     try {
       const raw = fs.readFileSync(this.filePath, "utf8");
-      const parsed = JSON.parse(raw) as Partial<RemoteStateFile>;
+      const parsed = JSON.parse(raw) as {
+        readonly version?: unknown;
+        readonly method?: unknown;
+        readonly tailscaleConfirmationRequired?: unknown;
+        readonly updatedAt?: unknown;
+      };
       // A method we no longer support (e.g. the retired "custom" proxy) fails
       // validation and falls back to "off" — exposure fails closed on upgrade.
-      if (parsed.version === 1 && isExposureMethod(parsed.method)) {
+      if ((parsed.version === 1 || parsed.version === 2) && isExposureMethod(parsed.method)) {
         return {
-          version: 1,
-          method: parsed.method,
-          updatedAt:
-            typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+          record: {
+            version: 2,
+            method: parsed.method,
+            tailscaleConfirmationRequired:
+              parsed.version === 1 || parsed.tailscaleConfirmationRequired !== false,
+            updatedAt:
+              typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+          },
+          cleanupRequired: false,
+          // Version 1 could replace a Tailscale intent with Link/off after a
+          // best-effort status read. Preserve that upgrade uncertainty until
+          // tailscaled positively reports that our Serve config is gone.
+          tailscaleConfirmationRequired:
+            parsed.version === 1 || parsed.tailscaleConfirmationRequired !== false,
         };
       }
-    } catch {
-      // Missing or invalid file means no remote intent was recorded yet.
+      return {
+        record: null,
+        cleanupRequired: true,
+        tailscaleConfirmationRequired: true,
+      };
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+        return {
+          record: null,
+          cleanupRequired: false,
+          tailscaleConfirmationRequired: false,
+        };
+      }
+      // A torn/corrupt/unreadable record may have represented an active
+      // exposure. Keep that uncertainty visible so startup tears down and
+      // confirms the transport is off before lowering auth.
+      return {
+        record: null,
+        cleanupRequired: true,
+        tailscaleConfirmationRequired: true,
+      };
     }
-    return null;
   }
 
   get method(): RemoteExposureMethod {
     return this.record.method;
   }
 
-  /** Persist the owner's exposure intent (0600, best-effort like credentials). */
-  set(method: RemoteExposureMethod): void {
-    this.record = { version: 1, method, updatedAt: new Date().toISOString() };
+  get needsCleanup(): boolean {
+    return this.cleanupRequired;
+  }
+
+  /** A legacy record may have forgotten a still-active Tailscale transport. */
+  get requiresTailscaleConfirmation(): boolean {
+    return this.tailscaleConfirmationRequired;
+  }
+
+  get revision(): number {
+    return this.mutationRevision;
+  }
+
+  /**
+   * Persist intent only after any prior Tailscale exposure has been reconciled.
+   * Callers that cannot prove teardown must use transitionWithoutTailscaleTeardown.
+   */
+  setReconciled(method: RemoteExposureMethod): void {
+    this.persist(method, false);
+  }
+
+  /**
+   * Persist a CLI/offline transition without erasing existing transport
+   * uncertainty. A previous Tailscale intent remains untrusted until the
+   * running server positively observes Serve as off.
+   */
+  transitionWithoutTailscaleTeardown(method: RemoteExposureMethod): void {
+    this.persist(
+      method,
+      this.cleanupRequired ||
+        this.tailscaleConfirmationRequired ||
+        this.record.method === "tailscale-serve" ||
+        this.record.method === "tailscale-funnel",
+    );
+  }
+
+  private persist(method: RemoteExposureMethod, tailscaleConfirmationRequired: boolean): void {
+    const next = {
+      version: 2,
+      method,
+      tailscaleConfirmationRequired,
+      updatedAt: new Date().toISOString(),
+    } as const;
+    const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      fs.writeFileSync(this.filePath, `${JSON.stringify(this.record, null, 2)}\n`, { mode: 0o600 });
-      fs.chmodSync(this.filePath, 0o600);
-    } catch {
-      // Best-effort persistence; the in-memory record still drives this run.
+      fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
+        mode: 0o600,
+        flag: "wx",
+      });
+      const descriptor = fs.openSync(temporaryPath, "r");
+      try {
+        fs.fsyncSync(descriptor);
+      } finally {
+        fs.closeSync(descriptor);
+      }
+      fs.renameSync(temporaryPath, this.filePath);
+      this.record = next;
+      this.mutationRevision += 1;
+      this.cleanupRequired = false;
+      this.tailscaleConfirmationRequired = tailscaleConfirmationRequired;
+    } catch (cause) {
+      // Never report success or change in-memory intent when the durable atomic
+      // replace failed. Callers leave the network boundary untouched or retry.
+      throw cause;
+    } finally {
+      fs.rmSync(temporaryPath, { force: true });
     }
   }
 }

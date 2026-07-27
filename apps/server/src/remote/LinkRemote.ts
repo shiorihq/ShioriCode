@@ -9,7 +9,7 @@ import type {
 
 import { FrpcConnector } from "./frpcConnector";
 import { LinkControlPlaneClient } from "./linkClient";
-import { LinkRemoteStore } from "./linkStore";
+import { LinkRemoteStore, type LinkConnectorCredential } from "./linkStore";
 
 const DEFAULT_SHIORI_ORIGIN = "https://shiori.codes";
 const DEFAULT_CALLBACK_SCHEME = "shioricode";
@@ -30,10 +30,27 @@ export interface LinkHostedAccessPrincipal {
   readonly username: string;
 }
 
+export interface LinkRemoteConnector {
+  readonly installed: boolean;
+  readonly running: boolean;
+  readonly lastError: string | null;
+  readonly cleanupRequired?: boolean;
+  start(credential: LinkConnectorCredential): Promise<void>;
+  stop(): Promise<void>;
+}
+
+export interface LinkRemoteClient {
+  provision(input: {
+    readonly instanceId: string;
+    readonly displayName: string;
+  }): Promise<LinkConnectorCredential>;
+  revoke(environmentRecordId: string): Promise<void>;
+}
+
 export class LinkRemote {
   readonly #store: LinkRemoteStore;
-  readonly #client: LinkControlPlaneClient;
-  readonly #connector: FrpcConnector;
+  readonly #client: LinkRemoteClient;
+  readonly #connector: LinkRemoteConnector;
   readonly #origin: string;
   readonly #callbackScheme: string;
   #lastError: string | null = null;
@@ -43,19 +60,26 @@ export class LinkRemote {
     readonly localPort: number;
     readonly origin?: string;
     readonly callbackScheme?: string;
+    /** @internal Test seams for the process and control-plane boundaries. */
+    readonly store?: LinkRemoteStore;
+    readonly client?: LinkRemoteClient;
+    readonly connector?: LinkRemoteConnector;
   }) {
-    this.#store = new LinkRemoteStore({ stateDir: input.stateDir });
+    this.#store = input.store ?? new LinkRemoteStore({ stateDir: input.stateDir });
     this.#origin = (input.origin ?? process.env.SHIORICODE_LINK_API_URL ?? DEFAULT_SHIORI_ORIGIN)
       .trim()
       .replace(/\/$/, "");
     this.#callbackScheme = resolveCallbackScheme(
       input.callbackScheme ?? process.env.SHIORICODE_DESKTOP_SCHEME,
     );
-    this.#client = new LinkControlPlaneClient({ store: this.#store, origin: this.#origin });
-    this.#connector = new FrpcConnector({
-      stateDir: input.stateDir,
-      localPort: input.localPort,
-    });
+    this.#client =
+      input.client ?? new LinkControlPlaneClient({ store: this.#store, origin: this.#origin });
+    this.#connector =
+      input.connector ??
+      new FrpcConnector({
+        stateDir: input.stateDir,
+        localPort: input.localPort,
+      });
   }
 
   get endpoint(): string | null {
@@ -77,7 +101,15 @@ export class LinkRemote {
   }
 
   get hostedAccessAvailable(): boolean {
-    return this.running && this.#store.account !== null && this.#store.connector !== null;
+    return this.running && this.hostedAccessConfigured;
+  }
+
+  get hostedAccessConfigured(): boolean {
+    return this.#store.account !== null && this.#store.connector !== null;
+  }
+
+  get managedProcessCleanupRequired(): boolean {
+    return this.#connector.cleanupRequired === true;
   }
 
   beginHostedAccess(state: string): string {
@@ -126,6 +158,7 @@ export class LinkRemote {
   }
 
   completeSignIn(input: LinkAuthCallbackInput): void {
+    this.#store.assertPendingAuth(input.state);
     if (input.error) {
       this.#store.clearPendingAuth();
       throw new Error(`Shiori sign-in failed: ${input.error}`);
@@ -147,11 +180,11 @@ export class LinkRemote {
       throw new Error("Sign in to Shiori before enabling Link access");
     }
     try {
-      await this.#connector.stop();
       const credential = await this.#client.provision({
         instanceId: this.#store.instanceId,
         displayName: os.hostname() || "ShioriCode",
       });
+      await this.#connector.stop();
       this.#store.setConnector(credential);
       await this.#connector.start(credential);
       this.#lastError = null;

@@ -12,7 +12,7 @@ import {
 type RemoteRpc = Pick<WsRpcClient, "remote">;
 
 interface RemoteCliDependencies {
-  readonly findService: () => ServiceLayout | null;
+  readonly findService: () => ServiceLayout | null | Promise<ServiceLayout | null>;
   readonly requireAdministrator: (platform: ServiceLayout["platform"]) => unknown;
   readonly connectService: (baseDir: string) => Promise<{
     readonly rpc: RemoteRpc;
@@ -49,12 +49,15 @@ interface RemoteCliTarget {
   readonly service: ServiceLayout | null;
 }
 
-function resolveTarget(baseDir: string | undefined, deps: RemoteCliDependencies): RemoteCliTarget {
+async function resolveTarget(
+  baseDir: string | undefined,
+  deps: RemoteCliDependencies,
+): Promise<RemoteCliTarget> {
   const explicitlyTargeted = baseDir !== undefined || Boolean(process.env.SHIORICODE_HOME?.trim());
   if (explicitlyTargeted) {
     return { baseDir, service: null };
   }
-  const service = deps.findService();
+  const service = await deps.findService();
   return service ? { baseDir: service.stateDir, service } : { baseDir: undefined, service: null };
 }
 
@@ -113,7 +116,7 @@ export async function remoteStatus(
   overrides: Partial<RemoteCliDependencies> = {},
 ): Promise<string> {
   const deps = { ...defaultDependencies, ...overrides };
-  const target = resolveTarget(baseDir, deps);
+  const target = await resolveTarget(baseDir, deps);
   return await withRemoteRpc(target, deps, async (rpc) =>
     formatRemoteStatus(await rpc.remote.getStatus()),
   );
@@ -125,7 +128,7 @@ export async function setRemoteExposure(
   overrides: Partial<RemoteCliDependencies> = {},
 ): Promise<string> {
   const deps = { ...defaultDependencies, ...overrides };
-  const target = resolveTarget(baseDir, deps);
+  const target = await resolveTarget(baseDir, deps);
 
   if (target.service?.platform === "linux" && method !== "off") {
     deps.requireAdministrator(target.service.platform);

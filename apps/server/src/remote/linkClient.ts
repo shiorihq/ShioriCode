@@ -1,4 +1,9 @@
-import type { LinkConnectorCredential, LinkRemoteStore } from "./linkStore";
+import {
+  isNonEmptyLinkString,
+  isValidLinkServerPort,
+  type LinkConnectorCredential,
+  type LinkRemoteStore,
+} from "./linkStore";
 
 const DEFAULT_SHIORI_ORIGIN = "https://shiori.codes";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -40,13 +45,13 @@ function parseProvisionResponse(value: unknown): ProvisionResponse {
   const environment = value.environment;
   const connector = value.connector;
   if (
-    typeof environment.id !== "string" ||
-    typeof environment.endpoint !== "string" ||
-    typeof connector.serverAddr !== "string" ||
-    typeof connector.serverPort !== "number" ||
+    !isNonEmptyLinkString(environment.id) ||
+    !isNonEmptyLinkString(environment.endpoint) ||
+    !isNonEmptyLinkString(connector.serverAddr) ||
+    !isValidLinkServerPort(connector.serverPort) ||
     connector.serverTls !== true ||
-    typeof connector.environmentId !== "string" ||
-    typeof connector.token !== "string"
+    !isNonEmptyLinkString(connector.environmentId) ||
+    !isNonEmptyLinkString(connector.token)
   ) {
     throw new Error("Shiori returned an invalid link connector credential");
   }
@@ -148,9 +153,13 @@ export class LinkControlPlaneClient {
   }
 
   async list(): Promise<readonly LinkEnvironmentSummary[]> {
-    const response = await this.#request("/api/shiori-code/link/environments", {
-      method: "GET",
-    });
+    // CLI list/status operations must never rotate the service's credentials behind
+    // its back. A 401 is reported to the operator without refreshing or persisting.
+    const response = await this.#request(
+      "/api/shiori-code/link/environments",
+      { method: "GET" },
+      false,
+    );
     if (!response.ok) {
       throw new Error(`Could not list ShioriCode Link environments (${response.status})`);
     }

@@ -9,6 +9,8 @@ export const ServerInstanceRecord = Schema.Struct({
   port: Schema.Int,
   baseDir: Schema.String,
   startedAt: Schema.String,
+  /** Per-process identity used to correlate health checks with this record. */
+  bootId: Schema.optional(Schema.String),
   wsUrl: Schema.String,
   authToken: Schema.NullOr(Schema.String),
   launcher: Schema.optional(Schema.String),

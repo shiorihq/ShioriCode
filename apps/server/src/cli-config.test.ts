@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import os from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
@@ -5,7 +6,7 @@ import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect"
 
 import { NetService } from "shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { deriveServerPaths } from "./config";
+import { deriveServerPaths, ensureServerDirectories } from "./config";
 import { resolveServerConfig } from "./cli";
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
@@ -373,6 +374,202 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
       });
+    }),
+  );
+
+  it.effect("preserves explicit false flags when environment values are true", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-false-flags-" });
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(4888),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          devUrl: Option.none(),
+          noBrowser: Option.some(false),
+          authToken: Option.none(),
+          remote: Option.some(false),
+          requireAuth: Option.some(false),
+          unsafeNoAuth: Option.some(false),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.some(false),
+          logWebSocketEvents: Option.some(false),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  SHIORICODE_NO_BROWSER: "true",
+                  SHIORICODE_REMOTE: "true",
+                  SHIORICODE_REQUIRE_AUTH: "true",
+                  SHIORICODE_UNSAFE_NO_AUTH: "true",
+                  SHIORICODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  SHIORICODE_LOG_WS_EVENTS: "true",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.noBrowser).toBe(false);
+      expect(resolved.requireAuth).toBe(false);
+      expect(resolved.unsafeNoAuth).toBe(false);
+      expect(resolved.autoBootstrapProjectFromCwd).toBe(false);
+      expect(resolved.logWebSocketEvents).toBe(false);
+    }),
+  );
+
+  it.effect("honors remote and unsafe-no-auth from the bootstrap envelope", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-bootstrap-auth-" });
+      const remoteFd = yield* openBootstrapFd({
+        host: "127.0.0.42",
+        remote: true,
+        requireAuth: false,
+        unsafeNoAuth: false,
+      });
+      const unsafeFd = yield* openBootstrapFd({
+        host: "0.0.0.0",
+        remote: true,
+        requireAuth: true,
+        unsafeNoAuth: true,
+      });
+      const resolve = (bootstrapFd: number) =>
+        resolveServerConfig(
+          {
+            mode: Option.some("web"),
+            port: Option.some(4888),
+            host: Option.none(),
+            baseDir: Option.some(baseDir),
+            devUrl: Option.none(),
+            noBrowser: Option.none(),
+            authToken: Option.none(),
+            remote: Option.none(),
+            requireAuth: Option.none(),
+            unsafeNoAuth: Option.none(),
+            bootstrapFd: Option.some(bootstrapFd),
+            autoBootstrapProjectFromCwd: Option.none(),
+            logWebSocketEvents: Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              NetService.layer,
+            ),
+          ),
+        );
+
+      const remote = yield* resolve(remoteFd);
+      expect(remote.host).toBe("127.0.0.42");
+      expect(remote.requireAuth).toBe(true);
+      expect(remote.unsafeNoAuth).toBe(false);
+
+      const unsafe = yield* resolve(unsafeFd);
+      expect(unsafe.requireAuth).toBe(false);
+      expect(unsafe.unsafeNoAuth).toBe(true);
+    }),
+  );
+
+  it.effect("creates new base and state directories for the owner only", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const fs = yield* FileSystem.FileSystem;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-private-state-" });
+      const baseDir = `${parentDir}/shiori-home`;
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(4888),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          authToken: Option.none(),
+          remote: Option.none(),
+          requireAuth: Option.none(),
+          unsafeNoAuth: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(fsSync.statSync(baseDir).mode & 0o777).toBe(0o700);
+      expect(fsSync.statSync(resolved.stateDir).mode & 0o777).toBe(0o700);
+    }),
+  );
+
+  it.effect("hardens a pre-existing default base directory on upgrade", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const fs = yield* FileSystem.FileSystem;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-default-upgrade-" });
+      const baseDir = `${parentDir}/.shiori`;
+      yield* fs.makeDirectory(baseDir);
+      yield* fs.chmod(baseDir, 0o755);
+      const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
+
+      yield* ensureServerDirectories(derivedPaths, { hardenBaseDir: true });
+
+      expect(fsSync.statSync(baseDir).mode & 0o777).toBe(0o700);
+      expect(fsSync.statSync(derivedPaths.stateDir).mode & 0o777).toBe(0o700);
+    }),
+  );
+
+  it.effect("does not chmod a pre-existing shared base directory", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-shared-base-" });
+      fsSync.chmodSync(baseDir, 0o755);
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(4888),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          authToken: Option.none(),
+          remote: Option.none(),
+          requireAuth: Option.none(),
+          unsafeNoAuth: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(fsSync.statSync(baseDir).mode & 0o777).toBe(0o755);
+      expect(fsSync.statSync(resolved.stateDir).mode & 0o777).toBe(0o700);
     }),
   );
 });
