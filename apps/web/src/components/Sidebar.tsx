@@ -813,7 +813,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <span className={threadMetaClassName}>
                 {props.showThreadJumpHints && props.jumpLabel ? (
                   <span
-                    className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-sm font-medium tracking-tight text-foreground shadow-sm"
+                    className="inline-flex h-5 items-center rounded-full border border-hairline bg-background/90 px-1.5 font-mono text-sm font-medium tracking-tight text-foreground shadow-sm"
                     title={props.jumpLabel}
                   >
                     {props.jumpLabel}

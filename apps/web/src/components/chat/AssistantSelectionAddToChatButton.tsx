@@ -196,7 +196,7 @@ export function AssistantSelectionAddToChatControl({
   onClick,
 }: AssistantSelectionAddToChatControlProps) {
   return (
-    <div className="pointer-events-auto rounded-full border border-border/70 bg-popover p-0.5 shadow-md">
+    <div className="pointer-events-auto rounded-full border border-hairline bg-popover p-0.5 shadow-md">
       <Button
         type="button"
         variant="ghost"

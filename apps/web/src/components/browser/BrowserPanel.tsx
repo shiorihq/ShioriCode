@@ -359,7 +359,7 @@ export default function BrowserPanel({
       data-browser-panel-active={active ? "true" : "false"}
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-card text-foreground"
     >
-      <div className="shrink-0 border-b border-border/70 bg-card">
+      <div className="shrink-0 border-b border-hairline bg-card">
         <BrowserPanelHeader
           title={snapshot.title}
           isAgentWorking={isAgentWorking}

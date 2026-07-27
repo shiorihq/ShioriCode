@@ -147,7 +147,7 @@ export function QueuedMessagesPanel({
   const count = queuedTurns.length;
 
   return (
-    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/15 px-4 py-1.5 backdrop-blur-sm">
+    <div className="rounded-t-[19px] border-b border-hairline bg-muted/15 px-4 py-1.5 backdrop-blur-sm">
       <button
         type="button"
         onClick={() => setIsCollapsed((prev) => !prev)}

@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from "react";
+import { memo, useState, useCallback, type CSSProperties } from "react";
 import { type TimestampFormat } from "contracts/settings";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
@@ -117,7 +117,13 @@ const PlanSidebar = memo(function PlanSidebar({
   }, [planMarkdown, workspaceRoot]);
 
   return (
-    <div className="flex h-full w-[320px] shrink-0 flex-col border-l border-border/50">
+    <div
+      data-app-reading-plate
+      style={
+        { "--app-reading-width": "100%", "--app-reading-plate-radius": "0px" } as CSSProperties
+      }
+      className="flex h-full w-[320px] shrink-0 flex-col border-l border-hairline"
+    >
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between px-3">
         <div className="flex items-center gap-2">
@@ -226,7 +232,7 @@ const PlanSidebar = memo(function PlanSidebar({
                 </span>
               </button>
               {proposedPlanExpanded ? (
-                <div className="border-l border-border/40 pl-3">
+                <div className="border-l border-hairline pl-3">
                   <ChatMarkdown
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}

@@ -177,6 +177,7 @@ function ComboboxPopup({
         >
           <ComboboxPrimitive.Popup
             className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            data-app-float-surface=""
             data-slot="combobox-popup"
             {...props}
           >

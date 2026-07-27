@@ -109,6 +109,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
+
+      assert.deepEqual(
+        decodePatch({
+          appearanceBackground: {
+            kind: "preset",
+            presetId: "japanese-autumn",
+            opacity: 65,
+            blur: 8,
+            mainOpacity: 80,
+            mainBlur: 4,
+          },
+        }),
+        {
+          appearanceBackground: {
+            kind: "preset",
+            presetId: "japanese-autumn",
+            opacity: 65,
+            blur: 8,
+            mainOpacity: 80,
+            mainBlur: 4,
+          },
+        },
+      );
     }),
   );
 

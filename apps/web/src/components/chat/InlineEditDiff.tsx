@@ -608,13 +608,13 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
   return (
     <div
       data-inline-diff="true"
-      className={cn("overflow-hidden rounded-md border border-border/50", className)}
+      className={cn("overflow-hidden rounded-md border border-hairline", className)}
     >
       {/* Header */}
       <div
         className={cn(
           CHAT_THREAD_BODY_CLASS,
-          "flex items-center gap-2 border-b border-border/50 px-3 py-1.5 font-mono text-muted-foreground",
+          "flex items-center gap-2 border-b border-hairline px-3 py-1.5 font-mono text-muted-foreground",
         )}
       >
         {diff.filePath && (
@@ -657,7 +657,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
               {/* Gutter */}
               <span
                 className={cn(
-                  "select-none border-r border-border/30 px-2 text-right",
+                  "select-none border-r border-hairline px-2 text-right",
                   LINE_GUTTER_STYLES[line.type],
                 )}
                 style={{ minWidth: `${gutterWidth + 2}ch` }}
@@ -686,7 +686,7 @@ export const InlineEditDiff = memo(function InlineEditDiff(props: {
         <div
           className={cn(
             CHAT_THREAD_BODY_CLASS,
-            "border-t border-border/50 px-3 py-1 text-center font-mono text-muted-foreground/70",
+            "border-t border-hairline px-3 py-1 text-center font-mono text-muted-foreground/70",
           )}
         >
           Diff truncated

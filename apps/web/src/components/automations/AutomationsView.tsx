@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 
 import type { Automation, AutomationCreateInput, AutomationListResult } from "contracts";
 
@@ -203,17 +203,26 @@ export function AutomationsView({ search }: AutomationsViewProps) {
   const columnClass = "mx-auto w-full max-w-3xl px-4";
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground">
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background [contain:paint]">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-app-canvas [contain:paint]">
           {isElectron ? (
-            <div className="drag-region flex h-[52px] shrink-0 items-center" />
+            <div data-app-chrome className="drag-region flex h-[52px] shrink-0 items-center" />
           ) : (
-            <header className="flex h-12 shrink-0 items-center">
+            <header data-app-chrome className="flex h-12 shrink-0 items-center">
               <div className={cn(columnClass, "flex h-full items-center")} />
             </header>
           )}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            data-app-reading-plate
+            style={
+              {
+                "--app-reading-width": "100%",
+                "--app-reading-plate-radius": "0px",
+              } as CSSProperties
+            }
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
             <AutomationsList
               automations={result.automations}
               loading={loading}

@@ -13,6 +13,8 @@ import {
 } from "@tanstack/react-router";
 import {
   type ReactNode,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -27,12 +29,10 @@ import { resolveOnboardingState } from "shared/onboarding";
 import { APP_DISPLAY_NAME } from "../branding";
 import { isElectron } from "../env";
 import { FeatureFlagSettingsSync } from "../featureFlags";
-import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { OnboardingScreen } from "../components/onboarding/OnboardingScreen";
+import { AppRouteShell } from "../components/AppRouteShell";
+import { AppStartupShell } from "../components/AppStartupShell";
 import { TelemetryBridge } from "../components/TelemetryBridge";
 import { Button } from "../components/ui/button";
-import { LoadingText } from "../components/ui/loading-text";
-import { Spinner } from "../components/ui/spinner";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { ensureNativeApi, hasDesktopNativeBridge, readNativeApi } from "../nativeApi";
@@ -69,6 +69,12 @@ import {
 import { logTelemetryErrorOnce, recordTelemetry } from "../telemetry";
 import { getWsRpcClient } from "~/wsRpcClient";
 
+const OnboardingScreen = lazy(() =>
+  import("../components/onboarding/OnboardingScreen").then(({ OnboardingScreen }) => ({
+    default: OnboardingScreen,
+  })),
+);
+
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
@@ -83,9 +89,7 @@ function RootRouteView() {
   if (isElectron && !hasDesktopNativeBridge()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
-        <div className="flex flex-1 items-center justify-center">
-          <AgentWarmupMessage />
-        </div>
+        <AppStartupShell />
       </div>
     );
   }
@@ -108,19 +112,6 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
-}
-
-function AgentWarmupMessage() {
-  return (
-    <LoadingText className="flex items-center gap-1.5 text-sm text-muted-foreground">
-      <Spinner className="size-3.5" />
-      Warming up the Agents
-    </LoadingText>
-  );
-}
-
-function AppRouteShell({ children }: { children: ReactNode }) {
-  return <AppSidebarLayout>{children}</AppSidebarLayout>;
 }
 
 function SettingsReturnPathTracker() {
@@ -279,22 +270,20 @@ function OnboardingGate({ children }: { children: ReactNode }) {
   }
 
   if (onboardingState === null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <AgentWarmupMessage />
-      </div>
-    );
+    return <AppStartupShell />;
   }
 
   if (!onboardingState.completed) {
     return (
-      <OnboardingScreen
-        onboardingState={onboardingState}
-        pendingStepId={pendingStepId}
-        onboardingError={onboardingError}
-        onCompleteStep={completeOnboardingStep}
-        onStartCoding={startCoding}
-      />
+      <Suspense fallback={<AppStartupShell />}>
+        <OnboardingScreen
+          onboardingState={onboardingState}
+          pendingStepId={pendingStepId}
+          onboardingError={onboardingError}
+          onCompleteStep={completeOnboardingStep}
+          onStartCoding={startCoding}
+        />
+      </Suspense>
     );
   }
 
@@ -365,11 +354,11 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
             <button
               type="button"
               onClick={copyTrace}
-              className="absolute top-2 right-2 rounded-md border border-border/50 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+              className="absolute top-2 right-2 rounded-md border border-hairline bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
             >
               {copied ? "Copied" : "Copy"}
             </button>
-            <pre className="max-h-52 overflow-auto rounded-lg border border-border/50 bg-muted/40 px-3 py-2.5 font-mono text-[11px] leading-[1.6] text-foreground/50">
+            <pre className="max-h-52 overflow-auto rounded-lg border border-hairline bg-muted/40 px-3 py-2.5 font-mono text-[11px] leading-[1.6] text-foreground/50">
               {details}
             </pre>
           </div>

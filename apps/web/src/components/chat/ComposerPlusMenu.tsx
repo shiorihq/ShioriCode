@@ -78,9 +78,7 @@ export const ComposerPlusMenu = memo(function ComposerPlusMenu({
   const handleSpeedChange = useCallback(
     (value: string) => {
       const nextFastMode = value === "fast";
-      if (nextFastMode !== fastModeEnabled) {
-        playFastModeBlitz(nextFastMode);
-      }
+      if (nextFastMode !== fastModeEnabled) playFastModeBlitz(nextFastMode);
       const next = { ...(modelOptions as Record<string, unknown>), fastMode: nextFastMode };
       setProviderModelOptions(threadId, provider, next as ProviderModelOptions[ProviderKind], {
         persistSticky: true,

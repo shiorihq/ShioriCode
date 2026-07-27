@@ -31,8 +31,30 @@ vi.mock("~/uiStateStore", () => ({
 }));
 
 vi.mock("~/hooks/useSettings", () => ({
-  useSettings: (selector?: (settings: { sidebarTranslucent: boolean }) => unknown) => {
+  useSettings: (
+    selector?: (settings: {
+      appearanceBackground: {
+        kind: "preset";
+        presetId: "japanese-winter";
+        customVersion: string;
+        opacity: number;
+        blur: number;
+        mainOpacity: number;
+        mainBlur: number;
+      };
+      sidebarTranslucent: boolean;
+    }) => unknown,
+  ) => {
     const settings = {
+      appearanceBackground: {
+        kind: "preset" as const,
+        presetId: "japanese-winter" as const,
+        customVersion: "",
+        opacity: 100,
+        blur: 0,
+        mainOpacity: 100,
+        mainBlur: 0,
+      },
       sidebarTranslucent: false,
     };
     return selector ? selector(settings) : settings;
@@ -59,8 +81,17 @@ describe("AppSidebarLayout", () => {
       </AppSidebarLayout>,
     );
 
-    expect(html).toContain("-ml-px overflow-hidden rounded-l-[var(--app-sidebar-shell-radius)]");
+    expect(html).toContain("overflow-hidden bg-background");
+    expect(html).toContain("-ml-px rounded-l-[var(--app-sidebar-shell-radius)]");
     expect(html).toContain('data-app-chat-shell-with-sidebar="true"');
+    // Both wallpaper regions mount as AppWallpaper leaves.
+    expect(html).toContain('data-app-wallpaper="shell"');
+    expect(html).toContain('data-app-wallpaper="main"');
+    expect(html).toContain('data-app-wallpaper-image="main"');
+    expect(html).toContain("--app-wallpaper-opacity:1");
+    expect(html).toContain("japanese-winter.webp");
+    expect(html).not.toContain("data-app-main-background-layer");
+    expect(html).not.toContain("data-app-main-background-shell");
     expect(html).not.toContain('data-app-sidebar-content-shell="true"');
   });
 });

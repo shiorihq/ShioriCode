@@ -72,8 +72,8 @@ export function ChatThreadPane(props: ChatThreadPaneProps) {
       aria-label={props.focused ? "Focused thread pane" : "Thread pane"}
       data-focused={props.focused ? "true" : "false"}
       className={cn(
-        "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-        props.multiPane && !props.focused && "bg-muted/10",
+        "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-app-canvas",
+        props.multiPane && !props.focused && "bg-pane-veil",
       )}
       onFocusCapture={() => {
         if (!props.focused) {
@@ -102,7 +102,7 @@ export function ChatThreadPane(props: ChatThreadPaneProps) {
         <div
           className={cn(
             "flex h-8 shrink-0 items-center justify-end border-b px-2",
-            props.focused ? "border-foreground/20 bg-background" : "border-border/70 bg-muted/10",
+            props.focused ? "border-foreground/20 bg-app-canvas" : "border-hairline bg-pane-veil",
           )}
         >
           <div

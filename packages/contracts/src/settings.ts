@@ -29,7 +29,9 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
-export const ThemeMode = Schema.Literals(["system", "light", "dark"]);
+/** "wallpaper" resolves from the mean luminance of the active appearance
+ * background, falling back to "system" when no wallpaper is set. */
+export const ThemeMode = Schema.Literals(["system", "wallpaper", "light", "dark"]);
 export type ThemeMode = typeof ThemeMode.Type;
 export const DEFAULT_THEME_MODE: ThemeMode = "system";
 
@@ -40,6 +42,26 @@ export const DEFAULT_LIGHT_THEME_ID = "builtin:shioricode-light";
 export const DEFAULT_DARK_THEME_ID = "builtin:shioricode-dark";
 export const DEFAULT_UI_FONT_FAMILY = "system-ui";
 export const DEFAULT_CODE_FONT_FAMILY = "ui-monospace";
+export const AppearanceBackgroundKind = Schema.Literals(["none", "preset", "custom"]);
+export type AppearanceBackgroundKind = typeof AppearanceBackgroundKind.Type;
+export const AppearanceBackgroundPresetId = Schema.Literals([
+  "evening-journey",
+  "japanese-spring",
+  "japanese-summer",
+  "japanese-autumn",
+  "japanese-winter",
+]);
+export type AppearanceBackgroundPresetId = typeof AppearanceBackgroundPresetId.Type;
+export const AppearanceBackground = Schema.Struct({
+  kind: AppearanceBackgroundKind.pipe(Schema.withDecodingDefault(() => "none" as const)),
+  presetId: Schema.optionalKey(AppearanceBackgroundPresetId),
+  customVersion: TrimmedString.pipe(Schema.withDecodingDefault(() => "")),
+  opacity: Schema.Number.pipe(Schema.withDecodingDefault(() => 100)),
+  blur: Schema.Number.pipe(Schema.withDecodingDefault(() => 0)),
+  mainOpacity: Schema.Number.pipe(Schema.withDecodingDefault(() => 100)),
+  mainBlur: Schema.Number.pipe(Schema.withDecodingDefault(() => 0)),
+});
+export type AppearanceBackground = typeof AppearanceBackground.Type;
 export const ThreadDoneNotificationSound = Schema.Literals(["chime", "bell", "pop", "sweep"]);
 export type ThreadDoneNotificationSound = typeof ThreadDoneNotificationSound.Type;
 
@@ -430,6 +452,7 @@ export const ServerSettings = Schema.Struct({
   computerUse: ComputerUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   browserUse: BrowserUseSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   mobileApp: MobileAppSettings.pipe(Schema.withDecodingDefault(() => ({}))),
+  appearanceBackground: AppearanceBackground.pipe(Schema.withDecodingDefault(() => ({}))),
 
   // MCP servers (global, with per-server provider affinity)
   mcpServers: McpServersConfig.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -587,6 +610,16 @@ const MobileAppSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
+const AppearanceBackgroundPatch = Schema.Struct({
+  kind: Schema.optionalKey(AppearanceBackgroundKind),
+  presetId: Schema.optionalKey(AppearanceBackgroundPresetId),
+  customVersion: Schema.optionalKey(Schema.String),
+  opacity: Schema.optionalKey(Schema.Number),
+  blur: Schema.optionalKey(Schema.Number),
+  mainOpacity: Schema.optionalKey(Schema.Number),
+  mainBlur: Schema.optionalKey(Schema.Number),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   generateMemories: Schema.optionalKey(Schema.Boolean),
@@ -600,6 +633,7 @@ export const ServerSettingsPatch = Schema.Struct({
   computerUse: Schema.optionalKey(ComputerUseSettingsPatch),
   browserUse: Schema.optionalKey(BrowserUseSettingsPatch),
   mobileApp: Schema.optionalKey(MobileAppSettingsPatch),
+  appearanceBackground: Schema.optionalKey(AppearanceBackgroundPatch),
   mcpServers: Schema.optionalKey(
     Schema.Struct({
       servers: Schema.optionalKey(Schema.Array(McpServerEntry)),

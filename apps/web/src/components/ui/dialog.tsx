@@ -67,6 +67,7 @@ function DialogPopup({
               "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4 max-sm:before:hidden max-sm:before:rounded-none",
             className,
           )}
+          data-app-float-surface="dense"
           data-slot="dialog-popup"
           {...props}
         >

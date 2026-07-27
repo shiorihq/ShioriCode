@@ -54,7 +54,7 @@ const ComposerAlertRow = memo(function ComposerAlertRow({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="border-t border-border/30 first:border-t-0">
+    <div className="border-t border-hairline first:border-t-0">
       <div className="flex items-start gap-2.5 px-4 py-2.5">
         <span className="flex h-[18px] shrink-0 items-center">{icon}</span>
         <div className="min-w-0 flex-1">
@@ -231,7 +231,7 @@ const ComposerThreadResumeAlert = memo(function ComposerThreadResumeAlert({
               "h-6 px-2 text-[11px]",
               copy.variant === "error"
                 ? "border-destructive/20 text-destructive/80 hover:border-destructive/30 hover:bg-destructive/[0.04] hover:text-destructive"
-                : "border-border/50 hover:bg-muted/40",
+                : "border-hairline hover:bg-muted/40",
             )}
             onClick={(e) => {
               e.stopPropagation();

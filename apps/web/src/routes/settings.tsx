@@ -35,10 +35,10 @@ function SettingsContentLayout() {
   }, [navigateBack]);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none text-foreground isolate">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-app-canvas text-foreground">
         {!isElectron && (
-          <header className="border-b border-border px-3 py-2 sm:px-5">
+          <header data-app-chrome className="border-b border-border px-3 py-2 sm:px-5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground">Settings</span>
               <div className="ms-auto flex items-center gap-2">
@@ -57,7 +57,10 @@ function SettingsContentLayout() {
         )}
 
         {isElectron && (
-          <div className="app-titlebar-window-controls-inset drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5 [--app-titlebar-base-left-padding:1.25rem]">
+          <div
+            data-app-chrome
+            className="app-titlebar-window-controls-inset drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5 [--app-titlebar-base-left-padding:1.25rem]"
+          >
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>

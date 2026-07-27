@@ -27,7 +27,7 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        "@container/diff-panel flex h-full min-w-0 flex-col overflow-hidden bg-background",
+        "@container/diff-panel flex h-full min-w-0 flex-col overflow-hidden bg-app-pane",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
@@ -49,8 +49,8 @@ export function DiffPanelHeaderSkeleton() {
   return (
     <>
       <div className="relative min-w-0 flex-1">
-        <Skeleton className="absolute left-0 top-1/2 size-6 -translate-y-1/2 rounded-md border border-border/50" />
-        <Skeleton className="absolute right-0 top-1/2 size-6 -translate-y-1/2 rounded-md border border-border/50" />
+        <Skeleton className="absolute left-0 top-1/2 size-6 -translate-y-1/2 rounded-md border border-hairline" />
+        <Skeleton className="absolute right-0 top-1/2 size-6 -translate-y-1/2 rounded-md border border-hairline" />
         <div className="flex gap-1 overflow-hidden px-8 py-0.5">
           <Skeleton className="h-6 w-16 shrink-0 rounded-md" />
           <Skeleton className="h-6 w-24 shrink-0 rounded-md" />
@@ -70,11 +70,11 @@ export function DiffPanelLoadingState(props: { label: string }) {
     <div className="relative flex min-h-0 flex-1 overflow-hidden p-2">
       <div
         aria-hidden="true"
-        className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-border/60 bg-card/30"
+        className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-hairline bg-card/30"
       >
         <div className="absolute inset-0 bg-linear-to-br from-background/25 via-transparent to-primary/5" />
         <div className="absolute inset-0 scale-[1.015] blur-[3px]">
-          <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+          <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
             <div className="h-4 w-28 rounded-full bg-foreground/[0.08]" />
             <div className="ml-auto h-4 w-16 rounded-full bg-foreground/[0.07]" />
           </div>
@@ -145,7 +145,7 @@ function DiffPanelLoadingPreviewBlock(props: {
   }>;
 }) {
   return (
-    <div className="rounded-md border border-border/35 bg-background/55 p-3">
+    <div className="rounded-md border border-hairline bg-background/55 p-3">
       <div className="space-y-2">
         {props.rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3">

@@ -6,6 +6,7 @@ import {
   IconXmarkOutline24 as XIcon,
 } from "nucleo-core-outline-24";
 import {
+  type ThemeMode,
   DEFAULT_DARK_THEME_ID,
   DEFAULT_LIGHT_THEME_ID,
   DEFAULT_UNIFIED_SETTINGS,
@@ -22,6 +23,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AppearanceBackgroundPicker } from "./AppearanceBackgroundPicker";
 import {
   DEFAULT_CODE_FONT_OPTION,
   DEFAULT_UI_FONT_OPTION,
@@ -35,9 +37,12 @@ import {
 
 const THEME_OPTIONS = [
   { value: "system", label: "System" },
+  { value: "wallpaper", label: "Match background" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ] as const;
+
+const THEME_OPTION_VALUES = new Set<string>(THEME_OPTIONS.map((option) => option.value));
 
 const APPEARANCE_THEME_LABELS = {
   light: "Light theme",
@@ -184,7 +189,7 @@ export function AppearanceSettingsPanel() {
       <SettingsSection title="Themes">
         <SettingsRow
           title="Theme mode"
-          description="Choose when the app resolves to its light or dark appearance."
+          description="Choose when the app resolves to its light or dark appearance. Match background reads the brightness of your background image and picks the appearance its text will stand out against."
           resetAction={
             theme !== DEFAULT_UNIFIED_SETTINGS.themeMode ? (
               <ResetButton label="theme mode" onClick={() => setTheme("system")} />
@@ -194,8 +199,8 @@ export function AppearanceSettingsPanel() {
             <Select
               value={theme}
               onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
+                if (typeof value === "string" && THEME_OPTION_VALUES.has(value)) {
+                  setTheme(value as ThemeMode);
                 }
               }}
             >
@@ -314,7 +319,7 @@ export function AppearanceSettingsPanel() {
               {importedThemes.map((customTheme) => (
                 <div
                   key={customTheme.id}
-                  className="flex flex-col gap-2 rounded-xl border border-border/80 bg-background/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex flex-col gap-2 rounded-xl border border-hairline bg-background/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -361,7 +366,7 @@ export function AppearanceSettingsPanel() {
               ))}
             </div>
           ) : (
-            <div className="mt-4 rounded-xl border border-dashed border-border/80 bg-background/40 px-3 py-4 text-xs text-muted-foreground">
+            <div className="mt-4 rounded-xl border border-dashed border-hairline bg-background/40 px-3 py-4 text-xs text-muted-foreground">
               Imported themes will appear here after you add a JSON file.
             </div>
           )}
@@ -373,6 +378,42 @@ export function AppearanceSettingsPanel() {
             <PaintbrushIcon className="size-3" />
             Build your own theme
           </Link>
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection title="Background">
+        <SettingsRow
+          title="Background image"
+          description="Choose a hand-painted Japanese scene or upload an image stored on this ShioriCode host."
+          resetAction={
+            settings.appearanceBackground.kind !== "none" ||
+            settings.appearanceBackground.opacity !==
+              DEFAULT_UNIFIED_SETTINGS.appearanceBackground.opacity ||
+            settings.appearanceBackground.blur !==
+              DEFAULT_UNIFIED_SETTINGS.appearanceBackground.blur ||
+            settings.appearanceBackground.mainOpacity !==
+              DEFAULT_UNIFIED_SETTINGS.appearanceBackground.mainOpacity ||
+            settings.appearanceBackground.mainBlur !==
+              DEFAULT_UNIFIED_SETTINGS.appearanceBackground.mainBlur ? (
+              <ResetButton
+                label="background image"
+                onClick={() =>
+                  updateSettings({
+                    appearanceBackground: {
+                      ...settings.appearanceBackground,
+                      kind: "none",
+                      opacity: DEFAULT_UNIFIED_SETTINGS.appearanceBackground.opacity,
+                      blur: DEFAULT_UNIFIED_SETTINGS.appearanceBackground.blur,
+                      mainOpacity: DEFAULT_UNIFIED_SETTINGS.appearanceBackground.mainOpacity,
+                      mainBlur: DEFAULT_UNIFIED_SETTINGS.appearanceBackground.mainBlur,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <AppearanceBackgroundPicker />
         </SettingsRow>
       </SettingsSection>
 

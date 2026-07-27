@@ -42,7 +42,7 @@ function FadedListViewport(props: {
 }) {
   return (
     <div
-      className="border-t border-border/45"
+      className="border-t border-hairline"
       style={{ maskImage: FADE_LIST_MASK_IMAGE, WebkitMaskImage: FADE_LIST_MASK_IMAGE }}
       aria-label={props.ariaLabel}
     >
@@ -104,7 +104,7 @@ const ComposerQueuedRow = memo(function ComposerQueuedRow(props: {
   const tooltipText = isFailed && queuedTurn.errorMessage ? queuedTurn.errorMessage : previewText;
 
   return (
-    <div className="group/queued-row flex min-w-0 items-center gap-2.5 border-t border-border/35 px-4 py-2 first:border-t-0">
+    <div className="group/queued-row flex min-w-0 items-center gap-2.5 border-t border-hairline px-4 py-2 first:border-t-0">
       <ArrowUpIcon
         aria-hidden
         className={cn(
@@ -217,7 +217,7 @@ const ComposerTaskListRow = memo(function ComposerTaskListRow(props: { item: Act
   return (
     <div
       className={cn(
-        "group/task-row border-t border-border/35 px-4 py-2 first:border-t-0",
+        "group/task-row border-t border-hairline px-4 py-2 first:border-t-0",
         completed && "opacity-55",
       )}
     >
@@ -308,7 +308,7 @@ const BackgroundSubagentRow = memo(function BackgroundSubagentRow(props: {
 
   return (
     <div
-      className="border-t border-border/35 px-4 py-2 first:border-t-0"
+      className="border-t border-hairline px-4 py-2 first:border-t-0"
       data-background-subagent-row="true"
       data-testid={`background-subagent-row-${row.id}`}
     >
@@ -356,7 +356,7 @@ const ComposerContextSection = memo(function ComposerContextSection(props: {
   const { title, icon: Icon, count, open, onOpenChange, children } = props;
 
   return (
-    <div className="border-t border-border/40 first:border-t-0">
+    <div className="border-t border-hairline first:border-t-0">
       <button
         type="button"
         className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-2.5 text-left focus-visible:outline-none"

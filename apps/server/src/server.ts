@@ -7,6 +7,10 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/serverInstance";
 
 import { authRoutesLayer } from "./auth/authRoutes";
+import {
+  appearanceBackgroundFileRouteLayer,
+  appearanceBackgroundUploadRouteLayer,
+} from "./appearanceBackground";
 import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
 import { linkAccessRoutesLayer } from "./auth/linkAccessRoutes";
 import { RemoteAccessLive, remoteHealthRouteLayer, SERVER_BOOT_ID } from "./remote/RemoteAccess";
@@ -266,6 +270,8 @@ const RuntimeServicesLive = RuntimeServicesBaseLive.pipe(
 
 export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
+  appearanceBackgroundUploadRouteLayer,
+  appearanceBackgroundFileRouteLayer,
   avatarUploadRouteLayer,
   avatarDeleteRouteLayer,
   browserPanelRequestRouteLayer,

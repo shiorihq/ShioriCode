@@ -596,7 +596,7 @@ function MessagesTimelineView({
     const groupId = row.expansionId;
     const entries = row.groupedEntries;
     const hasChildren = row.childRows.length > 0;
-    const wrapperClassName = depth > 0 ? "ml-4 border-l border-border/40 pl-3" : "";
+    const wrapperClassName = depth > 0 ? "ml-4 border-l border-hairline pl-3" : "";
 
     if (hasChildren) {
       const parentEntry = entries[0]!;
@@ -958,7 +958,7 @@ function MessagesTimelineView({
                       (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
                         <div
                           key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                          className="overflow-hidden rounded-lg border border-hairline bg-background/70"
                         >
                           {image.previewUrl ? (
                             <button
@@ -1476,7 +1476,7 @@ const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-border/50 bg-background/40">
+    <div className="mt-3 overflow-hidden rounded-xl border border-hairline bg-background/40">
       <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3.5">
         <p
           className={cn(
@@ -1543,7 +1543,7 @@ const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         </div>
       </div>
       {!isFileListCollapsed && (
-        <div className="border-t border-border/40 py-1">
+        <div className="border-t border-hairline py-1">
           {visibleFiles.map((file) => {
             const additions = file.additions ?? 0;
             const deletions = file.deletions ?? 0;
@@ -2554,7 +2554,7 @@ const DelegatedAgentCardView = memo(function DelegatedAgentCardView(props: {
     <div
       className={cn(
         CHAT_THREAD_BODY_CLASS,
-        "mt-1 space-y-1 rounded-md border border-border/55 bg-muted/25 px-3 py-2 text-foreground/80",
+        "mt-1 space-y-1 rounded-md border border-hairline bg-muted/25 px-3 py-2 text-foreground/80",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -2565,7 +2565,7 @@ const DelegatedAgentCardView = memo(function DelegatedAgentCardView(props: {
           </span>
         )}
         {card.runInBackground && (
-          <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-foreground/65">
+          <span className="rounded-sm border border-hairline px-1.5 py-0.5 text-foreground/65">
             Background
           </span>
         )}
@@ -2838,7 +2838,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
                       key={`${commandAction.label}:${commandAction.detail ?? ""}`}
                       className={cn(
                         CHAT_THREAD_BODY_CLASS,
-                        "rounded-full border border-border/70 px-2 py-0.5 text-foreground/60",
+                        "rounded-full border border-hairline px-2 py-0.5 text-foreground/60",
                       )}
                       title={commandAction.detail ?? undefined}
                     >
@@ -2901,7 +2901,7 @@ export const ExpandableWorkEntry = memo(function ExpandableWorkEntry(
 
           {planProposalMarkdown && (
             <div className="mt-1">
-              <div className="rounded-lg border border-border/55 bg-muted/25 px-3 py-2 text-foreground/80">
+              <div className="rounded-lg border border-hairline bg-muted/25 px-3 py-2 text-foreground/80">
                 <ChatMarkdown text={planProposalMarkdown} cwd={cwd} />
               </div>
             </div>

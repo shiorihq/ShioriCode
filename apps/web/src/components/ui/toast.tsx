@@ -224,6 +224,9 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
 
           return (
             <Toast.Root
+              // Dense, not glass: these stack, and a translucent front toast
+              // would show the one queued behind it as a ghost.
+              data-app-float-surface="dense"
               className={cn(
                 "absolute z-[calc(9999-var(--toast-index))] h-(--toast-calc-height) w-full select-none rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 [transition:transform_.5s_cubic-bezier(.22,1,.36,1),opacity_.5s,height_.15s] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
                 // Base positioning using data-position
@@ -385,6 +388,7 @@ function AnchoredToasts() {
                       ? "rounded-md shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]"
                       : "rounded-lg shadow-lg/5 before:rounded-[calc(var(--radius-lg)-1px)]",
                   )}
+                  data-app-float-surface=""
                   data-slot="toast-popup"
                   toast={toast}
                 >

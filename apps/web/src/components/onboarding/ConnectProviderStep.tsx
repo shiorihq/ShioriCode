@@ -70,7 +70,7 @@ export function ConnectProviderStep({ pendingStepId, onCompleteStep }: ConnectPr
             <m.div
               initial={skip ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="rounded-xl border border-border/70 bg-background/40 p-4"
+              className="rounded-xl border border-hairline bg-background/40 p-4"
             >
               <p className="text-sm text-muted-foreground">
                 <LoadingText>Checking provider status...</LoadingText>
