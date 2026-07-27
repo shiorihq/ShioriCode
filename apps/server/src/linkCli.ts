@@ -1,4 +1,7 @@
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 
 import { LinkControlPlaneClient } from "./remote/linkClient";
 import { LinkRemoteStore } from "./remote/linkStore";
@@ -7,14 +10,18 @@ import {
   controlService,
   installedServiceLayout,
   linkServiceStateDir,
-  repairServiceStateOwnership,
   requireServiceAdministrator,
+  serviceLayout,
+  type ServiceLayout,
 } from "./serviceManager";
+
+const execFile = promisify(execFileCallback);
 
 const DEFAULT_SHIORI_ORIGIN = "https://shiori.codes";
 const REQUEST_TIMEOUT_MS = 15_000;
+const LINK_SERVICE_CHILD_ENV = "SHIORICODE_LINK_SERVICE_CHILD";
 
-interface DeviceStartResponse {
+export interface DeviceStartResponse {
   readonly deviceCode: string;
   readonly userCode: string;
   readonly verificationUri: string;
@@ -23,13 +30,35 @@ interface DeviceStartResponse {
   readonly interval: number;
 }
 
-interface DeviceTokens {
+export interface DeviceTokens {
   readonly token: string;
   readonly refreshToken: string;
 }
 
-function linkOrigin(): string {
-  return (process.env.SHIORICODE_LINK_API_URL ?? DEFAULT_SHIORI_ORIGIN).trim().replace(/\/$/, "");
+function linkOrigin(
+  configured = process.env.SHIORICODE_LINK_API_URL ?? DEFAULT_SHIORI_ORIGIN,
+): string {
+  const origin = configured.trim().replace(/\/$/, "");
+  if (
+    origin.length === 0 ||
+    origin.length > 2_048 ||
+    ["\0", "\r", "\n"].some((character) => origin.includes(character))
+  )
+    throw new Error("Invalid ShioriCode Link API URL");
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    throw new Error("Invalid ShioriCode Link API URL");
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new Error("Invalid ShioriCode Link API URL");
+  }
+  return origin;
 }
 
 async function jsonRequest<T>(
@@ -38,7 +67,11 @@ async function jsonRequest<T>(
 ): Promise<{ readonly response: Response; readonly body: T | null }> {
   const response = await fetch(`${linkOrigin()}${pathname}`, {
     ...init,
-    headers: { "Content-Type": "application/json", "X-Shiori-Client": "cli", ...init.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shiori-Client": "cli",
+      ...init.headers,
+    },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const body = (await response.json().catch(() => null)) as T | null;
@@ -65,7 +98,9 @@ async function startDeviceAuthorization(): Promise<DeviceStartResponse> {
   return body as DeviceStartResponse;
 }
 
-async function waitForDeviceAuthorization(input: DeviceStartResponse): Promise<DeviceTokens> {
+export async function waitForDeviceAuthorization(
+  input: DeviceStartResponse,
+): Promise<DeviceTokens> {
   const deadline = Date.now() + input.expiresIn * 1_000;
   let intervalMs = Math.max(1_000, input.interval * 1_000);
   let tick = 0;
@@ -76,10 +111,21 @@ async function waitForDeviceAuthorization(input: DeviceStartResponse): Promise<D
       process.stdout.write(`\r${frames[tick % frames.length]} Waiting for GitHub authorization…`);
       tick += 1;
     }
-    const { response, body } = await jsonRequest<Partial<DeviceTokens>>(
-      "/api/shiori-code/link/device/token",
-      { method: "POST", body: JSON.stringify({ deviceCode: input.deviceCode }) },
-    );
+    let result: {
+      readonly response: Response;
+      readonly body: Partial<DeviceTokens> | null;
+    };
+    try {
+      result = await jsonRequest<Partial<DeviceTokens>>("/api/shiori-code/link/device/token", {
+        method: "POST",
+        body: JSON.stringify({ deviceCode: input.deviceCode }),
+      });
+    } catch {
+      // A device code remains valid across transient DNS, timeout, and connection
+      // failures. Keep polling until the authorization server's deadline.
+      continue;
+    }
+    const { response, body } = result;
     if (response.ok && body?.token && body.refreshToken) {
       if (process.stdout.isTTY)
         process.stdout.write("\r✓ GitHub authorization complete.          \n");
@@ -101,36 +147,314 @@ async function waitForDeviceAuthorization(input: DeviceStartResponse): Promise<D
   throw new Error("The GitHub authorization code expired");
 }
 
-function serviceLinkContext() {
-  const layout = installedServiceLayout();
-  if (layout.accountMode === "dedicated") requireServiceAdministrator(layout.platform);
-  const store = new LinkRemoteStore({ stateDir: linkServiceStateDir(layout) });
-  const client = new LinkControlPlaneClient({ store, origin: linkOrigin() });
-  return { layout, store, client };
+export interface LinkServiceExecution {
+  readonly layout: ServiceLayout;
+  readonly serviceChild: boolean;
 }
 
-export async function connectLinkEnvironment(displayName: string): Promise<string> {
-  const { layout, store, client } = serviceLinkContext();
-  const authorization = await startDeviceAuthorization();
-  console.log("\nConnect this ShioriCode server to your GitHub account:\n");
-  console.log(`  ${authorization.verificationUriComplete}`);
-  console.log(`\nCode: ${authorization.userCode}\n`);
-  console.log("Open the URL on any computer. This command will wait here.");
-  const tokens = await waitForDeviceAuthorization(authorization);
-  store.setAccount({ accessToken: tokens.token, refreshToken: tokens.refreshToken });
-  const connector = await client.provision({
-    instanceId: store.instanceId,
-    displayName: displayName.trim() || os.hostname() || "ShioriCode",
+interface LinkServiceChildContext {
+  readonly layout: ServiceLayout;
+}
+
+export interface LinkServiceChildValidation {
+  readonly platform?: NodeJS.Platform;
+  readonly effectiveUid?: number | undefined;
+  readonly resolveUid?: (account: string) => Promise<number>;
+}
+
+async function resolveServiceAccountUid(account: string): Promise<number> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFile("/usr/bin/id", ["-u", account], {
+      encoding: "utf8",
+    }));
+  } catch {
+    throw new Error(`Could not resolve the service account UID for ${account}`);
+  }
+  const value = stdout.trim();
+  if (!/^\d+$/u.test(value))
+    throw new Error(`Could not resolve the service account UID for ${account}`);
+  const uid = Number(value);
+  if (!Number.isSafeInteger(uid) || uid < 0)
+    throw new Error(`Could not resolve the service account UID for ${account}`);
+  return uid;
+}
+
+export async function decodeLinkServiceChildLayout(
+  encoded = process.env[LINK_SERVICE_CHILD_ENV],
+  validation: LinkServiceChildValidation = {},
+): Promise<ServiceLayout | null> {
+  if (!encoded) return null;
+  if (encoded.length > 16 * 1024) throw new Error("Invalid Link service-child context");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Invalid Link service-child context");
+  }
+  const candidate =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Partial<LinkServiceChildContext>).layout
+      : undefined;
+  const runtimePlatform = validation.platform ?? process.platform;
+  if (
+    !candidate ||
+    (candidate.platform !== "linux" && candidate.platform !== "darwin") ||
+    candidate.platform !== runtimePlatform ||
+    (candidate.accountMode !== "dedicated" && candidate.accountMode !== "current") ||
+    typeof candidate.account !== "string" ||
+    typeof candidate.homeDir !== "string" ||
+    typeof candidate.stateDir !== "string" ||
+    typeof candidate.workspaceDir !== "string" ||
+    typeof candidate.logPath !== "string" ||
+    typeof candidate.servicePath !== "string" ||
+    !path.posix.isAbsolute(candidate.homeDir) ||
+    !path.posix.isAbsolute(candidate.stateDir) ||
+    !path.posix.isAbsolute(candidate.workspaceDir) ||
+    !path.posix.isAbsolute(candidate.logPath) ||
+    ["\0", "\r", "\n"].some((character) =>
+      `${candidate.account}${candidate.homeDir}${candidate.stateDir}${candidate.workspaceDir}${candidate.logPath}${candidate.servicePath}`.includes(
+        character,
+      ),
+    )
+  ) {
+    throw new Error("Invalid Link service-child context");
+  }
+  const layout = serviceLayout(candidate.platform, {
+    accountMode: candidate.accountMode,
+    account: candidate.account,
+    homeDir: candidate.homeDir,
+    stateDir: candidate.stateDir,
+    workspaceDir: candidate.workspaceDir,
+    logPath: candidate.logPath,
+    servicePath: candidate.servicePath,
+    port: candidate.port,
   });
-  store.setConnector(connector);
-  new RemoteStateStore({ stateDir: linkServiceStateDir(layout) }).set("shiori-link");
-  await repairServiceStateOwnership(layout);
-  await controlService("restart");
-  return connector.endpoint;
+  const effectiveUid =
+    validation.effectiveUid ??
+    (typeof process.getuid === "function" ? process.getuid() : undefined);
+  const accountUid = await (validation.resolveUid ?? resolveServiceAccountUid)(layout.account);
+  if (effectiveUid === undefined || accountUid === 0 || effectiveUid !== accountUid) {
+    throw new Error("Invalid Link service-child identity");
+  }
+  return layout;
+}
+
+async function resolveLinkServiceExecution(): Promise<LinkServiceExecution> {
+  const childLayout = await decodeLinkServiceChildLayout();
+  if (childLayout) return { layout: childLayout, serviceChild: true };
+  const layout = await installedServiceLayout();
+  if (layout.accountMode === "dedicated") requireServiceAdministrator(layout.platform);
+  return { layout, serviceChild: false };
+}
+
+export function linkServiceChildCommand(
+  layout: ServiceLayout,
+  argv: readonly string[] = process.argv,
+  origin = linkOrigin(),
+): { readonly file: string; readonly args: readonly string[] } {
+  if (layout.platform === "win32") throw new Error("Link service-child execution requires POSIX");
+  if (!argv[1] || !path.posix.isAbsolute(argv[1]))
+    throw new Error("Could not resolve the ShioriCode CLI entrypoint");
+  const context = Buffer.from(
+    JSON.stringify({ layout } satisfies LinkServiceChildContext),
+    "utf8",
+  ).toString("base64url");
+  const environment = [
+    "-i",
+    "-u",
+    "SUDO_USER",
+    "-u",
+    "SUDO_UID",
+    "-u",
+    "SUDO_GID",
+    `${LINK_SERVICE_CHILD_ENV}=${context}`,
+    `HOME=${layout.homeDir}`,
+    `USER=${layout.account}`,
+    `LOGNAME=${layout.account}`,
+    `PATH=${layout.servicePath}`,
+    `SHIORICODE_LINK_API_URL=${linkOrigin(origin)}`,
+    process.execPath,
+    ...argv.slice(1),
+  ];
+  return layout.platform === "linux"
+    ? {
+        file: "/usr/sbin/runuser",
+        args: ["-u", layout.account, "--", "/usr/bin/env", ...environment],
+      }
+    : {
+        file: "/usr/bin/sudo",
+        args: ["-u", layout.account, "/usr/bin/env", ...environment],
+      };
+}
+
+export function linkServiceAccountCommand(
+  layout: ServiceLayout,
+  file: string,
+  args: readonly string[],
+): { readonly file: string; readonly args: readonly string[] } {
+  if (layout.platform === "win32") throw new Error("Link service-account execution requires POSIX");
+  return layout.platform === "linux"
+    ? {
+        file: "/usr/sbin/runuser",
+        args: ["-u", layout.account, "--", file, ...args],
+      }
+    : {
+        file: "/usr/bin/sudo",
+        args: ["-u", layout.account, file, ...args],
+      };
+}
+
+async function assertLinkServiceChildAccess(layout: ServiceLayout): Promise<void> {
+  const cliPath = process.argv[1];
+  if (!cliPath || !path.posix.isAbsolute(cliPath))
+    throw new Error("Could not resolve the ShioriCode CLI entrypoint");
+  for (const [flag, candidate, label] of [
+    ["-x", process.execPath, "runtime"],
+    ["-r", cliPath, "CLI entrypoint"],
+  ] as const) {
+    const command = linkServiceAccountCommand(layout, "/usr/bin/test", [flag, candidate]);
+    try {
+      await execFile(command.file, [...command.args], { encoding: "utf8" });
+    } catch {
+      throw new Error(
+        `The ${layout.account} service account cannot access the ShioriCode ${label}`,
+      );
+    }
+  }
+}
+
+async function runLinkServiceChild(layout: ServiceLayout): Promise<void> {
+  await assertLinkServiceChildAccess(layout);
+  const command = linkServiceChildCommand(layout);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command.file, [...command.args], {
+      stdio: "inherit",
+      windowsHide: true,
+      shell: false,
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Link service-child exited with ${signal ?? `code ${code ?? 1}`}`));
+    });
+  });
+}
+
+export interface LinkMutationReexecDependencies {
+  readonly effectiveUid: () => number | undefined;
+  readonly resolveUid: (account: string) => Promise<number>;
+  readonly runChild: (layout: ServiceLayout) => Promise<void>;
+  readonly restart: () => Promise<unknown>;
+}
+
+export function linkMutationRequiresServiceChild(
+  layout: ServiceLayout,
+  effectiveUid: number,
+  accountUid: number,
+): boolean {
+  return layout.platform !== "win32" && effectiveUid !== accountUid;
+}
+
+export async function reexecLinkMutationIfNeeded(
+  execution: LinkServiceExecution,
+  dependencies: LinkMutationReexecDependencies = {
+    effectiveUid: () => (typeof process.getuid === "function" ? process.getuid() : undefined),
+    resolveUid: resolveServiceAccountUid,
+    runChild: runLinkServiceChild,
+    restart: async () => await controlService("restart"),
+  },
+): Promise<boolean> {
+  const { layout } = execution;
+  if (execution.serviceChild || layout.platform === "win32") {
+    return false;
+  }
+  const effectiveUid = dependencies.effectiveUid();
+  if (effectiveUid === undefined) throw new Error("Could not resolve the effective UID for Link");
+  const accountUid = await dependencies.resolveUid(layout.account);
+  if (!linkMutationRequiresServiceChild(layout, effectiveUid, accountUid)) return false;
+  if (accountUid === 0) throw new Error("Refusing to run a Link service child as root");
+  await dependencies.runChild(layout);
+  await dependencies.restart();
+  return true;
+}
+
+export interface LinkMutationDispatchDependencies {
+  readonly resolveExecution: () => Promise<LinkServiceExecution>;
+  readonly reexec: (execution: LinkServiceExecution) => Promise<boolean>;
+}
+
+export async function dispatchLinkMutation<T>(
+  mutate: (execution: LinkServiceExecution) => Promise<T>,
+  dependencies: LinkMutationDispatchDependencies = {
+    resolveExecution: resolveLinkServiceExecution,
+    reexec: reexecLinkMutationIfNeeded,
+  },
+): Promise<T | null> {
+  const execution = await dependencies.resolveExecution();
+  if (await dependencies.reexec(execution)) return null;
+  try {
+    return await mutate(execution);
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as { readonly code?: unknown }).code
+        : undefined;
+    if (execution.layout.platform !== "win32" && (code === "EACCES" || code === "EPERM")) {
+      throw new Error(
+        `The ${execution.layout.account} service account cannot update Link state at ${linkServiceStateDir(execution.layout)}. Legacy files may still belong to an administrator; manually reassign or remove those files as an administrator. ShioriCode will not recursively change their ownership.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+async function serviceLinkContext(
+  input: { readonly readOnly?: boolean } = {},
+  execution?: LinkServiceExecution,
+) {
+  const resolved = execution ?? (await resolveLinkServiceExecution());
+  const { layout } = resolved;
+  const store = new LinkRemoteStore({
+    stateDir: linkServiceStateDir(layout),
+    createIfMissing: input.readOnly !== true,
+  });
+  const client = new LinkControlPlaneClient({ store, origin: linkOrigin() });
+  return { ...resolved, store, client };
+}
+
+export async function connectLinkEnvironment(
+  displayName: string,
+  dependencies?: LinkMutationDispatchDependencies,
+): Promise<string | null> {
+  return await dispatchLinkMutation(async (execution) => {
+    const { layout, serviceChild, store, client } = await serviceLinkContext({}, execution);
+    const authorization = await startDeviceAuthorization();
+    console.log("\nConnect this ShioriCode server to your GitHub account:\n");
+    console.log(`  ${authorization.verificationUriComplete}`);
+    console.log(`\nCode: ${authorization.userCode}\n`);
+    console.log("Open the URL on any computer. This command will wait here.");
+    const tokens = await waitForDeviceAuthorization(authorization);
+    store.setAccount({
+      accessToken: tokens.token,
+      refreshToken: tokens.refreshToken,
+    });
+    const connector = await client.provision({
+      instanceId: store.instanceId,
+      displayName: displayName.trim() || os.hostname() || "ShioriCode",
+    });
+    store.setConnector(connector);
+    new RemoteStateStore({
+      stateDir: linkServiceStateDir(layout),
+    }).transitionWithoutTailscaleTeardown("shiori-link");
+    if (!serviceChild) await controlService("restart");
+    return connector.endpoint;
+  }, dependencies);
 }
 
 export async function listLinkEnvironments(): Promise<string> {
-  const { client } = serviceLinkContext();
+  const { client } = await serviceLinkContext({ readOnly: true });
   const environments = await client.list();
   if (environments.length === 0) return "No Link environments found.";
   return environments
@@ -145,8 +469,8 @@ export async function listLinkEnvironments(): Promise<string> {
     .join("\n\n");
 }
 
-export function linkStatus(): string {
-  const { store } = serviceLinkContext();
+export async function linkStatus(): Promise<string> {
+  const { store } = await serviceLinkContext({ readOnly: true });
   if (!store.account) return "GitHub account: not connected\nLink environment: not configured";
   const connector = store.connector;
   return connector
@@ -154,13 +478,21 @@ export function linkStatus(): string {
     : "GitHub account: connected\nLink environment: not configured";
 }
 
-export async function disconnectLinkEnvironment(): Promise<string> {
-  const { layout, store, client } = serviceLinkContext();
-  const connector = store.connector;
-  if (connector && store.account) await client.revoke(connector.environmentRecordId);
-  store.clearAccount();
-  new RemoteStateStore({ stateDir: linkServiceStateDir(layout) }).set("off");
-  await repairServiceStateOwnership(layout);
-  await controlService("restart");
-  return "Disconnected GitHub and revoked this Link environment.";
+export async function disconnectLinkEnvironment(
+  dependencies?: LinkMutationDispatchDependencies,
+): Promise<string | null> {
+  return await dispatchLinkMutation(async (execution) => {
+    const { layout, serviceChild, store, client } = await serviceLinkContext({}, execution);
+    const connector = store.connector;
+    if (connector && store.account) await client.revoke(connector.environmentRecordId);
+    store.clearAccount();
+    const remoteState = new RemoteStateStore({
+      stateDir: linkServiceStateDir(layout),
+    });
+    if (remoteState.method === "shiori-link") {
+      remoteState.transitionWithoutTailscaleTeardown("off");
+    }
+    if (!serviceChild) await controlService("restart");
+    return "Disconnected GitHub and revoked this Link environment.";
+  }, dependencies);
 }

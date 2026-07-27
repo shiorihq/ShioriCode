@@ -1,15 +1,18 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync } from "node:fs";
+import { isIP } from "node:net";
 import nodePath from "node:path";
 
-import { Effect, FileSystem, Layer } from "effect";
+import { Data, Effect, FileSystem, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import { decodeServerInstanceRecord, encodeServerInstanceRecord } from "shared/serverInstance";
 
 import { authRoutesLayer } from "./auth/authRoutes";
 import { EnvironmentAuthLive } from "./auth/EnvironmentAuth";
 import { linkAccessRoutesLayer } from "./auth/linkAccessRoutes";
-import { RemoteAccessLive, remoteHealthRouteLayer } from "./remote/RemoteAccess";
+import { RemoteAccessLive, remoteHealthRouteLayer, SERVER_BOOT_ID } from "./remote/RemoteAccess";
+import { hasPersistedLinkHostedAccess } from "./remote/linkStore";
 import { linkAuthCallbackRouteLayer } from "./remote/linkAuthRoute";
+import { RemoteStateStore } from "./remote/remoteStateStore";
 import { avatarDeleteRouteLayer, avatarUploadRouteLayer } from "./avatarUpload";
 import {
   BrowserPanelRequestsLive,
@@ -24,6 +27,7 @@ import { fixPath } from "./os-jank";
 import { websocketRpcRouteLayer } from "./ws";
 import { OpenLive } from "./open";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite";
+import { writeFileStringAtomically } from "./persistence/writeFileStringAtomically";
 import { ServerLifecycleEventsLive } from "./serverLifecycleEvents";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
@@ -73,6 +77,11 @@ import { AutomationServiceLive } from "./automations/Layers/AutomationService";
 // Bun defaults to 10 seconds, which aborts healthy long polls and makes the
 // phone appear offline while the desktop server is still running.
 const BUN_HTTP_IDLE_TIMEOUT_SECONDS = 35;
+
+class ServerStartupStateError extends Data.TaggedError("ServerStartupStateError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -287,14 +296,11 @@ export const withHttpRoutesReadySignal =
           const fs = yield* FileSystem.FileSystem;
           yield* HttpServer.HttpServer;
           const startup = yield* ServerRuntimeStartup;
-          yield* writeServerInstanceRecord(fs, config).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("failed to write server instance record", {
-                path: config.serverInstancePath,
-                cause,
-              }),
-            ),
-          );
+          // This record can contain the live legacy bearer token. Do not make
+          // the routed server ready unless its owner-only replacement was
+          // published successfully; otherwise an old 0644 record could keep a
+          // still-valid credential readable while the new server is online.
+          yield* writeServerInstanceRecord(fs, config);
           yield* Effect.addFinalizer(() =>
             clearServerInstanceRecord(fs, config).pipe(
               Effect.catch(() =>
@@ -313,21 +319,43 @@ export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
 
+    // Run before HttpServerLive is even constructed. HttpRouter.serve's tap is
+    // intentionally a post-listen readiness boundary, so doing this there
+    // would leave a brief upgrade window where a legacy 0644 token record and
+    // live routes coexist.
+    yield* Effect.try({
+      try: () => hardenExistingServerInstanceRecordBeforeListen(config.serverInstancePath),
+      catch: (cause) =>
+        new ServerStartupStateError({
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Could not harden the existing server instance record",
+          cause,
+        }),
+    });
+
     // Fail-closed gate: if the server is remote-reachable, it must have a way to
     // authenticate clients. Keyed on exposure intent (config.requireAuth), not on
     // the bind host, because a reverse proxy keeps the bind on loopback.
     if (config.requireAuth && !config.unsafeNoAuth) {
-      const hasCredentialsFile = existsSync(nodePath.join(config.stateDir, "credentials.json"));
-      const hasEnvCredentials = Boolean(
-        process.env.SHIORICODE_USERNAME && process.env.SHIORICODE_PASSWORD,
-      );
-      const hasLegacyToken = Boolean(config.authToken);
-      if (!hasCredentialsFile && !hasEnvCredentials && !hasLegacyToken) {
+      const authConfigured = yield* Effect.try({
+        try: () => hasConfiguredStartupAuthentication(config),
+        catch: (cause) =>
+          new ServerStartupStateError({
+            message:
+              cause instanceof Error
+                ? cause.message
+                : "Could not verify the configured authentication state",
+            cause,
+          }),
+      });
+      if (!authConfigured) {
         return yield* Effect.fail(
           new Error(
             "Refusing to start: remote access is enabled but no credentials are configured. " +
               "Set SHIORICODE_USERNAME and SHIORICODE_PASSWORD (persisted on first run), pass --auth-token, " +
-              "or pass --unsafe-no-auth to override (dangerous).",
+              "connect ShioriCode Link, or pass --unsafe-no-auth to override (dangerous).",
           ),
         );
       }
@@ -349,16 +377,37 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
+export function hasConfiguredStartupAuthentication(
+  config: ServerConfigShape,
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (
+    existsSync(nodePath.join(config.stateDir, "credentials.json")) ||
+    Boolean(environment.SHIORICODE_USERNAME && environment.SHIORICODE_PASSWORD) ||
+    Boolean(config.authToken)
+  ) {
+    return true;
+  }
+  const remoteState = new RemoteStateStore({ stateDir: config.stateDir });
+  return (
+    remoteState.method === "shiori-link" &&
+    !remoteState.needsCleanup &&
+    hasPersistedLinkHostedAccess(config.stateDir)
+  );
+}
+
 // Important: Only `ServerConfig` should be provided by the CLI layer.
 const RunServerDependencies = ServerSettingsLive;
 
 export const runServer = Layer.launch(makeServerLayer).pipe(Effect.provide(RunServerDependencies));
 
-function buildServerInstanceUrl(config: ServerConfigShape) {
-  const host =
+export function buildServerInstanceUrl(config: ServerConfigShape) {
+  const configuredHost =
     config.host && config.host !== "0.0.0.0" && config.host !== "::" && config.host !== "[::]"
       ? config.host
       : "127.0.0.1";
+  const unbracketedHost = configuredHost.replace(/^\[/, "").replace(/\]$/, "");
+  const host = isIP(unbracketedHost) === 6 ? `[${unbracketedHost}]` : configuredHost;
   const url = new URL(`ws://${host}:${config.port}/ws`);
   if (config.authToken) {
     url.searchParams.set("token", config.authToken);
@@ -366,33 +415,79 @@ function buildServerInstanceUrl(config: ServerConfigShape) {
   return url.toString();
 }
 
-const writeServerInstanceRecord = (fs: FileSystem.FileSystem, config: ServerConfigShape) =>
-  fs.writeFileString(
-    config.serverInstancePath,
-    `${JSON.stringify(
-      encodeServerInstanceRecord({
-        version: 1,
-        pid: process.pid,
-        port: config.port,
-        baseDir: config.baseDir,
-        startedAt: new Date().toISOString(),
-        wsUrl: buildServerInstanceUrl(config),
-        authToken: config.authToken ?? null,
-        launcher: config.mode,
-      }),
-      null,
-      2,
-    )}\n`,
-  );
+export function hardenExistingServerInstanceRecordBeforeListen(recordPath: string): void {
+  try {
+    const stat = lstatSync(recordPath);
+    if (!stat.isFile()) {
+      throw new Error(`Refusing to use a non-file server instance record: ${recordPath}`);
+    }
+    chmodSync(recordPath, 0o600);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw cause;
+  }
+}
 
-const clearServerInstanceRecord = (fs: FileSystem.FileSystem, config: ServerConfigShape) =>
+export const writeServerInstanceRecord = (fs: FileSystem.FileSystem, config: ServerConfigShape) =>
+  Effect.gen(function* () {
+    // Harden a record written by an older release before attempting the atomic
+    // replacement. If the replacement later fails, startup also fails and the
+    // legacy credential is no longer left world-readable.
+    if (yield* fs.exists(config.serverInstancePath)) {
+      yield* fs.chmod(config.serverInstancePath, 0o600);
+    }
+    const contents = yield* Effect.try({
+      try: () =>
+        `${JSON.stringify(
+          encodeServerInstanceRecord({
+            version: 1,
+            pid: process.pid,
+            port: config.port,
+            baseDir: config.baseDir,
+            startedAt: new Date().toISOString(),
+            bootId: SERVER_BOOT_ID,
+            wsUrl: buildServerInstanceUrl(config),
+            authToken: config.authToken ?? null,
+            launcher: config.mode,
+          }),
+          null,
+          2,
+        )}\n`,
+      catch: (cause) =>
+        new ServerStartupStateError({
+          message:
+            cause instanceof Error ? cause.message : "Could not encode server instance record",
+          cause,
+        }),
+    });
+    yield* writeFileStringAtomically(config.serverInstancePath, contents, { mode: 0o600 }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
+  });
+
+export const clearServerInstanceRecord = (fs: FileSystem.FileSystem, config: ServerConfigShape) =>
   Effect.gen(function* () {
     const exists = yield* fs.exists(config.serverInstancePath);
     if (!exists) {
       return;
     }
     const raw = yield* fs.readFileString(config.serverInstancePath);
-    const current = decodeServerInstanceRecord(JSON.parse(raw));
+    const current = yield* Effect.try({
+      try: () => decodeServerInstanceRecord(JSON.parse(raw)),
+      catch: (cause) =>
+        new ServerStartupStateError({
+          message:
+            cause instanceof Error ? cause.message : "Could not decode server instance record",
+          cause,
+        }),
+    }).pipe(
+      Effect.catch(() =>
+        fs.remove(config.serverInstancePath, { force: true }).pipe(Effect.as(null)),
+      ),
+    );
+    if (current === null) {
+      return;
+    }
     if (current.pid !== process.pid) {
       return;
     }

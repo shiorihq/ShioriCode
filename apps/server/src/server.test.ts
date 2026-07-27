@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createServer } from "node:http";
+import { readFile, readdir, stat } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import {
   CommandId,
@@ -535,6 +536,281 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get(`/attachments/${attachmentId}`);
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires an authenticated owner before creating a mobile pairing secret", () =>
+    Effect.gen(function* () {
+      const previousUsername = process.env.SHIORICODE_USERNAME;
+      const previousPassword = process.env.SHIORICODE_PASSWORD;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          process.env.SHIORICODE_USERNAME = "mobile-owner";
+          process.env.SHIORICODE_PASSWORD = "correct horse battery staple";
+        }),
+        () =>
+          Effect.sync(() => {
+            if (previousUsername === undefined) delete process.env.SHIORICODE_USERNAME;
+            else process.env.SHIORICODE_USERNAME = previousUsername;
+            if (previousPassword === undefined) delete process.env.SHIORICODE_PASSWORD;
+            else process.env.SHIORICODE_PASSWORD = previousPassword;
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        config: { requireAuth: true, authToken: undefined },
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              mobileApp: { enabled: true },
+            }),
+          },
+        },
+      });
+      const pairingUrl = yield* getHttpServerUrl("/api/mobile/pairing-sessions");
+
+      const denied = yield* Effect.promise(() => fetch(pairingUrl, { method: "POST" }));
+      assert.equal(denied.status, 401);
+      assert.notInclude(yield* Effect.promise(() => denied.text()), "pairingSecret");
+
+      const loginUrl = yield* getHttpServerUrl("/api/auth/login");
+      const login = yield* Effect.promise(() =>
+        fetch(loginUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: "mobile-owner",
+            password: "correct horse battery staple",
+          }),
+        }),
+      );
+      assert.equal(login.status, 200);
+      assert.match(login.headers.get("set-cookie") ?? "", /(?:^|;)\s*Secure(?:;|$)/i);
+      const loginBody = (yield* Effect.promise(() => login.json())) as {
+        token: string;
+      };
+
+      const allowed = yield* Effect.promise(() =>
+        fetch(pairingUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${loginBody.token}` },
+        }),
+      );
+      assert.equal(allowed.status, 200);
+      const allowedBody = (yield* Effect.promise(() => allowed.json())) as {
+        data: { qrPayload: string };
+      };
+      const qrPayload = JSON.parse(allowedBody.data.qrPayload) as { pairingSecret?: string };
+      assert.isString(qrPayload.pairingSecret);
+
+      const logoutUrl = yield* getHttpServerUrl("/api/auth/logout");
+      const logout = yield* Effect.promise(() =>
+        fetch(logoutUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${loginBody.token}` },
+        }),
+      );
+      assert.equal(logout.status, 200);
+      assert.match(logout.headers.get("set-cookie") ?? "", /(?:^|;)\s*Secure(?:;|$)/i);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("compares the legacy mobile pairing token through the shared auth boundary", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: { requireAuth: true, authToken: "legacy-secret" },
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              mobileApp: { enabled: true },
+            }),
+          },
+        },
+      });
+      const pairingUrl = yield* getHttpServerUrl("/api/mobile/pairing-sessions");
+
+      const denied = yield* Effect.promise(() =>
+        fetch(pairingUrl, {
+          method: "POST",
+          headers: { Authorization: "Bearer legacy-secrex" },
+        }),
+      );
+      assert.equal(denied.status, 401);
+
+      const allowed = yield* Effect.promise(() =>
+        fetch(pairingUrl, {
+          method: "POST",
+          headers: { Authorization: "Bearer legacy-secret" },
+        }),
+      );
+      assert.equal(allowed.status, 200);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("protects avatar upload and deletion before parsing attacker input", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: { requireAuth: true, authToken: "avatar-secret" },
+      });
+      const avatarUrl = yield* getHttpServerUrl("/api/profile/avatar");
+
+      const deniedUpload = yield* Effect.promise(() => fetch(avatarUrl, { method: "POST" }));
+      assert.equal(deniedUpload.status, 401);
+      const deniedDelete = yield* Effect.promise(() => fetch(avatarUrl, { method: "DELETE" }));
+      assert.equal(deniedDelete.status, 401);
+
+      const allowedUpload = yield* Effect.promise(() =>
+        fetch(avatarUrl, {
+          method: "POST",
+          headers: { Authorization: "Bearer avatar-secret" },
+        }),
+      );
+      assert.equal(allowedUpload.status, 400);
+
+      const allowedDelete = yield* Effect.promise(() =>
+        fetch(avatarUrl, {
+          method: "DELETE",
+          headers: {
+            Authorization: "Bearer avatar-secret",
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        }),
+      );
+      assert.equal(allowedDelete.status, 200);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns 400 for blank mobile identifiers and persists devices atomically", () =>
+    Effect.gen(function* () {
+      const config = yield* buildAppUnderTest({
+        config: { requireAuth: true, authToken: "mobile-secret" },
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              mobileApp: { enabled: true },
+            }),
+          },
+        },
+      });
+      const pairingUrl = yield* getHttpServerUrl("/api/mobile/pairing-sessions");
+      const pairUrl = yield* getHttpServerUrl("/api/mobile/pair");
+      const pairedDevices = yield* Effect.promise(async () => {
+        const sessions = await Promise.all(
+          Array.from({ length: 8 }, async () => {
+            const response = await fetch(pairingUrl, {
+              method: "POST",
+              headers: { Authorization: "Bearer mobile-secret" },
+            });
+            assert.equal(response.status, 200);
+            const body = (await response.json()) as {
+              data: { pairingId: string; qrPayload: string };
+            };
+            const payload = JSON.parse(body.data.qrPayload) as { pairingSecret: string };
+            return { pairingId: body.data.pairingId, pairingSecret: payload.pairingSecret };
+          }),
+        );
+        return Promise.all(
+          sessions.map(async (session, index) => {
+            const response = await fetch(pairUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ...session,
+                deviceName: `Security regression iPhone ${index}`,
+              }),
+            });
+            assert.equal(response.status, 200);
+            return (await response.json()) as {
+              data: { deviceId: string; token: string };
+            };
+          }),
+        );
+      });
+      const pairBody = pairedDevices[0];
+      assert.isDefined(pairBody);
+      const mobileHeaders = {
+        Authorization: `Bearer ${pairBody.data.token}`,
+        "x-shioricode-device-id": pairBody.data.deviceId,
+      };
+
+      const commandUrl = yield* getHttpServerUrl("/api/mobile/commands");
+      const invalidRequestId = yield* Effect.promise(() =>
+        fetch(commandUrl, {
+          method: "POST",
+          headers: { ...mobileHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "thread.archive",
+            requestId: "   ",
+            threadId: "thread-default",
+          }),
+        }),
+      );
+      assert.equal(invalidRequestId.status, 400);
+      assert.include(
+        yield* Effect.promise(() => invalidRequestId.text()),
+        "Invalid mobile command",
+      );
+
+      const validCommand = yield* Effect.promise(() =>
+        fetch(commandUrl, {
+          method: "POST",
+          headers: { ...mobileHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "thread.archive",
+            requestId: "request-1",
+            threadId: "missing-thread",
+          }),
+        }),
+      );
+      const validCommandBody = yield* Effect.promise(() => validCommand.text());
+      assert.equal(validCommand.status, 400, validCommandBody);
+      assert.include(validCommandBody, "Thread not found");
+
+      const invalidThreadUrl = yield* getHttpServerUrl("/api/mobile/thread/diff?threadId=%20%20");
+      const invalidThread = yield* Effect.promise(() =>
+        fetch(invalidThreadUrl, { headers: mobileHeaders }),
+      );
+      assert.equal(invalidThread.status, 400);
+      assert.include(yield* Effect.promise(() => invalidThread.text()), "Invalid threadId");
+
+      const validThreadUrl = yield* getHttpServerUrl(
+        "/api/mobile/thread/diff?threadId=thread-default",
+      );
+      const validThread = yield* Effect.promise(() =>
+        fetch(validThreadUrl, { headers: mobileHeaders }),
+      );
+      assert.equal(validThread.status, 200);
+
+      const invalidProjectUrl = yield* getHttpServerUrl(
+        "/api/mobile/workspace/entries?projectId=%20%20",
+      );
+      const invalidProject = yield* Effect.promise(() =>
+        fetch(invalidProjectUrl, { headers: mobileHeaders }),
+      );
+      assert.equal(invalidProject.status, 400);
+      assert.include(yield* Effect.promise(() => invalidProject.text()), "Invalid projectId");
+
+      const deviceStorePath = `${config.stateDir}/mobile-devices.json`;
+      const deviceStoreRaw = yield* Effect.promise(() => readFile(deviceStorePath, "utf8"));
+      const deviceStore = JSON.parse(deviceStoreRaw) as {
+        version: number;
+        devices: unknown[];
+      };
+      assert.equal(deviceStore.version, 1);
+      assert.lengthOf(deviceStore.devices, 8);
+      if (process.platform !== "win32") {
+        const deviceStoreStat = yield* Effect.promise(() => stat(deviceStorePath));
+        assert.equal(deviceStoreStat.mode & 0o777, 0o600);
+      }
+      const stateEntries = yield* Effect.promise(() => readdir(config.stateDir));
+      assert.deepEqual(
+        stateEntries.filter((entry) => entry.endsWith(".tmp")),
+        [],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

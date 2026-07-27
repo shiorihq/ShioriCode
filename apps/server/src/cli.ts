@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 import { NetService } from "shared/Net";
 import { Config, Effect, LogLevel, Option, Schema } from "effect";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
@@ -43,6 +45,9 @@ const BootstrapEnvelopeSchema = Schema.Struct({
   devUrl: Schema.optional(Schema.URLFromString),
   noBrowser: Schema.optional(Schema.Boolean),
   authToken: Schema.optional(Schema.String),
+  remote: Schema.optional(Schema.Boolean),
+  requireAuth: Schema.optional(Schema.Boolean),
+  unsafeNoAuth: Schema.optional(Schema.Boolean),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
   logWebSocketEvents: Schema.optional(Schema.Boolean),
 });
@@ -178,7 +183,18 @@ interface CliServerFlags {
 }
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
-  Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
+  Option.getOrElse(flag, () => envValue);
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  if (normalized === "localhost" || normalized === "::1") {
+    return true;
+  }
+  if (isIP(normalized) !== 4) {
+    return false;
+  }
+  return normalized.split(".", 1)[0] === "127";
+}
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -241,8 +257,11 @@ export const resolveServerConfig = (
         ),
       ),
     );
+    const defaultBaseDir = yield* resolveBaseDir(undefined);
     const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-    yield* ensureServerDirectories(derivedPaths);
+    yield* ensureServerDirectories(derivedPaths, {
+      hardenBaseDir: baseDir === defaultBaseDir,
+    });
     const noBrowser = resolveBooleanFlag(
       flags.noBrowser,
       Option.getOrElse(
@@ -299,10 +318,43 @@ export const resolveServerConfig = (
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
-    const remoteIntent = resolveBooleanFlag(flags.remote, env.remote ?? false);
-    const explicitRequireAuth = resolveBooleanFlag(flags.requireAuth, env.requireAuth ?? false);
-    const unsafeNoAuth = resolveBooleanFlag(flags.unsafeNoAuth, env.unsafeNoAuth ?? false);
-    const hostIsLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+    const remoteIntent = resolveBooleanFlag(
+      flags.remote,
+      Option.getOrElse(
+        resolveOptionPrecedence(
+          Option.fromUndefinedOr(env.remote),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.remote),
+          ),
+        ),
+        () => false,
+      ),
+    );
+    const explicitRequireAuth = resolveBooleanFlag(
+      flags.requireAuth,
+      Option.getOrElse(
+        resolveOptionPrecedence(
+          Option.fromUndefinedOr(env.requireAuth),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.requireAuth),
+          ),
+        ),
+        () => false,
+      ),
+    );
+    const unsafeNoAuth = resolveBooleanFlag(
+      flags.unsafeNoAuth,
+      Option.getOrElse(
+        resolveOptionPrecedence(
+          Option.fromUndefinedOr(env.unsafeNoAuth),
+          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+            Option.fromUndefinedOr(bootstrap.unsafeNoAuth),
+          ),
+        ),
+        () => false,
+      ),
+    );
+    const hostIsLoopback = isLoopbackHost(host);
     // Require auth whenever the server is (or intends to be) reachable beyond
     // loopback. A reverse proxy keeps the bind on 127.0.0.1, so --remote is the
     // signal for the tunnel case; a non-loopback bind also implies remote.
@@ -470,6 +522,7 @@ const serviceCommand = Command.make("service").pipe(
                 : "Password: loaded from --recovery-password-file (not echoed)",
             );
           }
+          for (const warning of result.warnings) console.warn(`\nWarning: ${warning}`);
           console.log("\nNext: shioricode link connect");
         }),
       ),
@@ -496,13 +549,13 @@ const linkCommand = Command.make("link").pipe(
       Command.withHandler(({ name }) =>
         Effect.promise(async () => {
           const endpoint = await connectLinkEnvironment(Option.getOrElse(name, () => ""));
-          console.log(`\nLink hosting is ready:\n${endpoint}`);
+          if (endpoint !== null) console.log(`\nLink hosting is ready:\n${endpoint}`);
         }),
       ),
     ),
     Command.make("status").pipe(
       Command.withDescription("Show the Link connection configured for this service."),
-      Command.withHandler(() => Effect.sync(() => console.log(linkStatus()))),
+      Command.withHandler(() => Effect.promise(async () => console.log(await linkStatus()))),
     ),
     Command.make("list").pipe(
       Command.withDescription("List named Link environments on the connected GitHub account."),
@@ -513,7 +566,10 @@ const linkCommand = Command.make("link").pipe(
     Command.make("disconnect").pipe(
       Command.withDescription("Revoke this Link environment and unlink GitHub."),
       Command.withHandler(() =>
-        Effect.promise(async () => console.log(await disconnectLinkEnvironment())),
+        Effect.promise(async () => {
+          const result = await disconnectLinkEnvironment();
+          if (result !== null) console.log(result);
+        }),
       ),
     ),
   ]),
@@ -541,7 +597,9 @@ const openCommand = Command.make("open", {
   ),
 );
 
-const remoteStatusCommand = Command.make("status", { baseDir: baseDirFlag }).pipe(
+const remoteStatusCommand = Command.make("status", {
+  baseDir: baseDirFlag,
+}).pipe(
   Command.withDescription("Show the active remote access method and reachable URL."),
   Command.withHandler(({ baseDir }) =>
     Effect.promise(async () => {

@@ -173,7 +173,22 @@ const OFF: ServeObservation = { method: "off", url: null };
 
 /** Whether a serve proxy target (e.g. "http://127.0.0.1:3773") is our port. */
 function proxyTargetsPort(proxy: string, port: number): boolean {
-  return new RegExp(`(?:127\\.0\\.0\\.1|localhost|\\[::1\\]):${port}(?:/|$)`).test(proxy);
+  try {
+    const url = new URL(proxy);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]") &&
+      Number(url.port || (url.protocol === "https:" ? 443 : 80)) === port
+    );
+  } catch {
+    return false;
+  }
+}
+
+function textTargetsPort(text: string, port: number): boolean {
+  const urls = text.match(/https?:\/\/[^\s()]+/gi) ?? [];
+  return urls.some((url) => proxyTargetsPort(url.replace(/[,;]+$/, ""), port));
 }
 
 function urlForHostPort(hostPort: string): string | null {
@@ -219,9 +234,7 @@ export function parseServeStatusText(text: string, port: number): ServeObservati
   if (!trimmed || /no serve config/i.test(trimmed)) {
     return OFF;
   }
-  const targetsOurPort =
-    trimmed.includes(`127.0.0.1:${port}`) || trimmed.includes(`localhost:${port}`);
-  if (!targetsOurPort) {
+  if (!textTargetsPort(trimmed, port)) {
     return OFF;
   }
   const urlMatch = trimmed.match(/https?:\/\/[^\s(]+/);
@@ -231,16 +244,33 @@ export function parseServeStatusText(text: string, port: number): ServeObservati
 
 /** Read the current serve config, but only report it when it targets OUR port. */
 export async function readServe(cli: string | null, port: number): Promise<ServeObservation> {
+  return (await readServeConfirmed(cli, port)) ?? OFF;
+}
+
+/**
+ * Read serve state without collapsing CLI/daemon failures into "off". Used by
+ * fail-closed teardown, where only a successful status response can prove that
+ * a persisted funnel is gone.
+ */
+export async function readServeConfirmed(
+  cli: string | null,
+  port: number,
+): Promise<ServeObservation | null> {
   if (!cli) {
-    return OFF;
+    return null;
   }
-  const json = await runJson(cli, ["serve", "status", "--json"], 8000);
-  if (json !== null) {
-    return parseServeStatusJson(json, port);
+  const jsonResult = await runCli(cli, ["serve", "status", "--json"], 8000);
+  if (jsonResult.code === 0 && jsonResult.stdout.trim()) {
+    try {
+      return parseServeStatusJson(JSON.parse(jsonResult.stdout) as unknown, port);
+    } catch {
+      // Fall through to the text command. Older versions can print non-JSON
+      // diagnostics even when the process exits successfully.
+    }
   }
   const result = await runCli(cli, ["serve", "status"], 8000);
   if (result.code !== 0) {
-    return OFF;
+    return null;
   }
   return parseServeStatusText(result.stdout, port);
 }
