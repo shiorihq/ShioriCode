@@ -34,7 +34,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import { SpiralLatticeLoader } from "./ui/dot-matrix-loader";
+import { Spinner } from "./ui/spinner";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -164,6 +164,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
+import { isSessionActivelyRunningTurn } from "../session-logic";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Project } from "../types";
 import { normalizeProjectTitle } from "shared/String";
 import { ShioriWordmark } from "./ShioriWordmark";
@@ -316,7 +317,7 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
 }
 
 function SidebarThreadWorkingLoader() {
-  return <SpiralLatticeLoader ariaLabel="Chat is working" className="opacity-70" size={12} />;
+  return <Spinner aria-label="Chat is working" className="size-3 opacity-70" />;
 }
 
 function SidebarLoadingSkeleton({ className }: { className?: string }) {
@@ -526,8 +527,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isSelected = props.isSelected;
   const isHighlighted = isActive || isSelected;
   const hasPendingDispatch = pendingThreadDispatch !== undefined;
-  const isThreadRunning =
-    thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const isThreadRunning = isSessionActivelyRunningTurn(thread.latestTurn, thread.session);
   const isThreadBusy = isThreadRunning || hasPendingDispatch;
   const isPinned = props.isPinned;
   const prStatus = prStatusIndicator(props.pr);

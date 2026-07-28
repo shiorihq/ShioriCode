@@ -99,7 +99,7 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { RandomDotMatrixLoader } from "../ui/dot-matrix-loader";
+import { Spinner } from "../ui/spinner";
 import { type TimestampFormat } from "contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
@@ -1770,7 +1770,7 @@ const WorkingIndicator = memo(function WorkingIndicator(props: { createdAt: stri
 
   return (
     <p className={cn(CHAT_THREAD_BODY_CLASS, "flex items-center text-foreground")}>
-      <RandomDotMatrixLoader className="mr-1.5" />
+      <Spinner aria-label="Working" className="mr-1.5 size-3.5 text-muted-foreground" />
       <span className="shimmer shimmer-spread-200">{label}</span>
     </p>
   );

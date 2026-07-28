@@ -18,6 +18,7 @@ import {
   summarizeProviderToolInvocation,
 } from "./providerTool";
 import { extractChangedFilesFromProviderData } from "./providerFileChanges";
+import { SUBAGENT_TASK_ITEM_TYPE, subagentTaskItemId } from "./subagentTask";
 
 import type {
   ChatMessage,
@@ -789,7 +790,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (lifecycleStatus) {
     entry.lifecycleStatus = lifecycleStatus;
   }
-  const itemType = extractWorkLogItemType(payload);
+  // Task lifecycle activities persisted before the projection tagged them are
+  // still rendered as subagent work, so the item type is re-derived here.
+  const itemType =
+    extractWorkLogItemType(payload) ?? (taskItemId ? SUBAGENT_TASK_ITEM_TYPE : undefined);
   const requestKind =
     extractWorkLogRequestKind(payload) ??
     (lastToolName ? classifyProviderToolRequestKind(lastToolName) : undefined);
@@ -840,7 +844,7 @@ function deriveTaskLifecycleWorkItemId(
     return null;
   }
   const taskId = asTrimmedString(payload?.taskId);
-  return taskId ? `task:${taskId}` : null;
+  return taskId ? subagentTaskItemId(taskId) : null;
 }
 
 function inferTaskLifecycleStatus(

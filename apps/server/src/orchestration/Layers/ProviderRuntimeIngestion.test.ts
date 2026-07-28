@@ -42,6 +42,7 @@ import {
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import { deriveWorkLogEntries } from "shared/orchestrationSession";
 import { ProviderRuntimeIngestionUnprovided } from "./ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -5346,6 +5347,125 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
 
     expect(payload?.parentItemId).toBe("agent-tool-2");
+    expect(payload?.itemType).toBe("collab_agent_tool_call");
+    expect(payload?.itemId).toBe("task:task-subagent-2");
+    expect(activity?.summary).toBe("Subagent task update");
+  });
+
+  it("projects a Claude subagent task lifecycle as one collapsible subagent work entry", async () => {
+    const harness = await createHarness();
+    const startedAtMs = Date.now();
+    const now = new Date(startedAtMs).toISOString();
+    const at = (offsetMs: number) => new Date(startedAtMs + offsetMs).toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-claude-subagent-lifecycle"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "claudeAgent",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          goalLifecycleKey: null,
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
+    const rawTaskPayload = (subtype: string, extra: Record<string, unknown>) => ({
+      source: "claude.sdk.message",
+      method: `claude/system/${subtype}`,
+      payload: {
+        type: "system",
+        subtype,
+        task_id: "task-subagent-3",
+        tool_use_id: "agent-tool-3",
+        ...extra,
+      },
+    });
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-claude-lifecycle-started"),
+      provider: "claudeAgent",
+      createdAt: at(1),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-task-3"),
+      payload: {
+        taskId: "task-subagent-3",
+        description: "Search repo for SkipLink usages",
+      },
+      raw: rawTaskPayload("task_started", { description: "Search repo for SkipLink usages" }),
+    });
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-claude-lifecycle-progress"),
+      provider: "claudeAgent",
+      createdAt: at(2),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-task-3"),
+      payload: {
+        taskId: "task-subagent-3",
+        description: "Search repo for SkipLink usages",
+        summary: "Grepping src/components",
+      },
+      raw: rawTaskPayload("task_progress", { summary: "Grepping src/components" }),
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-claude-lifecycle-completed"),
+      provider: "claudeAgent",
+      createdAt: at(3),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-task-3"),
+      payload: {
+        taskId: "task-subagent-3",
+        status: "completed",
+        summary: "Found 3 SkipLink usages",
+      },
+      raw: rawTaskPayload("task_notification", { status: "completed" }),
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-lifecycle-completed",
+      ),
+    );
+
+    const lifecycleActivities = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id.startsWith("evt-claude-lifecycle-") &&
+        (activity.kind === "task.started" ||
+          activity.kind === "task.progress" ||
+          activity.kind === "task.completed"),
+    );
+    expect(lifecycleActivities).toHaveLength(3);
+    for (const activity of lifecycleActivities) {
+      const payload = activity.payload as Record<string, unknown>;
+      expect(payload.itemType).toBe("collab_agent_tool_call");
+      expect(payload.itemId).toBe("task:task-subagent-3");
+      expect(payload.parentItemId).toBe("agent-tool-3");
+      expect(activity.summary.startsWith("Subagent task")).toBe(true);
+    }
+
+    const workEntries = deriveWorkLogEntries(
+      lifecycleActivities,
+      TurnId.makeUnsafe("turn-claude-task-3"),
+    );
+    expect(workEntries).toHaveLength(1);
+    const [collapsed] = workEntries;
+    expect(collapsed?.itemType).toBe("collab_agent_tool_call");
+    expect(collapsed?.itemId).toBe("task:task-subagent-3");
+    expect(collapsed?.parentItemId).toBe("agent-tool-3");
+    expect(collapsed?.detail).toBe("Found 3 SkipLink usages");
+    expect(collapsed?.running).toBe(false);
   });
 
   it("projects Codex child parent ids from raw payloads onto tool activities", async () => {

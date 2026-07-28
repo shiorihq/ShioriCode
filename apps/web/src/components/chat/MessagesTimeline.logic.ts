@@ -1223,6 +1223,11 @@ function runningActionForKind(kind: WorkEntryDisplayKind): string {
   }
 }
 
+function deriveWorkEntryHeading(entry: WorkLogEntry): string {
+  const raw = normalizeCompactToolLabel(entry.toolTitle ? entry.toolTitle : entry.label);
+  return raw.length > 0 ? `${raw.charAt(0).toUpperCase()}${raw.slice(1)}` : raw;
+}
+
 export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   const normalizedLabel = normalizeWorkEntryTitle(entry);
   const explicitDetail = getExplicitDetail(entry);
@@ -1281,10 +1286,13 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
   }
 
   if (entry.itemType === "collab_agent_tool_call") {
+    // Providers that report subagent progress as task lifecycle events carry no
+    // tool-call input, so the projected task description/summary is the detail.
+    const detail = subagentTaskDetail ?? explicitDetail;
     return {
       kind: "other",
-      action: "",
-      detail: subagentTaskDetail ?? explicitDetail,
+      action: detail ? "" : deriveWorkEntryHeading(entry),
+      detail,
       monospace: false,
       dedupeKey: null,
     };
@@ -1516,10 +1524,7 @@ export function formatWorkEntry(entry: WorkLogEntry): FormattedWorkEntry {
     };
   }
 
-  const raw = entry.toolTitle
-    ? normalizeCompactToolLabel(entry.toolTitle)
-    : normalizeCompactToolLabel(entry.label);
-  const heading = raw.length > 0 ? `${raw.charAt(0).toUpperCase()}${raw.slice(1)}` : raw;
+  const heading = deriveWorkEntryHeading(entry);
   return {
     kind: "other",
     action: heading,
@@ -1595,7 +1600,9 @@ export type WorkGroupSummaryParts = {
 };
 
 function joinSummaryParts({ leadingVerb, rest }: WorkGroupSummaryParts): string {
-  return rest.length > 0 ? `${leadingVerb} ${rest}` : leadingVerb;
+  // Subagent entries render without a leading verb, so the join must not emit a
+  // leading space in front of the task description.
+  return rest.length > 0 ? `${leadingVerb} ${rest}`.trim() : leadingVerb;
 }
 
 export function getDisplayedWorkEntries(entries: ReadonlyArray<WorkLogEntry>): WorkLogEntry[] {

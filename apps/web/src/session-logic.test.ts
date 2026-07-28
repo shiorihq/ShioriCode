@@ -796,9 +796,12 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities, undefined);
 
     expect(entries).toHaveLength(2);
+    // The task payloads above predate itemType projection; the derived entry must
+    // still be tagged as subagent work so persisted history renders identically.
     expect(entries[1]).toMatchObject({
       id: "claude-task-started",
       itemId: "task:task-subagent-1",
+      itemType: "collab_agent_tool_call",
       parentItemId: "agent-tool-claude",
       label: "Task completed",
       detail: "No issues found.",

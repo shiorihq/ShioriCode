@@ -634,6 +634,39 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("formats provider task-lifecycle subagent entries that carry no tool-call input", () => {
+    // Claude reports subagent progress as task.* runtime events: no tool input,
+    // only the projected task description/summary.
+    const taskEntry = {
+      id: "claude-task-entry",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      label: "Subagent task completed",
+      tone: "tool" as const,
+      itemType: "collab_agent_tool_call" as const,
+      itemId: "task:task-1",
+      parentItemId: "agent-tool-1",
+      detail: "Search repo for main-content and SkipLink usages",
+    } satisfies WorkLogEntry;
+
+    expect(formatWorkEntry(taskEntry)).toMatchObject({
+      kind: "other",
+      action: "",
+      detail: "Search repo for main-content and SkipLink usages",
+      monospace: false,
+    });
+    expect(deriveWorkGroupIconKind([taskEntry])).toBe("agent");
+    expect(buildWorkGroupSummary([taskEntry], false)).toBe(
+      "Search repo for main-content and SkipLink usages",
+    );
+
+    // Without a description the row must still name itself instead of rendering blank.
+    const { detail: _detail, ...taskEntryWithoutDetail } = taskEntry;
+    expect(formatWorkEntry(taskEntryWithoutDetail)).toMatchObject({
+      action: "Subagent task",
+      detail: null,
+    });
+  });
+
   it("formats Codex wait/close subagent tool calls with the correct action", () => {
     expect(
       formatWorkEntry({

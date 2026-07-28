@@ -19,6 +19,7 @@ import {
 import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "shared/DrainableWorker";
 import { snapshotProviderToolData } from "shared/providerTool";
+import { SUBAGENT_TASK_ITEM_TYPE, subagentTaskItemId } from "shared/subagentTask";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -335,6 +336,26 @@ function isReasoningTaskProgress(
   return event.provider === "codex";
 }
 
+/**
+ * Task lifecycle events that hang off a parent tool call describe delegated
+ * (subagent) work. Projecting them with the canonical subagent item type plus a
+ * stable item id lets them flow through the exact same work log pipeline as
+ * provider `item.*` subagent tool calls: lifecycle collapsing into one row,
+ * agent iconography, and subagent grouping.
+ *
+ * Turn-level task events (Codex `task_started` / `task_complete`) have no parent
+ * item and are intentionally left untouched.
+ */
+function subagentTaskLifecycleFields(
+  parentItemId: string | undefined,
+  taskId: string,
+): { readonly itemType: typeof SUBAGENT_TASK_ITEM_TYPE; readonly itemId: string } | undefined {
+  if (!parentItemId) {
+    return undefined;
+  }
+  return { itemType: SUBAGENT_TASK_ITEM_TYPE, itemId: subagentTaskItemId(taskId) };
+}
+
 function approvalReviewSummary(
   event: Extract<
     ProviderRuntimeEvent,
@@ -572,14 +593,16 @@ function runtimeEventToActivities(
 
     case "task.started": {
       const parentItemId = parentItemIdFromRuntimeEvent(event);
+      const subagentFields = subagentTaskLifecycleFields(parentItemId, event.payload.taskId);
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "info",
           kind: "task.started",
-          summary:
-            event.payload.taskType === "plan"
+          summary: subagentFields
+            ? "Subagent task started"
+            : event.payload.taskType === "plan"
               ? "Plan task started"
               : event.payload.taskType
                 ? `${event.payload.taskType} task started`
@@ -587,6 +610,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(parentItemId ? { parentItemId } : {}),
+            ...subagentFields,
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
@@ -602,16 +626,22 @@ function runtimeEventToActivities(
       const detail = truncateTaskProgressDetail(event);
       const reasoningProgress = isReasoningTaskProgress(event);
       const parentItemId = parentItemIdFromRuntimeEvent(event);
+      const subagentFields = subagentTaskLifecycleFields(parentItemId, event.payload.taskId);
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "info",
           kind: "task.progress",
-          summary: reasoningProgress ? "Reasoning update" : "Status update",
+          summary: reasoningProgress
+            ? "Reasoning update"
+            : subagentFields
+              ? "Subagent task update"
+              : "Status update",
           payload: {
             taskId: event.payload.taskId,
             ...(parentItemId ? { parentItemId } : {}),
+            ...subagentFields,
             ...(detail ? { detail } : {}),
             displayAs: reasoningProgress ? "reasoning" : "status",
             ...(event.payload.summary ? { summary: event.payload.summary } : {}),
@@ -627,6 +657,8 @@ function runtimeEventToActivities(
 
     case "task.completed": {
       const parentItemId = parentItemIdFromRuntimeEvent(event);
+      const subagentFields = subagentTaskLifecycleFields(parentItemId, event.payload.taskId);
+      const subject = subagentFields ? "Subagent task" : "Task";
       return [
         {
           id: event.eventId,
@@ -635,14 +667,15 @@ function runtimeEventToActivities(
           kind: "task.completed",
           summary:
             event.payload.status === "failed"
-              ? "Task failed"
+              ? `${subject} failed`
               : event.payload.status === "stopped"
-                ? "Task stopped"
-                : "Task completed",
+                ? `${subject} stopped`
+                : `${subject} completed`,
           payload: {
             taskId: event.payload.taskId,
             status: event.payload.status,
             ...(parentItemId ? { parentItemId } : {}),
+            ...subagentFields,
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.outputFile ? { outputFile: event.payload.outputFile } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
